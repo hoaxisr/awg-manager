@@ -93,7 +93,6 @@ func (a *app) setupOrchestrator() {
 		return nil
 	})
 	a.dnsFailover.SetLogger(dnsFailoverJournal{log: logging.NewScopedLogger(a.loggingService, logging.GroupRouting, logging.SubDnsRoute)})
-	a.dnsRouteService.SetHydraRoute(a.hydraService)
 	a.dnsRouteService.SetFailoverManager(a.dnsFailover)
 	a.dnsFailover.SetAffectedListsLookup(a.dnsRouteService.LookupAffectedLists)
 

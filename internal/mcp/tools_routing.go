@@ -269,7 +269,7 @@ func registerRoutingTools(s *mcp.Server, d Deps) {
 		Description: "Edit an existing domain routing list in place: rename it, replace its manual entries or excludes, add or remove domain list subscriptions, send it through a different tunnel or an ordered set of targets with failover, or switch its kill switch. " +
 			"Omitted fields are left untouched and the backend always survives, which is why this is the way to change a list, " +
 			"not remove_dns_route followed by add_dns_route. manualDomains and excludes each replace EVERY entry of their kind — read them from get_dns_route first. " +
-			"HydraRoute lists take one target and no excludes, subscriptions or kill switch. Check the returned warnings.",
+			"Check the returned warnings.",
 		// Not idempotent: addSubscriptionUrls fetches the lists again, and a
 		// retried removeSubscriptions is refused once the ref is gone.
 		Annotations: safeWrite("Update DNS route", false),

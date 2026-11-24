@@ -7,18 +7,15 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
 	"github.com/hoaxisr/awg-manager/internal/events"
-	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
 )
 
-// writeDNSRouteError: HR-группа адресуется позицией на ревизии файлов; если
-// файлы с тех пор переписали (HRweb, руки), клиент получает 409 и
-// перечитывает список, а не правит не ту группу.
+// writeDNSRouteError: правило с бэкендом HydraRoute (старая вкладка, импорт
+// старой копии) отличимо по коду от прочих отказов записи.
 func writeDNSRouteError(w http.ResponseWriter, err error, code string) {
-	if errors.Is(err, hydraroute.ErrRulesChanged) {
-		response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "HR_RULES_CHANGED")
-		return
+	if errors.Is(err, dnsroute.ErrHydraRouteBackend) {
+		code = "DNS_ROUTE_BACKEND_UNSUPPORTED"
 	}
 	response.Error(w, err.Error(), code)
 }
@@ -42,46 +39,40 @@ type DnsRouteTargetDTO struct {
 
 // DnsRouteDTO mirrors frontend DnsRoute.
 type DnsRouteDTO struct {
-	ID                 string                    `json:"id" example:"dns_xyz789"`
-	Name               string                    `json:"name" example:"Work VPN"`
-	Domains            []string                  `json:"domains" example:"example.com"`
-	Excludes           []string                  `json:"excludes,omitempty" example:"ads.example.com"`
-	ExcludesText       string                    `json:"excludesText,omitempty" example:"# local bypass\n.local\n10.0.0.0/8"`
-	ExcludeSubnets     []string                  `json:"excludeSubnets,omitempty" example:"10.0.0.0/24"`
-	Subnets            []string                  `json:"subnets,omitempty" example:"10.0.0.0/8"`
-	ManualDomains      []string                  `json:"manualDomains" example:"corp.internal"`
-	ManualText         string                    `json:"manualText,omitempty" example:"# streaming\nyoutube.com\n# backup\ngooglevideo.com"`
-	Subscriptions      []DnsRouteSubscriptionDTO `json:"subscriptions,omitempty"`
-	SkipIPv6           bool                      `json:"skipIPv6,omitempty" example:"true"`
-	Routes             []DnsRouteTargetDTO       `json:"routes"`
-	Enabled            bool                      `json:"enabled" example:"true"`
-	CreatedAt          string                    `json:"createdAt" example:"2024-01-01T00:00:00Z"`
-	UpdatedAt          string                    `json:"updatedAt" example:"2024-01-15T12:00:00Z"`
-	Backend            string                    `json:"backend,omitempty" enums:"ndms,hydraroute" example:"hydraroute"`
-	IconURL            string                    `json:"iconUrl,omitempty" example:"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."`
-	HRRouteMode        string                    `json:"hrRouteMode,omitempty" enums:"interface,policy" example:"interface"`
-	HRPolicyName       string                    `json:"hrPolicyName,omitempty" example:"Streaming"`
-	HRPolicyInterfaces []string                  `json:"hrPolicyInterfaces,omitempty" example:"Wireguard0"`
+	ID             string                    `json:"id" example:"dns_xyz789"`
+	Name           string                    `json:"name" example:"Work VPN"`
+	Domains        []string                  `json:"domains" example:"example.com"`
+	Excludes       []string                  `json:"excludes,omitempty" example:"ads.example.com"`
+	ExcludesText   string                    `json:"excludesText,omitempty" example:"# local bypass\n.local\n10.0.0.0/8"`
+	ExcludeSubnets []string                  `json:"excludeSubnets,omitempty" example:"10.0.0.0/24"`
+	Subnets        []string                  `json:"subnets,omitempty" example:"10.0.0.0/8"`
+	ManualDomains  []string                  `json:"manualDomains" example:"corp.internal"`
+	ManualText     string                    `json:"manualText,omitempty" example:"# streaming\nyoutube.com\n# backup\ngooglevideo.com"`
+	Subscriptions  []DnsRouteSubscriptionDTO `json:"subscriptions,omitempty"`
+	SkipIPv6       bool                      `json:"skipIPv6,omitempty" example:"true"`
+	Routes         []DnsRouteTargetDTO       `json:"routes"`
+	Enabled        bool                      `json:"enabled" example:"true"`
+	CreatedAt      string                    `json:"createdAt" example:"2024-01-01T00:00:00Z"`
+	UpdatedAt      string                    `json:"updatedAt" example:"2024-01-15T12:00:00Z"`
+	Backend        string                    `json:"backend,omitempty" enums:"ndms" example:"ndms"`
+	IconURL        string                    `json:"iconUrl,omitempty" example:"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."`
 }
 
-// DnsRouteUpsertRequest is the request body for DNS/HR route list create/update.
+// DnsRouteUpsertRequest is the request body for DNS route list create/update.
 type DnsRouteUpsertRequest struct {
-	Name               string                    `json:"name" example:"Youtube"`
-	ManualDomains      []string                  `json:"manualDomains" example:"youtube.com,.googlevideo.com"`
-	ManualText         string                    `json:"manualText,omitempty" example:"# game servers\nexample.com\n203.0.113.0/24"`
-	Subscriptions      []DnsRouteSubscriptionDTO `json:"subscriptions,omitempty"`
-	Excludes           []string                  `json:"excludes,omitempty" example:"ads.youtube.com"`
-	ExcludesText       string                    `json:"excludesText,omitempty" example:"# local bypass\n.local\n10.0.0.0/8"`
-	ExcludeSubnets     []string                  `json:"excludeSubnets,omitempty" example:"10.0.0.0/24"`
-	Subnets            []string                  `json:"subnets,omitempty" example:"142.250.0.0/15"`
-	SkipIPv6           *bool                     `json:"skipIPv6,omitempty" example:"true"`
-	Routes             []DnsRouteTargetDTO       `json:"routes,omitempty"`
-	Enabled            bool                      `json:"enabled" example:"true"`
-	Backend            string                    `json:"backend,omitempty" enums:"ndms,hydraroute" example:"hydraroute"`
-	IconURL            string                    `json:"iconUrl,omitempty" example:"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."`
-	HRRouteMode        string                    `json:"hrRouteMode,omitempty" enums:"interface,policy" example:"interface"`
-	HRPolicyName       string                    `json:"hrPolicyName,omitempty" example:"Streaming"`
-	HRPolicyInterfaces []string                  `json:"hrPolicyInterfaces,omitempty" example:"Wireguard0"`
+	Name           string                    `json:"name" example:"Youtube"`
+	ManualDomains  []string                  `json:"manualDomains" example:"youtube.com,.googlevideo.com"`
+	ManualText     string                    `json:"manualText,omitempty" example:"# game servers\nexample.com\n203.0.113.0/24"`
+	Subscriptions  []DnsRouteSubscriptionDTO `json:"subscriptions,omitempty"`
+	Excludes       []string                  `json:"excludes,omitempty" example:"ads.youtube.com"`
+	ExcludesText   string                    `json:"excludesText,omitempty" example:"# local bypass\n.local\n10.0.0.0/8"`
+	ExcludeSubnets []string                  `json:"excludeSubnets,omitempty" example:"10.0.0.0/24"`
+	Subnets        []string                  `json:"subnets,omitempty" example:"142.250.0.0/15"`
+	SkipIPv6       *bool                     `json:"skipIPv6,omitempty" example:"true"`
+	Routes         []DnsRouteTargetDTO       `json:"routes,omitempty"`
+	Enabled        bool                      `json:"enabled" example:"true"`
+	Backend        string                    `json:"backend,omitempty" enums:"ndms" example:"ndms"`
+	IconURL        string                    `json:"iconUrl,omitempty" example:"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."`
 }
 
 // DnsRouteDeleteBatchRequest is the request body for batch delete.

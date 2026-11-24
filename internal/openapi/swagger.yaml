@@ -1414,8 +1414,7 @@ definitions:
       backend:
         enum:
         - ndms
-        - hydraroute
-        example: hydraroute
+        example: ndms
         type: string
       createdAt:
         example: "2024-01-01T00:00:00Z"
@@ -1446,21 +1445,6 @@ definitions:
           # local bypass
           .local
           10.0.0.0/8
-        type: string
-      hrPolicyInterfaces:
-        example:
-        - Wireguard0
-        items:
-          type: string
-        type: array
-      hrPolicyName:
-        example: Streaming
-        type: string
-      hrRouteMode:
-        enum:
-        - interface
-        - policy
-        example: interface
         type: string
       iconUrl:
         example: data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...
@@ -1555,8 +1539,7 @@ definitions:
       backend:
         enum:
         - ndms
-        - hydraroute
-        example: hydraroute
+        example: ndms
         type: string
       enabled:
         example: true
@@ -1578,21 +1561,6 @@ definitions:
           # local bypass
           .local
           10.0.0.0/8
-        type: string
-      hrPolicyInterfaces:
-        example:
-        - Wireguard0
-        items:
-          type: string
-        type: array
-      hrPolicyName:
-        example: Streaming
-        type: string
-      hrRouteMode:
-        enum:
-        - interface
-        - policy
-        example: interface
         type: string
       iconUrl:
         example: data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...

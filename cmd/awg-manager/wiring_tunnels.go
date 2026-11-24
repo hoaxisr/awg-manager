@@ -216,24 +216,6 @@ func (a *app) setupServices() {
 		a.bootLog.Warn("dns-routes-load", "", err.Error())
 	}
 
-	a.hydraService.SetDnsListProvider(func() []hydraroute.DnsListInfo {
-		data := a.dnsRouteStore.GetCached()
-		if data == nil {
-			return nil
-		}
-		var lists []hydraroute.DnsListInfo
-		for _, list := range data.Lists {
-			if list.Backend != "hydraroute" || !list.Enabled || len(list.Routes) == 0 {
-				continue
-			}
-			lists = append(lists, hydraroute.DnsListInfo{
-				TunnelID: list.Routes[0].TunnelID,
-				Subnets:  list.Subnets,
-			})
-		}
-		return lists
-	})
-
 	// Static route service for IP-based routing through tunnels
 	// (constructed later, after ndmsCommands is available).
 	a.staticRouteStore = storage.NewStaticRouteStore(a.dataDir)

@@ -49,12 +49,9 @@
         bodyLoading = false,
     }: Props = $props();
 
-    // HR-backed rules live in their own tab now; this tab shows only NDMS.
-    // By name, as the HR Neo tab lists its rules (#851): the order of lists
-    // means nothing to the router — only the order of tunnels inside a list does.
-    let dnsRoutes = $derived(
-        allDnsRoutes.filter((r) => r.backend !== 'hydraroute').sort((a, b) => a.name.localeCompare(b.name))
-    );
+    // By name (#851): the order of lists means nothing to the router — only the
+    // order of tunnels inside a list does.
+    let dnsRoutes = $derived([...allDnsRoutes].sort((a, b) => a.name.localeCompare(b.name)));
 
     // Open edit modal when search result is clicked.
     // Capture counter at mount to skip stale values on tab re-mount.
@@ -237,7 +234,7 @@
             const beforeCount = dnsRoutes.length;
             const fresh = await api.deleteDnsRouteBatch(ids);
             dnsRoutesStore.applyMutationResponse(fresh);
-            const deleted = Math.max(0, beforeCount - fresh.filter(r => r.backend !== 'hydraroute').length);
+            const deleted = Math.max(0, beforeCount - fresh.length);
 
             exitDnsSelection();
             notifications.success(m.routing_bulk_deleted_rules({ count: deleted }));

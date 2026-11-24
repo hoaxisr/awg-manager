@@ -260,7 +260,7 @@
         if (singboxInstalled) void loadGeoFileCount();
         else geoFileCount = 0;
     });
-    let dnsActiveCount = $derived(dnsRoutes.filter(r => r.enabled && r.backend !== 'hydraroute').length);
+    let dnsActiveCount = $derived(dnsRoutes.filter(r => r.enabled).length);
     let ipActiveCount = $derived(ipRoutes.filter(r => r.enabled).length);
     let clientActiveCount = $derived(clientRoutes.filter(r => r.enabled).length);
     let policyCount = $derived(accessPolicies.length);

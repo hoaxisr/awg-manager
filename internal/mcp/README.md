@@ -56,8 +56,6 @@ a comment so the next reader can re-check:
   over `src dst clientName`, not an exact source filter.
 - **Zero values.** `DelayChecker.CheckOne` answers 0 both for a timeout and for
   "already probing". `dnsroute.Update` treats a zero field as "not sent".
-- **Which lookup finds what.** `dnsroute.Get` scans only the JSON store;
-  `List` also merges HydraRoute lists with `hr:` ids.
 - **What a flag does not do.** Disabling a sing-box subscription leaves
   its own group in the configuration and removes its servers only from
   aggregate groups (`subscription/groups.go`, `resolveGroupTags`). A fake
