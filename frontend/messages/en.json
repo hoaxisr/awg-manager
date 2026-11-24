@@ -2718,6 +2718,7 @@
 	"proxy_wdtt_diag_transport_auto": "Auto",
 	"proxy_wdtt_diag_diag_key": "Diagnostics key (dk)",
 	"proxy_wdtt_diag_diag_key_saved": "Saved from link; leave blank to use it",
+	"proxy_wdtt_diag_diag_key_forget": "Forget saved key",
 	"proxy_wdtt_diag_diag_key_placeholder": "Optional: one-time server key",
 	"proxy_wdtt_diag_running": "Checking path through VK TURN and server response…",
 	"proxy_wdtt_diag_run": "Run check",

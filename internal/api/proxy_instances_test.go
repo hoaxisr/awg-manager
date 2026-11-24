@@ -1960,4 +1960,15 @@ func TestProxyInstances_DiagKeySecretMaskingAndPreservation(t *testing.T) {
 	if mgr.mutated[len(mgr.mutated)-1].WdttClient.DiagKey != "diag-secret-next" {
 		t.Fatalf("новый diagKey не сохранился: %+v", mgr.mutated[len(mgr.mutated)-1].WdttClient)
 	}
+
+	// Явный null стирает сохранённый ключ; другой секрет null не трогает.
+	password := mgr.mutated[len(mgr.mutated)-1].WdttClient.Password
+	rr = doProxy(t, h, http.MethodPatch, "/api/proxyrt/instances/"+rec.Key(), `{"config":{"diagKey":null,"password":null}}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PATCH null code = %d: %s", rr.Code, rr.Body.String())
+	}
+	last := mgr.mutated[len(mgr.mutated)-1].WdttClient
+	if last.DiagKey != "" || last.Password != password || password == "" {
+		t.Fatalf("после null: diagKey=%q, пароль изменён=%v", last.DiagKey, last.Password != password)
+	}
 }

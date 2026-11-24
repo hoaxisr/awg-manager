@@ -2784,6 +2784,7 @@
 	"proxy_wdtt_diag_transport_auto": "Авто",
 	"proxy_wdtt_diag_diag_key": "Ключ диагностики (dk)",
 	"proxy_wdtt_diag_diag_key_saved": "Сохранён из ссылки; оставьте пустым, чтобы использовать его",
+	"proxy_wdtt_diag_diag_key_forget": "Забыть сохранённый ключ",
 	"proxy_wdtt_diag_diag_key_placeholder": "Необязательно: одноразовый ключ сервера",
 	"proxy_wdtt_diag_running": "Проверяем путь через VK TURN и ответ сервера…",
 	"proxy_wdtt_diag_run": "Проверить",
