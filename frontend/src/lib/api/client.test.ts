@@ -286,3 +286,26 @@ describe('importConfig: тело запроса — объект целиком'
 		expect(body.backend).toBe('kernel');
 	});
 });
+
+describe('fircGetMonitor', () => {
+	const originalFetch = globalThis.fetch;
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+
+	it('просит списки клиентов только по запросу', async () => {
+		const fetchMock = vi.fn().mockImplementation(
+			async () =>
+				new Response(JSON.stringify({ success: true, data: {} }), {
+					headers: { 'Content-Type': 'application/json' },
+				}),
+		);
+		globalThis.fetch = fetchMock;
+
+		await api.fircGetMonitor();
+		await api.fircGetMonitor(true);
+
+		expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual(['/api/firc/monitor', '/api/firc/monitor?clients=1']);
+	});
+});

@@ -1,15 +1,23 @@
 <script lang="ts">
 	import { m } from '$lib/i18n';
-	import type { FircMonitorSnapshot } from '$lib/types/firc';
+	import type { FircHost, FircMonitorSnapshot, FircPolicy } from '$lib/types/firc';
 	import { Badge, StatusDot } from '$lib/components/ui';
+	import { ChevronDown, ChevronRight } from 'lucide-svelte';
 	import { formatBytes, formatTime, formatOutboundLabel } from './fircMonitorFormat';
+	import FircMonitorClientsList from './FircMonitorClientsList.svelte';
 
 	interface Props {
 		view: 'sources' | 'details';
 		snapshot: FircMonitorSnapshot | null;
+		/** Раскрытые списки клиентов: 'all', 'srv:<id>', 'grp:<id>'. */
+		expandedClients: Record<string, boolean>;
+		hosts: FircHost[];
+		policies: FircPolicy[];
+		onToggleClients: (key: string) => void;
+		onFilterClientEvents: (ip: string) => void;
 	}
 
-	let { view, snapshot }: Props = $props();
+	let { view, snapshot, expandedClients, hosts, policies, onToggleClients, onFilterClientEvents }: Props = $props();
 
 	let totalTxBytes = $derived.by(() => {
 		if (snapshot?.totalTxBytes !== undefined) return snapshot.totalTxBytes;
@@ -89,7 +97,15 @@
 									<div>
 										<span class="conn-pill">{m.firc_monitor_sessions({ n: srv.activeConns })}</span>
 										{#if srv.activeClients}
-											<span class="bytes-meta">{m.firc_monitor_devices({ n: srv.activeClients })}</span>
+											<button
+												type="button"
+												class="mon-clients-trigger"
+												aria-expanded={Boolean(expandedClients[`srv:${srv.id}`])}
+												onclick={() => onToggleClients(`srv:${srv.id}`)}
+											>
+												<span>{m.firc_monitor_devices({ n: srv.activeClients })}</span>
+												{#if expandedClients[`srv:${srv.id}`]}<ChevronDown size={11} />{:else}<ChevronRight size={11} />{/if}
+											</button>
 										{/if}
 									</div>
 									<div class="bytes-meta">
@@ -116,6 +132,16 @@
 								{/if}
 							</td>
 						</tr>
+						{#if srv.activeClients && expandedClients[`srv:${srv.id}`]}
+							<tr class="mon-clients-subrow" data-testid="firc-mon-server-clients-{srv.id}">
+								<td colspan="5">
+									<div class="mon-clients-box">
+										<div class="mon-clients-box-head">{m.firc_monitor_clients_source_title({ source: srv.name })}</div>
+										<FircMonitorClientsList clients={srv.clients} total={srv.activeClients} {hosts} {policies} showGroups={true} {onFilterClientEvents} />
+									</div>
+								</td>
+							</tr>
+						{/if}
 					{/each}
 				</tbody>
 			</table>
@@ -132,6 +158,22 @@
 			<div class="kpi-hint">
 				{snapshot?.totalClients ? m.firc_monitor_kpi_conns_clients({ n: snapshot.totalClients }) : m.firc_monitor_kpi_conns_hint()}
 			</div>
+			{#if snapshot?.totalClients}
+				<button
+					type="button"
+					class="mon-clients-toggle"
+					aria-expanded={Boolean(expandedClients.all)}
+					onclick={() => onToggleClients('all')}
+				>
+					{#if expandedClients.all}
+						<ChevronDown size={12} />
+						<span>{m.firc_monitor_clients_hide()}</span>
+					{:else}
+						<ChevronRight size={12} />
+						<span>{m.firc_monitor_clients_show({ count: snapshot.totalClients })}</span>
+					{/if}
+				</button>
+			{/if}
 		</div>
 		<div class="kpi-card">
 			<div class="kpi-label">{m.firc_monitor_kpi_volume()}</div>
@@ -155,6 +197,18 @@
 			</div>
 		</div>
 	</div>
+
+	{#if expandedClients.all && snapshot?.totalClients}
+		<div class="mon-card" data-testid="firc-mon-global-clients">
+			<div class="mon-card-head">
+				<span>{m.firc_monitor_active_clients_title()}</span>
+				<span class="mon-card-sub">{snapshot.totalClients}</span>
+			</div>
+			<div class="mon-clients-panel-body">
+				<FircMonitorClientsList clients={snapshot.clients} total={snapshot.totalClients} {hosts} {policies} showGroups={true} {onFilterClientEvents} />
+			</div>
+		</div>
+	{/if}
 
 	<div class="mon-card">
 		<div class="mon-card-head">
@@ -211,7 +265,15 @@
 									<div>
 										<span class="conn-pill">{m.firc_monitor_sessions({ n: grp.activeConns })}</span>
 										{#if grp.activeClients}
-											<span class="bytes-meta">{m.firc_monitor_devices({ n: grp.activeClients })}</span>
+											<button
+												type="button"
+												class="mon-clients-trigger"
+												aria-expanded={Boolean(expandedClients[`grp:${grp.id}`])}
+												onclick={() => onToggleClients(`grp:${grp.id}`)}
+											>
+												<span>{m.firc_monitor_devices({ n: grp.activeClients })}</span>
+												{#if expandedClients[`grp:${grp.id}`]}<ChevronDown size={11} />{:else}<ChevronRight size={11} />{/if}
+											</button>
 										{/if}
 									</div>
 									<div class="bytes-meta">{m.firc_monitor_received()} <strong>{formatBytes(grp.connRxBytes)}</strong></div>
@@ -248,6 +310,16 @@
 								<div class="muted-meta">{m.firc_monitor_out_packets()}</div>
 							</td>
 						</tr>
+						{#if grp.activeClients && expandedClients[`grp:${grp.id}`]}
+							<tr class="mon-clients-subrow" data-testid="firc-mon-group-clients-{grp.id}">
+								<td colspan="5">
+									<div class="mon-clients-box">
+										<div class="mon-clients-box-head">{m.firc_monitor_clients_group_title({ group: grp.name })}</div>
+										<FircMonitorClientsList clients={grp.clients} total={grp.activeClients} {hosts} {policies} showGroups={false} {onFilterClientEvents} />
+									</div>
+								</td>
+							</tr>
+						{/if}
 					{/each}
 				</tbody>
 			</table>
@@ -385,6 +457,7 @@
 
 	.mon-table-wrap {
 		overflow-x: auto;
+		container-type: inline-size;
 	}
 
 	.mon-table {
@@ -463,5 +536,68 @@
 	.domain-text {
 		color: var(--text-primary);
 		font-weight: 500;
+	}
+
+	.mon-clients-toggle,
+	.mon-clients-trigger {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+		border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+		border-radius: 5px;
+		background: color-mix(in srgb, var(--accent) 10%, transparent);
+		color: var(--text-primary);
+		font: inherit;
+		font-size: 0.71rem;
+		font-weight: 500;
+		cursor: pointer;
+		padding: 1px 6px;
+		transition: background 0.15s ease, border-color 0.15s ease;
+	}
+
+	.mon-clients-toggle {
+		align-self: flex-start;
+		margin-top: 0.2rem;
+		padding: 2px 8px;
+	}
+
+	.mon-clients-trigger {
+		margin-left: 0.25rem;
+	}
+
+	.mon-clients-toggle:hover,
+	.mon-clients-trigger:hover {
+		background: color-mix(in srgb, var(--accent) 18%, transparent);
+		border-color: var(--accent);
+	}
+
+	.mon-clients-panel-body {
+		padding: 0.55rem 0.75rem;
+	}
+
+	.mon-table tr.mon-clients-subrow td {
+		padding: 0.35rem 0.65rem 0.6rem;
+		background: color-mix(in srgb, var(--bg-secondary) 70%, transparent);
+	}
+
+	/* Список держится в видимой ширине: таблица на телефоне прокручивается вбок. */
+	.mon-clients-box {
+		position: sticky;
+		left: 0.65rem;
+		box-sizing: border-box;
+		max-width: calc(100cqi - 1.3rem);
+		display: flex;
+		flex-direction: column;
+		gap: 0.4rem;
+		padding: 0.5rem 0.65rem;
+		border-radius: 6px;
+		border: 1px solid var(--border);
+		background: var(--bg-primary, rgba(0, 0, 0, 0.12));
+	}
+
+	.mon-clients-box-head {
+		font-size: 0.72rem;
+		font-weight: 600;
+		color: var(--text-secondary);
 	}
 </style>

@@ -13,6 +13,8 @@ vi.hoisted(() => {
 });
 const {
 	fircGetMonitor,
+	fircGetHosts,
+	fircGetPolicies,
 	fircCheckDomain,
 	fircGetAutolist,
 	fircRecheckAutolist,
@@ -25,6 +27,8 @@ const {
 	scanPage,
 } = vi.hoisted(() => ({
 	fircGetMonitor: vi.fn(),
+	fircGetHosts: vi.fn(),
+	fircGetPolicies: vi.fn(),
 	fircCheckDomain: vi.fn(),
 	fircGetAutolist: vi.fn(),
 	fircRecheckAutolist: vi.fn(),
@@ -39,6 +43,8 @@ const {
 vi.mock('$lib/api/client', () => ({
 	api: {
 		fircGetMonitor,
+		fircGetHosts,
+		fircGetPolicies,
 		fircCheckDomain,
 		fircGetAutolist,
 		fircRecheckAutolist,
@@ -84,6 +90,10 @@ const autolistMock = {
 beforeEach(() => {
 	vi.clearAllMocks();
 	fircGetMonitor.mockResolvedValue(snapshot);
+	fircGetHosts.mockResolvedValue([
+		{ name: 'Workstation', mac: 'aa:bb:cc:dd:ee:01', ip: '192.168.1.5', ip6: [], active: true, policy: 'Policy3' },
+	]);
+	fircGetPolicies.mockResolvedValue([{ name: 'Policy3', description: 'Дети', devices: 1 }]);
 	fircGetAutolist.mockResolvedValue(autolistMock);
 	fircAutolistCandidateAction.mockResolvedValue({ ...autolistMock, candidates: [] });
 	fircGetGroups.mockResolvedValue([]);
@@ -260,5 +270,135 @@ describe('FIRC compact monitor', () => {
 		details.open = false;
 		await fireEvent(details, new Event('toggle'));
 		expect(screen.getByLabelText<HTMLInputElement>(m.page_scan_exit_custom_proxy()).value).toBe('');
+	});
+
+	// Как бэкенд: списки клиентов — только по запросу, счётчики — всегда.
+	function clientsSnapshot(withClients: boolean) {
+		const lan = { ip: '192.168.1.5', sourceId: 'lan_br0', sourceName: 'LAN / Wi-Fi', conns: 15, txBytes: 500000, rxBytes: 2500000 };
+		const vpn = { ip: '10.10.0.5', sourceId: 'awg_server', sourceName: 'AWGM WireGuard', conns: 5, txBytes: 177000, rxBytes: 750000 };
+		const lists = <T>(clients: T) => (withClients ? { clients } : {});
+		const event = { at: 1700000000, groupId: 'tg', groupName: 'Telegram', outbound: 'opkgtun10' };
+		return {
+			...snapshot,
+			totalConns: 20,
+			totalClients: 130,
+			...lists([{ ...lan, groups: ['Telegram'] }, { ...vpn, groups: ['Telegram'] }]),
+			servers: [{ ...snapshot.servers[0], id: 'lan_br0', activeConns: 15, activeClients: 1, ...lists([{ ...lan, groups: ['Telegram'] }]) }],
+			groups: [{ ...snapshot.groups[0], id: 'tg', name: 'Telegram', activeConns: 20, activeClients: 2, ...lists([lan, vpn]) }],
+			recentMatches: [
+				{ ...event, seq: 1, clientIp: '192.168.1.5', sourceId: 'lan_br0', sourceName: 'LAN / Wi-Fi', domain: 'api.telegram.org' },
+				{ ...event, seq: 2, clientIp: '192.168.1.50', sourceId: 'lan_br0', sourceName: 'LAN / Wi-Fi', domain: 'web.telegram.org' },
+			],
+		};
+	}
+
+	async function renderWithClients() {
+		fircGetMonitor.mockImplementation(async (withClients: boolean) => clientsSnapshot(withClients));
+		const view = render(FircMonitorPanel);
+		await screen.findByText('Telegram');
+		return view;
+	}
+
+	const openView = (name: string) => fireEvent.click(screen.getByRole('button', { name }));
+	const openGlobalClients = () => fireEvent.click(screen.getByRole('button', { name: m.firc_monitor_clients_show({ count: 130 }) }));
+
+	it('requests client lists only while one is open, and names once per opening', async () => {
+		await renderWithClients();
+		await openView(m.firc_monitor_view_details());
+		expect(fircGetMonitor.mock.calls).toEqual([[false]]);
+		expect(fircGetHosts).not.toHaveBeenCalled();
+
+		await openGlobalClients();
+		await waitFor(() => expect(fircGetMonitor).toHaveBeenLastCalledWith(true));
+		expect(await screen.findByText('Workstation')).toBeTruthy();
+
+		const calls = fircGetMonitor.mock.calls.length;
+		await fireEvent.click(screen.getByRole('button', { name: m.common_refresh() }));
+		await waitFor(() => expect(fircGetMonitor).toHaveBeenCalledTimes(calls + 1));
+		expect(fircGetMonitor).toHaveBeenLastCalledWith(true);
+		expect(fircGetHosts).toHaveBeenCalledTimes(1);
+		expect(fircGetPolicies).toHaveBeenCalledTimes(1);
+
+		// Раскрытый список другого раздела не виден — и не запрашивается.
+		await openView(m.firc_monitor_view_sources());
+		await fireEvent.click(screen.getByRole('button', { name: m.common_refresh() }));
+		await waitFor(() => expect(fircGetMonitor).toHaveBeenLastCalledWith(false));
+
+		await fireEvent.click(screen.getByRole('button', { name: m.firc_monitor_devices({ n: 1 }) }));
+		await waitFor(() => expect(fircGetMonitor).toHaveBeenLastCalledWith(true));
+		expect(fircGetHosts).toHaveBeenCalledTimes(2);
+		expect(fircGetPolicies).toHaveBeenCalledTimes(2);
+	});
+
+	it('loads an opened list on pause and after the poll already in flight', async () => {
+		await renderWithClients();
+		await openView(m.firc_monitor_view_details());
+		await fireEvent.click(screen.getByRole('button', { name: m.diag_logs_pause() }));
+		let release = () => {};
+		fircGetMonitor.mockImplementationOnce(
+			() => new Promise((resolve) => { release = () => resolve(clientsSnapshot(false)); }),
+		);
+		await fireEvent.click(screen.getByRole('button', { name: m.common_refresh() }));
+		await openGlobalClients();
+		expect(screen.getByTestId('firc-mon-global-clients').textContent).toContain(m.firc_monitor_loading_data());
+		release();
+		expect(await screen.findByText('Workstation')).toBeTruthy();
+	});
+
+	it('shows device names, policy descriptions and the cut-off note in every list', async () => {
+		const { container } = await renderWithClients();
+
+		await openView(m.firc_monitor_view_sources());
+		await fireEvent.click(screen.getByRole('button', { name: m.firc_monitor_devices({ n: 1 }) }));
+		await screen.findByText('Workstation');
+		const srvList = screen.getByTestId('firc-mon-server-clients-lan_br0').textContent;
+		expect(srvList).toContain('AA:BB:CC:DD:EE:01');
+		expect(srvList).not.toContain(m.firc_monitor_clients_truncated({ shown: 1, total: 1 }));
+		expect(container.querySelectorAll('table')).toHaveLength(1);
+
+		await openView(m.firc_monitor_view_details());
+		await fireEvent.click(screen.getByRole('button', { name: m.firc_monitor_devices({ n: 2 }) }));
+		await waitFor(() => expect(screen.getByTestId('firc-mon-group-clients-tg').textContent).toContain('AWGM WireGuard'));
+		const grpList = screen.getByTestId('firc-mon-group-clients-tg').textContent;
+		expect(grpList).toContain('192.168.1.5');
+		expect(grpList).toContain('10.10.0.5');
+
+		await openGlobalClients();
+		const globalList = screen.getByTestId('firc-mon-global-clients').textContent;
+		expect(globalList).toContain('Workstation');
+		expect(globalList).toContain('Дети');
+		expect(globalList).not.toContain('Policy3');
+		expect(globalList).toContain(m.firc_monitor_clients_truncated({ shown: 2, total: 130 }));
+	});
+
+	it('still lists clients by address when names are unavailable', async () => {
+		fircGetHosts.mockRejectedValue(new Error('offline'));
+		fircGetPolicies.mockRejectedValue(new Error('offline'));
+		await renderWithClients();
+		await openView(m.firc_monitor_view_details());
+		await openGlobalClients();
+		await waitFor(() => expect(screen.getByTestId('firc-mon-global-clients').textContent).toContain('192.168.1.5'));
+	});
+
+	it('jumps to events of exactly this device and lets the filter be removed', async () => {
+		const { container } = await renderWithClients();
+		// Прежние фильтры ленты не должны прятать события устройства.
+		await openView(m.firc_monitor_view_events());
+		await fireEvent.change(container.querySelector('.feed-select')!, { target: { value: 'lan_br0' } });
+		await fireEvent.input(screen.getByPlaceholderText(m.firc_monitor_feed_search()), { target: { value: 'web' } });
+		expect(screen.queryByText('api.telegram.org')).toBeNull();
+
+		await openView(m.firc_monitor_view_details());
+		await openGlobalClients();
+		await screen.findByText('Workstation');
+		await fireEvent.click(screen.getByTitle(m.firc_monitor_clients_filter_events_title({ ip: '192.168.1.5' })));
+
+		expect(screen.getByText('api.telegram.org')).toBeTruthy();
+		expect(screen.queryByText('web.telegram.org')).toBeNull();
+		expect(container.querySelector<HTMLSelectElement>('.feed-select')!.value).toBe('all');
+
+		await fireEvent.click(screen.getByTitle(m.firc_monitor_feed_client_clear()));
+		expect(screen.getByText('web.telegram.org')).toBeTruthy();
+		expect(screen.queryByTitle(m.firc_monitor_feed_client_clear())).toBeNull();
 	});
 });

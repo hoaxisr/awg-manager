@@ -2304,7 +2304,9 @@ func (h *FircHandler) handleGetMonitor(w http.ResponseWriter, r *http.Request) {
 		response.Success(w, h.op.GetOfflineMonitorSnapshot(r.Context()))
 		return
 	}
-	response.Success(w, h.op.GetMonitorSnapshot(r.Context()))
+	// Списки клиентов растут с числом устройств, поэтому уходят только по запросу.
+	withClients := r.URL.Query().Get("clients") == "1"
+	response.Success(w, h.op.GetMonitorSnapshot(r.Context(), withClients))
 }
 
 func (h *FircHandler) handleCheckDomain(w http.ResponseWriter, r *http.Request) {

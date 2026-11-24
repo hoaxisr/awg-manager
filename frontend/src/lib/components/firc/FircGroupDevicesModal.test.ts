@@ -241,4 +241,210 @@ describe('FircGroupDevicesModal', () => {
 		expect(screen.getByRole('checkbox', { name: 'Phone' })).toBeChecked();
 		expect(screen.getByRole('checkbox', { name: 'SmartTV' })).toBeChecked();
 	});
+
+	it('excludes and locks member device toggles and updates active hosts counter when a policy is excluded', async () => {
+		const hostsWithPolicies: FircHost[] = [
+			{
+				name: 'Laptop',
+				mac: 'AA:BB:CC:DD:EE:01',
+				ip: '192.168.50.10',
+				ip6: [],
+				active: true,
+				policy: 'Policy1',
+			},
+			{
+				name: 'Tablet',
+				mac: 'AA:BB:CC:DD:EE:04',
+				ip: '192.168.50.11',
+				ip6: [],
+				online: true,
+				policy: 'Policy1',
+			},
+			{
+				name: 'Phone',
+				mac: 'AA:BB:CC:DD:EE:02',
+				ip: '192.168.50.20',
+				ip6: [],
+				online: true,
+				policy: 'ProxyRu',
+			},
+			{
+				name: 'SmartTV',
+				mac: 'AA:BB:CC:DD:EE:03',
+				ip: '192.168.50.30',
+				ip6: [],
+				online: false,
+			},
+		];
+		const { onapply } = renderModal({ hosts: hostsWithPolicies });
+
+		expect(screen.getByTestId('firc-dm-policies-count')).toHaveTextContent('2 / 2');
+		expect(screen.getByTestId('firc-dm-hosts-count')).toHaveTextContent('4 / 4');
+
+		const policy1Toggle = screen.getByRole('checkbox', { name: 'Main Policy' });
+		await fireEvent.click(policy1Toggle);
+
+		expect(screen.getByTestId('firc-dm-policies-count')).toHaveTextContent('1 / 2');
+		expect(screen.getByTestId('firc-dm-hosts-count')).toHaveTextContent('2 / 4');
+
+		const laptopToggle = screen.getByRole('checkbox', { name: 'Laptop' });
+		const tabletToggle = screen.getByRole('checkbox', { name: 'Tablet' });
+		const phoneToggle = screen.getByRole('checkbox', { name: 'Phone' });
+		expect(laptopToggle).not.toBeChecked();
+		expect(laptopToggle).toBeDisabled();
+		expect(tabletToggle).not.toBeChecked();
+		expect(tabletToggle).toBeDisabled();
+		expect(phoneToggle).toBeChecked();
+		expect(phoneToggle).not.toBeDisabled();
+		expect(screen.getAllByText(m.firc_devices_badge_by_policy())).toHaveLength(2);
+
+		await fireEvent.click(screen.getByRole('button', { name: m.common_apply() }));
+		expect(onapply).toHaveBeenCalledWith({
+			allow: [],
+			deny: ['policy:Policy1'],
+		});
+
+		await fireEvent.click(policy1Toggle);
+		expect(laptopToggle).toBeChecked();
+		expect(laptopToggle).not.toBeDisabled();
+		expect(tabletToggle).toBeChecked();
+		expect(tabletToggle).not.toBeDisabled();
+		expect(screen.getByTestId('firc-dm-hosts-count')).toHaveTextContent('4 / 4');
+	});
+
+	it('includes and locks member device toggles in selected-only mode and supports searching by policy name', async () => {
+		const hostsWithPolicies: FircHost[] = [
+			{
+				name: 'Laptop',
+				mac: 'AA:BB:CC:DD:EE:01',
+				ip: '192.168.50.10',
+				ip6: [],
+				online: true,
+				policy: 'Policy1',
+			},
+			{
+				name: 'Tablet',
+				mac: 'AA:BB:CC:DD:EE:04',
+				ip: '192.168.50.11',
+				ip6: [],
+				online: true,
+				policy: 'Policy1',
+			},
+			{
+				name: 'Phone',
+				mac: 'AA:BB:CC:DD:EE:02',
+				ip: '192.168.50.20',
+				ip6: [],
+				online: true,
+				policy: 'ProxyRu',
+			},
+		];
+		const { onapply } = renderModal({ hosts: hostsWithPolicies });
+
+		await fireEvent.click(screen.getByRole('button', { name: m.firc_devices_mode_allow() }));
+		expect(screen.getByTestId('firc-dm-policies-count')).toHaveTextContent('0 / 2');
+		expect(screen.getByTestId('firc-dm-hosts-count')).toHaveTextContent('0 / 3');
+
+		await fireEvent.click(screen.getByRole('checkbox', { name: 'Main Policy' }));
+		expect(screen.getByTestId('firc-dm-policies-count')).toHaveTextContent('1 / 2');
+		expect(screen.getByTestId('firc-dm-hosts-count')).toHaveTextContent('2 / 3');
+
+		const laptopToggle = screen.getByRole('checkbox', { name: 'Laptop' });
+		const tabletToggle = screen.getByRole('checkbox', { name: 'Tablet' });
+		const phoneToggle = screen.getByRole('checkbox', { name: 'Phone' });
+		expect(laptopToggle).toBeChecked();
+		expect(laptopToggle).toBeDisabled();
+		expect(tabletToggle).toBeChecked();
+		expect(tabletToggle).toBeDisabled();
+		expect(phoneToggle).not.toBeChecked();
+		expect(phoneToggle).not.toBeDisabled();
+		expect(screen.getAllByText(m.firc_devices_badge_by_policy())).toHaveLength(2);
+
+		const searchInput = screen.getByPlaceholderText(m.firc_devices_search_placeholder());
+		await fireEvent.input(searchInput, { target: { value: 'Main Policy' } });
+		expect(screen.getByRole('checkbox', { name: 'Laptop' })).toBeInTheDocument();
+		expect(screen.getByRole('checkbox', { name: 'Tablet' })).toBeInTheDocument();
+		expect(screen.queryByRole('checkbox', { name: 'Phone' })).not.toBeInTheDocument();
+
+		await fireEvent.click(screen.getByRole('button', { name: m.common_apply() }));
+		expect(onapply).toHaveBeenCalledWith({
+			allow: ['policy:Policy1'],
+			deny: [],
+		});
+	});
+
+	it('recognizes and toggles legacy policy:<description> selectors cleanly', async () => {
+		const hostsWithPolicies: FircHost[] = [
+			{
+				name: 'Laptop',
+				mac: 'AA:BB:CC:DD:EE:01',
+				ip: '192.168.50.10',
+				ip6: [],
+				online: true,
+				policy: 'Policy1',
+			},
+			{
+				name: 'Phone',
+				mac: 'AA:BB:CC:DD:EE:02',
+				ip: '192.168.50.20',
+				ip6: [],
+				online: true,
+				policy: 'ProxyRu',
+			},
+		];
+		const { onapply } = renderModal({
+			hosts: hostsWithPolicies,
+			initialDevices: { allow: [], deny: ['policy:Main Policy'] },
+		});
+
+		const policy1Toggle = screen.getByRole('checkbox', { name: 'Main Policy' });
+		expect(policy1Toggle).not.toBeChecked();
+		expect(screen.getByRole('checkbox', { name: 'Laptop' })).toBeDisabled();
+		expect(screen.getByTestId('firc-dm-policies-count')).toHaveTextContent('1 / 2');
+
+		// Turn Main Policy back ON -> removes legacy 'policy:Main Policy' entry cleanly.
+		await fireEvent.click(policy1Toggle);
+		expect(policy1Toggle).toBeChecked();
+		expect(screen.getByRole('checkbox', { name: 'Laptop' })).not.toBeDisabled();
+		await fireEvent.click(screen.getByRole('button', { name: m.common_apply() }));
+		expect(onapply).toHaveBeenLastCalledWith({ allow: [], deny: [] });
+
+		// Снятая и возвращённая политика пишется как была: каноническую запись
+		// политики включённого сервера бэкенд снял бы с deny.
+		await fireEvent.click(policy1Toggle);
+		await fireEvent.click(screen.getByRole('button', { name: m.common_apply() }));
+		expect(onapply).toHaveBeenLastCalledWith({ allow: [], deny: ['policy:Main Policy'] });
+	});
+
+	it('gives a description shared by two policies to the first one only', () => {
+		renderModal({
+			policies: [
+				{ name: 'Policy1', description: 'Same', devices: 1 },
+				{ name: 'Policy2', description: 'Same', devices: 1 },
+			],
+			hosts: [
+				{ ...sampleHosts[0], policy: 'Policy1' },
+				{ ...sampleHosts[1], policy: 'Policy2' },
+			],
+			initialDevices: { allow: [], deny: ['policy:Same'] },
+		});
+
+		expect(document.body.querySelector('[data-entry="policy:Policy1"]')).toHaveAttribute('data-enabled', 'false');
+		expect(document.body.querySelector('[data-entry="policy:Policy2"]')).toHaveAttribute('data-enabled', 'true');
+		expect(screen.getByRole('checkbox', { name: 'Laptop' })).toBeDisabled();
+		expect(screen.getByRole('checkbox', { name: 'Phone' })).not.toBeDisabled();
+	});
+
+	it('does not lock devices when the policies list failed to load', async () => {
+		renderModal({
+			policies: [],
+			hosts: [{ ...sampleHosts[0], policy: 'Policy1' }],
+			initialDevices: { allow: [], deny: ['policy:Policy1'] },
+		});
+
+		const laptopToggle = screen.getByRole('checkbox', { name: 'Laptop' });
+		expect(laptopToggle).not.toBeDisabled();
+		await fireEvent.click(laptopToggle);
+		expect(laptopToggle).not.toBeChecked();
+	});
 });

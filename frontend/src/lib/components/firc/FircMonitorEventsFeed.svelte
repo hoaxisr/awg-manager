@@ -3,7 +3,7 @@
 	import type { FircMonitorSnapshot } from '$lib/types/firc';
 	import { Badge } from '$lib/components/ui';
 	import { IpInspectSection } from '$lib/components/diagnostics';
-	import { Search, ArrowRight, Info } from 'lucide-svelte';
+	import { Search, ArrowRight, Info, X } from 'lucide-svelte';
 	import { formatTime, formatOutboundLabel } from './fircMonitorFormat';
 
 	interface Props {
@@ -12,6 +12,8 @@
 		// разделов монитора, как и до выделения ленты.
 		sourceFilter: string;
 		searchFilter: string;
+		/** Адрес устройства, чьи события показать; пусто — всех. */
+		clientFilter: string;
 		inspectedEventSeq: number | null;
 		onOpenQuickAdd: (target: { ip?: string; domain?: string; prefix?: string }) => void;
 	}
@@ -20,6 +22,7 @@
 		snapshot,
 		sourceFilter = $bindable(),
 		searchFilter = $bindable(),
+		clientFilter = $bindable(),
 		inspectedEventSeq = $bindable(),
 		onOpenQuickAdd,
 	}: Props = $props();
@@ -28,6 +31,7 @@
 		const list = snapshot?.recentMatches ?? [];
 		const q = searchFilter.trim().toLowerCase();
 		return list.filter((m) => {
+			if (clientFilter && m.clientIp !== clientFilter) return false;
 			if (sourceFilter !== 'all' && m.sourceId !== sourceFilter) return false;
 			if (q) {
 				const hay = `${m.domain} ${m.clientIp} ${m.sourceName} ${m.groupName} ${m.outbound} ${m.fakeIp ?? ''} ${m.realIp ?? ''}`.toLowerCase();
@@ -43,6 +47,17 @@
 	<div class="mon-card-head">
 		<span>{m.firc_monitor_feed_title()}</span>
 		<div class="feed-filters">
+			{#if clientFilter}
+				<button
+					type="button"
+					class="feed-client-chip"
+					title={m.firc_monitor_feed_client_clear()}
+					onclick={() => (clientFilter = '')}
+				>
+					<span class="mono">{m.firc_monitor_feed_client({ ip: clientFilter })}</span>
+					<X size={11} aria-hidden="true" />
+				</button>
+			{/if}
 			<div class="feed-search">
 				<Search size={13} />
 				<input
@@ -152,6 +167,23 @@
 		flex-wrap: wrap;
 		min-width: 0;
 		max-width: 100%;
+	}
+
+	.feed-client-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		padding: 0 0.5rem;
+		min-height: 28px;
+		max-width: 100%;
+		overflow-wrap: anywhere;
+		border-radius: 6px;
+		border: 1px solid var(--accent);
+		background: color-mix(in srgb, var(--accent) 12%, transparent);
+		color: var(--text-primary);
+		font: inherit;
+		font-size: 0.73rem;
+		cursor: pointer;
 	}
 
 	.feed-search {

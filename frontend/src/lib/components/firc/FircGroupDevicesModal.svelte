@@ -13,6 +13,7 @@
 	import FircGroupDevicesSearch from './FircGroupDevicesSearch.svelte';
 	import FircGroupDevicesManualBar from './FircGroupDevicesManualBar.svelte';
 	import type { FircDeviceSelector, FircHost, FircPolicy } from '$lib/types/firc';
+	import { hasPolicyEntry, hostDeviceState, policyLabel, policyOfEntry, withPolicyEntry, type FircDevicesMode } from '$lib/utils/fircPolicyDevices';
 
 	interface Props {
 		open: boolean;
@@ -34,7 +35,7 @@
 		onapply,
 	}: Props = $props();
 
-	let mode = $state<'all' | 'allow'>('all');
+	let mode = $state<FircDevicesMode>('all');
 	let denyEntries = $state<Set<string>>(new Set());
 	let allowEntries = $state<Set<string>>(new Set());
 	let initialDenyOrder = $state<Set<string>>(new Set());
@@ -94,10 +95,10 @@
 	});
 
 	function formatEntryChipLabel(entry: string): string {
-		if (entry.startsWith('policy:')) {
-			const pName = entry.slice('policy:'.length);
+		const pName = policyOfEntry(entry, policies);
+		if (pName !== null) {
 			const pol = policies.find((p) => p.name === pName);
-			return pol?.description ? `${pol.description} (${pName})` : entry;
+			return pol?.description ? `${pol.description} (${pol.name})` : entry;
 		}
 		if (entry.startsWith('mac:')) {
 			const mac = entry.slice('mac:'.length).toLowerCase();
@@ -107,10 +108,6 @@
 		const byIp = dedupedHosts.find((x) => x.ip === entry && x.ip !== '0.0.0.0');
 		if (byIp?.name) return `${byIp.name} (${entry})`;
 		return entry;
-	}
-
-	function isEntryEnabled(key: string): boolean {
-		return mode === 'all' ? !denyEntries.has(key) : allowEntries.has(key);
 	}
 
 	function setEntryEnabled(key: string, enabled: boolean) {
@@ -177,10 +174,34 @@
 	let currentEntries = $derived(mode === 'all' ? denyEntries : allowEntries);
 	let activeInitialOrder = $derived(mode === 'all' ? initialDenyOrder : initialAllowOrder);
 
+	function isPolicyEnabled(pol: FircPolicy): boolean {
+		return hasPolicyEntry(currentEntries, pol.name, policies) === (mode === 'allow');
+	}
+
+	function setPolicyEnabled(pol: FircPolicy, enabled: boolean) {
+		const present = enabled === (mode === 'allow');
+		const next = withPolicyEntry(currentEntries, pol.name, policies, present, activeInitialOrder);
+		if (mode === 'all') denyEntries = next;
+		else allowEntries = next;
+	}
+
+	function getHostPolicy(h: FircHost): { name: string; label: string } | null {
+		const name = h.policy?.trim();
+		return name ? { name, label: policyLabel(name, policies) } : null;
+	}
+
+	function hostOnline(h: FircHost): boolean | undefined {
+		return h.online ?? h.active;
+	}
+
+	function hostState(h: FircHost) {
+		return hostDeviceState(h, hostEntryKey(h), mode, currentEntries, policies);
+	}
+
 	let sortedPolicies = $derived.by(() => {
 		return [...policies].sort((a, b) => {
-			const aPin = activeInitialOrder.has(`policy:${a.name}`) ? 1 : 0;
-			const bPin = activeInitialOrder.has(`policy:${b.name}`) ? 1 : 0;
+			const aPin = hasPolicyEntry(activeInitialOrder, a.name, policies) ? 1 : 0;
+			const bPin = hasPolicyEntry(activeInitialOrder, b.name, policies) ? 1 : 0;
 			if (aPin !== bPin) return bPin - aPin;
 			return (a.description || a.name).localeCompare(b.description || b.name);
 		});
@@ -189,29 +210,33 @@
 	let filteredSortedHosts = $derived.by(() => {
 		const q = searchQuery.trim().toLowerCase();
 		const base = q
-			? dedupedHosts.filter(
-					(h) =>
+			? dedupedHosts.filter((h) => {
+					const pol = getHostPolicy(h);
+					return (
 						(h.name && h.name.toLowerCase().includes(q)) ||
 						(h.ip && h.ip.toLowerCase().includes(q)) ||
-						(h.mac && h.mac.toLowerCase().includes(q)),
-				)
+						(h.mac && h.mac.toLowerCase().includes(q)) ||
+						(pol !== null &&
+							(pol.name.toLowerCase().includes(q) || pol.label.toLowerCase().includes(q)))
+					);
+				})
 			: [...dedupedHosts];
 		return base.sort((a, b) => {
 			const aPin = activeInitialOrder.has(hostEntryKey(a)) ? 1 : 0;
 			const bPin = activeInitialOrder.has(hostEntryKey(b)) ? 1 : 0;
 			if (aPin !== bPin) return bPin - aPin;
-			const aOnline = a.online === true ? 1 : 0;
-			const bOnline = b.online === true ? 1 : 0;
+			const aOnline = hostOnline(a) === true ? 1 : 0;
+			const bOnline = hostOnline(b) === true ? 1 : 0;
 			if (aOnline !== bOnline) return bOnline - aOnline;
 			return (a.name || a.ip || a.mac || '').localeCompare(b.name || b.ip || b.mac || '');
 		});
 	});
 
 	let activePoliciesCount = $derived(
-		policies.filter((p) => isEntryEnabled(`policy:${p.name}`)).length,
+		policies.filter(isPolicyEnabled).length,
 	);
 	let activeHostsCount = $derived(
-		dedupedHosts.filter((h) => isEntryEnabled(hostEntryKey(h))).length,
+		dedupedHosts.filter((h) => hostState(h).enabled).length,
 	);
 
 	let modeOptions = $derived<SegmentedOption<'all' | 'allow'>[]>([
@@ -296,7 +321,7 @@
 							<div class="dm-policies-list">
 								{#each sortedPolicies as pol (pol.name)}
 									{@const key = `policy:${pol.name}`}
-									{@const isOn = isEntryEnabled(key)}
+									{@const isOn = isPolicyEnabled(pol)}
 									{@const titleText = pol.description ? `${pol.description} (${pol.name})` : pol.name}
 									<FircGroupDevicesRow
 										entryKey={key}
@@ -305,7 +330,7 @@
 										label={pol.description || pol.name}
 										meta={pol.devices > 0 ? `${pol.name} · ${m.firc_devices_policy_hosts({ count: pol.devices })}` : pol.name}
 										title={titleText}
-										onset={(next) => setEntryEnabled(key, next)}
+										onset={(next) => setPolicyEnabled(pol, next)}
 									/>
 								{/each}
 							</div>
@@ -336,10 +361,17 @@
 								<div class="dm-devices-grid" class:dm-cols-3={policies.length === 0}>
 									{#each filteredSortedHosts as h (hostEntryKey(h))}
 										{@const key = hostEntryKey(h)}
-										{@const isOn = isEntryEnabled(key)}
+										{@const pol = getHostPolicy(h)}
+										{@const { enabled: isOn, locked } = hostState(h)}
+										{@const online = hostOnline(h)}
 										{@const label = h.name || h.ip || h.mac}
 										{@const meta = formatHostMeta(h)}
-										{@const titleText = [label, meta].filter(Boolean).join(' · ')}
+										{@const lockTitle = locked && pol
+											? mode === 'all'
+												? m.firc_devices_locked_excluded_by_policy({ policy: pol.label })
+												: m.firc_devices_locked_included_by_policy({ policy: pol.label })
+											: ''}
+										{@const titleText = [label, meta, pol?.label, lockTitle].filter(Boolean).join(' · ')}
 										<FircGroupDevicesRow
 											entryKey={key}
 											{mode}
@@ -347,7 +379,9 @@
 											label={label ?? ''}
 											{meta}
 											title={titleText}
-											online={h.online}
+											{online}
+											policyLabel={pol?.label}
+											{lockTitle}
 											onset={(next) => setEntryEnabled(key, next)}
 										/>
 									{/each}
