@@ -154,6 +154,20 @@ func (o *WarpTunnelOps) managedRef(ctx context.Context, t *storage.AWGTunnel) (w
 
 // systemProtectReason — почему системный интерфейс трогать нельзя.
 func (o *WarpTunnelOps) systemProtectReason(t *ndms.SystemWireguardTunnel) string {
+	if reason := o.systemForeignReason(t); reason != "" {
+		return reason
+	}
+	for _, name := range managedNativeWGNames(o.Store) {
+		if name == t.ID {
+			return "туннель управляется AWGM — выберите тип native"
+		}
+	}
+	return ""
+}
+
+// systemForeignReason — почему интерфейс чужой или служебный; записи
+// управляемых туннелей не читает.
+func (o *WarpTunnelOps) systemForeignReason(t *ndms.SystemWireguardTunnel) string {
 	if t.Description == ndms.BuiltInVPNServerDescription {
 		return "встроенный VPN-сервер Keenetic"
 	}
@@ -171,11 +185,6 @@ func (o *WarpTunnelOps) systemProtectReason(t *ndms.SystemWireguardTunnel) strin
 			if ms.InterfaceName == t.ID {
 				return "сервер AWGM (managedServers)"
 			}
-		}
-	}
-	for _, name := range managedNativeWGNames(o.Store) {
-		if name == t.ID {
-			return "туннель управляется AWGM — выберите тип native"
 		}
 	}
 	return ""
@@ -422,6 +431,7 @@ func (o *WarpTunnelOps) ListKeys(ctx context.Context) ([]warpscout.TunnelKeyRef,
 				ID:             sys[i].ID,
 				Name:           name,
 				LocalPublicKey: strings.TrimSpace(sys[i].PublicKey),
+				Protected:      o.systemForeignReason(&sys[i]) != "",
 			})
 		}
 	}

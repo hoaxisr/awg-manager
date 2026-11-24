@@ -2080,8 +2080,8 @@ func TestWarpTunnelOps_ProtectedExternalTunnelBlocksScanAndReissue(t *testing.T)
 		}
 		if r.Mode == warpscout.TargetSystem && r.ID == "Wireguard7" {
 			sawExtKey = true
-			if r.LocalPublicKey != pub1 || r.Name != "Phobos WARP" {
-				t.Fatalf("expected Wireguard7 key ref with pub1 and Phobos WARP, got %+v", r)
+			if r.LocalPublicKey != pub1 || r.Name != "Phobos WARP" || !r.Protected {
+				t.Fatalf("expected protected Wireguard7 key ref with pub1 and Phobos WARP, got %+v", r)
 			}
 		}
 	}

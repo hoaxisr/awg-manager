@@ -297,7 +297,7 @@ func (s *Service) StartFindJunk(req FindJunkRequest) error {
 		return ErrEngineMissing
 	}
 	scanIface := s.resolveScanIface(s.rootCtx, req.Ifname)
-	chosenAcct, outer, needDistinctSlot, occupiedOwner, err := s.prepareScanAccount(s.rootCtx, acct, scanIface)
+	outer, err := s.prepareScanAccount(s.rootCtx, acct, scanIface)
 	if err != nil {
 		return err
 	}
@@ -367,15 +367,12 @@ func (s *Service) StartFindJunk(req FindJunkRequest) error {
 		var best *JunkAttempt
 		func() {
 			defer s.engineMu.Unlock()
-			scanAcct := chosenAcct
-			if outer != nil && outer.IsWarp {
-				if !outer.Running {
-					runErr = errors.New("внешний туннель WARP выключен — сначала запустите его")
-				} else {
-					scanAcct, runErr = s.ensureDistinctAccount(ctx, outer.Iface, outer.LocalPublicKey)
-				}
-			} else if needDistinctSlot {
-				scanAcct, runErr = s.registerDistinctScanSlot(ctx, acct.PublicKey, occupiedOwner)
+			defer s.releaseScanKey()
+			var scanAcct *Account
+			if outer != nil && outer.IsWarp && !outer.Running {
+				runErr = errors.New("внешний туннель WARP выключен — сначала запустите его")
+			} else {
+				scanAcct, runErr = s.claimScanAccount(func() (*Account, error) { return s.pickScanAccount(ctx, outer) })
 			}
 
 			r := newFindJunkRand()

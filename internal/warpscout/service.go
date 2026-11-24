@@ -56,6 +56,8 @@ type TunnelKeyRef struct {
 	ID             string
 	Name           string
 	LocalPublicKey string
+	// Protected — чужой или служебный интерфейс, прерывать который нельзя.
+	Protected bool
 }
 
 // TunnelKeyInventory — необязательный быстрый интерфейс инвентаризации ключей
@@ -281,6 +283,7 @@ type Service struct {
 	findJunk            FindJunkStatus
 	findJunkCancel      context.CancelFunc
 	findJunkSeq         uint64 // монотонный счётчик запусков подбора маскировки
+	scanKey             string // публичный ключ, которым сейчас идёт скан (под acctMu занимается, под mu освобождается)
 	testBeforeApplySave func() // барьер только для тестов конкурентности
 	watch               map[string]*WatchStatus
 	stats               map[string]*ProfileStats
@@ -802,6 +805,10 @@ func (s *Service) RegisterWithOptions(ctx context.Context, opts RegisterOptions)
 	if err != nil {
 		return nil, err
 	}
+	keepOld := false
+	if old != nil && old.WarpPlus && acct.ID != old.ID {
+		keepOld = !s.carryLicense(ctx, opts, old, acct)
+	}
 	if old != nil && strings.TrimSpace(old.AddressV4) != "" && old.AddressV4 != DefaultTunnelIPv4 {
 		acct.AddressV4 = old.AddressV4
 	}
@@ -809,10 +816,36 @@ func (s *Service) RegisterWithOptions(ctx context.Context, opts RegisterOptions)
 		return nil, err
 	}
 	if old != nil && old.ID != "" && old.Token != "" && old.ID != acct.ID && !oldNotFound {
-		s.dropRegistration(old)
+		if keepOld {
+			s.logWarn("register", "warp", "Прежняя регистрация с WARP+ у Cloudflare не снята")
+		} else {
+			s.dropRegistration(old)
+		}
 	}
 	s.logInfo("register", "warp", "Зарегистрирована учётная запись Cloudflare WARP")
 	return s.d.Store.Account(), nil
+}
+
+// carryLicense переносит WARP+ на новую регистрацию; false — перенести не вышло,
+// и прежнюю регистрацию снимать нельзя. После регистрации через relay лицензия
+// не переносится никаким маршрутом: relay знает токен новой записи и прочёл бы
+// ключ лицензии ответом GET /reg/{id}/account.
+func (s *Service) carryLicense(ctx context.Context, opts RegisterOptions, old, fresh *Account) bool {
+	if strings.TrimSpace(opts.RelayURL) != "" {
+		s.logWarn("register", "warp", "Лицензия WARP+ не перенесена: записи, созданной через relay, её ключ не передаётся")
+		return false
+	}
+	if old.License == "" {
+		s.logWarn("register", "warp", "Лицензия WARP+ не перенесена: её ключ неизвестен")
+		return false
+	}
+	if err := s.doAccountOpWithBase(ctx, opts, func(hc *http.Client, base string) error {
+		return applyLicenseWithBase(ctx, hc, fresh, old.License, base)
+	}); err != nil {
+		s.logWarn("register", "warp", "Лицензия WARP+ к новой регистрации не применена: "+err.Error())
+		return false
+	}
+	return true
 }
 
 // ImportAccount импортирует готовую учётную запись WARP из JSON, TOML или WireGuard/AWG .conf.
@@ -934,44 +967,54 @@ func (s *Service) listTunnelKeys(ctx context.Context) ([]TunnelKeyRef, bool, err
 			ID:             list[i].ID,
 			Name:           list[i].Name,
 			LocalPublicKey: list[i].LocalPublicKey,
+			Protected:      list[i].Protected,
 		})
 	}
 	return keys, true, nil
 }
 
 func (s *Service) findKeyOwnerInList(keys []TunnelKeyRef, hasInventory bool, pubKey string) (bool, string) {
+	if owners := s.keyOwnersInList(keys, hasInventory, pubKey); len(owners) > 0 {
+		return true, owners[0].Name
+	}
+	return false, ""
+}
+
+// keyOwnersInList — все туннели, работающие на ключе pubKey.
+func (s *Service) keyOwnersInList(keys []TunnelKeyRef, hasInventory bool, pubKey string) []TunnelKeyRef {
 	pubKey = strings.TrimSpace(pubKey)
 	if pubKey == "" {
-		return false, ""
+		return nil
 	}
-	var aliveNames map[string]string
-	if hasInventory {
-		aliveNames = make(map[string]string, len(keys))
-		for _, t := range keys {
-			k := string(t.Mode) + ":" + t.ID
-			name := strings.TrimSpace(t.Name)
-			if name == "" {
-				name = t.ID
-			}
-			aliveNames[k] = name
-			if strings.TrimSpace(t.LocalPublicKey) == pubKey {
-				return true, name
-			}
+	var owners []TunnelKeyRef
+	seen := map[string]bool{}
+	byID := make(map[string]TunnelKeyRef, len(keys))
+	for _, t := range keys {
+		k := string(t.Mode) + ":" + t.ID
+		if t.Name = strings.TrimSpace(t.Name); t.Name == "" {
+			t.Name = t.ID
+		}
+		byID[k] = t
+		if strings.TrimSpace(t.LocalPublicKey) == pubKey && !seen[k] {
+			seen[k] = true
+			owners = append(owners, t)
 		}
 	}
 	for _, ta := range s.d.Store.TunnelAccounts() {
-		if strings.TrimSpace(ta.PublicKey) != pubKey {
+		k := string(ta.TunnelMode) + ":" + ta.TunnelID
+		if strings.TrimSpace(ta.PublicKey) != pubKey || seen[k] {
 			continue
 		}
-		k := string(ta.TunnelMode) + ":" + ta.TunnelID
-		if aliveNames == nil {
-			return true, ta.TunnelID
+		t, alive := byID[k]
+		if !hasInventory {
+			t, alive = TunnelKeyRef{Mode: ta.TunnelMode, ID: ta.TunnelID, Name: ta.TunnelID}, true
 		}
-		if owner, ok := aliveNames[k]; ok {
-			return true, owner
+		if alive {
+			seen[k] = true
+			owners = append(owners, t)
 		}
 	}
-	return false, ""
+	return owners
 }
 
 func (s *Service) isAccountKeyInUse(ctx context.Context, pubKey string) (bool, string, error) {
@@ -1215,7 +1258,11 @@ func (s *Service) pickNonCollidingIPv4(ctx context.Context, preferred string, av
 // ensureDistinctAccount возвращает учётную запись WARP, чей PublicKey не
 // совпадает ни с одним из avoidPubKeys (иначе Cloudflare разрывает внешний
 // туннель при появлении пакета с тем же ключом). При необходимости лениво
-// регистрирует и шифрует второй слот InnerAccount.
+// регистрирует и шифрует второй слот InnerAccount. Вызывается под acctMu: тот
+// же замок, что у Register, DeleteAccountLocal и Apply(ReuseAccount), — иначе
+// выбранный ключ мог бы занять параллельный Apply, а регистрация слота,
+// завершившаяся после удаления учётной записи, оставила бы слот, который у
+// Cloudflare уже никто не снимет.
 func (s *Service) ensureDistinctAccount(ctx context.Context, routeIface string, avoidPubKeys ...string) (*Account, error) {
 	avoid := map[string]bool{}
 	for _, k := range avoidPubKeys {
@@ -1223,26 +1270,20 @@ func (s *Service) ensureDistinctAccount(ctx context.Context, routeIface string, 
 			avoid[k] = true
 		}
 	}
+	primary := s.d.Store.Account()
+	if primary == nil {
+		return nil, ErrNoAccount
+	}
 	keys, hasInv, err := s.listTunnelKeys(ctx)
 	if err != nil {
 		return nil, err
 	}
-	primary := s.d.Store.Account()
-	if len(avoid) > 0 && primary != nil && primary.PrivateKey != "" && primary.PublicKey != "" && !avoid[primary.PublicKey] {
+	if len(avoid) > 0 && primary.PrivateKey != "" && primary.PublicKey != "" && !avoid[primary.PublicKey] {
 		if inUse, _ := s.findKeyOwnerInList(keys, hasInv, primary.PublicKey); !inUse {
 			return primary, nil
 		}
 	}
 
-	// Тот же замок, что у Register и DeleteAccountLocal: иначе регистрация
-	// слота, завершившаяся после удаления учётной записи, оставила бы слот,
-	// который у Cloudflare уже никто не снимет.
-	s.acctMu.Lock()
-	defer s.acctMu.Unlock()
-
-	if s.d.Store.Account() == nil {
-		return nil, ErrNoAccount
-	}
 	if inner := s.d.Store.InnerAccount(); inner != nil && inner.PrivateKey != "" {
 		if avoid[inner.PublicKey] {
 			// Готовый слот не перезаписываем: на его ключе работают созданные
@@ -1286,7 +1327,7 @@ func (s *Service) ensureDistinctAccount(ctx context.Context, routeIface string, 
 		return nil, firstErr
 	}
 	var avoidIPs []string
-	if primary != nil && primary.AddressV4 != "" {
+	if primary.AddressV4 != "" {
 		avoidIPs = append(avoidIPs, primary.AddressV4)
 	}
 	fresh.AddressV4 = s.pickNonCollidingIPv4(ctx, "172.16.0.3", avoidIPs...)
@@ -1420,38 +1461,103 @@ func (s *Service) hasAccountHTTP() bool {
 	return s.d.HTTP != nil || s.d.HTTPDirectBypass != nil || s.d.HTTPFallbacks != nil
 }
 
-func (s *Service) prepareScanAccount(ctx context.Context, acct *Account, scanIface string) (chosen *Account, outer *TunnelRef, needDistinctSlot bool, occupiedOwner string, err error) {
-	chosen = acct
+// prepareScanAccount — быстрая проверка до запуска скана: отказ, который не
+// изменится за время ожидания сканера, уходит сразу ответом на запрос.
+// Запись для скана выбирает pickScanAccount.
+func (s *Service) prepareScanAccount(ctx context.Context, acct *Account, scanIface string) (outer *TunnelRef, err error) {
 	outer = s.resolveRouteTunnel(ctx, scanIface)
 	if outer != nil && outer.IsWarp {
-		return chosen, outer, false, "", nil
+		return outer, nil
 	}
 	keys, hasInv, err := s.listTunnelKeys(ctx)
 	if err != nil {
-		return nil, nil, false, "", err
+		return nil, err
 	}
-	inUse, owner := s.findKeyOwnerInList(keys, hasInv, acct.PublicKey)
-	if !inUse {
-		return chosen, outer, false, "", nil
+	owners := s.keyOwnersInList(keys, hasInv, acct.PublicKey)
+	if mayInterruptOwners(owners) || s.existingFreeAccountFrom(keys, hasInv, acct.PublicKey) != nil ||
+		(s.d.Store.InnerAccount() == nil && s.hasAccountHTTP()) {
+		return outer, nil
 	}
-	if free := s.existingFreeAccountFrom(keys, hasInv, acct.PublicKey); free != nil {
-		return free, outer, false, "", nil
-	}
-	if s.d.Store.InnerAccount() != nil {
-		return nil, nil, false, "", fmt.Errorf("%w: ключ аккаунта WARP используется туннелем %q, а дополнительный слот тоже занят — удалите туннель или импортируйте отдельный аккаунт для сканера", ErrInvalidInput, owner)
-	}
-	if !s.hasAccountHTTP() {
-		return nil, nil, false, "", fmt.Errorf("%w: ключ аккаунта WARP используется туннелем %q — скан тем же ключом разорвёт его соединение; удалите туннель или импортируйте отдельный аккаунт для сканера", ErrInvalidInput, owner)
-	}
-	return chosen, outer, true, owner, nil
+	return nil, sharedKeyError(owners)
 }
 
-func (s *Service) registerDistinctScanSlot(ctx context.Context, primaryPubKey, occupiedOwner string) (*Account, error) {
-	scanAcct, err := s.ensureDistinctAccount(ctx, "", primaryPubKey)
-	if err != nil {
-		return nil, fmt.Errorf("ключ аккаунта WARP используется туннелем %q, а зарегистрировать отдельный слот для сканера не удалось: %w", occupiedOwner, err)
+// mayInterruptOwners — скан ключом этих туннелей допустим: ключ ничей или у
+// одного туннеля, который не чужой и не служебный.
+func mayInterruptOwners(owners []TunnelKeyRef) bool {
+	return len(owners) == 0 || (len(owners) == 1 && !owners[0].Protected)
+}
+
+func sharedKeyError(owners []TunnelKeyRef) error {
+	names := make([]string, len(owners))
+	for i, o := range owners {
+		names[i] = fmt.Sprintf("%q", o.Name)
 	}
-	return scanAcct, nil
+	return fmt.Errorf("%w: ключ аккаунта WARP занят (туннели: %s), а отдельной записи для сканера нет — скан разорвал бы соединение; удалите туннель или импортируйте отдельный аккаунт", ErrInvalidInput, strings.Join(names, ", "))
+}
+
+// claimScanAccount выбирает запись под acctMu и закрепляет её ключ за сканером
+// до releaseScanKey: Apply(ReuseAccount) этим ключом туннель не создаст.
+func (s *Service) claimScanAccount(pick func() (*Account, error)) (*Account, error) {
+	s.acctMu.Lock()
+	defer s.acctMu.Unlock()
+	acct, err := pick()
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	s.scanKey = strings.TrimSpace(acct.PublicKey)
+	s.mu.Unlock()
+	return acct, nil
+}
+
+// pickScanAccount — запись для ручного скана и подбора маскировки.
+func (s *Service) pickScanAccount(ctx context.Context, outer *TunnelRef) (*Account, error) {
+	primary := s.d.Store.Account()
+	if primary == nil {
+		return nil, ErrNoAccount
+	}
+	viaWarp := outer != nil && outer.IsWarp
+	routeIface, avoid, shared := "", primary.PublicKey, primary
+	if viaWarp {
+		routeIface, avoid = outer.Iface, outer.LocalPublicKey
+		if strings.TrimSpace(primary.PublicKey) == strings.TrimSpace(avoid) {
+			shared = s.d.Store.InnerAccount()
+		}
+	} else if inUse, _, err := s.isAccountKeyInUse(ctx, primary.PublicKey); err != nil {
+		return nil, err
+	} else if !inUse {
+		return primary, nil
+	}
+	acct, distErr := s.ensureDistinctAccount(ctx, routeIface, avoid)
+	if distErr == nil || ctx.Err() != nil {
+		return acct, distErr
+	}
+	// Отдельной записи нет и завести её не удалось (Cloudflare недоступен, второй
+	// слот занят). Ключ единственного туннеля всё же годится: скан запустил
+	// пользователь, туннель прервётся лишь на время скана. Через WARP его же
+	// ключом не сканируем никогда.
+	if shared == nil || shared.PrivateKey == "" ||
+		(viaWarp && (outer.LocalPublicKey == "" || strings.TrimSpace(shared.PublicKey) == strings.TrimSpace(outer.LocalPublicKey))) {
+		return nil, distErr
+	}
+	keys, hasInv, err := s.listTunnelKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+	owners := s.keyOwnersInList(keys, hasInv, shared.PublicKey)
+	if !mayInterruptOwners(owners) {
+		return nil, fmt.Errorf("%w (%w)", sharedKeyError(owners), distErr)
+	}
+	if len(owners) == 1 {
+		s.logWarn("scan", "warp", fmt.Sprintf("Отдельной учётной записи для сканера нет (%v) — скан идёт ключом туннеля %q и кратко прервёт его соединение", distErr, owners[0].Name))
+	}
+	return shared, nil
+}
+
+func (s *Service) releaseScanKey() {
+	s.mu.Lock()
+	s.scanKey = ""
+	s.mu.Unlock()
 }
 
 // StartScan запускает ручной скан в фоне.
@@ -1472,7 +1578,7 @@ func (s *Service) StartScan(req ScanRequest) error {
 		return ErrEngineMissing
 	}
 	scanIface := s.resolveScanIface(s.rootCtx, req.Ifname)
-	chosenAcct, outer, needDistinctSlot, occupiedOwner, err := s.prepareScanAccount(s.rootCtx, acct, scanIface)
+	outer, err := s.prepareScanAccount(s.rootCtx, acct, scanIface)
 	if err != nil {
 		return err
 	}
@@ -1490,14 +1596,12 @@ func (s *Service) StartScan(req ScanRequest) error {
 		maxHits = 20
 	}
 	awg := s.awgForUse()
-	params, err := s.buildParams(s.rootCtx, chosenAcct, awg, req.Filters, maxHits, req.MaxCandidates, req.Endpoints, nil, req.Ifname, nil)
+	params, err := s.buildParams(s.rootCtx, acct, awg, req.Filters, maxHits, req.MaxCandidates, req.Endpoints, nil, req.Ifname, nil)
 	if err != nil {
 		s.engineMu.Unlock()
 		return err
 	}
-	// Зависший процесс сканера иначе держал бы engineMu, а автопилот сидел бы
-	// в engine_busy до ручного «Стоп».
-	ctx, cancel := context.WithTimeout(s.rootCtx, time.Duration(params.DeadlineMs)*time.Millisecond+scanKillGrace)
+	ctx, cancel := context.WithCancel(s.rootCtx)
 	s.mu.Lock()
 	s.scan = ScanStatus{Running: true, Owner: "manual", StartedAt: s.d.Now(), Hits: []Hit{}}
 	s.scanCancel = cancel
@@ -1510,24 +1614,19 @@ func (s *Service) StartScan(req ScanRequest) error {
 		defer s.wg.Done()
 		defer s.engineMu.Unlock()
 		defer cancel()
+		defer s.releaseScanKey()
 		var runErr error
-		if outer != nil && outer.IsWarp {
-			if !outer.Running {
-				runErr = errors.New("внешний туннель WARP выключен — сначала запустите его")
-			} else {
-				var scanAcct *Account
-				scanAcct, runErr = s.ensureDistinctAccount(ctx, outer.Iface, outer.LocalPublicKey)
-				if runErr == nil {
-					params, runErr = s.buildParams(ctx, scanAcct, awg, req.Filters, maxHits, req.MaxCandidates, req.Endpoints, nil, outer.Iface, outer)
-				}
-			}
-		} else if needDistinctSlot {
-			var scanAcct *Account
-			scanAcct, runErr = s.registerDistinctScanSlot(ctx, acct.PublicKey, occupiedOwner)
-			if runErr == nil {
-				params, runErr = s.buildParams(ctx, scanAcct, awg, req.Filters, maxHits, req.MaxCandidates, req.Endpoints, nil, req.Ifname, nil)
-			}
+		var scanAcct *Account
+		if outer != nil && outer.IsWarp && !outer.Running {
+			runErr = errors.New("внешний туннель WARP выключен — сначала запустите его")
+		} else if scanAcct, runErr = s.claimScanAccount(func() (*Account, error) { return s.pickScanAccount(ctx, outer) }); runErr == nil {
+			params, runErr = s.buildParams(ctx, scanAcct, awg, req.Filters, maxHits, req.MaxCandidates, req.Endpoints, nil, scanIface, outer)
 		}
+		// Зависший процесс сканера иначе держал бы engineMu, а автопилот сидел бы
+		// в engine_busy до ручного «Стоп». Отсчёт идёт после выбора записи:
+		// регистрация слота при заблокированном API съела бы время скана.
+		ctx, cancelRun := context.WithTimeout(ctx, time.Duration(params.DeadlineMs)*time.Millisecond+scanKillGrace)
+		defer cancelRun()
 		lastPub := time.Time{}
 		if runErr == nil {
 			runErr = s.d.Runner.Run(ctx, params, func(ev EngineEvent) {
@@ -1984,6 +2083,12 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplyResult, er
 					if outer != nil {
 						tunAddr = s.pickNonCollidingIPv4(ctx, tunAddr, outer.AddressV4)
 					}
+				}
+				s.mu.Lock()
+				scanKey := s.scanKey
+				s.mu.Unlock()
+				if scanKey != "" && scanKey == strings.TrimSpace(curAcct.PublicKey) {
+					return nil, fmt.Errorf("%w: ключом текущего аккаунта сейчас идёт скан — дождитесь его окончания или остановите", ErrInvalidInput)
 				}
 				s.collectTunnelAccounts(ctx)
 				if inUse, owner, checkErr := s.isAccountKeyInUse(ctx, curAcct.PublicKey); checkErr != nil {

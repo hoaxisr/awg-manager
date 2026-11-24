@@ -176,7 +176,9 @@ func NormalizeRelayBaseURL(raw string) (string, error) {
 	}
 	u, err := url.Parse(trimmed)
 	if err != nil {
-		return "", fmt.Errorf("%w: некорректный URL relay: %v", ErrInvalidInput, err)
+		// Текст url.Parse содержит сам URL вместе с учётными данными, а ошибка
+		// уходит в журнал.
+		return "", fmt.Errorf("%w: некорректный URL relay", ErrInvalidInput)
 	}
 	if u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.TrimSpace(u.Host) == "" {
 		return "", fmt.Errorf("%w: укажите чистый URL relay без параметров и учётных данных", ErrInvalidInput)
