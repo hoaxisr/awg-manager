@@ -2,6 +2,8 @@ import type {
 	WdttClientConfig,
 	WdttClientInstance,
 	WdttConfig,
+	WdttDiagRequest,
+	WdttDiagResult,
 	WdttGenerateLinkResult,
 	WdttImportPayload,
 	WdttLinkDecodeResult,
@@ -55,6 +57,12 @@ export const WDTT_WG_NOT_READY = 'WDTT_WG_NOT_READY';
  * само не рассосётся — автозавод после этого кода останавливается.
  */
 export const WDTT_WG_ADDRESS_CONFLICT = 'WDTT_WG_ADDRESS_CONFLICT';
+
+export const WDTT_DIAG_UNSUPPORTED = 'WDTT_DIAG_UNSUPPORTED';
+export const WDTT_DIAG_BUSY = 'WDTT_DIAG_BUSY';
+export const WDTT_DIAG_TIMEOUT = 'WDTT_DIAG_TIMEOUT';
+export const WDTT_DIAG_NO_BINARY = 'WDTT_DIAG_NO_BINARY';
+export const WDTT_DIAG_CONFIG_INCOMPLETE = 'WDTT_DIAG_CONFIG_INCOMPLETE';
 
 export class WdttClient extends FreeturnClient {
 	async getWdttConfig(): Promise<WdttConfig> {
@@ -203,12 +211,26 @@ export class WdttClient extends FreeturnClient {
 	/** `mode` — режим ссылки (§11); пусто — режим записи (`relayMode`). */
 	async generateWdttServerLink(
 		id: string,
-		opts?: { peer?: string; vkHashes?: string[]; name?: string; password?: string; mode?: 'wg' | 'raw' }
+		opts?: {
+			peer?: string;
+			vkHashes?: string[];
+			name?: string;
+			password?: string;
+			mode?: 'wg' | 'raw';
+			includeDiagKey?: boolean;
+		}
 	): Promise<WdttGenerateLinkResult> {
 		return this.request<WdttGenerateLinkResult>(instancePath('wdtt-server', id, '/link'), {
 			method: 'POST',
 			body: JSON.stringify(opts ?? {})
 		});
+	}
+
+	async rotateWdttServerDiagKey(id: string): Promise<{ rotated: boolean }> {
+		return this.request<{ rotated: boolean }>(
+			instancePath('wdtt-server', id, '/diag-key/rotate'),
+			{ method: 'POST' }
+		);
 	}
 
 	async getWdttServerPanelUsers(serverId: string): Promise<WdttPanelUsersStatus> {
@@ -245,5 +267,17 @@ export class WdttClient extends FreeturnClient {
 			instancePath('wdtt-server', serverId, `/users/${encodeURIComponent(password)}`),
 			{ method: 'DELETE' }
 		);
+	}
+
+	async runWdttClientDiag(
+		id: string,
+		opts?: WdttDiagRequest,
+		signal?: AbortSignal
+	): Promise<WdttDiagResult> {
+		return this.request<WdttDiagResult>(instancePath('wdtt-client', id, '/diag'), {
+			method: 'POST',
+			body: JSON.stringify(opts ?? {}),
+			signal
+		});
 	}
 }

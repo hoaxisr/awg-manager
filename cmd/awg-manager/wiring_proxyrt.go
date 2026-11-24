@@ -27,6 +27,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/ftlink"
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/install"
 	proxysub "github.com/hoaxisr/awg-manager/internal/proxyapp/subscription"
+	"github.com/hoaxisr/awg-manager/internal/proxyapp/wdttdiag"
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/wdttlink"
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/wdttusers"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt"
@@ -1043,6 +1044,10 @@ func (a *app) wireProxyrt() {
 		Snapshots: snapshots,
 		Log:       logTail,
 	})
+	diagHandler := wdttdiag.New(wdttdiag.Deps{
+		Records: records,
+		Binary:  installSvc.Binary,
+	})
 	instances := api.NewProxyInstancesHandler(api.ProxyInstancesDeps{
 		Manager:          mgr,
 		States:           states,
@@ -1055,13 +1060,15 @@ func (a *app) wireProxyrt() {
 
 	a.srv.SetProxyRtSurface(server.ProxyRtSurface{
 		Instances: proxyrtDispatch{
-			instances: instances.Handle,
-			users:     users.Serve,
-			captcha:   captchaSvc.Serve,
-			allowlist: allowlist.Serve,
-			link:      linkHandler.Link,
-			ensureWG:  linkHandler.EnsureWGTunnel,
-			refresh:   subs.Serve,
+			instances:     instances.Handle,
+			users:         users.Serve,
+			captcha:       captchaSvc.Serve,
+			allowlist:     allowlist.Serve,
+			link:          linkHandler.Link,
+			rotateDiagKey: linkHandler.RotateDiagKey,
+			ensureWG:      linkHandler.EnsureWGTunnel,
+			diag:          diagHandler.Serve,
+			refresh:       subs.Serve,
 		}.handler(),
 		ListenMoves:        instances.AckListenMoves,
 		WdttLinkDecode:     linkHandler.Decode,
@@ -1337,13 +1344,15 @@ func (a *app) proxyFactory(ref *proxyManagerRef, journal *logging.ScopedLogger,
 // владелец поддерева и отвечает 404 на неизвестном хвосте, то есть проглотил
 // бы users, link, captcha и allowlist целиком.
 type proxyrtDispatch struct {
-	instances http.HandlerFunc
-	users     func(w http.ResponseWriter, r *http.Request, key string, sub []string)
-	captcha   func(w http.ResponseWriter, r *http.Request, key string, sub []string)
-	allowlist func(w http.ResponseWriter, r *http.Request, key string, sub []string)
-	link      func(w http.ResponseWriter, r *http.Request, key string)
-	ensureWG  func(w http.ResponseWriter, r *http.Request, key string)
-	refresh   func(w http.ResponseWriter, r *http.Request, key string)
+	instances     http.HandlerFunc
+	users         func(w http.ResponseWriter, r *http.Request, key string, sub []string)
+	captcha       func(w http.ResponseWriter, r *http.Request, key string, sub []string)
+	allowlist     func(w http.ResponseWriter, r *http.Request, key string, sub []string)
+	link          func(w http.ResponseWriter, r *http.Request, key string)
+	rotateDiagKey func(w http.ResponseWriter, r *http.Request, key string)
+	ensureWG      func(w http.ResponseWriter, r *http.Request, key string)
+	diag          func(w http.ResponseWriter, r *http.Request, key string)
+	refresh       func(w http.ResponseWriter, r *http.Request, key string)
 }
 
 func (d proxyrtDispatch) handler() http.HandlerFunc {
@@ -1369,8 +1378,20 @@ func (d proxyrtDispatch) handler() http.HandlerFunc {
 			d.allowlist(w, r, key, parts)
 		case "link":
 			d.link(w, r, key)
+		case "diag-key":
+			if sub == "rotate" && d.rotateDiagKey != nil {
+				d.rotateDiagKey(w, r, key)
+				return
+			}
+			d.instances(w, r)
 		case "ensure-wg-tunnel":
 			d.ensureWG(w, r, key)
+		case "diag":
+			if len(parts) == 0 && d.diag != nil {
+				d.diag(w, r, key)
+				return
+			}
+			d.instances(w, r)
 		case "linked-tunnels":
 			// Своей ручки у связей больше нет: снимает их путь удаления
 			// инстанса (PF24). Путь остаётся ради честного 404 на старый

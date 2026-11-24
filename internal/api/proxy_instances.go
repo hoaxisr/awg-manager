@@ -966,7 +966,7 @@ func proxyNeedsOpkgTun(rec instancestore.Record) bool {
 
 // proxySecretFields — секретные поля конфигов ролей (json-имена). Значения
 // наружу не уходят, а на входе пустое значение означает «не менять» (Н5).
-var proxySecretFields = []string{"password", "obfKey"}
+var proxySecretFields = []string{"password", "diagKey", "obfKey"}
 
 // proxySecretsOf — секреты, объявленные конфигом роли. Список нужен ВЫДАЧЕ:
 // без него признак `passwordSet` пропадал бы вместе с пустым значением
@@ -974,7 +974,7 @@ var proxySecretFields = []string{"password", "obfKey"}
 func proxySecretsOf(kind instancestore.Kind) []string {
 	switch kind {
 	case instancestore.KindWdttClient:
-		return []string{"password"}
+		return []string{"password", "diagKey"}
 	case instancestore.KindFreeTurnClient, instancestore.KindFreeTurnServer:
 		return []string{"obfKey"}
 	}

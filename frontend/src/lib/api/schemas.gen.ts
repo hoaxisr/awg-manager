@@ -3495,6 +3495,36 @@ const vlessserver_XHTTPTuning: v.GenericSchema = v.looseObject({
 	x_padding_placement: v.optional(v.nullable(v.string())),
 });
 
+const wdttdiag_DiagResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => wdttdiag_Result))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const wdttdiag_Result: v.GenericSchema = v.looseObject({
+	durationMs: v.optional(v.nullable(v.number())),
+	exitCode: v.optional(v.nullable(v.number())),
+	mode: v.optional(v.nullable(v.string())),
+	steps: v.optional(v.nullable(v.array(v.lazy(() => wdttdiag_Step)))),
+	transport: v.optional(v.nullable(v.string())),
+	verdict: v.optional(v.nullable(v.lazy(() => wdttdiag_Verdict))),
+});
+
+const wdttdiag_Step: v.GenericSchema = v.looseObject({
+	state: v.optional(v.nullable(v.string())),
+	step: v.optional(v.nullable(v.string())),
+	text: v.optional(v.nullable(v.string())),
+	title: v.optional(v.nullable(v.string())),
+});
+
+const wdttdiag_Verdict: v.GenericSchema = v.looseObject({
+	actions: v.optional(v.nullable(v.array(v.string()))),
+	code: v.optional(v.nullable(v.string())),
+	facts: v.optional(v.nullable(v.unknown())),
+	sev: v.optional(v.nullable(v.string())),
+	text: v.optional(v.nullable(v.string())),
+	title: v.optional(v.nullable(v.string())),
+});
+
 const wdttlink_DecodeResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => wdttlink_LinkDecodeResult))),
 	success: v.optional(v.nullable(v.boolean())),
@@ -3515,6 +3545,7 @@ const wdttlink_EnsureWGTunnelResponse: v.GenericSchema = v.looseObject({
 const wdttlink_ImportPayload: v.GenericSchema = v.looseObject({
 	connMode: v.optional(v.nullable(v.string())),
 	deviceId: v.optional(v.nullable(v.string())),
+	diagKey: v.optional(v.nullable(v.string())),
 	listen: v.optional(v.nullable(v.string())),
 	name: v.optional(v.nullable(v.string())),
 	password: v.optional(v.nullable(v.string())),
@@ -3550,6 +3581,15 @@ const wdttlink_LinkResult: v.GenericSchema = v.looseObject({
 	link: v.optional(v.nullable(v.string())),
 	linkQwdtt: v.optional(v.nullable(v.string())),
 	peer: v.optional(v.nullable(v.string())),
+});
+
+const wdttlink_RotateDiagKeyResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => wdttlink_RotateDiagKeyResult))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const wdttlink_RotateDiagKeyResult: v.GenericSchema = v.looseObject({
+	rotated: v.optional(v.nullable(v.boolean())),
 });
 
 const wdttlink_SubscriptionPreview: v.GenericSchema = v.looseObject({
@@ -3977,6 +4017,8 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /proxyrt/install/uninstall": v.lazy(() => install_InstallResponse),
 	"POST /proxyrt/instances": v.lazy(() => api_ProxyRtInstanceResponse),
 	"POST /proxyrt/instances/{key}/apply": v.lazy(() => api_OkResponse),
+	"POST /proxyrt/instances/{key}/diag": v.lazy(() => wdttdiag_DiagResponse),
+	"POST /proxyrt/instances/{key}/diag-key/rotate": v.lazy(() => wdttlink_RotateDiagKeyResponse),
 	"POST /proxyrt/instances/{key}/ensure-wg-tunnel": v.lazy(() => wdttlink_EnsureWGResponse),
 	"POST /proxyrt/instances/{key}/link": v.lazy(() => wdttlink_LinkResponse),
 	"POST /proxyrt/instances/{key}/restart": v.lazy(() => api_OkResponse),

@@ -290,6 +290,8 @@ export function toWdttClientConfig(v: ProxyInstanceView): WdttClientConfig {
     peer: str(c, "peer") ?? "",
     password: "",
     passwordSet: bool(c, "passwordSet") === true,
+    diagKey: "",
+    diagKeySet: bool(c, "diagKeySet") === true,
     vkHashes: str(c, "vkHashes") ?? "",
     workers: num(c, "workers") ?? 0,
     obfs: str(c, "obfs") ?? "",
@@ -663,6 +665,7 @@ export function toWdttClientPatch(cfg: WdttClientConfig): Cfg {
     out.defaultRoute = cfg.defaultRoute;
   }
   putSecret(out, "password", cfg.password);
+  putSecret(out, "diagKey", cfg.diagKey);
   return out;
 }
 

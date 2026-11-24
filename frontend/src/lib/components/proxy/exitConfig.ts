@@ -46,6 +46,7 @@ export function cloneConfig<T>(value: T): T {
 // и '' для него — не «пусто», а поломка семантики.
 
 const WDTT_OPTIONAL_STRINGS: readonly (keyof WdttClientConfig)[] = [
+	'diagKey',
 	'deviceId',
 	'vkAuthMode',
 	'sub',

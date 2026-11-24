@@ -476,3 +476,30 @@ func TestRefreshHandler_Rejections(t *testing.T) {
 		t.Fatalf("несуществующий инстанс code=%d body=%s", rr.Code, rr.Body)
 	}
 }
+
+func TestRefresh_DiagKeyUpdateAndPreserve(t *testing.T) {
+	rec := clientRecord()
+	rec.WdttClient.DiagKey = "existing-dk"
+
+	// Пустой DiagKey не затирает сохранённый.
+	s1, src1, _ := newService(t, rec, &fakeFetch{res: subscriptionOf(
+		wdttlink.ImportPayload{Peer: "1.2.3.4:56000", Password: "p2"},
+	)})
+	if _, err := s1.Refresh(context.Background(), clientKey); err != nil {
+		t.Fatal(err)
+	}
+	if got := src1.recs[clientKey].WdttClient.DiagKey; got != "existing-dk" {
+		t.Fatalf("пустой DiagKey затёр старый: %q", got)
+	}
+
+	// Непустой DiagKey обновляется.
+	s2, src2, _ := newService(t, rec, &fakeFetch{res: subscriptionOf(
+		wdttlink.ImportPayload{Peer: "1.2.3.4:56000", Password: "p2", DiagKey: "next-dk"},
+	)})
+	if _, err := s2.Refresh(context.Background(), clientKey); err != nil {
+		t.Fatal(err)
+	}
+	if got := src2.recs[clientKey].WdttClient.DiagKey; got != "next-dk" {
+		t.Fatalf("новый DiagKey не применился: %q", got)
+	}
+}
