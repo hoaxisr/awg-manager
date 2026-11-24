@@ -203,6 +203,8 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.375rem;
+		/* Сегменты делят ширину блока поровну: без минимума подпись сжимает их до «A…». */
+		min-width: 12rem;
 	}
 
 	.control-block--grow {

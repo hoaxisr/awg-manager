@@ -206,6 +206,13 @@
 		gap: 0.375rem;
 	}
 
+	/* Длинное значение факта переносится внутри чипа, а не вылезает за карточку. */
+	.facts :global(.badge) {
+		max-width: 100%;
+		white-space: normal;
+		overflow-wrap: anywhere;
+	}
+
 	.steps-section {
 		display: flex;
 		flex-direction: column;
