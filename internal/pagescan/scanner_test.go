@@ -529,6 +529,34 @@ func TestScan_ProxyModesAndAutoFallback(t *testing.T) {
 	}
 }
 
+// Вход FIRC слушает адрес LAN-интерфейса: прокси по умолчанию на своём адресе
+// годен, если он в списке известных; чужой адрес и чужой порт — нет.
+func TestParseDefaultProxySpec_RouterAddress(t *testing.T) {
+	svc := NewService(Options{
+		ProxyLister: func(context.Context) []ProxyOption {
+			return []ProxyOption{{URL: "http://192.168.1.1:1099"}, {URL: "http://192.168.1.50:1099"}}
+		},
+	})
+	svc.isRouterAddr = func(addr netip.Addr) bool { return addr.String() == "192.168.1.1" }
+	for raw, want := range map[string]string{
+		"http://192.168.1.1:1099":  "192.168.1.1:1099",
+		"http://127.0.0.1:1099":    "127.0.0.1:1099",
+		"http://192.168.1.1:79":    "",
+		"http://192.168.1.50:1099": "",
+	} {
+		spec, err := svc.parseDefaultProxySpec(context.Background(), raw)
+		if want == "" {
+			if !errors.Is(err, ErrBlockedAddress) {
+				t.Errorf("%s: err = %v, want ErrBlockedAddress", raw, err)
+			}
+			continue
+		}
+		if err != nil || len(spec.DialAddrs) != 1 || spec.DialAddrs[0] != want {
+			t.Errorf("%s: spec = %+v, err = %v", raw, spec, err)
+		}
+	}
+}
+
 func TestScan_ProxySecurityBlocksNonPublicAndFailsClosed(t *testing.T) {
 	// 1. Non-loopback proxy URL must be rejected before dialing.
 	svcBadProxy := NewService(Options{

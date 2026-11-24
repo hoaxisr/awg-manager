@@ -70,6 +70,8 @@ func newPageScanFixture(t *testing.T, engine string, tunnels []firc.Tunnel, ifac
 	}
 
 	inboundPort, devicePort := listenPort(t), listenPort(t)
+	tunnels = append(tunnels, firc.Tunnel{ID: "main", Device: "tunvless9", Description: "Main", Enable: true,
+		Inbounds: []firc.TunnelInbound{{Port: uint16(inboundPort), Listen: "lo"}}})
 	fircOp := firc.NewOperator(firc.Options{ConfigDir: t.TempDir(), InboundPort: uint16(inboundPort)})
 	fircOp.SetClient(firc.NewHTTPClient(mock.URL, mock.Client()))
 
@@ -118,14 +120,18 @@ func proxyURLs(items []pagescan.ProxyOption) []string {
 func TestPageScanProxyURLProvider(t *testing.T) {
 	ctx := context.Background()
 
+	provide := func(fx pageScanFixture) string {
+		return fx.srv.pageScanProxyURLProvider(fx.srv.pageScanFircTunnels())(ctx)
+	}
+
 	fx := newPageScanFixture(t, "firc", nil, nil)
-	if got, want := fx.srv.pageScanProxyURLProvider()(ctx), loopbackURL(fx.inboundPort); got != want {
+	if got, want := provide(fx), loopbackURL(fx.inboundPort); got != want {
 		t.Fatalf("engine=firc: provider = %q, want %q", got, want)
 	}
 
 	// Движок не FIRC: живой device-proxy не становится выходом режима auto.
 	fx = newPageScanFixture(t, "sing-box", nil, nil)
-	if got := fx.srv.pageScanProxyURLProvider()(ctx); got != "" {
+	if got := provide(fx); got != "" {
 		t.Fatalf("engine=sing-box: provider = %q, want empty", got)
 	}
 
@@ -134,8 +140,75 @@ func TestPageScanProxyURLProvider(t *testing.T) {
 	dead := httptest.NewServer(http.NotFoundHandler())
 	dead.Close()
 	fx.srv.fircHandler.Operator().SetClient(firc.NewHTTPClient(dead.URL, dead.Client()))
-	if got := fx.srv.pageScanProxyURLProvider()(ctx); got != "" {
+	if got := provide(fx); got != "" {
 		t.Fatalf("fircd is down: provider = %q, want empty", got)
+	}
+}
+
+// ifaceWithIPv4 — поднятый интерфейс с адресом IPv4, кроме loopback.
+func ifaceWithIPv4(t *testing.T) (name, ip string) {
+	t.Helper()
+	all, err := net.Interfaces()
+	if err != nil {
+		t.Fatalf("net.Interfaces: %v", err)
+	}
+	for _, iface := range all {
+		if ip := resolveInterfaceIPv4(iface.Name); ip != "" && iface.Flags&net.FlagUp != 0 {
+			return iface.Name, ip
+		}
+	}
+	t.Skip("нет интерфейса с IPv4, кроме loopback")
+	return "", ""
+}
+
+// fircd слушает только адрес интерфейса из listen: 127.0.0.1 тогда закрыт или
+// принадлежит другой программе (тот же 1099 — умолчание прокси для LAN).
+func TestPageScanFircInbound_UsesListenAddress(t *testing.T) {
+	ctx := context.Background()
+	iface, ip := ifaceWithIPv4(t)
+	ln, err := net.Listen("tcp", net.JoinHostPort(ip, "0"))
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	port := ln.Addr().(*net.TCPAddr).Port
+	foreign, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if err != nil {
+		t.Skipf("порт %d занят на loopback: %v", port, err)
+	}
+	t.Cleanup(func() { _ = foreign.Close() })
+
+	inbound := func(in firc.TunnelInbound, enable bool) *Server {
+		in.Port = uint16(port)
+		srv := newPageScanFixture(t, "firc", []firc.Tunnel{{ID: "t1", Device: "tunvless0", Enable: enable, Inbounds: []firc.TunnelInbound{in}}}, nil).srv
+		op := firc.NewOperator(firc.Options{ConfigDir: t.TempDir(), InboundPort: uint16(port)})
+		op.SetClient(srv.fircHandler.Operator().Client())
+		srv.fircHandler = api.NewFircHandler(op)
+		return srv
+	}
+	want := "http://" + net.JoinHostPort(ip, strconv.Itoa(port))
+
+	srv := inbound(firc.TunnelInbound{Listen: iface}, true)
+	if got := srv.pageScanProxyURLProvider(srv.pageScanFircTunnels())(ctx); got != want {
+		t.Errorf("provider = %q, want %q", got, want)
+	}
+	urls := proxyURLs(srv.pageScanProxyLister(srv.pageScanFircTunnels())(ctx))
+	if !slices.Contains(urls, want) || slices.Contains(urls, loopbackURL(port)) {
+		t.Errorf("proxies = %v, want %s without loopback", urls, want)
+	}
+	match := srv.pageScanRouterProxyMatcher(srv.pageScanFircTunnels())
+	if !match(ctx, ip, strconv.Itoa(port)) || match(ctx, "127.0.0.1", strconv.Itoa(port)) {
+		t.Errorf("matcher must accept %s:%d and refuse loopback", ip, port)
+	}
+
+	for name, srv := range map[string]*Server{
+		"вход с паролем":   inbound(firc.TunnelInbound{Listen: iface, User: "u", Password: "p"}, true),
+		"туннель выключен": inbound(firc.TunnelInbound{Listen: iface}, false),
+		"интерфейса нет":   inbound(firc.TunnelInbound{Listen: "awgm-absent0"}, true),
+	} {
+		if got := srv.pageScanProxyURLProvider(srv.pageScanFircTunnels())(ctx); got != "" {
+			t.Errorf("%s: provider = %q, want empty", name, got)
+		}
 	}
 }
 
