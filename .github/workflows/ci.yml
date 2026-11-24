@@ -111,6 +111,8 @@ jobs:
           if [ ! -f /usr/include/pcre2.h ] && ! pkg-config --exists libpcre2-8 2>/dev/null; then
             need_pkgs="$need_pkgs libpcre2-dev"
           fi
+          # fircd unit tests link the whole daemon library.
+          need_pkgs="$need_pkgs libcurl4-openssl-dev libyaml-dev libcjson-dev libmnl-dev zlib1g-dev"
           if [ -n "$need_pkgs" ]; then
             sudo apt-get update
             sudo apt-get install -y --no-install-recommends $need_pkgs
