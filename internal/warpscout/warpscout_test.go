@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -54,17 +55,21 @@ func (r *fakeRunner) Run(ctx context.Context, p ScanParams, on func(EngineEvent)
 }
 
 type fakeTunnels struct {
-	mu          sync.Mutex
-	refs        map[string]*TunnelRef
-	swaps       []string
-	swapOpts    []SwapOptions
-	renames     []string
-	created     []string
-	createdOpts []CreateOptions
-	getErr      error
-	createErr   error
-	onSwap      func(r *TunnelRef)
-	onCreate    func(r *TunnelRef)
+	mu            sync.Mutex
+	refs          map[string]*TunnelRef
+	swaps         []string
+	swapOpts      []SwapOptions
+	renames       []string
+	created       []string
+	createdOpts   []CreateOptions
+	getErr        error
+	listErr       error
+	listCalls     int
+	listKeysCalls int
+	createErr     error
+	onSwap        func(r *TunnelRef)
+	onCreate      func(r *TunnelRef)
+	beforeCreate  func() // барьер до создания: f.mu не держит, список туннелей доступен
 }
 
 func key(m TargetMode, id string) string { return string(m) + "/" + id }
@@ -72,11 +77,59 @@ func key(m TargetMode, id string) string { return string(m) + "/" + id }
 func (f *fakeTunnels) List(context.Context) ([]TunnelRef, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.listCalls++
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
 	var out []TunnelRef
 	for _, r := range f.refs {
 		out = append(out, *r)
 	}
 	return out, nil
+}
+
+func (f *fakeTunnels) ListKeys(context.Context) ([]TunnelKeyRef, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.listKeysCalls++
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	var out []TunnelKeyRef
+	for _, r := range f.refs {
+		out = append(out, TunnelKeyRef{
+			Mode:           r.Mode,
+			ID:             r.ID,
+			Name:           r.Name,
+			LocalPublicKey: r.LocalPublicKey,
+			Protected:      r.Protected,
+		})
+	}
+	return out, nil
+}
+
+func (f *fakeTunnels) ListCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.listCalls
+}
+
+func (f *fakeTunnels) ResetListCount() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.listCalls = 0
+}
+
+func (f *fakeTunnels) ListKeysCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.listKeysCalls
+}
+
+func (f *fakeTunnels) ResetListKeysCount() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.listKeysCalls = 0
 }
 
 func (f *fakeTunnels) Get(_ context.Context, m TargetMode, id string) (*TunnelRef, error) {
@@ -94,6 +147,9 @@ func (f *fakeTunnels) Get(_ context.Context, m TargetMode, id string) (*TunnelRe
 }
 
 func (f *fakeTunnels) Create(_ context.Context, m TargetMode, name, conf string, opts CreateOptions) (*TunnelRef, error) {
+	if f.beforeCreate != nil {
+		f.beforeCreate()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.createErr != nil {
@@ -198,8 +254,13 @@ func newFakeWarpAPI(t *testing.T) *fakeWarpAPI {
 	// Тест, уже поставивший свою подмену API, сохраняет её: иначе его
 	// сервер остался бы без запросов, а тест — зелёным вхолостую.
 	if cfAPIBase == apiBase {
+		origAlt := cfAPIBaseAlt
 		cfAPIBase = a.srv.URL
-		t.Cleanup(func() { cfAPIBase = apiBase })
+		cfAPIBaseAlt = ""
+		t.Cleanup(func() {
+			cfAPIBase = apiBase
+			cfAPIBaseAlt = origAlt
+		})
 	}
 	return a
 }
@@ -793,9 +854,9 @@ func TestAccountOps_Serialized(t *testing.T) {
 	// После newTestService: он ставит общую подмену API, а этому тесту
 	// нужна своя, с удержанием запроса.
 	s, _, _, _ := newTestService(t)
-	origBase := cfAPIBase
-	cfAPIBase = srv.URL
-	t.Cleanup(func() { cfAPIBase = origBase })
+	origBase, origAlt := cfAPIBase, cfAPIBaseAlt
+	cfAPIBase, cfAPIBaseAlt = srv.URL, ""
+	t.Cleanup(func() { cfAPIBase, cfAPIBaseAlt = origBase, origAlt })
 	log := &captureLog{}
 	s.d.Log = log
 	s.d.HTTP = func(string) (*http.Client, error) { return srv.Client(), nil }
@@ -1176,9 +1237,9 @@ func TestRegisterAccount_V0a4005FlowAndWarpPlusSemantics(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	origBase := cfAPIBase
-	cfAPIBase = srv.URL
-	t.Cleanup(func() { cfAPIBase = origBase })
+	origBase, origAlt := cfAPIBase, cfAPIBaseAlt
+	cfAPIBase, cfAPIBaseAlt = srv.URL, ""
+	t.Cleanup(func() { cfAPIBase, cfAPIBaseAlt = origBase, origAlt })
 
 	acct, err := RegisterAccount(context.Background(), srv.Client())
 	if err != nil {
@@ -1258,9 +1319,9 @@ func TestService_RegisterFallbackAndKeyRotation(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	origBase := cfAPIBase
-	cfAPIBase = srv.URL
-	t.Cleanup(func() { cfAPIBase = origBase })
+	origBase, origAlt := cfAPIBase, cfAPIBaseAlt
+	cfAPIBase, cfAPIBaseAlt = srv.URL, ""
+	t.Cleanup(func() { cfAPIBase, cfAPIBaseAlt = origBase, origAlt })
 
 	st, err := NewStore(t.TempDir(), plainCipher{})
 	if err != nil {
@@ -1272,8 +1333,8 @@ func TestService_RegisterFallbackAndKeyRotation(t *testing.T) {
 		Runner: &fakeRunner{},
 		WAN:    func(context.Context) (string, bool) { return "eth3", true },
 		HTTP:   func(string) (*http.Client, error) { return blockedClient, nil },
-		HTTPFallbacks: func(context.Context) []*http.Client {
-			return []*http.Client{srv.Client(), srv.Client()}
+		HTTPFallbacks: func(context.Context) []FallbackClient {
+			return []FallbackClient{{Client: srv.Client()}, {Client: srv.Client()}}
 		},
 	})
 	t.Cleanup(s.Stop)
@@ -1541,9 +1602,9 @@ func TestSetAccountAddress_PreservedAcrossRotationAndCreateOverride(t *testing.T
 	}))
 	defer srv.Close()
 
-	origBase := cfAPIBase
-	cfAPIBase = srv.URL
-	t.Cleanup(func() { cfAPIBase = origBase })
+	origBase, origAlt := cfAPIBase, cfAPIBaseAlt
+	cfAPIBase, cfAPIBaseAlt = srv.URL, ""
+	t.Cleanup(func() { cfAPIBase, cfAPIBaseAlt = origBase, origAlt })
 
 	s, _, tun, _ := newTestService(t)
 	s.d.HTTP = func(string) (*http.Client, error) { return srv.Client(), nil }
@@ -1739,9 +1800,9 @@ func TestStartScan_ViaWarpTunnel_UsesInnerAccountAndConcurrency1(t *testing.T) {
 		}`))
 	}))
 	defer srv.Close()
-	origBase := cfAPIBase
-	cfAPIBase = srv.URL
-	t.Cleanup(func() { cfAPIBase = origBase })
+	origBase, origAlt := cfAPIBase, cfAPIBaseAlt
+	cfAPIBase, cfAPIBaseAlt = srv.URL, ""
+	t.Cleanup(func() { cfAPIBase, cfAPIBaseAlt = origBase, origAlt })
 
 	s, runner, tun, _ := newTestService(t)
 	s.d.HTTP = func(string) (*http.Client, error) { return srv.Client(), nil }
@@ -1808,9 +1869,9 @@ func TestApplyCreate_WarpInWarp_MTU1220AndMultiAutopilot(t *testing.T) {
 		}`))
 	}))
 	defer srv.Close()
-	origBase := cfAPIBase
-	cfAPIBase = srv.URL
-	t.Cleanup(func() { cfAPIBase = origBase })
+	origBase, origAlt := cfAPIBase, cfAPIBaseAlt
+	cfAPIBase, cfAPIBaseAlt = srv.URL, ""
+	t.Cleanup(func() { cfAPIBase, cfAPIBaseAlt = origBase, origAlt })
 
 	s, _, tun, _ := newTestService(t)
 	s.d.HTTP = func(string) (*http.Client, error) { return srv.Client(), nil }
@@ -1913,10 +1974,16 @@ func TestWatchdog_WarpInWarp_WaitsForOuterAndScansViaOuter(t *testing.T) {
 		t.Fatal(err)
 	}
 	tun.mu.Lock()
+	tun.refs[key(TargetNative, "awg50")] = &TunnelRef{
+		Mode: TargetNative, ID: "awg50", Name: "WARP HEL", Iface: "nwg3",
+		Endpoint: "162.159.192.255:880", AddressV4: "172.16.0.10",
+		LocalPublicKey: "pub", PeerPublicKey: WarpPeerPublicKey,
+		IsWarp: true, Running: true,
+	}
 	tun.refs[key(TargetNative, "awg60")] = &TunnelRef{
 		Mode: TargetNative, ID: "awg60", Name: "WARP-in-WARP FRA", Iface: "nwg4",
 		Endpoint: "162.159.193.1:2408", AddressV4: "172.16.0.3",
-		LocalPublicKey: "pub-inner", PeerPublicKey: WarpPeerPublicKey,
+		LocalPublicKey: "pub-awg60", PeerPublicKey: WarpPeerPublicKey,
 		IsWarp: true, Running: true,
 		ViaMode: TargetNative, ViaTunnelID: "awg50", ViaIface: "nwg3",
 		ViaLabel: "WARP HEL", ViaEndpoint: "162.159.192.255:880", ViaRunning: false,
@@ -1961,6 +2028,36 @@ func TestWatchdog_WarpInWarp_WaitsForOuterAndScansViaOuter(t *testing.T) {
 	}
 	if runner.calls[0].PrivateKey != "aW5uZXItcHJpdi1rZXk=" {
 		t.Fatalf("ожидался ключ InnerAccount, получили %q", runner.calls[0].PrivateKey)
+	}
+
+	// Собственный ключ целевого каскада конфликтом не считается: каскады, созданные
+	// на ключе второго слота, иначе остались бы без автоподмены.
+	tun.mu.Lock()
+	tun.refs[key(TargetNative, "awg60")].LocalPublicKey = "pub-inner"
+	tun.mu.Unlock()
+	prober.mu.Lock()
+	prober.queue = []TraceResult{{Colo: "DME", Loc: "RU", Warp: "on"}, {Colo: "DME", Loc: "RU", Warp: "on"}}
+	prober.mu.Unlock()
+	runner.mu.Unlock()
+	s.checkOnce(context.Background(), p, &watcherState{})
+	runner.mu.Lock()
+	if len(runner.calls) != 2 || runner.calls[1].PrivateKey != "aW5uZXItcHJpdi1rZXk=" || runner.calls[1].Ifname != "nwg3" {
+		t.Fatalf("каскад на ключе второго слота должен сканироваться им же через внешний туннель: %+v", runner.calls)
+	}
+
+	// Тот же ключ у соседнего туннеля — уже конфликт.
+	tun.mu.Lock()
+	tun.refs[key(TargetNative, "awg61")] = &TunnelRef{Mode: TargetNative, ID: "awg61", Name: "Сосед",
+		IsWarp: true, Running: true, LocalPublicKey: "pub-inner"}
+	tun.mu.Unlock()
+	prober.mu.Lock()
+	prober.queue = []TraceResult{{Colo: "DME", Loc: "RU", Warp: "on"}, {Colo: "DME", Loc: "RU", Warp: "on"}}
+	prober.mu.Unlock()
+	runner.mu.Unlock()
+	s.checkOnce(context.Background(), p, &watcherState{})
+	runner.mu.Lock()
+	if len(runner.calls) != 2 {
+		t.Fatalf("каскад не должен сканировать ключом соседнего туннеля, calls=%d", len(runner.calls))
 	}
 }
 
@@ -2009,9 +2106,9 @@ func TestWatchdog_HealthyCheckDoesNotRename(t *testing.T) {
 	}
 }
 
-// Автоподмена не сканирует через WARP-туннель его же ключом (Cloudflare
-// рвёт внешнюю сессию) и не регистрирует второй слот без пользователя:
-// без готового слота скан уходит на WAN.
+// Автоподмена не сканирует ключом работающего WARP-туннеля (ни через сам
+// туннель, ни в обход через WAN — Cloudflare рвёт сессию) и не регистрирует
+// второй слот без пользователя; при наличии свободного InnerAccount скан идёт через nwg5.
 func TestWatchdog_SwapDoesNotScanThroughWarpWithItsOwnKey(t *testing.T) {
 	s, r, tun, pr := newTestService(t)
 	tun.refs[key(TargetNative, "awg11")] = &TunnelRef{Mode: TargetNative, ID: "awg11", Name: "WARP HEL",
@@ -2027,14 +2124,42 @@ func TestWatchdog_SwapDoesNotScanThroughWarpWithItsOwnKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.checkOnce(context.Background(), p, &watcherState{})
-	if len(r.calls) != 1 {
-		t.Fatalf("ожидался один скан, calls=%d", len(r.calls))
-	}
-	if got := r.calls[0].Ifname; got != "eth3" {
-		t.Fatalf("скан ушёл через %q, ожидался WAN eth3", got)
+	if len(r.calls) != 0 || len(tun.swaps) != 0 {
+		t.Fatalf("без свободного слота скан/подмена занятым ключом недопустимы: calls=%d swaps=%d", len(r.calls), len(tun.swaps))
 	}
 	if s.d.Store.InnerAccount() != nil {
 		t.Fatal("второй слот зарегистрирован без пользователя")
+	}
+	if ws := s.State().Watch; len(ws) != 1 || !strings.Contains(ws[0].Message, "WARP HEL") {
+		t.Fatalf("ожидалось сообщение о занятости ключа туннелем WARP HEL, got %+v", ws)
+	}
+
+	privInner, pubInner, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.d.Store.SetInnerAccount(&Account{
+		ID: "in-free", Token: "tok-in", PrivateKey: privInner, PublicKey: pubInner,
+		PeerPublicKey: WarpPeerPublicKey, AddressV4: "172.16.0.5",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	pr.mu.Lock()
+	pr.queue = []TraceResult{
+		{Colo: "DME", Loc: "RU", Warp: "on"},
+		{Colo: "DME", Loc: "RU", Warp: "on"},
+		{Colo: "HEL", Loc: "FI", Warp: "on", LatencyMs: 40},
+	}
+	pr.mu.Unlock()
+	s.checkOnce(context.Background(), p, &watcherState{})
+	if len(r.calls) != 1 {
+		t.Fatalf("со свободным вторым слотом ожидался один скан, calls=%d", len(r.calls))
+	}
+	if r.calls[0].Ifname != "nwg5" || r.calls[0].PrivateKey != privInner {
+		t.Fatalf("ожидался скан через nwg5 ключом InnerAccount (%s), получили ifname=%q priv=%q", privInner, r.calls[0].Ifname, r.calls[0].PrivateKey)
+	}
+	if len(tun.swaps) != 1 {
+		t.Fatalf("ожидалась подмена endpoint после скана со свободным слотом, swaps=%v", tun.swaps)
 	}
 }
 
@@ -2804,5 +2929,1428 @@ func TestWatchedTunnels_RespectsModeAndEnabled(t *testing.T) {
 	got2 := s.WatchedTunnels()
 	if len(got2) != 2 || got2["system:Wireguard0"].State != WatchDegraded || got2["system:Wireguard0"].Message != "timeout" {
 		t.Fatalf("multi mode WatchedTunnels = %+v, want both active profiles", got2)
+	}
+}
+
+func TestRegisterWithOptions_RelayProxyBypassAndAltHost(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("custom relay and invalid relay rejection", func(t *testing.T) {
+		relayHits := 0
+		relayClient := &http.Client{Transport: guardRoundTripper(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Host != "warp-relay.example.com" || r.URL.Path != "/v0a4005/reg" {
+				t.Errorf("unexpected relay URL: %s", r.URL.String())
+			}
+			relayHits++
+			rec := httptest.NewRecorder()
+			rec.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(rec, `{"id":"rel-1","token":"tok-rel","warp_enabled":true,"account":{"account_type":"free"},"config":{"client_id":"AQID","peers":[{"public_key":%q}],"interface":{"addresses":{"v4":"172.16.0.9"}}}}`, WarpPeerPublicKey)
+			return rec.Result(), nil
+		})}
+
+		st, err := NewStore(t.TempDir(), plainCipher{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := New(Deps{
+			Store: st,
+			HTTP:  func(string) (*http.Client, error) { return relayClient, nil },
+		})
+		t.Cleanup(s.Stop)
+
+		for _, bad := range []string{
+			"http://relay.example.com",
+			"http://127.0.0.1:8080",
+			"http://localhost:8080",
+			"https://localhost",
+			"https://127.0.0.1",
+			"https://[::1]",
+			"https://192.168.1.1",
+			"https://10.0.0.1",
+			"https://172.16.0.1",
+			"https://100.64.0.1",
+		} {
+			if _, err := s.RegisterWithOptions(ctx, RegisterOptions{RelayURL: bad}); !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("expected ErrInvalidInput for relay %q, got %v", bad, err)
+			}
+		}
+		acct, err := s.RegisterWithOptions(ctx, RegisterOptions{RelayURL: "https://warp-relay.example.com"})
+		if err != nil {
+			t.Fatalf("RegisterWithOptions via relay failed: %v", err)
+		}
+		if relayHits != 1 || acct.ID != "rel-1" || !acct.HasToken || acct.Imported {
+			t.Fatalf("unexpected relay account: hits=%d acct=%+v", relayHits, acct)
+		}
+	})
+
+	t.Run("explicit proxyUrl skips direct WAN and fallbacks", func(t *testing.T) {
+		api := newFakeWarpAPI(t)
+		st, err := NewStore(t.TempDir(), plainCipher{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var gotProxyURL string
+		wanCalled := false
+		fbCalled := false
+		s := New(Deps{
+			Store: st,
+			HTTP: func(string) (*http.Client, error) {
+				wanCalled = true
+				return nil, errors.New("should not dial WAN")
+			},
+			HTTPFallbacks: func(context.Context) []FallbackClient {
+				fbCalled = true
+				return nil
+			},
+			HTTPProxyClient: func(u string) (*http.Client, error) {
+				gotProxyURL = u
+				return api.srv.Client(), nil
+			},
+		})
+		t.Cleanup(s.Stop)
+
+		acct, err := s.RegisterWithOptions(ctx, RegisterOptions{ProxyURL: "socks5://127.0.0.1:1080"})
+		if err != nil {
+			t.Fatalf("RegisterWithOptions via proxy failed: %v", err)
+		}
+		if gotProxyURL != "socks5://127.0.0.1:1080" || wanCalled || fbCalled || acct.ID != "dev-1" {
+			t.Fatalf("unexpected proxy behavior: url=%q wan=%v fb=%v acct=%+v", gotProxyURL, wanCalled, fbCalled, acct)
+		}
+	})
+
+	t.Run("direct TLS bypass recovers before fallbacks", func(t *testing.T) {
+		api := newFakeWarpAPI(t)
+		st, err := NewStore(t.TempDir(), plainCipher{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		fbCalled := false
+		s := New(Deps{
+			Store: st,
+			HTTP: func(string) (*http.Client, error) {
+				return &http.Client{Transport: failRoundTripper{err: errors.New("tspu reset")}}, nil
+			},
+			HTTPDirectBypass: func(string) (*http.Client, error) {
+				return api.srv.Client(), nil
+			},
+			HTTPFallbacks: func(context.Context) []FallbackClient {
+				fbCalled = true
+				return nil
+			},
+		})
+		t.Cleanup(s.Stop)
+
+		acct, err := s.Register(ctx)
+		if err != nil {
+			t.Fatalf("Register with bypass failed: %v", err)
+		}
+		if fbCalled || acct.ID != "dev-1" {
+			t.Fatalf("expected bypass recovery without fallbacks, fb=%v acct=%+v", fbCalled, acct)
+		}
+	})
+
+	t.Run("fallback to alt host when primary fails", func(t *testing.T) {
+		primarySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}))
+		defer primarySrv.Close()
+
+		altSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{"id":"alt-1","token":"tok-alt","warp_enabled":true,"account":{"account_type":"free"},"config":{"client_id":"AQID","peers":[{"public_key":%q}],"interface":{"addresses":{"v4":"172.16.0.2"}}}}`, WarpPeerPublicKey)
+		}))
+		defer altSrv.Close()
+
+		origPrimary, origAlt := cfAPIBase, cfAPIBaseAlt
+		cfAPIBase, cfAPIBaseAlt = primarySrv.URL, altSrv.URL
+		t.Cleanup(func() {
+			cfAPIBase, cfAPIBaseAlt = origPrimary, origAlt
+		})
+
+		st, err := NewStore(t.TempDir(), plainCipher{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := New(Deps{
+			Store: st,
+			HTTP:  func(string) (*http.Client, error) { return altSrv.Client(), nil },
+		})
+		t.Cleanup(s.Stop)
+
+		acct, err := s.Register(ctx)
+		if err != nil {
+			t.Fatalf("expected alt host recovery, got %v", err)
+		}
+		if acct.ID != "alt-1" {
+			t.Fatalf("expected alt-1 account, got %+v", acct)
+		}
+	})
+}
+
+func TestImportAccount_AndTokenlessGuards(t *testing.T) {
+	ctx := context.Background()
+	priv, _, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := NewStore(t.TempDir(), plainCipher{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	netCalled := false
+	s := New(Deps{
+		Store: st,
+		HTTP: func(string) (*http.Client, error) {
+			netCalled = true
+			return nil, errors.New("unexpected network call")
+		},
+	})
+	t.Cleanup(s.Stop)
+
+	conf := fmt.Sprintf("[Interface]\nPrivateKey = %s\nAddress = 172.16.0.5/32\n[Peer]\nPublicKey = %s\n", priv, WarpPeerPublicKey)
+	acct, err := s.ImportAccount(ctx, conf)
+	if err != nil {
+		t.Fatalf("ImportAccount failed: %v", err)
+	}
+	if !acct.Imported || acct.HasToken || acct.Token != "" || !strings.HasPrefix(acct.ID, "imported-") {
+		t.Fatalf("unexpected imported account flags: %+v", acct)
+	}
+
+	if _, err := s.SetLicense(ctx, "lic-key"); !errors.Is(err, ErrInvalidInput) || netCalled {
+		t.Fatalf("expected SetLicense rejection without network call, err=%v netCalled=%v", err, netCalled)
+	}
+	if err := s.DeleteAccountLocal(ctx); err != nil || netCalled {
+		t.Fatalf("expected local-only delete for tokenless account, err=%v netCalled=%v", err, netCalled)
+	}
+	if s.d.Store.Account() != nil {
+		t.Fatal("expected account cleared after DeleteAccountLocal")
+	}
+
+	// С токеном SetLicense продолжает работать через Cloudflare API.
+	api := newFakeWarpAPI(t)
+	s2 := New(Deps{
+		Store: st,
+		HTTP:  func(string) (*http.Client, error) { return api.srv.Client(), nil },
+	})
+	t.Cleanup(s2.Stop)
+	jsonWithToken := fmt.Sprintf(`{"id":"tok-acc","token":"secret-tok","private_key":%q,"peer_public_key":%q,"address_v4":"172.16.0.2"}`, priv, WarpPeerPublicKey)
+	acct2, err := s2.ImportAccount(ctx, jsonWithToken)
+	if err != nil || !acct2.HasToken || !acct2.Imported {
+		t.Fatalf("expected tokened import, err=%v acct=%+v", err, acct2)
+	}
+	if _, err := s2.SetLicense(ctx, "valid-lic"); err != nil {
+		t.Fatalf("SetLicense on tokened import failed: %v", err)
+	}
+}
+
+func TestApply_OfflineReuseAccountAndSecondTunnelGuard(t *testing.T) {
+	ctx := context.Background()
+	priv, pub, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := NewStore(t.TempDir(), plainCipher{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tun := &fakeTunnels{refs: map[string]*TunnelRef{}}
+	s := New(Deps{
+		Store:   st,
+		Tunnels: tun,
+		HTTP: func(string) (*http.Client, error) {
+			return &http.Client{Transport: failRoundTripper{err: errors.New("TLS handshake timeout")}}, nil
+		},
+	})
+	t.Cleanup(s.Stop)
+
+	conf := fmt.Sprintf("[Interface]\nPrivateKey = %s\nAddress = 172.16.0.2/32\n[Peer]\nPublicKey = %s\n", priv, WarpPeerPublicKey)
+	if _, err := s.ImportAccount(ctx, conf); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. В офлайне без ReuseAccount туннель НЕ переходит молча на ключ основного аккаунта.
+	if _, err := s.Apply(ctx, ApplyRequest{
+		Action: "create", Mode: TargetNative, Endpoint: "162.159.193.9:2408",
+	}); err == nil {
+		t.Fatal("expected error in offline Apply without ReuseAccount=true")
+	}
+
+	// 1b. Явный ReuseAccount=true создаёт первый туннель на ключе основного аккаунта.
+	res1, err := s.Apply(ctx, ApplyRequest{
+		Action: "create", Mode: TargetNative, Endpoint: "162.159.193.9:2408", ReuseAccount: true,
+	})
+	if err != nil {
+		t.Fatalf("explicit ReuseAccount Apply failed: %v", err)
+	}
+	if !res1.AccountReused || res1.Tunnel == nil {
+		t.Fatalf("expected AccountReused=true, got %+v", res1)
+	}
+	tun.mu.Lock()
+	tun.refs[key(TargetNative, res1.Tunnel.ID)].LocalPublicKey = pub
+	tun.mu.Unlock()
+
+	// 2. Второй туннель на том же ключе отвергается как при явном ReuseAccount, так и в офлайне.
+	if _, err := s.Apply(ctx, ApplyRequest{
+		Action: "create", Mode: TargetNative, Endpoint: "162.159.193.10:2408",
+	}); err == nil {
+		t.Fatal("expected error creating second tunnel on already-used key")
+	}
+	if _, err := s.Apply(ctx, ApplyRequest{
+		Action: "create", Mode: TargetNative, Endpoint: "162.159.193.10:2408", ReuseAccount: true,
+	}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput for explicit ReuseAccount on busy key, got %v", err)
+	}
+
+	// 3. После удаления первого туннеля сбой Tunnels.Create при повторном использовании
+	// основного аккаунта НЕ вызывает dropRegistration у Cloudflare.
+	tun.mu.Lock()
+	delete(tun.refs, key(TargetNative, res1.Tunnel.ID))
+	tun.mu.Unlock()
+	if _, err := s.Apply(ctx, ApplyRequest{
+		Action: "create", Mode: TargetNative, Endpoint: "162.159.193.11:2408", ReuseAccount: true,
+	}); err != nil {
+		t.Fatalf("ReuseAccount after first tunnel removed failed: %v", err)
+	}
+	tun.mu.Lock()
+	for id, ref := range tun.refs {
+		delete(tun.refs, id)
+		_ = ref
+	}
+	tun.createErr = errors.New("ndms fail")
+	tun.mu.Unlock()
+
+	api := newFakeWarpAPI(t)
+	sOnline := New(Deps{
+		Store:   st,
+		Tunnels: tun,
+		HTTP:    func(string) (*http.Client, error) { return api.srv.Client(), nil },
+	})
+	t.Cleanup(sOnline.Stop)
+	if err := st.SetAccount(&Account{ID: "keep-primary", Token: "tok-keep", PrivateKey: priv, PublicKey: pub, PeerPublicKey: WarpPeerPublicKey, AddressV4: "172.16.0.2", HasToken: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sOnline.Apply(ctx, ApplyRequest{
+		Action: "create", Mode: TargetNative, Endpoint: "162.159.193.12:2408", ReuseAccount: true,
+	}); err == nil {
+		t.Fatal("expected createErr failure")
+	}
+	time.Sleep(30 * time.Millisecond)
+	api.mu.Lock()
+	deleted := append([]string(nil), api.deleted...)
+	api.mu.Unlock()
+	if len(deleted) != 0 {
+		t.Fatalf("reused primary account must not be dropped on Create failure, deleted=%v", deleted)
+	}
+}
+
+func TestDoAccountOpWithBase_ClosesAllFallbacks(t *testing.T) {
+	ctx := context.Background()
+	st, err := NewStore(t.TempDir(), plainCipher{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	makeService := func(closed *[3]bool) *Service {
+		s := New(Deps{
+			Store: st,
+			HTTP: func(string) (*http.Client, error) {
+				return &http.Client{Transport: failRoundTripper{err: errors.New("wan blocked")}}, nil
+			},
+			HTTPFallbacks: func(context.Context) []FallbackClient {
+				return []FallbackClient{
+					{Client: &http.Client{Transport: failRoundTripper{err: errors.New("fb0")}}, Close: func() { closed[0] = true }},
+					{Client: &http.Client{Transport: failRoundTripper{err: errors.New("fb1")}}, Close: func() { closed[1] = true }},
+					{Client: &http.Client{Transport: failRoundTripper{err: errors.New("fb2")}}, Close: func() { closed[2] = true }},
+				}
+			},
+		})
+		t.Cleanup(s.Stop)
+		return s
+	}
+
+	// 1. Early success on fb0 still closes fb1 and fb2.
+	var closedEarly [3]bool
+	sEarly := makeService(&closedEarly)
+	if err := sEarly.doAccountOpWithBase(ctx, RegisterOptions{}, func(hc *http.Client, _ string) error {
+		if closedEarly[0] {
+			return errors.New("closed before callback")
+		}
+		// Succeed when using fb0 (non-WAN client).
+		if hc.Transport != nil {
+			if _, ok := hc.Transport.(failRoundTripper); ok {
+				if err := hc.Transport.(failRoundTripper).err; err.Error() == "fb0" {
+					return nil
+				}
+			}
+		}
+		return errors.New("wan blocked")
+	}); err != nil {
+		t.Fatalf("early fallback success failed: %v", err)
+	}
+	if closedEarly != [3]bool{true, true, true} {
+		t.Fatalf("expected all fallbacks closed on early success, got %v", closedEarly)
+	}
+
+	// 2. All fail closes all fallbacks.
+	var closedAllFail [3]bool
+	sFail := makeService(&closedAllFail)
+	if err := sFail.doAccountOpWithBase(ctx, RegisterOptions{}, func(_ *http.Client, _ string) error {
+		return errors.New("network timeout")
+	}); err == nil {
+		t.Fatal("expected failure when all fallbacks fail")
+	}
+	if closedAllFail != [3]bool{true, true, true} {
+		t.Fatalf("expected all fallbacks closed on failure, got %v", closedAllFail)
+	}
+
+	// 3. Cancelled context still closes pre-created fallbacks.
+	var closedCancel [3]bool
+	sCancel := makeService(&closedCancel)
+	cctx, cancel := context.WithCancel(ctx)
+	cancel()
+	_ = sCancel.doAccountOpWithBase(cctx, RegisterOptions{}, func(_ *http.Client, _ string) error {
+		return errors.New("cancelled")
+	})
+	if closedCancel != [3]bool{true, true, true} {
+		t.Fatalf("expected all fallbacks closed on canceled context, got %v", closedCancel)
+	}
+}
+
+func TestRegisterWithOptions_CustomRelayDoesNotSendExistingToken(t *testing.T) {
+	ctx := context.Background()
+	priv, pub, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := NewStore(t.TempDir(), plainCipher{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAccount(&Account{
+		ID:            "existing-plus-id",
+		Token:         "sensitive-existing-token",
+		PrivateKey:    priv,
+		PublicKey:     pub,
+		PeerPublicKey: WarpPeerPublicKey,
+		AddressV4:     "172.16.0.2",
+		WarpPlus:      true,
+		HasToken:      true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var gotMethod, gotAuth, gotPath string
+	relayClient := &http.Client{Transport: guardRoundTripper(func(r *http.Request) (*http.Response, error) {
+		gotMethod = r.Method
+		gotAuth = r.Header.Get("Authorization")
+		gotPath = r.URL.Path
+		rec := httptest.NewRecorder()
+		rec.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(rec, `{"id":"rel-new","token":"tok-rel-new","warp_enabled":true,"account":{"account_type":"free"},"config":{"client_id":"AQID","peers":[{"public_key":%q}],"interface":{"addresses":{"v4":"172.16.0.8"}}}}`, WarpPeerPublicKey)
+		return rec.Result(), nil
+	})}
+
+	s := New(Deps{
+		Store: st,
+		HTTP:  func(string) (*http.Client, error) { return relayClient, nil },
+	})
+	t.Cleanup(s.Stop)
+
+	acct, err := s.RegisterWithOptions(ctx, RegisterOptions{RelayURL: "https://warp-relay.example.com"})
+	if err != nil {
+		t.Fatalf("RegisterWithOptions via relay failed: %v", err)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/v0a4005/reg" || gotAuth != "" {
+		t.Fatalf("custom relay must register cleanly without sending existing token: method=%s path=%s auth=%q", gotMethod, gotPath, gotAuth)
+	}
+	if acct.ID != "rel-new" {
+		t.Fatalf("expected new relay account rel-new, got %+v", acct)
+	}
+}
+
+func TestApiDo_RejectsRedirectsAndDisallowedRelayIPs(t *testing.T) {
+	ctx := context.Background()
+	st, err := NewStore(t.TempDir(), plainCipher{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	targetHits := 0
+	redirectTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		targetHits++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer redirectTarget.Close()
+
+	redirSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, redirectTarget.URL, http.StatusFound)
+	}))
+	defer redirSrv.Close()
+
+	err = apiDo(ctx, redirSrv.Client(), http.MethodPost, redirSrv.URL+"/reg", "tok-1", map[string]string{"key": "abc"}, nil)
+	var se *apiStatusError
+	if !errors.As(err, &se) || se.Code != http.StatusFound || targetHits != 0 {
+		t.Fatalf("expected non-followed 302 redirect error with 0 target hits, got err=%v targetHits=%d", err, targetHits)
+	}
+	if shouldRetryFallback(err) {
+		t.Fatal("302 redirect status should not retry fallbacks")
+	}
+
+	for _, badRelay := range []string{
+		"http://relay.example.com",
+		"http://127.0.0.1:8080",
+		"http://localhost:8080",
+		"https://localhost",
+		"https://sub.localhost",
+		"https://127.0.0.1",
+		"https://[::1]",
+		"https://192.168.1.1",
+		"https://10.0.0.1",
+		"https://172.16.0.1",
+		"https://100.64.0.1",
+		"https://169.254.169.254",
+		"https://[fe80::1]:8443",
+		"https://0.0.0.0",
+		"https://[::ffff:169.254.169.254]",
+	} {
+		if _, nErr := NormalizeRelayBaseURL(badRelay); !errors.Is(nErr, ErrInvalidInput) {
+			t.Fatalf("NormalizeRelayBaseURL(%q) = %v, want ErrInvalidInput", badRelay, nErr)
+		}
+	}
+
+	fbCalled := false
+	s := New(Deps{
+		Store: st,
+		HTTPFallbacks: func(context.Context) []FallbackClient {
+			fbCalled = true
+			return nil
+		},
+		HTTPProxyClient: func(string) (*http.Client, error) {
+			return &http.Client{
+				Transport: failRoundTripper{err: errors.New(`dial socks5://alice:supersecret@127.0.0.1:1: connection refused`)},
+			}, nil
+		},
+	})
+	t.Cleanup(s.Stop)
+
+	_, regErr := s.RegisterWithOptions(ctx, RegisterOptions{ProxyURL: "socks5://alice:supersecret@127.0.0.1:1"})
+	if regErr == nil || fbCalled {
+		t.Fatalf("expected proxy error without fallback, err=%v fbCalled=%v", regErr, fbCalled)
+	}
+	if strings.Contains(regErr.Error(), "supersecret") {
+		t.Fatalf("proxy password leaked in RegisterWithOptions error: %v", regErr)
+	}
+}
+
+func TestAltAPIBaseFor_IndependentFromPrimaryOverride(t *testing.T) {
+	origBase, origAlt := cfAPIBase, cfAPIBaseAlt
+	t.Cleanup(func() {
+		cfAPIBase, cfAPIBaseAlt = origBase, origAlt
+	})
+
+	cfAPIBase = "https://primary.test/v0a4005"
+	cfAPIBaseAlt = "https://alt.test/v0a4005"
+	if got := altAPIBaseFor(cfAPIBase, RegisterOptions{}); got != "https://alt.test/v0a4005" {
+		t.Fatalf("expected alt base returned regardless of cfAPIBase override, got %q", got)
+	}
+	if got := altAPIBaseFor("https://alt.test/v0a4005", RegisterOptions{}); got != "" {
+		t.Fatalf("expected empty alt base when primary == alt, got %q", got)
+	}
+	if got := altAPIBaseFor(cfAPIBase, RegisterOptions{RelayURL: "https://relay.example.com"}); got != "" {
+		t.Fatalf("expected empty alt base for custom RelayURL, got %q", got)
+	}
+	cfAPIBaseAlt = ""
+	if got := altAPIBaseFor(cfAPIBase, RegisterOptions{}); got != "" {
+		t.Fatalf("expected empty alt base when cleared, got %q", got)
+	}
+}
+
+func TestAccountKeyInUse_BlocksScanReissueDeleteImportAndWatchdog(t *testing.T) {
+	ctx := context.Background()
+	s, runner, tun, prober := newTestService(t)
+	api := apiOf(t)
+
+	priv1, pub1, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.d.Store.SetAccount(&Account{
+		ID: "prim-1", Token: "tok-1", PrivateKey: priv1, PublicKey: pub1,
+		PeerPublicKey: WarpPeerPublicKey, AddressV4: "172.16.0.2", HasToken: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create tunnel explicitly reusing primary key.
+	res, err := s.Apply(ctx, ApplyRequest{
+		Action: "create", Mode: TargetNative, Name: "WARP Live", Endpoint: "162.159.193.1:2408", ReuseAccount: true,
+	})
+	if err != nil || !res.AccountReused || res.Tunnel == nil {
+		t.Fatalf("Apply ReuseAccount failed: res=%+v err=%v", res, err)
+	}
+	tun.mu.Lock()
+	tun.refs[key(TargetNative, res.Tunnel.ID)].LocalPublicKey = pub1
+	tun.refs[key(TargetNative, res.Tunnel.ID)].Running = true
+	tun.mu.Unlock()
+
+	tun.ResetListCount()
+	tun.ResetListKeysCount()
+	if st := s.State(); st.AccountKeyInUseBy != "WARP Live" {
+		t.Fatalf("expected State().AccountKeyInUseBy == 'WARP Live', got %q", st.AccountKeyInUseBy)
+	}
+	if tun.ListKeysCount() != 1 || tun.ListCount() != 0 {
+		t.Fatalf("expected State() to use lightweight ListKeys once without full List, got ListKeys=%d List=%d", tun.ListKeysCount(), tun.ListCount())
+	}
+	tun.ResetListCount()
+	tun.ResetListKeysCount()
+	if _, err := s.RegisterWithOptions(ctx, RegisterOptions{}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected Register blocked with ErrInvalidInput while key in use, got %v", err)
+	}
+	if tun.ListKeysCount() != 1 || tun.ListCount() != 0 {
+		t.Fatalf("expected RegisterWithOptions to inspect keys once via ListKeys without full List, got ListKeys=%d List=%d", tun.ListKeysCount(), tun.ListCount())
+	}
+	tun.ResetListCount()
+	tun.ResetListKeysCount()
+	if err := s.DeleteAccountLocal(ctx); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected DeleteAccountLocal blocked with ErrInvalidInput while key in use, got %v", err)
+	}
+	if tun.ListKeysCount() != 1 || tun.ListCount() != 0 {
+		t.Fatalf("expected DeleteAccountLocal to inspect keys once via ListKeys without full List, got ListKeys=%d List=%d", tun.ListKeysCount(), tun.ListCount())
+	}
+	if s.d.Store.Account() == nil || len(api.deleted) != 0 {
+		t.Fatalf("account or Cloudflare registration must remain intact when delete is blocked: acct=%v deleted=%v", s.d.Store.Account(), api.deleted)
+	}
+
+	// Основной ключ у двух туннелей, а завести отдельный слот нечем: скан и find-junk
+	// отказывают синхронно, не запуская runner.
+	origHTTP := s.d.HTTP
+	s.d.HTTP = nil
+	tun.mu.Lock()
+	tun.refs[key(TargetNative, "awg-second")] = &TunnelRef{
+		Mode: TargetNative, ID: "awg-second", Name: "WARP Second", LocalPublicKey: pub1, IsWarp: true, Running: true,
+	}
+	tun.mu.Unlock()
+	if err := s.StartScan(ScanRequest{Filters: Filters{Protocol: ProtocolWG}}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected offline WAN StartScan blocked with ErrInvalidInput while key shared, got %v", err)
+	}
+	if err := s.StartFindJunk(FindJunkRequest{I1Profile: "quic"}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected offline WAN StartFindJunk blocked with ErrInvalidInput while key shared, got %v", err)
+	}
+	tun.mu.Lock()
+	delete(tun.refs, key(TargetNative, "awg-second"))
+	tun.mu.Unlock()
+	s.d.HTTP = origHTTP
+
+	// Importing the exact same live tunnel key is rejected (1 ListKeys read total, 0 full List).
+	sameConf := fmt.Sprintf("[Interface]\nPrivateKey = %s\nAddress = 172.16.0.2/32\n[Peer]\nPublicKey = %s\n", priv1, WarpPeerPublicKey)
+	tun.ResetListCount()
+	tun.ResetListKeysCount()
+	if _, err := s.ImportAccount(ctx, sameConf); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ImportAccount of live tunnel's own key rejected with ErrInvalidInput, got %v", err)
+	}
+	if tun.ListKeysCount() != 1 || tun.ListCount() != 0 {
+		t.Fatalf("expected ImportAccount to inspect keys once via ListKeys without full List, got ListKeys=%d List=%d", tun.ListKeysCount(), tun.ListCount())
+	}
+
+	// Собственный ключ целевого туннеля автоподмене не мешает (1 ListKeys read).
+	prober.queue = []TraceResult{{Colo: "DME", Loc: "RU", Warp: "on"}, {Colo: "DME", Loc: "RU", Warp: "on"}}
+	p := Profile{
+		ID: "p-live", Name: "WARP Live", Enabled: true, TargetMode: TargetNative, TargetID: res.Tunnel.ID,
+		Filters: DefaultFilters(), FailThreshold: 1, CooldownSec: 10,
+	}
+	if _, err := s.SaveConfig(ctx, Config{ProfileMode: ProfileModeSingle, ActiveProfileID: p.ID, Profiles: []Profile{p}, AWG: s.d.Store.Config().AWG}); err != nil {
+		t.Fatal(err)
+	}
+	tun.ResetListCount()
+	tun.ResetListKeysCount()
+	s.checkOnce(ctx, p, &watcherState{})
+	if got := tun.ListKeysCount(); got != 1 {
+		t.Fatalf("expected watchdog swap to inspect key inventory once via ListKeys, got %d", got)
+	}
+	runner.mu.Lock()
+	scanCount := len(runner.calls)
+	runner.mu.Unlock()
+	if scanCount != 1 || runner.calls[0].PrivateKey != priv1 {
+		t.Fatalf("watchdog must scan for the target with its own key, runner calls=%d", scanCount)
+	}
+
+	// Когда HTTP доступен и второй слот свободен (ещё не создан), StartScan лениво
+	// регистрирует InnerAccount и сканирует его ключом, не трогая ключ живого туннеля.
+	if err := s.StartScan(ScanRequest{Filters: Filters{Protocol: ProtocolWG}}); err != nil {
+		t.Fatalf("expected WAN StartScan with HTTP available to lazily register secondary slot, got %v", err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if !s.ScanSnapshot().Running && s.ScanSnapshot().Done > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if inner := s.d.Store.InnerAccount(); inner == nil || inner.PublicKey == pub1 {
+		t.Fatalf("expected distinct InnerAccount created for scanner, got %+v", inner)
+	}
+	runner.mu.Lock()
+	if len(runner.calls) != 2 || runner.calls[1].PrivateKey == priv1 {
+		t.Fatalf("scanner must use lazy InnerAccount key rather than tunnel's priv1: %+v", runner.calls)
+	}
+	runner.mu.Unlock()
+
+	// Если второй слот уже есть и тоже занят, а основной ключ у двух туннелей, скан не
+	// перезаписывает InnerAccount и отказывает синхронно.
+	tun.mu.Lock()
+	tun.refs[key(TargetNative, "awg-inner-busy")] = &TunnelRef{
+		Mode: TargetNative, ID: "awg-inner-busy", Name: "WARP Inner Busy",
+		LocalPublicKey: s.d.Store.InnerAccount().PublicKey, IsWarp: true, Running: true,
+	}
+	tun.refs[key(TargetNative, "awg-second")] = &TunnelRef{
+		Mode: TargetNative, ID: "awg-second", Name: "WARP Second", LocalPublicKey: pub1, IsWarp: true, Running: true,
+	}
+	tun.mu.Unlock()
+	if err := s.StartScan(ScanRequest{Filters: Filters{Protocol: ProtocolWG}}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected StartScan blocked when both primary and inner slots are in use, got %v", err)
+	}
+	tun.mu.Lock()
+	delete(tun.refs, key(TargetNative, "awg-inner-busy"))
+	delete(tun.refs, key(TargetNative, "awg-second"))
+	tun.mu.Unlock()
+
+	// Importing a DIFFERENT spare key succeeds, keeps live tunnel's old registration intact at Cloudflare, and unblocks StartScan!
+	priv2, _, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherConf := fmt.Sprintf("[Interface]\nPrivateKey = %s\nAddress = 172.16.0.9/32\n[Peer]\nPublicKey = %s\n", priv2, WarpPeerPublicKey)
+	imp, err := s.ImportAccount(ctx, otherConf)
+	if err != nil || imp == nil || imp.PublicKey == pub1 {
+		t.Fatalf("importing distinct spare account failed: imp=%+v err=%v", imp, err)
+	}
+	time.Sleep(30 * time.Millisecond)
+	if _, deleted := api.counts(); len(deleted) != 0 {
+		t.Fatalf("old primary registration still in use by live tunnel must NOT be deleted on import: %v", deleted)
+	}
+	if st := s.State(); st.AccountKeyInUseBy != "" {
+		t.Fatalf("expected AccountKeyInUseBy cleared after importing distinct key, got %q", st.AccountKeyInUseBy)
+	}
+	if err := s.StartScan(ScanRequest{Filters: Filters{Protocol: ProtocolWG}}); err != nil {
+		t.Fatalf("expected StartScan unblocked with spare account, got %v", err)
+	}
+	s.StopScan()
+}
+
+func TestImportAccount_DropsUnusedReplacedRegistration(t *testing.T) {
+	ctx := context.Background()
+	s, _, _, _ := newTestService(t)
+	api := apiOf(t)
+
+	priv1, pub1, _ := GenerateKeyPair()
+	priv2, _, _ := GenerateKeyPair()
+	if err := s.d.Store.SetAccount(&Account{
+		ID: "old-unused-id", Token: "tok-unused", PrivateKey: priv1, PublicKey: pub1,
+		PeerPublicKey: WarpPeerPublicKey, AddressV4: "172.16.0.2", HasToken: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	otherConf := fmt.Sprintf("[Interface]\nPrivateKey = %s\nAddress = 172.16.0.5/32\n[Peer]\nPublicKey = %s\n", priv2, WarpPeerPublicKey)
+	if _, err := s.ImportAccount(ctx, otherConf); err != nil {
+		t.Fatalf("ImportAccount failed: %v", err)
+	}
+	deleted := api.waitDeleted(t, 1)
+	if len(deleted) != 1 || deleted[0] != "old-unused-id" {
+		t.Fatalf("expected old unused account dropped via Cloudflare DELETE, got %v", deleted)
+	}
+}
+
+func TestWatchdog_SwapSkipsWhenPrimaryKeyUsedByUnrecordedSiblingTunnel(t *testing.T) {
+	ctx := context.Background()
+	s, runner, tun, prober := newTestService(t)
+
+	tun.mu.Lock()
+	tun.refs[key(TargetNative, "awg10")].LocalPublicKey = "pub-target"
+	// Соседний туннель настроен вне WarpScout (записи в Store.TunnelAccounts нет),
+	// но его живой LocalPublicKey совпадает с основным аккаунтом ("pub").
+	tun.refs[key(TargetNative, "awg11")] = &TunnelRef{
+		Mode: TargetNative, ID: "awg11", Name: "WARP External",
+		Iface: "nwg5", Endpoint: "162.159.193.7:2408",
+		IsWarp: true, Running: true, LocalPublicKey: "pub",
+	}
+	tun.mu.Unlock()
+
+	runner.hits = []Hit{{Endpoint: "188.114.96.9:2408", PingMs: 40, Colo: "HEL", Loc: "FI"}}
+	prober.queue = []TraceResult{{Colo: "DME", Loc: "RU", Warp: "on"}, {Colo: "DME", Loc: "RU", Warp: "on"}}
+	p := testProfile()
+	cfg := s.d.Store.Config()
+	cfg.Profiles = []Profile{p}
+	cfg.ActiveProfileID = p.ID
+	cfg.ScanInterface = ""
+	if err := s.d.Store.SetConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	s.checkOnce(ctx, p, &watcherState{})
+	if len(runner.calls) != 0 || len(tun.swaps) != 0 {
+		t.Fatalf("watchdog must not handshake with sibling tunnel's LocalPublicKey on WAN: calls=%d swaps=%d", len(runner.calls), len(tun.swaps))
+	}
+	if ws := s.State().Watch; len(ws) != 1 || !strings.Contains(ws[0].Message, "WARP External") {
+		t.Fatalf("expected watch error naming sibling tunnel WARP External, got %+v", ws)
+	}
+
+	// Когда появляется свободный второй слот, автоподмена переходит на него и срабатывает штатно.
+	privInner, pubInner, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.d.Store.SetInnerAccount(&Account{
+		ID: "in-spare", Token: "tok-in", PrivateKey: privInner, PublicKey: pubInner,
+		PeerPublicKey: WarpPeerPublicKey, AddressV4: "172.16.0.6",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	prober.mu.Lock()
+	prober.queue = []TraceResult{
+		{Colo: "DME", Loc: "RU", Warp: "on"},
+		{Colo: "DME", Loc: "RU", Warp: "on"},
+		{Colo: "HEL", Loc: "FI", Warp: "on", LatencyMs: 40},
+	}
+	prober.mu.Unlock()
+
+	s.checkOnce(ctx, p, &watcherState{})
+	if len(runner.calls) != 1 || len(tun.swaps) != 1 {
+		t.Fatalf("expected scan & swap using spare InnerAccount: calls=%d swaps=%d", len(runner.calls), len(tun.swaps))
+	}
+	if runner.calls[0].PrivateKey != privInner || runner.calls[0].Ifname != "eth3" {
+		t.Fatalf("expected WAN scan using InnerAccount private key, got ifname=%q priv=%q", runner.calls[0].Ifname, runner.calls[0].PrivateKey)
+	}
+}
+
+func TestAccountKeyGuard_FailsClosedOnTunnelListError(t *testing.T) {
+	ctx := context.Background()
+	s, runner, tun, prober := newTestService(t)
+	api := apiOf(t)
+
+	priv1, pub1, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.d.Store.SetAccount(&Account{
+		ID: "prim-1", Token: "tok-1", PrivateKey: priv1, PublicKey: pub1,
+		PeerPublicKey: WarpPeerPublicKey, AddressV4: "172.16.0.2", HasToken: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	listErr := errors.New("rci unavailable")
+	tun.mu.Lock()
+	tun.listErr = listErr
+	tun.mu.Unlock()
+
+	if st := s.State(); !strings.Contains(st.AccountKeyCheckError, "rci unavailable") || st.AccountKeyInUseBy != "" {
+		t.Fatalf("expected State().AccountKeyCheckError containing 'rci unavailable', got %+v", st)
+	}
+	if _, err := s.RegisterWithOptions(ctx, RegisterOptions{}); err == nil || !strings.Contains(err.Error(), "rci unavailable") {
+		t.Fatalf("RegisterWithOptions must fail closed on Tunnels.List error, got %v", err)
+	}
+	if err := s.DeleteAccountLocal(ctx); err == nil || !strings.Contains(err.Error(), "rci unavailable") {
+		t.Fatalf("DeleteAccountLocal must fail closed on Tunnels.List error, got %v", err)
+	}
+	if s.d.Store.Account() == nil || len(api.deleted) != 0 {
+		t.Fatalf("account or Cloudflare state mutated despite inventory error: acct=%v deleted=%v", s.d.Store.Account(), api.deleted)
+	}
+
+	priv2, _, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherConf := fmt.Sprintf("[Interface]\nPrivateKey = %s\nAddress = 172.16.0.9/32\n[Peer]\nPublicKey = %s\n", priv2, WarpPeerPublicKey)
+	if _, err := s.ImportAccount(ctx, otherConf); err == nil || !strings.Contains(err.Error(), "rci unavailable") {
+		t.Fatalf("ImportAccount must fail closed on Tunnels.List error, got %v", err)
+	}
+	if _, err := s.Apply(ctx, ApplyRequest{
+		Action: "create", Mode: TargetNative, Name: "WARP Live", Endpoint: "162.159.193.1:2408", ReuseAccount: true,
+	}); err == nil || !strings.Contains(err.Error(), "rci unavailable") {
+		t.Fatalf("Apply(ReuseAccount) must fail closed on Tunnels.List error, got %v", err)
+	}
+	if err := s.StartScan(ScanRequest{Filters: Filters{Protocol: ProtocolWG}}); err == nil || !strings.Contains(err.Error(), "rci unavailable") {
+		t.Fatalf("StartScan must fail closed on Tunnels.List error, got %v", err)
+	}
+	if err := s.StartFindJunk(FindJunkRequest{I1Profile: "quic"}); err == nil || !strings.Contains(err.Error(), "rci unavailable") {
+		t.Fatalf("StartFindJunk must fail closed on Tunnels.List error, got %v", err)
+	}
+	if _, err := s.ensureDistinctAccount(ctx, "nwg3", "other-pub"); err == nil || !strings.Contains(err.Error(), "rci unavailable") {
+		t.Fatalf("ensureDistinctAccount must fail closed on Tunnels.List error, got %v", err)
+	}
+
+	prober.queue = []TraceResult{{Colo: "DME", Loc: "RU", Warp: "on"}, {Colo: "DME", Loc: "RU", Warp: "on"}}
+	p := testProfile()
+	if _, err := s.SaveConfig(ctx, Config{ProfileMode: ProfileModeSingle, ActiveProfileID: p.ID, Profiles: []Profile{p}, AWG: s.d.Store.Config().AWG}); err != nil {
+		t.Fatal(err)
+	}
+	s.checkOnce(ctx, p, &watcherState{})
+	if len(runner.calls) != 0 {
+		t.Fatalf("watchdog must not scan when tunnel inventory failed, calls=%d", len(runner.calls))
+	}
+	if ws := s.State().Watch; len(ws) != 1 || !strings.Contains(ws[0].Message, "rci unavailable") {
+		t.Fatalf("expected watch error reporting Tunnels.List failure, got %+v", ws)
+	}
+
+	// Первичная регистрация при отсутствии аккаунта остаётся доступной даже при сбое Tunnels.List.
+	if err := s.d.Store.SetAccount(nil); err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := s.RegisterWithOptions(ctx, RegisterOptions{})
+	if err != nil || fresh == nil {
+		t.Fatalf("initial registration with nil account must succeed even when Tunnels.List errors: fresh=%+v err=%v", fresh, err)
+	}
+}
+
+func TestApply_ReuseAccount_SerializedWithReissueAndConcurrentApply(t *testing.T) {
+	ctx := context.Background()
+	priv, pub, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("concurrent_apply_reuse_allows_only_one", func(t *testing.T) {
+		s, _, tun, _ := newTestService(t)
+		if err := s.d.Store.SetAccount(&Account{
+			ID: "prim-race-1", Token: "tok-1", PrivateKey: priv, PublicKey: pub,
+			PeerPublicKey: WarpPeerPublicKey, AddressV4: "172.16.0.2", HasToken: true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		entered := make(chan struct{}, 2)
+		proceed := make(chan struct{})
+		tun.beforeCreate = func() {
+			entered <- struct{}{}
+			<-proceed
+		}
+		tun.onCreate = func(r *TunnelRef) { r.LocalPublicKey, r.Running = pub, true }
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		var resA, resB *ApplyResult
+		var errA, errB error
+		go func() {
+			defer wg.Done()
+			resA, errA = s.Apply(ctx, ApplyRequest{
+				Action: "create", Mode: TargetNative, Name: "WARP A", Endpoint: "162.159.193.1:2408", ReuseAccount: true,
+			})
+		}()
+		<-entered
+		go func() {
+			defer wg.Done()
+			resB, errB = s.Apply(ctx, ApplyRequest{
+				Action: "create", Mode: TargetNative, Name: "WARP B", Endpoint: "162.159.193.2:2408", ReuseAccount: true,
+			})
+		}()
+		// Первый Apply прошёл проверку ключа и ещё не создал туннель: второй обязан
+		// ждать замка, а не пройти ту же проверку.
+		select {
+		case <-entered:
+			t.Error("второй Apply дошёл до создания туннеля, пока первый не завершён")
+		case <-time.After(100 * time.Millisecond):
+		}
+		close(proceed)
+		wg.Wait()
+
+		if (errA == nil) == (errB == nil) {
+			t.Fatalf("expected exactly 1 Apply(ReuseAccount) to succeed and 1 to fail: errA=%v resA=%+v errB=%v resB=%+v", errA, resA, errB, resB)
+		}
+		failErr := errA
+		if failErr == nil {
+			failErr = errB
+		}
+		if !errors.Is(failErr, ErrInvalidInput) {
+			t.Fatalf("expected losing concurrent Apply(ReuseAccount) to fail with ErrInvalidInput, got %v", failErr)
+		}
+	})
+
+	t.Run("reissue_waits_for_apply_reuse_and_fails", func(t *testing.T) {
+		s, _, tun, _ := newTestService(t)
+		api := apiOf(t)
+		if err := s.d.Store.SetAccount(&Account{
+			ID: "prim-race-2", Token: "tok-2", PrivateKey: priv, PublicKey: pub,
+			PeerPublicKey: WarpPeerPublicKey, AddressV4: "172.16.0.2", HasToken: true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		entered := make(chan struct{})
+		proceed := make(chan struct{})
+		tun.beforeCreate = func() {
+			close(entered)
+			<-proceed
+		}
+		tun.onCreate = func(r *TunnelRef) { r.LocalPublicKey, r.Running = pub, true }
+
+		applyCh, regCh := make(chan error, 1), make(chan error, 1)
+		go func() {
+			_, err := s.Apply(ctx, ApplyRequest{
+				Action: "create", Mode: TargetNative, Name: "WARP Race", Endpoint: "162.159.193.1:2408", ReuseAccount: true,
+			})
+			applyCh <- err
+		}()
+		<-entered
+		go func() {
+			_, err := s.RegisterWithOptions(ctx, RegisterOptions{})
+			regCh <- err
+		}()
+		select {
+		case err := <-regCh:
+			t.Fatalf("перевыпуск не дождался создания туннеля на этом же ключе: %v", err)
+		case <-time.After(100 * time.Millisecond):
+		}
+		close(proceed)
+		applyErr, regErr := <-applyCh, <-regCh
+
+		if applyErr != nil {
+			t.Fatalf("expected Apply(ReuseAccount) to succeed, got %v", applyErr)
+		}
+		if !errors.Is(regErr, ErrInvalidInput) {
+			t.Fatalf("expected concurrent RegisterWithOptions to block/fail with ErrInvalidInput after Apply recorded tunnel, got %v", regErr)
+		}
+		if got := s.d.Store.Account(); got == nil || got.PublicKey != pub {
+			t.Fatalf("primary account key changed unexpectedly during serialized Apply+Reissue: %+v", got)
+		}
+		if reg, deleted := api.counts(); reg != 0 || len(deleted) != 0 {
+			t.Fatalf("Cloudflare API must not rotate or delete primary account while serialized Apply acquired it: reg=%d deleted=%v", reg, deleted)
+		}
+	})
+}
+
+// ── ключ одного туннеля, relay и закрепление ключа за сканом ─────
+
+// legacyKeyService — раскладка до записи на каждый туннель: awg10 работает на
+// ключе основной учётной записи, записи в TunnelAccounts у него нет.
+func legacyKeyService(t *testing.T) (*Service, *fakeRunner, *fakeTunnels, *fakeProber, *captureLog) {
+	t.Helper()
+	s, runner, tun, prober := newTestService(t)
+	log := &captureLog{}
+	s.d.Log = log
+	tun.refs[key(TargetNative, "awg10")].LocalPublicKey = "pub"
+	return s, runner, tun, prober, log
+}
+
+func runScan(t *testing.T, s *Service, req ScanRequest) (ScanStatus, error) {
+	t.Helper()
+	req.Filters.Protocol = ProtocolWG
+	if err := s.StartScan(req); err != nil {
+		return ScanStatus{}, err
+	}
+	s.wg.Wait()
+	return s.ScanSnapshot(), nil
+}
+
+func (l *captureLog) has(sub string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.ContainsFunc(l.msgs, func(m string) bool { return strings.Contains(m, sub) })
+}
+
+func TestWatchdog_SwapScansWithTargetsOwnPrimaryKey(t *testing.T) {
+	prep := func(t *testing.T) (*Service, *fakeRunner, *fakeTunnels, Profile) {
+		s, runner, tun, prober, _ := legacyKeyService(t)
+		runner.hits = []Hit{{Endpoint: "188.114.96.9:2408", PingMs: 40, Colo: "HEL", Loc: "FI"}}
+		prober.queue = []TraceResult{{Colo: "DME", Loc: "RU", Warp: "on"}, {Colo: "DME", Loc: "RU", Warp: "on"}}
+		p := testProfile()
+		cfg := s.d.Store.Config()
+		cfg.Profiles, cfg.ActiveProfileID, cfg.ScanInterface = []Profile{p}, p.ID, "nwg1"
+		if err := s.d.Store.SetConfig(cfg); err != nil {
+			t.Fatal(err)
+		}
+		return s, runner, tun, p
+	}
+
+	t.Run("свой ключ через WAN", func(t *testing.T) {
+		s, runner, tun, p := prep(t)
+		s.checkOnce(context.Background(), p, &watcherState{})
+		if len(runner.calls) != 1 || runner.calls[0].Ifname != "eth3" || runner.calls[0].PrivateKey != "cHJpdg==" || len(tun.swaps) != 1 {
+			t.Fatalf("туннель на ключе основной записи остался без автоподмены: %+v swaps=%v", runner.calls, tun.swaps)
+		}
+	})
+	t.Run("через сам себя нельзя", func(t *testing.T) {
+		s, runner, tun, p := prep(t)
+		// WAN неизвестен — маршрут скана остаётся самим целевым туннелем.
+		s.d.WAN = func(context.Context) (string, bool) { return "", true }
+		s.checkOnce(context.Background(), p, &watcherState{})
+		if len(runner.calls) != 0 || len(tun.swaps) != 0 {
+			t.Fatalf("скан через туннель его же ключом: %+v", runner.calls)
+		}
+	})
+}
+
+func TestManualScan_FallsBackToKeyOfSingleTunnel(t *testing.T) {
+	const warning = "скан идёт ключом туннеля \"WARP\""
+	failHTTP := func(string) (*http.Client, error) {
+		return &http.Client{Transport: failRoundTripper{err: errors.New("API недоступен")}}, nil
+	}
+
+	t.Run("регистрация слота не удалась", func(t *testing.T) {
+		s, runner, _, _, log := legacyKeyService(t)
+		s.d.HTTP = failHTTP
+		st, err := runScan(t, s, ScanRequest{})
+		if err != nil || st.Error != "" || len(runner.calls) != 1 || runner.calls[0].PrivateKey != "cHJpdg==" {
+			t.Fatalf("скан не откатился на основной ключ: err=%v st=%+v calls=%+v", err, st, runner.calls)
+		}
+		if !log.has(warning) {
+			t.Fatalf("нет предупреждения в журнале: %v", log.msgs)
+		}
+	})
+	t.Run("нет транспорта, find-junk", func(t *testing.T) {
+		s, runner, _, _, log := legacyKeyService(t)
+		s.d.HTTP = nil
+		if err := s.StartFindJunk(FindJunkRequest{I1Profile: "quic", MaxAttempts: 1, PerSubnet: 1}); err != nil {
+			t.Fatal(err)
+		}
+		s.wg.Wait()
+		if len(runner.calls) != 1 || runner.calls[0].PrivateKey != "cHJpdg==" || !log.has(warning) {
+			t.Fatalf("подбор не откатился на основной ключ: %+v log=%v", runner.calls, log.msgs)
+		}
+	})
+	t.Run("второй слот тоже занят", func(t *testing.T) {
+		s, runner, tun, _, log := legacyKeyService(t)
+		if err := s.d.Store.SetInnerAccount(&Account{ID: "in", Token: "t", PrivateKey: "aW5uZXI=", PublicKey: "pub-inner"}); err != nil {
+			t.Fatal(err)
+		}
+		tun.refs[key(TargetNative, "awg20")] = &TunnelRef{Mode: TargetNative, ID: "awg20", Name: "Каскад", IsWarp: true, LocalPublicKey: "pub-inner"}
+		if _, err := runScan(t, s, ScanRequest{}); err != nil || len(runner.calls) != 1 || runner.calls[0].PrivateKey != "cHJpdg==" || !log.has(warning) {
+			t.Fatalf("err=%v calls=%+v log=%v", err, runner.calls, log.msgs)
+		}
+	})
+	t.Run("регистрация удалась — туннель не трогаем", func(t *testing.T) {
+		s, runner, _, _, log := legacyKeyService(t)
+		if _, err := runScan(t, s, ScanRequest{}); err != nil || len(runner.calls) != 1 || runner.calls[0].PrivateKey == "cHJpdg==" || log.has("кратко прервёт") {
+			t.Fatalf("err=%v calls=%+v log=%v", err, runner.calls, log.msgs)
+		}
+	})
+	t.Run("два владельца — отказ", func(t *testing.T) {
+		s, runner, tun, _, _ := legacyKeyService(t)
+		s.d.HTTP = failHTTP
+		tun.refs[key(TargetNative, "awg11")] = &TunnelRef{Mode: TargetNative, ID: "awg11", Name: "Второй", IsWarp: true, LocalPublicKey: "pub"}
+		st, err := runScan(t, s, ScanRequest{})
+		if err != nil || !strings.Contains(st.Error, "Второй") || len(runner.calls) != 0 {
+			t.Fatalf("ключ двух туннелей пошёл в скан: err=%v st=%+v calls=%+v", err, st, runner.calls)
+		}
+	})
+	t.Run("владелец — чужой защищённый туннель — отказ", func(t *testing.T) {
+		s, runner, tun, _, _ := legacyKeyService(t)
+		s.d.HTTP = failHTTP
+		tun.refs[key(TargetNative, "awg10")].Protected = true
+		if st, err := runScan(t, s, ScanRequest{}); err != nil || st.Error == "" || len(runner.calls) != 0 {
+			t.Fatalf("скан прервал защищённый туннель: err=%v st=%+v calls=%+v", err, st, runner.calls)
+		}
+	})
+	t.Run("запись TunnelAccounts и живой ключ — один владелец", func(t *testing.T) {
+		s, runner, _, _, _ := legacyKeyService(t)
+		s.d.HTTP = failHTTP
+		if err := s.d.Store.AddTunnelAccount(TunnelAccount{Account: *s.d.Store.Account(), TunnelMode: TargetNative, TunnelID: "awg10"}); err != nil {
+			t.Fatal(err)
+		}
+		if st, err := runScan(t, s, ScanRequest{}); err != nil || st.Error != "" || len(runner.calls) != 1 {
+			t.Fatalf("один туннель посчитан дважды: err=%v st=%+v", err, st)
+		}
+	})
+	t.Run("список туннелей недоступен — отказ", func(t *testing.T) {
+		s, runner, tun, _, _ := legacyKeyService(t)
+		entered, proceed := make(chan struct{}), make(chan struct{})
+		s.d.HTTP = func(string) (*http.Client, error) {
+			close(entered)
+			<-proceed
+			return nil, errors.New("API недоступен")
+		}
+		if err := s.StartScan(ScanRequest{Filters: Filters{Protocol: ProtocolWG}}); err != nil {
+			t.Fatal(err)
+		}
+		<-entered
+		tun.mu.Lock()
+		tun.listErr = errors.New("rci unavailable")
+		tun.mu.Unlock()
+		close(proceed)
+		s.wg.Wait()
+		if st := s.ScanSnapshot(); !strings.Contains(st.Error, "rci unavailable") || len(runner.calls) != 0 {
+			t.Fatalf("st=%+v calls=%+v", st, runner.calls)
+		}
+	})
+	t.Run("регистрация слота не съедает время скана", func(t *testing.T) {
+		s, runner, _, _, _ := legacyKeyService(t)
+		oldDeadline, oldGrace := scanDeadline, scanKillGrace
+		scanDeadline, scanKillGrace = 50*time.Millisecond, 0
+		t.Cleanup(func() { scanDeadline, scanKillGrace = oldDeadline, oldGrace })
+		s.d.HTTP = func(string) (*http.Client, error) {
+			time.Sleep(100 * time.Millisecond)
+			return nil, errors.New("API недоступен")
+		}
+		if st, err := runScan(t, s, ScanRequest{}); err != nil || st.Error != "" || len(runner.calls) != 1 {
+			t.Fatalf("err=%v st=%+v calls=%+v", err, st, runner.calls)
+		}
+	})
+	t.Run("остановка скана не откатывает на ключ туннеля", func(t *testing.T) {
+		s, runner, _, _, log := legacyKeyService(t)
+		entered := make(chan struct{})
+		s.d.HTTP = func(string) (*http.Client, error) {
+			return &http.Client{Transport: guardRoundTripper(func(r *http.Request) (*http.Response, error) {
+				close(entered)
+				<-r.Context().Done()
+				return nil, r.Context().Err()
+			})}, nil
+		}
+		if err := s.StartScan(ScanRequest{Filters: Filters{Protocol: ProtocolWG}}); err != nil {
+			t.Fatal(err)
+		}
+		<-entered
+		s.StopScan()
+		s.wg.Wait()
+		if len(runner.calls) != 0 || log.has("кратко прервёт") {
+			t.Fatalf("calls=%+v log=%v", runner.calls, log.msgs)
+		}
+	})
+	t.Run("через другой WARP", func(t *testing.T) {
+		s, runner, tun, _, log := legacyKeyService(t)
+		s.d.HTTP = failHTTP
+		tun.refs[key(TargetNative, "awg50")] = &TunnelRef{Mode: TargetNative, ID: "awg50", Name: "Внешний", Iface: "nwg5",
+			Endpoint: "162.159.193.7:2408", IsWarp: true, Running: true, LocalPublicKey: "pub-outer"}
+		if _, err := runScan(t, s, ScanRequest{Ifname: "nwg5"}); err != nil || len(runner.calls) != 1 ||
+			runner.calls[0].Ifname != "nwg5" || runner.calls[0].PrivateKey != "cHJpdg==" || !log.has(warning) {
+			t.Fatalf("err=%v calls=%+v log=%v", err, runner.calls, log.msgs)
+		}
+	})
+	t.Run("внешний на основном ключе — ключ каскада", func(t *testing.T) {
+		s, runner, tun, _, log := legacyKeyService(t)
+		if err := s.d.Store.SetInnerAccount(&Account{ID: "in", Token: "t", PrivateKey: "aW5uZXI=", PublicKey: "pub-inner"}); err != nil {
+			t.Fatal(err)
+		}
+		tun.refs[key(TargetNative, "awg20")] = &TunnelRef{Mode: TargetNative, ID: "awg20", Name: "Каскад", IsWarp: true, LocalPublicKey: "pub-inner"}
+		if _, err := runScan(t, s, ScanRequest{Ifname: "nwg1"}); err != nil || len(runner.calls) != 1 ||
+			runner.calls[0].PrivateKey != "aW5uZXI=" || !log.has("скан идёт ключом туннеля \"Каскад\"") {
+			t.Fatalf("err=%v calls=%+v log=%v", err, runner.calls, log.msgs)
+		}
+	})
+	t.Run("ключ внешнего неизвестен — без отката", func(t *testing.T) {
+		s, runner, tun, _, _ := legacyKeyService(t)
+		s.d.HTTP = failHTTP
+		tun.refs[key(TargetNative, "awg10")].LocalPublicKey = ""
+		if err := s.d.Store.AddTunnelAccount(TunnelAccount{Account: *s.d.Store.Account(), TunnelMode: TargetNative, TunnelID: "awg10"}); err != nil {
+			t.Fatal(err)
+		}
+		if st, err := runScan(t, s, ScanRequest{Ifname: "nwg1"}); err != nil || st.Error == "" || len(runner.calls) != 0 {
+			t.Fatalf("err=%v st=%+v calls=%+v", err, st, runner.calls)
+		}
+	})
+	t.Run("через сам туннель его же ключом — никогда", func(t *testing.T) {
+		s, runner, _, _, _ := legacyKeyService(t)
+		s.d.HTTP = failHTTP
+		st, err := runScan(t, s, ScanRequest{Ifname: "nwg1"})
+		if err != nil || st.Error == "" || len(runner.calls) != 0 {
+			t.Fatalf("err=%v st=%+v calls=%+v", err, st, runner.calls)
+		}
+	})
+}
+
+// Ключ, выбранный сканом, не достаётся параллельному Apply(ReuseAccount), и наоборот.
+func TestScanKey_SerializedWithReuseApply(t *testing.T) {
+	reuse := ApplyRequest{Action: "create", Mode: TargetNative, Name: "WARP R", Endpoint: "162.159.193.1:2408", ReuseAccount: true}
+
+	t.Run("скан идёт — Apply отказывает", func(t *testing.T) {
+		s, _, tun, _ := newTestService(t)
+		started, proceed := make(chan struct{}), make(chan struct{})
+		s.d.Runner = runnerFunc(func() { close(started); <-proceed })
+		if err := s.StartScan(ScanRequest{Filters: Filters{Protocol: ProtocolWG}}); err != nil {
+			t.Fatal(err)
+		}
+		<-started
+		_, err := s.Apply(context.Background(), reuse)
+		close(proceed)
+		s.wg.Wait()
+		if !errors.Is(err, ErrInvalidInput) || len(tun.created) != 0 {
+			t.Fatalf("Apply занял ключ идущего скана: err=%v", err)
+		}
+		if _, err := s.Apply(context.Background(), reuse); err != nil {
+			t.Fatalf("после скана ключ должен освободиться: %v", err)
+		}
+	})
+	t.Run("подбор маскировки идёт — Apply отказывает", func(t *testing.T) {
+		s, _, tun, _ := newTestService(t)
+		started, proceed := make(chan struct{}), make(chan struct{})
+		s.d.Runner = runnerFunc(func() { close(started); <-proceed })
+		if err := s.StartFindJunk(FindJunkRequest{I1Profile: "quic", MaxAttempts: 1, PerSubnet: 1}); err != nil {
+			t.Fatal(err)
+		}
+		<-started
+		_, err := s.Apply(context.Background(), reuse)
+		close(proceed)
+		s.wg.Wait()
+		if !errors.Is(err, ErrInvalidInput) || len(tun.created) != 0 {
+			t.Fatalf("Apply занял ключ подбора: err=%v", err)
+		}
+		if _, err := s.Apply(context.Background(), reuse); err != nil {
+			t.Fatalf("после подбора ключ должен освободиться: %v", err)
+		}
+	})
+	t.Run("автоподмена идёт — Apply отказывает", func(t *testing.T) {
+		s, _, tun, prober := newTestService(t)
+		started, proceed := make(chan struct{}), make(chan struct{})
+		s.d.Runner = runnerFunc(func() { close(started); <-proceed })
+		prober.queue = []TraceResult{{Colo: "DME", Loc: "RU", Warp: "on"}, {Colo: "DME", Loc: "RU", Warp: "on"}}
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			s.checkOnce(context.Background(), testProfile(), &watcherState{})
+		}()
+		<-started
+		_, err := s.Apply(context.Background(), reuse)
+		close(proceed)
+		<-done
+		if !errors.Is(err, ErrInvalidInput) || len(tun.created) != 0 {
+			t.Fatalf("Apply занял ключ автоподмены: err=%v", err)
+		}
+		if _, err := s.Apply(context.Background(), reuse); err != nil {
+			t.Fatalf("после автоподмены ключ должен освободиться: %v", err)
+		}
+	})
+	t.Run("Apply создаёт туннель — скан берёт другой ключ", func(t *testing.T) {
+		s, runner, tun, _ := newTestService(t)
+		entered, proceed := make(chan struct{}), make(chan struct{})
+		tun.beforeCreate = func() { close(entered); <-proceed }
+		applyCh := make(chan error, 1)
+		go func() {
+			_, err := s.Apply(context.Background(), reuse)
+			applyCh <- err
+		}()
+		<-entered
+		if err := s.StartScan(ScanRequest{Filters: Filters{Protocol: ProtocolWG}}); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(100 * time.Millisecond)
+		close(proceed)
+		if err := <-applyCh; err != nil {
+			t.Fatal(err)
+		}
+		s.wg.Wait()
+		if len(runner.calls) != 1 || runner.calls[0].PrivateKey == "cHJpdg==" {
+			t.Fatalf("скан пошёл ключом только что созданного туннеля: %+v", runner.calls)
+		}
+	})
+}
+
+// runnerFunc — сканер, выполняющий fn вместо скана.
+type runnerFunc func()
+
+func (runnerFunc) Available() (string, bool) { return "/fake", true }
+func (f runnerFunc) Run(context.Context, ScanParams, func(EngineEvent)) error {
+	f()
+	return nil
+}
+
+func TestRegister_LicenseCarriedOrOldRegistrationKept(t *testing.T) {
+	ctx := context.Background()
+	// prep: учётная запись с WARP+ и клиент, пишущий все запросы (хост, метод, путь, тело, токен).
+	prep := func(t *testing.T, old Account, rotate, put int) (*Service, *captureLog, func() []string) {
+		s, _, _, _ := newTestService(t)
+		log := &captureLog{}
+		s.d.Log = log
+		if err := s.d.Store.SetAccount(&old); err != nil {
+			t.Fatal(err)
+		}
+		var mu sync.Mutex
+		var reqs []string
+		s.d.HTTP = func(string) (*http.Client, error) {
+			return &http.Client{Transport: guardRoundTripper(func(r *http.Request) (*http.Response, error) {
+				var body []byte
+				if r.Body != nil {
+					body, _ = io.ReadAll(r.Body)
+				}
+				host := "cf"
+				if r.URL.Host == "relay.example.com" {
+					host = "relay"
+				}
+				mu.Lock()
+				reqs = append(reqs, fmt.Sprintf("%s %s %s %s %s", host, r.Method, r.URL.Path, r.Header.Get("Authorization"), body))
+				mu.Unlock()
+				rec := httptest.NewRecorder()
+				rec.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.Method == http.MethodPatch:
+					rec.WriteHeader(rotate)
+					_, _ = rec.WriteString("{}")
+				case r.Method == http.MethodPut:
+					rec.WriteHeader(put)
+					_, _ = rec.WriteString("{}")
+				case r.Method == http.MethodGet:
+					_, _ = rec.WriteString(`{"account_type":"limited","warp_plus":true}`)
+				case r.Method == http.MethodPost:
+					_, _ = rec.WriteString(`{"id":"new-1","token":"tok-new","warp_enabled":true,"account":{"account_type":"free","license":"free-lic"}}`)
+				default:
+					_, _ = rec.WriteString("{}")
+				}
+				return rec.Result(), nil
+			})}, nil
+		}
+		return s, log, func() []string {
+			s.wg.Wait()
+			mu.Lock()
+			defer mu.Unlock()
+			return append([]string(nil), reqs...)
+		}
+	}
+	plus := Account{ID: "old-1", Token: "tok-old", PrivateKey: "cHJpdg==", PublicKey: "pub",
+		License: "secret-license", WarpPlus: true, AccountType: "limited"}
+
+	t.Run("relay: лицензия и токен не уходят, старая запись не снята", func(t *testing.T) {
+		s, log, reqs := prep(t, plus, 200, 200)
+		acct, err := s.RegisterWithOptions(ctx, RegisterOptions{RelayURL: "https://relay.example.com"})
+		if err != nil || acct.ID != "new-1" || acct.WarpPlus {
+			t.Fatalf("acct=%+v err=%v", acct, err)
+		}
+		for _, r := range reqs() {
+			if strings.Contains(r, "secret-license") || strings.Contains(r, "tok-old") || strings.Contains(r, " DELETE ") {
+				t.Fatalf("лишний запрос: %s", r)
+			}
+		}
+		if !log.has("Лицензия WARP+ не перенесена") || !log.has("не снята") {
+			t.Fatalf("нет предупреждения: %v", log.msgs)
+		}
+	})
+	t.Run("relay без WARP+: старая запись снимается мимо relay", func(t *testing.T) {
+		free := plus
+		free.WarpPlus, free.AccountType = false, "free"
+		s, _, reqs := prep(t, free, 200, 200)
+		if _, err := s.RegisterWithOptions(ctx, RegisterOptions{RelayURL: "https://relay.example.com"}); err != nil {
+			t.Fatal(err)
+		}
+		var deleted bool
+		for _, r := range reqs() {
+			if strings.HasPrefix(r, "relay ") && (strings.Contains(r, "tok-old") || strings.Contains(r, "secret-license")) {
+				t.Fatalf("секрет ушёл на relay: %s", r)
+			}
+			deleted = deleted || strings.HasPrefix(r, "cf DELETE /reg/old-1")
+		}
+		if !deleted {
+			t.Fatal("бесплатная регистрация должна сниматься")
+		}
+	})
+	t.Run("старая запись удалена у Cloudflare: лицензия перенесена", func(t *testing.T) {
+		s, _, reqs := prep(t, plus, 404, 200)
+		acct, err := s.Register(ctx)
+		if err != nil || acct.ID != "new-1" || !acct.WarpPlus || acct.License != "secret-license" {
+			t.Fatalf("acct=%+v err=%v reqs=%v", acct, err, reqs())
+		}
+	})
+	t.Run("перенос не удался: предупреждение, регистрация сохранена", func(t *testing.T) {
+		s, log, _ := prep(t, plus, 404, 400)
+		acct, err := s.Register(ctx)
+		if err != nil || acct.ID != "new-1" || acct.WarpPlus || !log.has("не применена") {
+			t.Fatalf("acct=%+v err=%v log=%v", acct, err, log.msgs)
+		}
+	})
+}
+
+func TestNormalizeRelayBaseURL_ErrorHidesURL(t *testing.T) {
+	for _, raw := range []string{"https://alice:topsecret@relay.example.com:bad", "https://alice:topsecret@relay%zz", "https://alice:topsecret@relay\x7f"} {
+		_, err := NormalizeRelayBaseURL(raw)
+		if !errors.Is(err, ErrInvalidInput) || strings.Contains(err.Error(), "topsecret") || strings.Contains(err.Error(), "relay.example") {
+			t.Fatalf("%q: %v", raw, err)
+		}
 	}
 }

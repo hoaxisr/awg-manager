@@ -22,6 +22,9 @@ const api = vi.hoisted(() => ({
 	warpscoutState: vi.fn(),
 	warpscoutTargets: vi.fn(),
 	warpscoutSaveConfig: vi.fn(),
+	warpscoutRegister: vi.fn(),
+	warpscoutImportAccount: vi.fn(),
+	warpscoutDeleteAccount: vi.fn(),
 	warpscoutSetAddress: vi.fn(),
 	warpscoutFindJunkStart: vi.fn(),
 	warpscoutFindJunkStop: vi.fn(),
@@ -659,5 +662,204 @@ describe('WarpScoutTab', () => {
 
 		await waitFor(() => expect(api.warpscoutSaveConfig).toHaveBeenCalledTimes(1));
 		expect(api.warpscoutSaveConfig.mock.calls[0][0].autoRename).toBe(false);
+	});
+
+	it('allows importing an account from the CTA modal and calls warpscoutImportAccount', async () => {
+		const initial = state();
+		api.warpscoutImportAccount.mockResolvedValue({
+			id: 'imported-1234',
+			warpPlus: false,
+			accountType: 'imported',
+			hasToken: false,
+			imported: true,
+			addressV4: '172.16.0.2',
+			publicKey: 'pub-imp',
+			peerPublicKey: 'peer-1',
+			createdAt: '2026-11-23T10:00:00Z',
+		});
+		const view = await mount(initial);
+
+		const openBtn = await screen.findByRole('button', { name: 'Импорт / прокси' });
+		await fireEvent.click(openBtn);
+
+		const textarea = await waitFor(() => view.container.ownerDocument.querySelector<HTMLTextAreaElement>('#warp-import-raw')!);
+		await fireEvent.input(textarea, {
+			target: { value: '[Interface]\nPrivateKey = privkey\nAddress = 172.16.0.2/32\n' },
+		});
+
+		const submitBtn = await screen.findByRole('button', { name: 'Импортировать' });
+		await fireEvent.click(submitBtn);
+
+		await waitFor(() => expect(api.warpscoutImportAccount).toHaveBeenCalledTimes(1));
+		expect(api.warpscoutImportAccount).toHaveBeenCalledWith('[Interface]\nPrivateKey = privkey\nAddress = 172.16.0.2/32');
+	});
+
+	it('allows registering through custom proxyUrl and relayUrl options, warns on relay, and clears credentials', async () => {
+		const initial = state();
+		api.warpscoutRegister.mockResolvedValue({
+			id: 'reg-1',
+			warpPlus: false,
+			accountType: 'free',
+			hasToken: true,
+			imported: false,
+			addressV4: '172.16.0.2',
+			publicKey: 'pub-reg',
+			peerPublicKey: 'peer-1',
+			createdAt: '2026-11-23T10:00:00Z',
+		});
+		const view = await mount(initial);
+
+		const openBtn = await screen.findByRole('button', { name: 'Импорт / прокси' });
+		await fireEvent.click(openBtn);
+
+		const proxyTabBtn = await screen.findByRole('button', { name: 'Прокси / Relay' });
+		await fireEvent.click(proxyTabBtn);
+
+		await screen.findByText(/сторонний HTTP-relay видит запросы регистрации/i);
+		const proxyInput = await waitFor(() => view.container.ownerDocument.querySelector<HTMLInputElement>('#warp-proxy-url')!);
+		const relayInput = view.container.ownerDocument.querySelector<HTMLInputElement>('#warp-relay-url')!;
+		await fireEvent.input(proxyInput, { target: { value: 'socks5://alice:topsecret@127.0.0.1:1080' } });
+		await fireEvent.input(relayInput, { target: { value: 'https://warp-relay.example.com' } });
+
+		const regBtns = await screen.findAllByRole('button', { name: 'Зарегистрировать' });
+		const submitBtn = regBtns.at(-1)!;
+		await fireEvent.click(submitBtn);
+
+		await waitFor(() => expect(api.warpscoutRegister).toHaveBeenCalledTimes(1));
+		expect(api.warpscoutRegister).toHaveBeenCalledWith({
+			proxyUrl: 'socks5://alice:topsecret@127.0.0.1:1080',
+			relayUrl: 'https://warp-relay.example.com',
+		});
+
+		// Reopening modal shows credentials cleared.
+		await fireEvent.click(await screen.findByRole('button', { name: 'Импорт / прокси' }));
+		await fireEvent.click(await screen.findByRole('button', { name: 'Прокси / Relay' }));
+		const reopenedProxy = await waitFor(() => view.container.ownerDocument.querySelector<HTMLInputElement>('#warp-proxy-url')!);
+		const reopenedRelay = view.container.ownerDocument.querySelector<HTMLInputElement>('#warp-relay-url')!;
+		expect(reopenedProxy.value).toBe('');
+		expect(reopenedRelay.value).toBe('');
+	});
+
+	it('does not promise to keep WARP+ when registering over an account via relay', async () => {
+		const view = await mount(acctState());
+		await fireEvent.click(chip(view.container, 0));
+		await fireEvent.click(await screen.findByRole('button', { name: 'Импорт / прокси' }));
+		await fireEvent.click(await screen.findByRole('button', { name: 'Прокси / Relay' }));
+		const doc = view.container.ownerDocument;
+		const relayInput = await waitFor(() => doc.querySelector<HTMLInputElement>('#warp-relay-url')!);
+		await fireEvent.input(relayInput, { target: { value: 'https://warp-relay.example.com' } });
+		await fireEvent.click(await screen.findByRole('button', { name: 'Зарегистрировать' }));
+		await screen.findByText(/Лицензия WARP\+ на неё не переносится/);
+		expect(screen.queryByText(/с сохранением WARP\+/)).toBeNull();
+		expect(api.warpscoutRegister).not.toHaveBeenCalled();
+	});
+
+	it('promises to keep WARP+ when reissuing via proxy only', async () => {
+		const view = await mount(acctState());
+		await fireEvent.click(chip(view.container, 0));
+		await fireEvent.click(await screen.findByRole('button', { name: 'Импорт / прокси' }));
+		await fireEvent.click(await screen.findByRole('button', { name: 'Прокси / Relay' }));
+		const doc = view.container.ownerDocument;
+		const proxyInput = await waitFor(() => doc.querySelector<HTMLInputElement>('#warp-proxy-url')!);
+		await fireEvent.input(proxyInput, { target: { value: 'socks5://127.0.0.1:1080' } });
+		await fireEvent.click(await screen.findByRole('button', { name: 'Зарегистрировать' }));
+		await screen.findByText(/с сохранением WARP\+/);
+		expect(screen.queryByText(/Лицензия WARP\+ на неё не переносится/)).toBeNull();
+	});
+
+	it('requires confirmation before overwriting an existing account on import', async () => {
+		const initial = acctState();
+		api.warpscoutImportAccount.mockResolvedValue({
+			...initial.account!,
+			id: 'imported-new',
+			accountType: 'imported',
+			hasToken: false,
+			imported: true,
+		});
+		const view = await mount(initial);
+
+		await fireEvent.click(chip(view.container, 0));
+		await fireEvent.click(await screen.findByRole('button', { name: 'Импорт / прокси' }));
+
+		const textarea = await waitFor(() => view.container.ownerDocument.querySelector<HTMLTextAreaElement>('#warp-import-raw')!);
+		await fireEvent.input(textarea, {
+			target: { value: '[Interface]\nPrivateKey = privnew\nAddress = 172.16.0.9/32\n' },
+		});
+
+		await fireEvent.click(await screen.findByRole('button', { name: 'Импортировать' }));
+		expect(api.warpscoutImportAccount).not.toHaveBeenCalled();
+		await screen.findByText('Заменить текущую учётную запись WARP?');
+
+		const importButtons = await screen.findAllByRole('button', { name: 'Импортировать' });
+		await fireEvent.click(importButtons.at(-1)!);
+		await waitFor(() => expect(api.warpscoutImportAccount).toHaveBeenCalledTimes(1));
+	});
+
+	it('locks reissue and delete controls when primary account key is in use by a tunnel', async () => {
+		const initial: WarpScoutState = {
+			...acctState(),
+			accountKeyInUseBy: 'WARP Live',
+		};
+		const { container } = await mount(initial);
+
+		await fireEvent.click(chip(container, 0));
+		await screen.findByText(/Ключ этого аккаунта используется туннелем «WARP Live»/);
+
+		const reissueBtn = await screen.findByRole('button', { name: 'Перевыпустить' });
+		const deleteBtn = await screen.findByRole('button', { name: 'Удалить' });
+		expect(reissueBtn.hasAttribute('disabled')).toBe(true);
+		expect(deleteBtn.hasAttribute('disabled')).toBe(true);
+
+		// Confirmation message on import explains that the old Cloudflare registration stays active.
+		await fireEvent.click(await screen.findByRole('button', { name: 'Импорт / прокси' }));
+		const textarea = await waitFor(() => container.ownerDocument.querySelector<HTMLTextAreaElement>('#warp-import-raw')!);
+		await fireEvent.input(textarea, {
+			target: { value: '[Interface]\nPrivateKey = privnew\nAddress = 172.16.0.9/32\n' },
+		});
+		await fireEvent.click(await screen.findByRole('button', { name: 'Импортировать' }));
+		await screen.findByText(/Регистрация старого ключа в Cloudflare сохранится, так как его использует туннель «WARP Live»/);
+	});
+
+	it('locks reissue, delete, and proxy registration when accountKeyCheckError is reported', async () => {
+		const initial: WarpScoutState = {
+			...acctState(),
+			accountKeyCheckError: 'rci unavailable',
+		};
+		const { container } = await mount(initial);
+
+		await fireEvent.click(chip(container, 0));
+		await screen.findByText(/Не удалось проверить занятость ключа \(rci unavailable\)/);
+
+		const reissueBtn = await screen.findByRole('button', { name: 'Перевыпустить' });
+		const deleteBtn = await screen.findByRole('button', { name: 'Удалить' });
+		expect(reissueBtn.hasAttribute('disabled')).toBe(true);
+		expect(deleteBtn.hasAttribute('disabled')).toBe(true);
+
+		await fireEvent.click(await screen.findByRole('button', { name: 'Импорт / прокси' }));
+		await fireEvent.click(await screen.findByRole('button', { name: 'Прокси / Relay' }));
+		await screen.findByText(/Не удалось проверить занятость ключа \(rci unavailable\)/);
+		const proxyInput = await waitFor(() => container.ownerDocument.querySelector<HTMLInputElement>('#warp-proxy-url')!);
+		await fireEvent.input(proxyInput, { target: { value: 'socks5://127.0.0.1:1080' } });
+		const regBtns = await screen.findAllByRole('button', { name: 'Зарегистрировать' });
+		expect(regBtns.at(-1)!.hasAttribute('disabled')).toBe(true);
+	});
+
+	it('hides WARP+ license binding and shows no-token hint for imported tokenless account', async () => {
+		const base = acctState();
+		const initial: WarpScoutState = {
+			...base,
+			account: {
+				...base.account!,
+				id: 'imported-abc',
+				accountType: 'imported',
+				hasToken: false,
+				imported: true,
+			},
+		};
+		const { container } = await mount(initial);
+
+		await fireEvent.click(chip(container, 0));
+		await screen.findByText('Аккаунт импортирован из .conf без токена Cloudflare — привязка WARP+ недоступна.');
+		expect(container.querySelector('#warp-license')).toBeNull();
 	});
 });

@@ -72,7 +72,10 @@ func boolToInt(b bool) int {
 	return 0
 }
 
-var _ warpscout.TunnelOps = (*WarpTunnelOps)(nil)
+var (
+	_ warpscout.TunnelOps          = (*WarpTunnelOps)(nil)
+	_ warpscout.TunnelKeyInventory = (*WarpTunnelOps)(nil)
+)
 
 // NewWarpAutopilotProvider строит легковесный провайдер карты активных
 // профилей автопилота WARP для обогащения списков туннелей.
@@ -151,6 +154,20 @@ func (o *WarpTunnelOps) managedRef(ctx context.Context, t *storage.AWGTunnel) (w
 
 // systemProtectReason — почему системный интерфейс трогать нельзя.
 func (o *WarpTunnelOps) systemProtectReason(t *ndms.SystemWireguardTunnel) string {
+	if reason := o.systemForeignReason(t); reason != "" {
+		return reason
+	}
+	for _, name := range managedNativeWGNames(o.Store) {
+		if name == t.ID {
+			return "туннель управляется AWGM — выберите тип native"
+		}
+	}
+	return ""
+}
+
+// systemForeignReason — почему интерфейс чужой или служебный; записи
+// управляемых туннелей не читает.
+func (o *WarpTunnelOps) systemForeignReason(t *ndms.SystemWireguardTunnel) string {
 	if t.Description == ndms.BuiltInVPNServerDescription {
 		return "встроенный VPN-сервер Keenetic"
 	}
@@ -168,11 +185,6 @@ func (o *WarpTunnelOps) systemProtectReason(t *ndms.SystemWireguardTunnel) strin
 			if ms.InterfaceName == t.ID {
 				return "сервер AWGM (managedServers)"
 			}
-		}
-	}
-	for _, name := range managedNativeWGNames(o.Store) {
-		if name == t.ID {
-			return "туннель управляется AWGM — выберите тип native"
 		}
 	}
 	return ""
@@ -343,8 +355,8 @@ func (o *WarpTunnelOps) populateViaInfoSeeded(ctx context.Context, refs []warpsc
 	}
 }
 
-// List — managed-туннели и системные WG-клиенты. Серверы и служебные
-// интерфейсы в выбор не попадают вовсе.
+// List — туннели для выбора цели (управляемые и незащищённые системные
+// WG-клиенты). При сбое RCI управляемые туннели из Store всё равно доступны.
 func (o *WarpTunnelOps) List(ctx context.Context) ([]warpscout.TunnelRef, error) {
 	out := []warpscout.TunnelRef{}
 	if o.Store != nil {
@@ -359,8 +371,7 @@ func (o *WarpTunnelOps) List(ctx context.Context) ([]warpscout.TunnelRef, error)
 		}
 	}
 	if o.System != nil {
-		sys, err := o.System.List(ctx)
-		if err == nil {
+		if sys, err := o.System.List(ctx); err == nil {
 			for i := range sys {
 				ref := o.systemRef(&sys[i])
 				if ref.Protected {
@@ -371,6 +382,59 @@ func (o *WarpTunnelOps) List(ctx context.Context) ([]warpscout.TunnelRef, error)
 		}
 	}
 	o.populateViaInfo(ctx, out)
+	return out, nil
+}
+
+// ListKeys возвращает облегчённый список всех туннелей (включая защищённые
+// системные вроде External != "") для проверки занятости ключей без опроса
+// Svc.Get и populateViaInfo. При сбое Store.List или System.List возвращает ошибку.
+func (o *WarpTunnelOps) ListKeys(ctx context.Context) ([]warpscout.TunnelKeyRef, error) {
+	out := []warpscout.TunnelKeyRef{}
+	managedNative := map[string]bool{}
+	if o.Store != nil {
+		list, err := o.Store.List()
+		if err != nil {
+			return nil, err
+		}
+		for i := range list {
+			mode, ok := modeOfBackend(list[i].Backend)
+			if !ok {
+				continue
+			}
+			pub, _ := warpscout.PublicKeyOf(list[i].Interface.PrivateKey)
+			out = append(out, warpscout.TunnelKeyRef{
+				Mode:           mode,
+				ID:             list[i].ID,
+				Name:           list[i].Name,
+				LocalPublicKey: pub,
+			})
+			if mode == warpscout.TargetNative && list[i].NWGIndex >= 0 {
+				managedNative[fmt.Sprintf("Wireguard%d", list[i].NWGIndex)] = true
+			}
+		}
+	}
+	if o.System != nil {
+		sys, err := o.System.List(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("список системных туннелей: %w", err)
+		}
+		for i := range sys {
+			if managedNative[sys[i].ID] {
+				continue
+			}
+			name := strings.TrimSpace(sys[i].Description)
+			if name == "" {
+				name = sys[i].ID
+			}
+			out = append(out, warpscout.TunnelKeyRef{
+				Mode:           warpscout.TargetSystem,
+				ID:             sys[i].ID,
+				Name:           name,
+				LocalPublicKey: strings.TrimSpace(sys[i].PublicKey),
+				Protected:      o.systemForeignReason(&sys[i]) != "",
+			})
+		}
+	}
 	return out, nil
 }
 
@@ -1290,37 +1354,132 @@ func defaultRotateKernelPort(ctx context.Context, iface string) error {
 	return nil
 }
 
+// warpLookupIPAddr и warpNewTransport переопределяются только в тестах.
+var (
+	warpLookupIPAddr warpscout.LookupIPAddrFunc
+	warpNewTransport = httpclient.NewTransport
+)
+
+func wrapWarpDialContext(base warpscout.DialContextFunc, preserveBoundDNS bool, disallow warpscout.IPDisallowFunc) warpscout.DialContextFunc {
+	if preserveBoundDNS && warpLookupIPAddr == nil {
+		return warpscout.NewPostDialGuardedDialContext(base, disallow)
+	}
+	return warpscout.NewGuardedDialContextWithPolicy(base, warpLookupIPAddr, disallow)
+}
+
 // WarpHTTPClientFactory — клиент Cloudflare API с прямым выходом через WAN.
 // Короткий таймаут рукопожатия позволяет быстро перейти на резервный выход
-// (прокси/туннель), если провайдер блокирует домен регистрации на сыром WAN.
+// (прокси), если провайдер блокирует домен регистрации на сыром WAN.
 func WarpHTTPClientFactory(wanIface string) (*http.Client, error) {
-	tr, err := httpclient.NewTransport(httpclient.TransportConfig{Interface: wanIface, Proxy: httpclient.ProxyDirect})
+	tr, err := warpNewTransport(httpclient.TransportConfig{Interface: wanIface, Proxy: httpclient.ProxyDirect})
 	if err != nil {
 		return nil, err
 	}
-	tr.TLSHandshakeTimeout = 6 * time.Second
+	tr.DialContext = wrapWarpDialContext(tr.DialContext, strings.TrimSpace(wanIface) != "", warpscout.IsDisallowedRelayIP)
+	tr.TLSHandshakeTimeout = 5 * time.Second
+	tr.ResponseHeaderTimeout = 8 * time.Second
+	return &http.Client{Transport: tr, Timeout: 10 * time.Second}, nil
+}
+
+// WarpSplitTLSClientFactory — прямой WAN-клиент с фрагментацией TLS ClientHello
+// по SNI (обход ТСПУ без внешнего прокси).
+func WarpSplitTLSClientFactory(wanIface string) (*http.Client, error) {
+	tr, err := warpNewTransport(httpclient.TransportConfig{Interface: wanIface, Proxy: httpclient.ProxyDirect})
+	if err != nil {
+		return nil, err
+	}
+	baseDial := tr.DialContext
+	if baseDial == nil {
+		baseDial = (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext
+	}
+	tr.DialContext = warpscout.NewSplitTLSDialer(wrapWarpDialContext(baseDial, strings.TrimSpace(wanIface) != "", warpscout.IsDisallowedRelayIP))
+	tr.TLSHandshakeTimeout = 5 * time.Second
+	tr.ResponseHeaderTimeout = 8 * time.Second
+	return &http.Client{Transport: tr, Timeout: 10 * time.Second}, nil
+}
+
+// WarpProxyHTTPClient создаёт HTTP-клиента через указанный пользователем прокси
+// (http://, https://, socks5://, socks5h://).
+func WarpProxyHTTPClient(proxyURL string) (*http.Client, error) {
+	trimmed := strings.TrimSpace(proxyURL)
+	u, err := url.Parse(trimmed)
+	if err != nil || strings.TrimSpace(u.Hostname()) == "" {
+		return nil, fmt.Errorf("%w: поддерживаются прокси http://, https://, socks5://, socks5h://", warpscout.ErrInvalidInput)
+	}
+	switch strings.ToLower(strings.TrimSpace(u.Scheme)) {
+	case "http", "https", "socks5", "socks5h":
+	default:
+		return nil, fmt.Errorf("%w: поддерживаются прокси http://, https://, socks5://, socks5h://", warpscout.ErrInvalidInput)
+	}
+	if warpscout.IsDisallowedLiteralIP(u.Hostname()) {
+		return nil, fmt.Errorf("%w: указанный IP-адрес прокси не допускается", warpscout.ErrInvalidInput)
+	}
+	tr, err := warpNewTransport(httpclient.TransportConfig{ProxyURL: trimmed})
+	if err != nil {
+		return nil, warpscout.SanitizeProxyError(fmt.Errorf("%w: некорректный URL прокси: %v", warpscout.ErrInvalidInput, err), trimmed)
+	}
+	tr.DialContext = wrapWarpDialContext(tr.DialContext, false, warpscout.IsDisallowedIP)
+	tr.TLSHandshakeTimeout = 8 * time.Second
 	tr.ResponseHeaderTimeout = 10 * time.Second
 	return &http.Client{Transport: tr, Timeout: 12 * time.Second}, nil
 }
 
-// WarpFallbackClients собирает резервные HTTP-клиенты для регистрации WARP и
-// привязки WARP+ на случай блокировки API Cloudflare на прямом WAN:
-//  1. настроенный маршрут загрузок (если выбран не direct);
-//  2. локальный «Прокси для устройств» (deviceproxy, включая авторизацию инстанса);
-//  3. до двух запущенных незащищённых не-WARP VPN-туннелей.
-func WarpFallbackClients(ctx context.Context, dp *deviceproxy.Service, ops *WarpTunnelOps, dl *downloader.Service) []*http.Client {
-	var out []*http.Client
+// WarpFallbackClients собирает явно выбранные пользователем резервные HTTP-клиенты
+// для регистрации WARP и привязки WARP+ на случай блокировки API Cloudflare на WAN:
+//  1. настроенный не-direct маршрут загрузок (downloader);
+//  2. первый активный не-direct локальный «Прокси для устройств» (deviceproxy).
+func WarpFallbackClients(ctx context.Context, dp *deviceproxy.Service, dl *downloader.Service) []warpscout.FallbackClient {
+	var out []warpscout.FallbackClient
+	closeAll := func() {
+		for _, item := range out {
+			if item.Close != nil {
+				item.Close()
+			} else if item.Client != nil {
+				item.Client.CloseIdleConnections()
+			}
+		}
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return nil
+	}
 
 	if dl != nil {
-		if lease, err := dl.ResolveClient(ctx, nil); err == nil && lease != nil && lease.Client != nil {
-			if tag := strings.TrimSpace(lease.Route.Tag); tag != "" && tag != "direct" {
-				out = append(out, lease.Client)
+		if lease, err := dl.ResolveClient(ctx, nil); err == nil && lease != nil {
+			tag := strings.TrimSpace(lease.Route.Tag)
+			if lease.Client != nil && tag != "" && !strings.EqualFold(tag, "direct") {
+				cCopy := *lease.Client
+				if cCopy.Timeout == 0 {
+					cCopy.Timeout = 10 * time.Second
+				}
+				if tr, ok := cCopy.Transport.(*http.Transport); ok && tr != nil {
+					trClone := tr.Clone()
+					trClone.TLSHandshakeTimeout = 5 * time.Second
+					trClone.ResponseHeaderTimeout = 8 * time.Second
+					if trClone.Proxy == nil {
+						trClone.DialContext = wrapWarpDialContext(trClone.DialContext, true, warpscout.IsDisallowedRelayIP)
+					} else {
+						trClone.DialContext = wrapWarpDialContext(trClone.DialContext, false, warpscout.IsDisallowedIP)
+					}
+					cCopy.Transport = trClone
+				}
+				leaseRef := lease
+				out = append(out, warpscout.FallbackClient{
+					Client: &cCopy,
+					Close: func() {
+						cCopy.CloseIdleConnections()
+						leaseRef.Close()
+					},
+				})
 			} else {
 				lease.Close()
 			}
 		}
 	}
 
+	if ctx != nil && ctx.Err() != nil {
+		closeAll()
+		return nil
+	}
 	if dp != nil {
 		for _, inst := range dp.GetSnapshot().Instances {
 			if !inst.Enabled || inst.Port <= 0 || inst.Port > 65535 || strings.EqualFold(strings.TrimSpace(inst.SelectedOutbound), "direct") {
@@ -1334,37 +1493,24 @@ func WarpFallbackClients(ctx context.Context, dp *deviceproxy.Service, ops *Warp
 			if inst.Auth.Enabled && inst.Auth.Username != "" {
 				u.User = url.UserPassword(inst.Auth.Username, inst.Auth.Password)
 			}
-			if tr, err := httpclient.NewTransport(httpclient.TransportConfig{ProxyURL: u.String()}); err == nil {
-				tr.TLSHandshakeTimeout = 8 * time.Second
-				tr.ResponseHeaderTimeout = 12 * time.Second
-				out = append(out, &http.Client{Transport: tr, Timeout: 15 * time.Second})
+			if tr, err := warpNewTransport(httpclient.TransportConfig{ProxyURL: u.String()}); err == nil {
+				tr.DialContext = wrapWarpDialContext(tr.DialContext, false, warpscout.IsDisallowedIP)
+				tr.TLSHandshakeTimeout = 6 * time.Second
+				tr.ResponseHeaderTimeout = 8 * time.Second
+				c := &http.Client{Transport: tr, Timeout: 10 * time.Second}
+				out = append(out, warpscout.FallbackClient{
+					Client: c,
+					Close:  c.CloseIdleConnections,
+				})
 				break
 			}
 		}
 	}
 
-	if ops != nil {
-		if list, err := ops.List(ctx); err == nil {
-			added := 0
-			for _, ref := range list {
-				if !ref.Running || ref.Protected || ref.IsWarp || ref.Iface == "" {
-					continue
-				}
-				tr, err := httpclient.NewTransport(httpclient.TransportConfig{Interface: ref.Iface, Proxy: httpclient.ProxyDirect})
-				if err != nil {
-					continue
-				}
-				tr.TLSHandshakeTimeout = 6 * time.Second
-				tr.ResponseHeaderTimeout = 10 * time.Second
-				out = append(out, &http.Client{Transport: tr, Timeout: 12 * time.Second})
-				added++
-				if added >= 2 {
-					break
-				}
-			}
-		}
+	if ctx != nil && ctx.Err() != nil {
+		closeAll()
+		return nil
 	}
-
 	return out
 }
 
@@ -1482,9 +1628,43 @@ func (h *WarpScoutHandler) Register(w http.ResponseWriter, r *http.Request) {
 		response.MethodNotAllowed(w)
 		return
 	}
-	acct, err := h.svc.Register(r.Context())
+	var opts warpscout.RegisterOptions
+	if r.Body != nil {
+		if err := readJSONBody(w, r, &opts); err != nil && !errors.Is(err, errEmptyBody) {
+			response.BadRequest(w, err.Error())
+			return
+		}
+	}
+	acct, err := h.svc.RegisterWithOptions(r.Context(), opts)
 	if err != nil {
 		h.log.Warn("register", "warp", err.Error())
+		h.fail(w, err)
+		return
+	}
+	response.Success(w, acct)
+}
+
+type warpImportAccountRequest struct {
+	Raw string `json:"raw"`
+}
+
+// ImportAccount — импорт учётной записи WARP из JSON, TOML или WireGuard/AWG .conf.
+//
+//	@Summary	Import Cloudflare WARP account
+//	@Tags		warpscout
+//	@Accept		json
+//	@Produce	json
+//	@Security	CookieAuth
+//	@Success	200	{object}	map[string]interface{}
+//	@Router		/warpscout/account/import [post]
+func (h *WarpScoutHandler) ImportAccount(w http.ResponseWriter, r *http.Request) {
+	req, ok := parseJSON[warpImportAccountRequest](w, r, http.MethodPost)
+	if !ok {
+		return
+	}
+	acct, err := h.svc.ImportAccount(r.Context(), req.Raw)
+	if err != nil {
+		h.log.Warn("import", "warp", err.Error())
 		h.fail(w, err)
 		return
 	}
@@ -1619,7 +1799,7 @@ func (h *WarpScoutHandler) FindJunkStart(w http.ResponseWriter, r *http.Request)
 		h.fail(w, err)
 		return
 	}
-	response.Success(w, h.svc.State().FindJunk)
+	response.Success(w, h.svc.FindJunkSnapshot())
 }
 
 // FindJunkStop — остановка автоподбора маскировки (сохраняется лучший найденный набор).
