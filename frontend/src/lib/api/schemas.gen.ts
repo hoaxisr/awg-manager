@@ -1023,7 +1023,6 @@ const api_PageScanEnvelope: v.GenericSchema = v.looseObject({
 const api_PageScanInterfaceOptionDTO: v.GenericSchema = v.looseObject({
 	label: v.optional(v.nullable(v.string())),
 	name: v.optional(v.nullable(v.string())),
-	up: v.optional(v.nullable(v.boolean())),
 });
 
 const api_PageScanOptionsDTO: v.GenericSchema = v.looseObject({
@@ -1039,7 +1038,6 @@ const api_PageScanOptionsEnvelope: v.GenericSchema = v.looseObject({
 });
 
 const api_PageScanProxyOptionDTO: v.GenericSchema = v.looseObject({
-	kind: v.optional(v.nullable(v.string())),
 	label: v.optional(v.nullable(v.string())),
 	url: v.optional(v.nullable(v.string())),
 });
@@ -1054,6 +1052,7 @@ const api_PageScanResourceDTO: v.GenericSchema = v.looseObject({
 	outbound: v.optional(v.nullable(v.string())),
 	outboundLabel: v.optional(v.nullable(v.string())),
 	resolveError: v.optional(v.nullable(v.string())),
+	routeUnknown: v.optional(v.nullable(v.boolean())),
 	routed: v.optional(v.nullable(v.boolean())),
 	sources: v.optional(v.nullable(v.array(v.string()))),
 });

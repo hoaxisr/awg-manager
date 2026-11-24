@@ -59,7 +59,7 @@
 	);
 
 	let unroutedDomains = $derived(
-		selectableDomains.filter((r) => !r.routed),
+		selectableDomains.filter((r) => !r.routed && !r.routeUnknown),
 	);
 
 	let checkedDomainList = $derived(
@@ -592,7 +592,7 @@
 												</span>
 											{/if}
 										</div>
-									{:else}
+									{:else if !item.routeUnknown}
 										<Badge variant="warning" size="xs">{m.page_scan_route_direct()}</Badge>
 									{/if}
 

@@ -282,13 +282,11 @@ export interface PageScanParams {
 export interface PageScanInterfaceOption {
 	name: string;
 	label: string;
-	up: boolean;
 }
 
 export interface PageScanProxyOption {
 	url: string;
 	label: string;
-	kind?: string;
 }
 
 export interface PageScanOptions {
@@ -310,6 +308,8 @@ export interface PageScanResource {
 	outboundLabel?: string;
 	inspect?: IpInspectResult;
 	resolveError?: string;
+	/** Маршрут не проверялся: имя не отдавали DNS роутера (socks5h). */
+	routeUnknown?: boolean;
 }
 
 export interface PageScanResult {

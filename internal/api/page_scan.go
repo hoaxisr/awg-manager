@@ -27,14 +27,12 @@ type PageScanRequestDTO struct {
 type PageScanInterfaceOptionDTO struct {
 	Name  string `json:"name" example:"opkgtun11"`
 	Label string `json:"label" example:"VPN DE (opkgtun11)"`
-	Up    bool   `json:"up" example:"true"`
 }
 
 // PageScanProxyOptionDTO mirrors pagescan.ProxyOption for OpenAPI schema generation.
 type PageScanProxyOptionDTO struct {
 	URL   string `json:"url" example:"http://127.0.0.1:1099"`
 	Label string `json:"label" example:"FIRC inbound (127.0.0.1:1099)"`
-	Kind  string `json:"kind,omitempty" example:"firc"`
 }
 
 // PageScanOptionsDTO mirrors pagescan.ScanOptionsResult for OpenAPI schema generation.
@@ -64,6 +62,7 @@ type PageScanResourceDTO struct {
 	OutboundLabel string        `json:"outboundLabel,omitempty" example:"Netherlands"`
 	Inspect       *IPInspectDTO `json:"inspect,omitempty"`
 	ResolveError  string        `json:"resolveError,omitempty"`
+	RouteUnknown  bool          `json:"routeUnknown,omitempty"`
 }
 
 // PageScanResultDTO mirrors pagescan.Result for OpenAPI schema generation.

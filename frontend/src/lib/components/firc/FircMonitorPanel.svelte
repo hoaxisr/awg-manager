@@ -103,6 +103,12 @@
 		}
 	}
 
+	// В URL своего прокси может быть пароль: свернули панель — забыли.
+	function forgetCustomProxy() {
+		if (customProxyUrl && lastPageScanParams?.proxyUrl === customProxyUrl.trim()) lastPageScanParams = null;
+		customProxyUrl = '';
+	}
+
 	function resolveScanParams(modeOverride?: PageScanFetchMode): PageScanParams | null {
 		if (modeOverride === 'direct') {
 			pageScanExit = 'direct';
@@ -259,6 +265,7 @@
 		{pageScanOptions}
 		{loadingPageScanOptions}
 		onLoadOptions={(force) => void loadPageScanOptions(force)}
+		onClose={forgetCustomProxy}
 		onCheck={(dom) => void runDomainCheck(dom)}
 		onScan={(mode) => void runPageScan(undefined, mode)}
 		onRetryScan={() => void runPageScan()}

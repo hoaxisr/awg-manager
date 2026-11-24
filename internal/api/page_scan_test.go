@@ -56,6 +56,9 @@ func TestPageScanHandler_Post(t *testing.T) {
 			`{"url":"https://example.com","interface":"nonexistent_tun9"}`,
 			`{"url":"https://example.com","fetchMode":"proxy","proxyUrl":"ftp://127.0.0.1:1080"}`,
 			`{"url":"https://example.com","proxyUrl":"http://192.168.1.1:1099"}`,
+			`{"url":"https://example.com","proxyUrl":"http://127.0.0.1:79"}`,
+			`{"url":"https://example.com","fetchMode":"auto","proxyUrl":"http://8.8.8.8:3128"}`,
+			`{"url":"https://example.com","fetchMode":"direct","interface":"opkgtun11"}`,
 		}
 		for _, p := range payloads {
 			req := httptest.NewRequest(http.MethodPost, "/api/diagnostics/page-scan", strings.NewReader(p))
@@ -103,12 +106,12 @@ func TestPageScanHandler_GetOptions(t *testing.T) {
 		ProxyURLProvider: func(context.Context) string { return "http://127.0.0.1:1099" },
 		ProxyLister: func(context.Context) []pagescan.ProxyOption {
 			return []pagescan.ProxyOption{
-				{URL: "http://127.0.0.1:1099", Label: "FIRC inbound (127.0.0.1:1099)", Kind: "firc"},
-				{URL: "socks5://user:pass@127.0.0.1:1080", Label: "SOCKS5 proxy (:1080)", Kind: "socks5"},
+				{URL: "http://127.0.0.1:1099", Label: "FIRC inbound (127.0.0.1:1099)"},
+				{URL: "socks5://user:pass@127.0.0.1:1080", Label: "SOCKS5 proxy (:1080)"},
 			}
 		},
 		InterfaceLister: func(context.Context) []pagescan.InterfaceOption {
-			return []pagescan.InterfaceOption{{Name: "opkgtun11", Label: "VPN DE (opkgtun11)", Up: true}}
+			return []pagescan.InterfaceOption{{Name: "opkgtun11", Label: "VPN DE (opkgtun11)"}}
 		},
 	}))
 

@@ -14,7 +14,9 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
+	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -47,6 +49,26 @@ func (r *stubHostResolver) LookupIPAddr(_ context.Context, host string) ([]net.I
 
 type stubInspectResolver struct{}
 
+// recordingResolver запоминает имена, ушедшие в локальный DNS.
+type recordingResolver struct {
+	stubHostResolver
+	mu   sync.Mutex
+	seen []string
+}
+
+func (r *recordingResolver) LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error) {
+	r.mu.Lock()
+	r.seen = append(r.seen, host)
+	r.mu.Unlock()
+	return r.stubHostResolver.LookupIPAddr(ctx, host)
+}
+
+func (r *recordingResolver) hosts() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.seen)
+}
+
 func (stubInspectResolver) LookupAddr(_ context.Context, addr string) ([]string, error) {
 	if addr == "93.184.216.34" {
 		return []string{"www.example.com."}, nil
@@ -70,6 +92,11 @@ func (stubInspectResolver) LookupTXT(_ context.Context, name string) ([]string, 
 	default:
 		return nil, nil
 	}
+}
+
+// Scan — короткая запись для тестов, которым не нужен явный выход.
+func (s *Service) Scan(ctx context.Context, rawURL string, mode FetchMode) (*Result, error) {
+	return s.ScanWithOptions(ctx, ScanRequest{URL: rawURL, Mode: mode})
 }
 
 func hasHost(hosts []extractedHost, host string) (extractedHost, bool) {
@@ -977,7 +1004,11 @@ func TestScanWithOptions_ManualProxySOCKS5AndHTTPAuth(t *testing.T) {
 
 	// 1. No-auth SOCKS5 proxy must send literal IPv4 ATYP=0x01 and extract resources.
 	socksNoAuthAddr, seenNoAuth, muNoAuth := startTestSOCKS5Proxy(t, "", "", rewrite)
-	svc := NewService(Options{Resolver: resolver, FetchTimeout: 2 * time.Second})
+	svc := NewService(Options{
+		Resolver:           resolver,
+		FetchTimeout:       2 * time.Second,
+		RouterProxyMatcher: func(context.Context, string, string) bool { return true },
+	})
 	res, err := svc.ScanWithOptions(context.Background(), ScanRequest{
 		URL:      "http://site.example.com/",
 		Mode:     FetchModeProxy,
@@ -996,18 +1027,18 @@ func TestScanWithOptions_ManualProxySOCKS5AndHTTPAuth(t *testing.T) {
 		t.Fatalf("expected literal IPv4 93.184.216.34:80 over SOCKS5, got %v", gotNoAuthTargets)
 	}
 
-	// 2. Authenticated socks5h proxy must authenticate via RFC 1929 and strip credentials from FetchTarget.
+	// 2. Authenticated socks5 proxy must authenticate via RFC 1929 and strip credentials from FetchTarget.
 	socksAuthAddr, seenAuth, muAuth := startTestSOCKS5Proxy(t, "alice", "s3cr3t", rewrite)
 	resAuth, err := svc.ScanWithOptions(context.Background(), ScanRequest{
 		URL:      "http://site.example.com/",
 		Mode:     FetchModeProxy,
-		ProxyURL: "socks5h://alice:s3cr3t@" + socksAuthAddr,
+		ProxyURL: "socks5://alice:s3cr3t@" + socksAuthAddr,
 	})
 	if err != nil {
 		t.Fatalf("SOCKS5 auth ScanWithOptions failed: %v", err)
 	}
-	if resAuth.FetchVia != "proxy" || resAuth.FetchTarget != "socks5h://"+socksAuthAddr {
-		t.Fatalf("expected redacted FetchTarget socks5h://%s, got via=%q target=%q", socksAuthAddr, resAuth.FetchVia, resAuth.FetchTarget)
+	if resAuth.FetchVia != "proxy" || resAuth.FetchTarget != "socks5://"+socksAuthAddr {
+		t.Fatalf("expected redacted FetchTarget socks5://%s, got via=%q target=%q", socksAuthAddr, resAuth.FetchVia, resAuth.FetchTarget)
 	}
 	muAuth.Lock()
 	gotAuthTargets := append([]string(nil), (*seenAuth)...)
@@ -1066,7 +1097,7 @@ func TestScanWithOptions_ManualProxyValidationAndSSRF(t *testing.T) {
 		Resolver:     resolver,
 		FetchTimeout: 2 * time.Second,
 		ProxyLister: func(context.Context) []ProxyOption {
-			return []ProxyOption{{URL: "http://192.168.90.1:1080", Label: "LAN SOCKS/HTTP", Kind: "deviceproxy"}}
+			return []ProxyOption{{URL: "http://192.168.90.1:1080", Label: "LAN SOCKS/HTTP"}}
 		},
 	})
 	svc.dialProxy = func(ctx context.Context, _ string, addr string) (net.Conn, error) {
@@ -1080,6 +1111,7 @@ func TestScanWithOptions_ManualProxyValidationAndSSRF(t *testing.T) {
 		"ftp://127.0.0.1:8080",
 		"https://127.0.0.1:8443",
 		"http://127.0.0.1:1099/path?x=1",
+		"http://user:p%zz@127.0.0.1:1099",
 	}
 	for _, rawProxy := range invalidCases {
 		if _, err := svc.ScanWithOptions(context.Background(), ScanRequest{
@@ -1147,13 +1179,7 @@ func TestScanWithOptions_InterfaceMode(t *testing.T) {
 		Resolver:     resolver,
 		FetchTimeout: 2 * time.Second,
 		InterfaceLister: func(context.Context) []InterfaceOption {
-			return []InterfaceOption{{Name: "opkgtun11", Label: "VPN DE (opkgtun11)", Up: true}}
-		},
-		InterfaceValidator: func(_ context.Context, iface string) error {
-			if iface != "opkgtun11" {
-				return fmt.Errorf("%w: interface %s is down", ErrInvalidInterface, iface)
-			}
-			return nil
+			return []InterfaceOption{{Name: "opkgtun11", Label: "VPN DE (opkgtun11)"}}
 		},
 	})
 	svc.interfaceLookupIPv4 = func(_ context.Context, host, iface string) ([]string, error) {
@@ -1243,8 +1269,9 @@ func TestScanWithOptions_InterfaceMode(t *testing.T) {
 		t.Fatalf("expected DoH+HTTP dial over interface, got res=%+v dials=%v", resDoH, ifaceDialLog)
 	}
 
-	// 4. Invalid syntax and validator failure return ErrInvalidInterface.
-	for _, badIface := range []string{"bad iface!", "nwg9"} {
+	// 4. Всё, чего нет в списке туннелей, отвергается — даже поднятый lo.
+	ifaceDialLog = nil
+	for _, badIface := range []string{"bad iface!", "nwg9", "lo", "OPKGTUN11", ""} {
 		if _, err := svc.ScanWithOptions(context.Background(), ScanRequest{
 			URL:       "http://site.example.com/",
 			Mode:      FetchModeInterface,
@@ -1253,6 +1280,9 @@ func TestScanWithOptions_InterfaceMode(t *testing.T) {
 			t.Errorf("iface %q: expected ErrInvalidInterface, got %v", badIface, err)
 		}
 	}
+	if len(ifaceDialLog) != 0 {
+		t.Fatalf("expected 0 dials for rejected interfaces, got %v", ifaceDialLog)
+	}
 }
 
 func TestService_Options(t *testing.T) {
@@ -1260,11 +1290,11 @@ func TestService_Options(t *testing.T) {
 		ProxyURLProvider: func(context.Context) string { return "http://user:pass@localhost:1099" },
 		ProxyLister: func(context.Context) []ProxyOption {
 			return []ProxyOption{
-				{URL: "socks5://alice:secret@127.0.0.1:1080", Label: "SOCKS5 proxy (:1080)", Kind: "socks5"},
+				{URL: "socks5://alice:secret@127.0.0.1:1080", Label: "SOCKS5 proxy (:1080)"},
 			}
 		},
 		InterfaceLister: func(context.Context) []InterfaceOption {
-			return []InterfaceOption{{Name: "nwg4", Label: "HomeWG (nwg4)", Up: true}}
+			return []InterfaceOption{{Name: "nwg4", Label: "HomeWG (nwg4)"}}
 		},
 	})
 
@@ -1275,7 +1305,7 @@ func TestService_Options(t *testing.T) {
 	if len(opts.Proxies) != 2 {
 		t.Fatalf("expected prepended default proxy + listed proxy, got %+v", opts.Proxies)
 	}
-	if opts.Proxies[0].Kind != "default" || opts.Proxies[0].URL != "http://127.0.0.1:1099" {
+	if opts.Proxies[0].URL != "http://127.0.0.1:1099" {
 		t.Fatalf("unexpected first proxy: %+v", opts.Proxies[0])
 	}
 	if opts.Proxies[1].URL != "socks5://127.0.0.1:1080" {
@@ -1289,7 +1319,7 @@ func TestService_Options(t *testing.T) {
 	svcLabeled := NewService(Options{
 		ProxyURLProvider: func(context.Context) string { return "http://127.0.0.1:1099" },
 		ProxyLister: func(context.Context) []ProxyOption {
-			return []ProxyOption{{URL: "http://127.0.0.1:1099", Label: "FIRC inbound (127.0.0.1:1099)", Kind: "firc"}}
+			return []ProxyOption{{URL: "http://127.0.0.1:1099", Label: "FIRC inbound (127.0.0.1:1099)"}}
 		},
 	})
 	optsLabeled := svcLabeled.Options(context.Background())
@@ -1327,8 +1357,10 @@ func TestScanWithOptions_ReviewFixes(t *testing.T) {
 					"cdn.example.com": {{IP: net.ParseIP("1.1.1.1")}},
 				},
 			},
-			InterfaceValidator: func(context.Context, string) error { return nil },
-			FetchTimeout:       2 * time.Second,
+			InterfaceLister: func(context.Context) []InterfaceOption {
+				return []InterfaceOption{{Name: "tunvless0"}}
+			},
+			FetchTimeout: 2 * time.Second,
 		})
 		svc.dohEndpoints = []string{dohSrv.Listener.Addr().String()}
 		svc.dohRootCAs = roots
@@ -1361,31 +1393,6 @@ func TestScanWithOptions_ReviewFixes(t *testing.T) {
 		}
 	})
 
-	t.Run("rejects loopback interface name cleanly", func(t *testing.T) {
-		ifaces, err := net.Interfaces()
-		if err != nil {
-			t.Fatalf("net.Interfaces: %v", err)
-		}
-		var loName string
-		for _, ifc := range ifaces {
-			if ifc.Flags&net.FlagLoopback != 0 && isValidInterfaceName(ifc.Name) {
-				loName = ifc.Name
-				break
-			}
-		}
-		if loName == "" {
-			return
-		}
-		svc := NewService(Options{})
-		if _, err := svc.ScanWithOptions(context.Background(), ScanRequest{
-			URL:       "https://example.com/",
-			Mode:      FetchModeInterface,
-			Interface: loName,
-		}); !errors.Is(err, ErrInvalidInterface) {
-			t.Fatalf("expected ErrInvalidInterface for loopback %q, got %v", loName, err)
-		}
-	})
-
 	t.Run("calls ProxyLister once per scan and allows RouterProxyMatcher for authenticated LAN proxy", func(t *testing.T) {
 		httpAuthAddr, _, authHdrs, muHTTP := startTestHTTPAuthConnectProxy(t, "bob", "pass", map[string]string{
 			"93.184.216.34:80": targetSrv.Listener.Addr().String(),
@@ -1400,7 +1407,7 @@ func TestScanWithOptions_ReviewFixes(t *testing.T) {
 			},
 			ProxyLister: func(context.Context) []ProxyOption {
 				listerCalls++
-				return []ProxyOption{{URL: "http://192.168.90.1:1080", Label: "Open LAN (:1080)", Kind: "deviceproxy"}}
+				return []ProxyOption{{URL: "http://192.168.90.1:1080", Label: "Open LAN (:1080)"}}
 			},
 			RouterProxyMatcher: func(_ context.Context, host, port string) bool {
 				return host == "192.168.90.1" && port == "1099"
@@ -1489,14 +1496,256 @@ func TestScanWithOptions_ReviewFixes(t *testing.T) {
 		svc := NewService(Options{FetchTimeout: 2 * time.Second})
 		specNoCreds := proxySpec{Scheme: "socks5", DialAddrs: []string{ln.Addr().String()}}
 		serverMode.Store(1)
-		if _, err := svc.dialViaSOCKS5(context.Background(), specNoCreds, "93.184.216.34:80"); err == nil || !strings.Contains(err.Error(), "unexpectedly") {
+		if _, err := svc.dialViaSOCKS5(context.Background(), specNoCreds, "93.184.216.34:80"); err == nil {
 			t.Fatalf("expected rejection when server demands 0x02 without creds, got %v", err)
 		}
 
 		specWithCreds := proxySpec{Scheme: "socks5", DialAddrs: []string{ln.Addr().String()}, Username: "u", Password: "p"}
 		serverMode.Store(2)
-		if _, err := svc.dialViaSOCKS5(context.Background(), specWithCreds, "93.184.216.34:80"); err == nil || !strings.Contains(err.Error(), "ver=5") {
+		if _, err := svc.dialViaSOCKS5(context.Background(), specWithCreds, "93.184.216.34:80"); err == nil {
 			t.Fatalf("expected rejection on bad RFC1929 version byte, got %v", err)
 		}
 	})
+}
+
+func TestScanWithOptions_RouterAddrAllowsOnlyKnownProxyPorts(t *testing.T) {
+	var dialed []string
+	listerCalls := 0
+	svc := NewService(Options{
+		Resolver: &stubHostResolver{records: map[string][]net.IPAddr{
+			"ok.example.com":   {{IP: net.ParseIP("93.184.216.34")}},
+			"self.example.com": {{IP: net.ParseIP("203.0.114.7")}},
+		}},
+		FetchTimeout: time.Second,
+		ProxyLister: func(context.Context) []ProxyOption {
+			listerCalls++
+			return []ProxyOption{{URL: "http://127.0.0.1:1099", Label: "FIRC"}}
+		},
+		RouterProxyMatcher: func(_ context.Context, host, port string) bool {
+			return host == "203.0.114.7" && port == "1080"
+		},
+	})
+	svc.dialProxy = func(_ context.Context, _ string, addr string) (net.Conn, error) {
+		dialed = append(dialed, addr)
+		return nil, errors.New("test dial")
+	}
+	// 203.0.114.7 — публичный адрес, назначенный самому роутеру.
+	svc.isRouterAddr = func(addr netip.Addr) bool {
+		return addr.String() == "203.0.114.7" || isRouterAddr(addr)
+	}
+	scan := func(rawProxy string) error {
+		_, err := svc.ScanWithOptions(context.Background(), ScanRequest{URL: "http://ok.example.com/", ProxyURL: rawProxy})
+		return err
+	}
+
+	for _, rawProxy := range []string{
+		"http://127.0.0.1:79",
+		"socks5://127.0.0.1:2222",
+		"socks5h://127.0.0.1:2222",
+		"http://127.5.6.7:1099",
+		"http://localhost:79",
+		"http://0.0.0.0:79",
+		"http://[::]:79",
+		"http://[::1]:79",
+		"http://[::ffff:127.0.0.1]:79",
+		"http://203.0.114.7:22",
+		"http://self.example.com:1080",
+	} {
+		if err := scan(rawProxy); !errors.Is(err, ErrInvalidProxy) {
+			t.Errorf("proxy %q: expected ErrInvalidProxy, got %v", rawProxy, err)
+		}
+	}
+	if len(dialed) != 0 {
+		t.Fatalf("expected 0 dials for rejected proxies, got %v", dialed)
+	}
+
+	for rawProxy, wantDial := range map[string]string{
+		"http://127.0.0.1:1099":          "127.0.0.1:1099",
+		"socks5://localhost:1099":        "127.0.0.1:1099",
+		"http://[::ffff:127.0.0.1]:1099": "127.0.0.1:1099",
+		"http://203.0.114.7:1080":        "203.0.114.7:1080",
+		"http://8.8.8.8:3128":            "8.8.8.8:3128",
+	} {
+		dialed, listerCalls = nil, 0
+		if err := scan(rawProxy); err == nil || errors.Is(err, ErrInvalidProxy) || errors.Is(err, ErrBlockedAddress) {
+			t.Errorf("proxy %q: expected dial error, got %v", rawProxy, err)
+		}
+		if len(dialed) != 1 || dialed[0] != wantDial {
+			t.Errorf("proxy %q: dialed %v, want [%s]", rawProxy, dialed, wantDial)
+		}
+		wantCalls := 1
+		if rawProxy == "http://8.8.8.8:3128" {
+			wantCalls = 0 // публичному адресу список не нужен
+		}
+		if listerCalls != wantCalls {
+			t.Errorf("proxy %q: ProxyLister called %d times, want %d", rawProxy, listerCalls, wantCalls)
+		}
+	}
+}
+
+func TestIsRouterAddr(t *testing.T) {
+	for addr, want := range map[string]bool{
+		"127.0.0.1": true, "127.9.9.9": true, "::1": true, "0.0.0.0": true, "::": true,
+		"8.8.8.8": false, "2606:4700:4700::1111": false,
+	} {
+		if got := isRouterAddr(netip.MustParseAddr(addr)); got != want {
+			t.Errorf("isRouterAddr(%s) = %v, want %v", addr, got, want)
+		}
+	}
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		t.Fatalf("InterfaceAddrs: %v", err)
+	}
+	for _, item := range addrs {
+		ipNet, ok := item.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		addr, _ := netip.AddrFromSlice(ipNet.IP)
+		if !isRouterAddr(addr.Unmap()) {
+			t.Errorf("own address %s is not recognised", addr)
+		}
+	}
+}
+
+func TestScanWithOptions_SOCKS5HKeepsTargetFromLocalDNS(t *testing.T) {
+	targetSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = io.WriteString(w, `<script src="https://cdn.example.com/a.js"></script>`)
+	}))
+	defer targetSrv.Close()
+
+	answer := net.ParseIP("93.184.216.34")
+	dohSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqWire, err := io.ReadAll(r.Body)
+		if err != nil || len(reqWire) < 12 {
+			http.Error(w, "bad query", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/dns-message")
+		_, _ = w.Write(buildTestDNSResponse(binary.BigEndian.Uint16(reqWire[0:2]), "site.example.com", "site.example.com", answer, false))
+	}))
+	defer dohSrv.Close()
+	dohAddr := dohSrv.Listener.Addr().String()
+	roots := x509.NewCertPool()
+	roots.AddCert(dohSrv.Certificate())
+
+	socksAddr, seen, mu := startTestSOCKS5Proxy(t, "alice", "p@ss", map[string]string{
+		"93.184.216.34:80": targetSrv.Listener.Addr().String(),
+		dohAddr:            dohAddr,
+	})
+
+	resolver := &recordingResolver{stubHostResolver: stubHostResolver{records: map[string][]net.IPAddr{
+		"site.example.com": {{IP: net.ParseIP("93.184.216.34")}},
+		"cdn.example.com":  {{IP: net.ParseIP("1.1.1.1")}},
+	}}}
+	var routed []string
+	svc := NewService(Options{
+		Resolver:           resolver,
+		FetchTimeout:       2 * time.Second,
+		RouterProxyMatcher: func(context.Context, string, string) bool { return true },
+		RouteChecker: func(_ context.Context, domains []string) (map[string]RouteInfo, error) {
+			routed = append(routed, domains...)
+			return nil, nil
+		},
+	})
+	svc.dohEndpoints = []string{dohAddr}
+	svc.dohRootCAs = roots
+
+	res, err := svc.ScanWithOptions(context.Background(), ScanRequest{
+		URL: "http://site.example.com/", ProxyURL: "socks5h://alice:p%40ss@" + socksAddr,
+	})
+	if err != nil {
+		t.Fatalf("socks5h scan failed: %v", err)
+	}
+	if res.FetchTarget != "socks5h://"+socksAddr {
+		t.Fatalf("FetchTarget = %q", res.FetchTarget)
+	}
+	mu.Lock()
+	targets := append([]string(nil), (*seen)...)
+	mu.Unlock()
+	if len(targets) != 2 || targets[0] != dohAddr || targets[1] != "93.184.216.34:80" {
+		t.Fatalf("expected DoH then literal IP over SOCKS5, got %v", targets)
+	}
+	if got := resolver.hosts(); slices.Contains(got, "site.example.com") {
+		t.Fatalf("target name leaked to local DNS: %v", got)
+	}
+	if slices.Contains(routed, "site.example.com") || !slices.Contains(routed, "cdn.example.com") {
+		t.Fatalf("route checker got %v", routed)
+	}
+	for _, r := range res.Resources {
+		if target := r.Host == "site.example.com"; r.RouteUnknown != target || (target && r.IP != "93.184.216.34") {
+			t.Fatalf("unexpected resource: %+v", r)
+		}
+	}
+
+	// Обычный socks5 по-прежнему резолвит локально.
+	if _, err := svc.ScanWithOptions(context.Background(), ScanRequest{
+		URL: "http://site.example.com/", ProxyURL: "socks5://alice:p%40ss@" + socksAddr,
+	}); err != nil {
+		t.Fatalf("socks5 scan failed: %v", err)
+	}
+	if !slices.Contains(resolver.hosts(), "site.example.com") {
+		t.Fatal("socks5 must resolve the target locally")
+	}
+
+	// Приватный ответ DoH блокируется.
+	answer = net.ParseIP("192.168.1.1")
+	if _, err := svc.ScanWithOptions(context.Background(), ScanRequest{
+		URL: "http://site.example.com/", ProxyURL: "socks5h://alice:p%40ss@" + socksAddr,
+	}); !errors.Is(err, ErrBlockedAddress) {
+		t.Fatalf("expected ErrBlockedAddress for private DoH answer, got %v", err)
+	}
+}
+
+func TestScanWithOptions_ForeignEgressParamsRejected(t *testing.T) {
+	svc := NewService(Options{})
+	for _, req := range []ScanRequest{
+		{Mode: FetchModeAuto, ProxyURL: "http://8.8.8.8:3128"},
+		{Mode: FetchModeDirect, ProxyURL: "http://8.8.8.8:3128"},
+		{Mode: FetchModeAuto, Interface: "opkgtun11"},
+		{Mode: FetchModeDirect, Interface: "opkgtun11"},
+		{Mode: FetchModeProxy, Interface: "opkgtun11", ProxyURL: "http://8.8.8.8:3128"},
+		{Mode: FetchModeInterface, Interface: "opkgtun11", ProxyURL: "http://8.8.8.8:3128"},
+	} {
+		req.URL = "https://example.com/"
+		if _, err := svc.ScanWithOptions(context.Background(), req); !errors.Is(err, ErrInvalidFetchMode) {
+			t.Errorf("%+v: expected ErrInvalidFetchMode, got %v", req, err)
+		}
+	}
+}
+
+func TestScanWithOptions_MalformedProxyURLHintsPercentEncoding(t *testing.T) {
+	svc := NewService(Options{})
+	for _, rawProxy := range []string{
+		"http://user:s3cr/et@8.8.8.8:3128",
+		"http://user:s3cr#et@8.8.8.8:3128",
+		"http://user:s3cr%zzet@8.8.8.8:3128",
+		"http://user:12/s3cr@8.8.8.8:3128",
+	} {
+		_, err := svc.ScanWithOptions(context.Background(), ScanRequest{URL: "https://example.com/", ProxyURL: rawProxy})
+		if !errors.Is(err, ErrInvalidProxy) || !strings.Contains(err.Error(), "percent-encoded") {
+			t.Errorf("%q: error without percent-encoding hint: %v", rawProxy, err)
+		}
+		if err != nil && strings.Contains(err.Error(), "s3cr") {
+			t.Errorf("password leaked into error: %v", err)
+		}
+	}
+}
+
+func TestDialViaSOCKS5_HonoursContextAndTimeout(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close() // соединения принимает ядро, на приветствие никто не отвечает
+
+	spec := proxySpec{Scheme: "socks5", DialAddrs: []string{ln.Addr().String()}}
+	svc := NewService(Options{FetchTimeout: 100 * time.Millisecond})
+	if _, err := svc.dialViaSOCKS5(context.Background(), spec, "93.184.216.34:80"); !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("expected deadline error, got %v", err)
+	}
+	if _, err := svc.dialViaSOCKS5(context.Background(), spec, "name.example.com:80"); !errors.Is(err, ErrBlockedAddress) {
+		t.Fatalf("expected ErrBlockedAddress for a hostname target, got %v", err)
+	}
 }

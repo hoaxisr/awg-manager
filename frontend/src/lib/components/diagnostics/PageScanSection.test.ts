@@ -266,4 +266,16 @@ describe('PageScanSection', () => {
 		await fireEvent.click(retryBtn);
 		expect(onRetry).toHaveBeenCalledTimes(1);
 	});
+
+	it('does not call an unchecked host direct', async () => {
+		const host = { host: 'target.example.com', sources: ['document'], routed: false };
+		const { rerender } = render(PageScanSection, {
+			props: { result: { ...sampleResult, resources: [{ ...host, routeUnknown: true }] } },
+		});
+		expect(screen.queryByText(m.page_scan_route_direct())).toBeNull();
+		expect(screen.queryByText(m.page_scan_select_unrouted({ count: 1 }))).toBeNull();
+
+		await rerender({ result: { ...sampleResult, resources: [host] } });
+		expect(screen.getByText(m.page_scan_route_direct())).toBeInTheDocument();
+	});
 });

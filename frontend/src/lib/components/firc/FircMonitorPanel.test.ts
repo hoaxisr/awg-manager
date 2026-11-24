@@ -5,6 +5,11 @@ vi.hoisted(() => {
 		configurable: true,
 		value: (query: string) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {} }),
 	});
+	globalThis.ResizeObserver = class {
+		observe() {}
+		unobserve() {}
+		disconnect() {}
+	};
 });
 const {
 	fircGetMonitor,
@@ -87,10 +92,10 @@ beforeEach(() => {
 		defaultProxy: 'http://127.0.0.1:1099',
 		defaultProxyLabel: 'FIRC inbound (127.0.0.1:1099)',
 		proxies: [
-			{ url: 'http://127.0.0.1:1099', label: 'FIRC inbound (127.0.0.1:1099)', kind: 'firc' },
-			{ url: 'socks5://127.0.0.1:1080', label: 'SOCKS5 proxy (:1080)', kind: 'socks5' },
+			{ url: 'http://127.0.0.1:1099', label: 'FIRC inbound (127.0.0.1:1099)' },
+			{ url: 'socks5://127.0.0.1:1080', label: 'SOCKS5 proxy (:1080)' },
 		],
-		interfaces: [{ name: 'opkgtun11', label: 'VPN DE (opkgtun11)', up: true }],
+		interfaces: [{ name: 'opkgtun11', label: 'VPN DE (opkgtun11)' }],
 	});
 });
 afterEach(cleanup);
@@ -170,8 +175,12 @@ describe('FIRC compact monitor', () => {
 			expect(getPageScanOptions).toHaveBeenCalledTimes(1);
 		});
 
-		const select = screen.getByLabelText<HTMLSelectElement>(m.page_scan_exit_label());
-		expect(select.textContent).toContain(
+		const trigger = screen.getByLabelText(m.page_scan_exit_label());
+		const pickExit = async (name: string) => {
+			await fireEvent.click(trigger);
+			await fireEvent.click(await screen.findByRole('option', { name }));
+		};
+		expect(trigger.textContent).toContain(
 			m.page_scan_exit_auto_with_proxy({ proxy: 'FIRC inbound (127.0.0.1:1099)' }),
 		);
 
@@ -192,7 +201,7 @@ describe('FIRC compact monitor', () => {
 			durationMs: 42,
 			resources: [{ host: 'cdn.example.com', sources: ['script'], routed: false }],
 		});
-		await fireEvent.change(select, { target: { value: 'iface:opkgtun11' } });
+		await pickExit('VPN DE (opkgtun11)');
 		await fireEvent.click(screen.getByRole('button', { name: m.page_scan_btn() }));
 
 		await waitFor(() => {
@@ -222,10 +231,10 @@ describe('FIRC compact monitor', () => {
 		await waitFor(() => {
 			expect(scanPage).toHaveBeenLastCalledWith('example.com', { fetchMode: 'proxy' });
 		});
-		expect(select.value).toBe('proxy:http://127.0.0.1:1099');
+		expect(trigger.textContent).toContain('FIRC inbound (127.0.0.1:1099)');
 
 		// 3. Select custom proxy with empty URL -> shows validation error, clears stale cdn.example.com, skips API call.
-		await fireEvent.change(select, { target: { value: 'custom' } });
+		await pickExit(m.page_scan_exit_custom_proxy());
 		await fireEvent.click(screen.getByRole('button', { name: m.page_scan_btn() }));
 		expect(await screen.findByText(m.page_scan_custom_proxy_required())).toBeTruthy();
 		expect(screen.queryByText('cdn.example.com')).toBeNull();
@@ -245,5 +254,11 @@ describe('FIRC compact monitor', () => {
 		});
 		expect(await screen.findByText('socks5 timeout')).toBeTruthy();
 		expect(screen.queryByText('cdn.example.com')).toBeNull();
+
+		// 5. Поле не предлагается запомнить браузеру и забывается при сворачивании панели.
+		expect(customInput.getAttribute('autocomplete')).toBe('off');
+		details.open = false;
+		await fireEvent(details, new Event('toggle'));
+		expect(screen.getByLabelText<HTMLInputElement>(m.page_scan_exit_custom_proxy()).value).toBe('');
 	});
 });

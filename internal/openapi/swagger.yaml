@@ -2831,9 +2831,6 @@ definitions:
       name:
         example: opkgtun11
         type: string
-      up:
-        example: true
-        type: boolean
     type: object
   api.PageScanOptionsDTO:
     properties:
@@ -2862,9 +2859,6 @@ definitions:
     type: object
   api.PageScanProxyOptionDTO:
     properties:
-      kind:
-        example: firc
-        type: string
       label:
         example: FIRC inbound (127.0.0.1:1099)
         type: string
@@ -2914,6 +2908,8 @@ definitions:
         type: string
       resolveError:
         type: string
+      routeUnknown:
+        type: boolean
       routed:
         example: true
         type: boolean
