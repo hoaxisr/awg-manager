@@ -272,6 +272,7 @@ export interface FircGroup {
 	check?: FircGroupCheck;
 	resolver?: FircGroupResolver;
 	block?: FircBlockAnswer;
+	cloudflare?: boolean;
 }
 
 export interface FircGroupIfaceState {
