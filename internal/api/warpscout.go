@@ -343,10 +343,13 @@ func (o *WarpTunnelOps) populateViaInfoSeeded(ctx context.Context, refs []warpsc
 	}
 }
 
-// List — managed-туннели и системные WG-клиенты. Серверы и служебные
-// интерфейсы в выбор не попадают вовсе.
+// List — managed-туннели и системные WG-интерфейсы (для защищённых сохраняются
+// флаги Protected и LocalPublicKey, чтобы проверки ключей видели все живые
+// интерфейсы включая External != ""; целевой UI отбирает список в Service.Targets).
+// Теневые NDMS-записи управляемых NativeWG-туннелей исключаются.
 func (o *WarpTunnelOps) List(ctx context.Context) ([]warpscout.TunnelRef, error) {
 	out := []warpscout.TunnelRef{}
+	managedNative := map[string]bool{}
 	if o.Store != nil {
 		list, err := o.Store.List()
 		if err != nil {
@@ -355,6 +358,9 @@ func (o *WarpTunnelOps) List(ctx context.Context) ([]warpscout.TunnelRef, error)
 		for i := range list {
 			if ref, ok := o.managedRef(ctx, &list[i]); ok {
 				out = append(out, ref)
+				if ref.Mode == warpscout.TargetNative && list[i].NWGIndex >= 0 {
+					managedNative[fmt.Sprintf("Wireguard%d", list[i].NWGIndex)] = true
+				}
 			}
 		}
 	}
@@ -364,11 +370,10 @@ func (o *WarpTunnelOps) List(ctx context.Context) ([]warpscout.TunnelRef, error)
 			return nil, fmt.Errorf("список системных туннелей: %w", err)
 		}
 		for i := range sys {
-			ref := o.systemRef(&sys[i])
-			if ref.Protected {
+			if managedNative[sys[i].ID] {
 				continue
 			}
-			out = append(out, ref)
+			out = append(out, o.systemRef(&sys[i]))
 		}
 	}
 	o.populateViaInfo(ctx, out)

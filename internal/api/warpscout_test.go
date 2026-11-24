@@ -1773,3 +1773,162 @@ func TestWarpTunnelOps_ListReturnsErrorOnSystemListFailure(t *testing.T) {
 		t.Fatalf("expected nil partial slice on System.List error, got %+v", refs)
 	}
 }
+
+type stubSystemInventorySvc struct {
+	*stubSystemTunnelSvc
+	tunnels []ndms.SystemWireguardTunnel
+}
+
+func (s *stubSystemInventorySvc) List(context.Context) ([]ndms.SystemWireguardTunnel, error) {
+	return append([]ndms.SystemWireguardTunnel(nil), s.tunnels...), nil
+}
+
+func (s *stubSystemInventorySvc) Get(_ context.Context, name string) (*ndms.SystemWireguardTunnel, error) {
+	for i := range s.tunnels {
+		if s.tunnels[i].ID == name {
+			cp := s.tunnels[i]
+			return &cp, nil
+		}
+	}
+	return nil, errors.New("не найден")
+}
+
+func TestWarpTunnelOps_ProtectedExternalTunnelBlocksScanAndReissue(t *testing.T) {
+	ctx := context.Background()
+	privOther, pubOther, err := warpscout.GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	priv1, pub1, err := warpscout.GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ops, _, store, _ := newWarpOpsHarness(t, map[string]tunnel.State{
+		"awg50": tunnel.StateRunning,
+	})
+	seedTunnel(t, store, &storage.AWGTunnel{
+		ID:       "awg50",
+		Name:     "WARP awg50",
+		Enabled:  true,
+		Backend:  "nativewg",
+		NWGIndex: 3,
+		Interface: storage.AWGInterface{
+			PrivateKey: privOther,
+			Address:    "172.16.0.10/32",
+		},
+		Peer: storage.AWGPeer{
+			PublicKey: warpscout.WarpPeerPublicKey,
+			Endpoint:  "162.159.192.70:2408",
+		},
+	})
+	ops.System = &stubSystemInventorySvc{
+		stubSystemTunnelSvc: &stubSystemTunnelSvc{},
+		tunnels: []ndms.SystemWireguardTunnel{
+			{
+				ID:            "Wireguard3",
+				Description:   "WARP awg50",
+				Status:        "up",
+				InterfaceName: "nwg3",
+				PublicKey:     pubOther,
+				Peer: &ndms.WireguardPeerInfo{
+					PublicKey: warpscout.WarpPeerPublicKey,
+					Endpoint:  "162.159.192.70:2408",
+				},
+			},
+			{
+				ID:            "Wireguard7",
+				Description:   "Phobos WARP",
+				External:      "phobos",
+				Status:        "up",
+				InterfaceName: "nwg7",
+				PublicKey:     pub1,
+				Peer: &ndms.WireguardPeerInfo{
+					PublicKey: warpscout.WarpPeerPublicKey,
+					Endpoint:  "162.159.192.1:2408",
+				},
+			},
+		},
+	}
+
+	wsStore, err := warpscout.NewStore(t.TempDir(), apiPlainCipher{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := wsStore.SetAccount(&warpscout.Account{
+		ID:            "prim-ext",
+		Token:         "tok-ext",
+		PrivateKey:    priv1,
+		PublicKey:     pub1,
+		PeerPublicKey: warpscout.WarpPeerPublicKey,
+		AddressV4:     "172.16.0.2",
+		HasToken:      true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := warpscout.New(warpscout.Deps{
+		Store:   wsStore,
+		Runner:  &apiJunkRunner{},
+		Tunnels: ops,
+		WAN:     func(context.Context) (string, bool) { return "eth3", true },
+	})
+	t.Cleanup(svc.Stop)
+
+	refs, err := ops.List(ctx)
+	if err != nil {
+		t.Fatalf("ops.List: %v", err)
+	}
+	var sawExt bool
+	for _, r := range refs {
+		if r.Mode == warpscout.TargetSystem && r.ID == "Wireguard3" {
+			t.Fatalf("managed NativeWG shadow Wireguard3 must not duplicate under TargetSystem: %+v", r)
+		}
+		if r.Mode == warpscout.TargetSystem && r.ID == "Wireguard7" {
+			sawExt = true
+			if !r.Protected || r.LocalPublicKey != pub1 {
+				t.Fatalf("expected Wireguard7 to be protected and preserve LocalPublicKey=%q, got %+v", pub1, r)
+			}
+		}
+	}
+	if !sawExt {
+		t.Fatalf("expected ops.List to include protected external tunnel Wireguard7, got %+v", refs)
+	}
+
+	targets, err := svc.Targets(ctx)
+	if err != nil {
+		t.Fatalf("svc.Targets: %v", err)
+	}
+	var sawManaged bool
+	for _, tg := range targets {
+		if tg.Mode == warpscout.TargetSystem && tg.ID == "Wireguard7" {
+			t.Fatalf("protected external tunnel Wireguard7 must not leak into svc.Targets: %+v", tg)
+		}
+		if tg.Mode == warpscout.TargetNative && tg.ID == "awg50" {
+			sawManaged = true
+		}
+	}
+	if !sawManaged {
+		t.Fatalf("expected managed awg50 in svc.Targets, got %+v", targets)
+	}
+
+	if err := ops.SwapEndpoint(ctx, warpscout.TargetSystem, "Wireguard7", "162.159.192.2:2408", warpscout.SwapOptions{}); !errors.Is(err, warpscout.ErrProtected) {
+		t.Fatalf("expected ErrProtected from SwapEndpoint on Wireguard7, got %v", err)
+	}
+	if err := ops.Rename(ctx, warpscout.TargetSystem, "Wireguard7", "Other"); !errors.Is(err, warpscout.ErrProtected) {
+		t.Fatalf("expected ErrProtected from Rename on Wireguard7, got %v", err)
+	}
+
+	if st := svc.State(); st.AccountKeyInUseBy != "Phobos WARP" {
+		t.Fatalf("expected State().AccountKeyInUseBy == 'Phobos WARP', got %q", st.AccountKeyInUseBy)
+	}
+	if err := svc.StartScan(warpscout.ScanRequest{Filters: warpscout.Filters{Protocol: warpscout.ProtocolWG}}); !errors.Is(err, warpscout.ErrInvalidInput) {
+		t.Fatalf("expected StartScan blocked with ErrInvalidInput when external tunnel holds key, got %v", err)
+	}
+	if _, err := svc.RegisterWithOptions(ctx, warpscout.RegisterOptions{}); !errors.Is(err, warpscout.ErrInvalidInput) {
+		t.Fatalf("expected RegisterWithOptions blocked with ErrInvalidInput when external tunnel holds key, got %v", err)
+	}
+	if err := svc.DeleteAccountLocal(ctx); !errors.Is(err, warpscout.ErrInvalidInput) {
+		t.Fatalf("expected DeleteAccountLocal blocked with ErrInvalidInput when external tunnel holds key, got %v", err)
+	}
+}

@@ -53,7 +53,8 @@ type SwapOptions struct {
 // TunnelOps — операции над туннелями, которые автопилоту нужны от
 // остального приложения. Реализация живёт в internal/api.
 type TunnelOps interface {
-	// List — все туннели, пригодные для показа в выборе цели.
+	// List — полная инвентаризация туннелей (включая защищённые системные с флагом
+	// Protected для проверок занятости ключей).
 	List(ctx context.Context) ([]TunnelRef, error)
 	// Get — один туннель; ошибка, если его нет.
 	Get(ctx context.Context, mode TargetMode, id string) (*TunnelRef, error)
@@ -530,14 +531,21 @@ func (s *Service) ClearHistory() error {
 	return nil
 }
 
-// Targets — туннели для выбора цели.
+// Targets — туннели для выбора цели (защищённые системные интерфейсы скрываются).
 func (s *Service) Targets(ctx context.Context) ([]TunnelRef, error) {
 	if s.d.Tunnels == nil {
 		return []TunnelRef{}, nil
 	}
-	list, err := s.d.Tunnels.List(ctx)
+	raw, err := s.d.Tunnels.List(ctx)
 	if err != nil {
 		return nil, err
+	}
+	list := make([]TunnelRef, 0, len(raw))
+	for _, t := range raw {
+		if t.Mode == TargetSystem && t.Protected {
+			continue
+		}
+		list = append(list, t)
 	}
 	sort.SliceStable(list, func(i, j int) bool {
 		if list[i].Mode != list[j].Mode {
