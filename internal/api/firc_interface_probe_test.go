@@ -259,3 +259,70 @@ func TestHandleProbeInterfaces_Validation(t *testing.T) {
 		}
 	})
 }
+
+func TestHandleProbeInterfaces_PrefersRunningFircAppCheckURLOverDefaultSettings(t *testing.T) {
+	tmpDir := t.TempDir()
+	settingsStore := storage.NewSettingsStore(tmpDir)
+	_, _ = settingsStore.Load()
+	if err := settingsStore.Update(func(s *storage.Settings) error {
+		s.SingboxRouter.RoutingEngine = "firc"
+		s.ConnectivityCheckURL = storage.DefaultConnectivityCheckURL
+		return nil
+	}); err != nil {
+		t.Fatalf("update settings: %v", err)
+	}
+
+	fircMux := http.NewServeMux()
+	fircMux.HandleFunc("/api/v1/system/netfilter", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"dirty": false})
+	})
+	fircMux.HandleFunc("/api/v1/system/settings", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"boot":           "ok",
+			"restarting":     false,
+			"pendingRestart": []string{},
+			"settings": map[string]any{
+				"app.check.url": "http://cp.cloudflare.com/generate_204",
+			},
+			"classes": map[string]string{},
+		})
+	})
+	mockFirc := httptest.NewServer(fircMux)
+	defer mockFirc.Close()
+
+	op := firc.NewOperator(firc.Options{ConfigDir: tmpDir})
+	op.SetClient(firc.NewHTTPClient(mockFirc.URL, mockFirc.Client()))
+	h := NewFircHandler(op)
+	h.SetSettingsStore(settingsStore)
+
+	var seenURL string
+	h.probeInterfaceFn = func(_ context.Context, ifaceName, checkURL string) fircInterfaceProbeResult {
+		seenURL = checkURL
+		return fircInterfaceProbeResult{Interface: ifaceName, Ok: true, LatencyMs: 45, HTTPCode: http.StatusNoContent}
+	}
+
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, func(next http.HandlerFunc) http.HandlerFunc { return next })
+
+	// 1. Default ConnectivityCheckURL -> uses running fircd app.check.url.
+	req := httptest.NewRequest(http.MethodPost, "/api/firc/interfaces/probe", strings.NewReader(`{"interfaces":["qmi_br0"]}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || seenURL != "http://cp.cloudflare.com/generate_204" {
+		t.Fatalf("status=%d seenURL=%q, want http://cp.cloudflare.com/generate_204", rec.Code, seenURL)
+	}
+
+	// 2. Explicitly customized ConnectivityCheckURL -> honors settings over app.check.url.
+	if err := settingsStore.Update(func(s *storage.Settings) error {
+		s.ConnectivityCheckURL = "https://custom.probe.test/204"
+		return nil
+	}); err != nil {
+		t.Fatalf("update custom settings URL: %v", err)
+	}
+	req2 := httptest.NewRequest(http.MethodPost, "/api/firc/interfaces/probe", strings.NewReader(`{"interfaces":["qmi_br0"]}`))
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK || seenURL != "https://custom.probe.test/204" {
+		t.Fatalf("custom settings URL: status=%d seenURL=%q, want https://custom.probe.test/204", rec2.Code, seenURL)
+	}
+}

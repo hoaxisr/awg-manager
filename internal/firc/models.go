@@ -1020,9 +1020,10 @@ type Status struct {
 
 // ProxyGroup defines an AWGM-managed fallback group of interfaces (up to 4) for FIRC.
 type ProxyGroup struct {
-	ID         string   `json:"id"`
-	Name       string   `json:"name"`
-	Interfaces []string `json:"interfaces"`
+	ID         string      `json:"id"`
+	Name       string      `json:"name"`
+	Interfaces []string    `json:"interfaces"`
+	Check      *GroupCheck `json:"check,omitempty"`
 }
 
 // KeenDNSCloudConfig controls routing Keenetic Cloud / KeenDNS traffic through FIRC.

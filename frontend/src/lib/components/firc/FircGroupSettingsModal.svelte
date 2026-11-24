@@ -11,8 +11,10 @@
 		mode: 'create' | 'edit';
 		form: GroupForm;
 		availableInterfaces: { value: string; label: string }[];
-		/** Блок проверки доступности: только у цепочки Fallback из 2+ интерфейсов. */
+		/** Блок проверки доступности: только у цепочки Fallback из 2+ интерфейсов без привязанной прокси-группы. */
 		showCheck: boolean;
+		/** Имя прокси-группы, если проверка цепочки управляется через неё. */
+		managedProxyGroupName?: string;
 		catalog: FircCatalog | null;
 		previewLoading: boolean;
 		previewData: FircListPreviewRes | null;
@@ -30,6 +32,7 @@
 		form = $bindable(),
 		availableInterfaces,
 		showCheck,
+		managedProxyGroupName = '',
 		catalog,
 		previewLoading,
 		previewData,
@@ -132,6 +135,12 @@
 						</p>
 					</div>
 				{/if}
+			</div>
+		{:else if managedProxyGroupName}
+			<div class="sec-box">
+				<p class="hint">
+					{m.firc_group_check_managed_by_pg({ name: managedProxyGroupName })}
+				</p>
 			</div>
 		{/if}
 

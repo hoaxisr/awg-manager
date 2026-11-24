@@ -19,7 +19,7 @@
 		type FircGroupsRuntime,
 		type FircProbeOptions,
 	} from '$lib/utils/fircGroups';
-	import type { FircProxyGroup } from '$lib/types/firc';
+	import type { FircGroupCheck, FircProxyGroup } from '$lib/types/firc';
 
 	interface Props {
 		open: boolean;
@@ -56,6 +56,7 @@
 				id: randomHexId(),
 				name: `Fallback #${draft.length + 1}`,
 				interfaces: [],
+				check: { mode: 'none', url: '' },
 			},
 		];
 	}
@@ -67,6 +68,7 @@
 	function toggleIfaceInDraftProxyGroup(pgIndex: number, ifaceId: string) {
 		const pg = draft[pgIndex];
 		if (!pg) return;
+		const prevLen = pg.interfaces.length;
 		const exists = pg.interfaces.includes(ifaceId);
 		if (exists) {
 			pg.interfaces = pg.interfaces.filter((x) => x !== ifaceId);
@@ -77,6 +79,32 @@
 			}
 			pg.interfaces = [...pg.interfaces, ifaceId];
 		}
+		if (pg.interfaces.length >= 2 && prevLen < 2) {
+			if (!pg.check || pg.check.mode === 'none') {
+				pg.check = { mode: 'url', url: pg.check?.url ?? '' };
+			}
+		} else if (pg.interfaces.length < 2) {
+			pg.check = { mode: 'none', url: '' };
+		}
+	}
+
+	function setDraftProxyGroupCheckMode(pgIndex: number, mode: FircGroupCheck['mode']) {
+		const pg = draft[pgIndex];
+		if (!pg) return;
+		pg.check = {
+			mode,
+			url: mode === 'url' ? (pg.check?.url ?? '') : '',
+			...(mode === 'keendns' ? { timeoutMs: pg.check?.timeoutMs || 5000 } : {}),
+		};
+	}
+
+	function setDraftProxyGroupCheckUrl(pgIndex: number, url: string) {
+		const pg = draft[pgIndex];
+		if (!pg) return;
+		pg.check = {
+			mode: pg.check?.mode ?? 'url',
+			url,
+		};
 	}
 
 	function moveIfaceInDraftProxyGroup(pgIndex: number, iIdx: number, delta: -1 | 1) {
@@ -121,7 +149,11 @@
 						size="sm"
 						disabled={pg.interfaces.length === 0 || isModalTesting}
 						title={m.firc_fallback_test_group_title({ name: pg.name })}
-						onclick={() => onprobe(pg.interfaces, { groupKey: `modal:${pg.id}` })}
+						onclick={() =>
+							onprobe(pg.interfaces, {
+								groupKey: `modal:${pg.id}`,
+								url: pg.check?.mode === 'url' && pg.check.url ? pg.check.url : undefined,
+							})}
 					>
 						{#snippet iconBefore()}<Zap size={12} class={isModalTesting ? 'spin' : ''} />{/snippet}
 						{isModalTesting ? '...' : m.firc_fallback_test()}
@@ -236,6 +268,58 @@
 						{/each}
 					</div>
 				</div>
+
+				{#if pg.interfaces.length >= 2}
+					{@const pgMode = pg.check?.mode ?? 'url'}
+					<div class="pg-check-box">
+						<div class="pg-check-grid">
+							<div class="field">
+								<label class="lbl" for={`firc-pg-check-mode-${pg.id}`}>
+									{m.firc_group_check_label()}
+								</label>
+								<select
+									id={`firc-pg-check-mode-${pg.id}`}
+									class="inp"
+									value={pgMode}
+									onchange={(e) =>
+										setDraftProxyGroupCheckMode(
+											pgIdx,
+											(e.currentTarget as HTMLSelectElement).value as FircGroupCheck['mode'],
+										)}
+								>
+									<option value="url">{m.firc_group_check_mode_url()}</option>
+									<option value="keendns">KeenDNS Cloud relay TCP</option>
+									<option value="none">{m.firc_group_check_mode_none()}</option>
+								</select>
+							</div>
+							{#if pgMode === 'url'}
+								<div class="field">
+									<label class="lbl" for={`firc-pg-check-url-${pg.id}`}>
+										{m.firc_group_check_url_label()}
+									</label>
+									<input
+										id={`firc-pg-check-url-${pg.id}`}
+										type="text"
+										class="inp font-mono"
+										placeholder={m.firc_group_check_url_placeholder()}
+										value={pg.check?.url ?? ''}
+										oninput={(e) =>
+											setDraftProxyGroupCheckUrl(pgIdx, (e.currentTarget as HTMLInputElement).value)}
+									/>
+								</div>
+							{/if}
+						</div>
+						<p class="hint">
+							{#if pgMode === 'url'}
+								{m.firc_group_check_url_hint()}
+							{:else if pgMode === 'keendns'}
+								{m.firc_pg_check_keendns_hint()}
+							{:else}
+								{m.firc_pg_check_none_hint()}
+							{/if}
+						</p>
+					</div>
+				{/if}
 			</div>
 		{/each}
 
@@ -545,5 +629,31 @@
 		border-radius: 4px;
 		background: color-mix(in srgb, var(--color-accent) 22%, transparent);
 		color: var(--color-accent);
+	}
+
+	.field {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+
+	.lbl {
+		font-size: 11.5px;
+		color: var(--text-secondary);
+		font-weight: 500;
+	}
+
+	.pg-check-box {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		padding-top: 8px;
+		border-top: 1px dashed var(--border);
+	}
+
+	.pg-check-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+		gap: 8px;
 	}
 </style>

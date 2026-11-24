@@ -1013,6 +1013,59 @@ func probeFircInterfaceHTTP(ctx context.Context, ifaceName, checkURL string) fir
 	}
 }
 
+func isValidProbeHTTPURL(raw string) (string, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", false
+	}
+	u, err := url.Parse(trimmed)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
+		return "", false
+	}
+	return u.String(), true
+}
+
+func (h *FircHandler) resolveProbeCheckURL(ctx context.Context, reqURL string) (string, error) {
+	if strings.TrimSpace(reqURL) != "" {
+		normalized, ok := isValidProbeHTTPURL(reqURL)
+		if !ok {
+			return "", errors.New("invalid probe url")
+		}
+		return normalized, nil
+	}
+
+	var settingsURL string
+	if h.settingsStore != nil {
+		if s, err := h.settingsStore.Get(); err == nil && s != nil {
+			settingsURL = strings.TrimSpace(s.ConnectivityCheckURL)
+		}
+	}
+	if settingsURL != "" && settingsURL != storage.DefaultConnectivityCheckURL {
+		return settingsURL, nil
+	}
+
+	if h.op != nil {
+		sCtx, cancel := context.WithTimeout(ctx, 750*time.Millisecond)
+		running := h.op.IsRunning(sCtx)
+		if running {
+			if st, err := h.op.Client().GetSettings(sCtx); err == nil && st != nil && st.Settings != nil {
+				if rawAppURL, ok := st.Settings["app.check.url"].(string); ok {
+					if normalized, valid := isValidProbeHTTPURL(rawAppURL); valid {
+						cancel()
+						return normalized, nil
+					}
+				}
+			}
+		}
+		cancel()
+	}
+
+	if settingsURL != "" {
+		return settingsURL, nil
+	}
+	return storage.DefaultConnectivityCheckURL, nil
+}
+
 func (h *FircHandler) handleProbeInterfaces(w http.ResponseWriter, r *http.Request) {
 	if h.op == nil {
 		response.ErrorWithStatus(w, http.StatusServiceUnavailable, "firc operator not initialized", "UNAVAILABLE")
@@ -1058,21 +1111,10 @@ func (h *FircHandler) handleProbeInterfaces(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	checkURL := strings.TrimSpace(req.URL)
-	if checkURL != "" {
-		u, err := url.Parse(checkURL)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
-			response.ErrorWithStatus(w, http.StatusBadRequest, "invalid probe url", "BAD_REQUEST")
-			return
-		}
-		checkURL = u.String()
-	} else if h.settingsStore != nil {
-		if s, err := h.settingsStore.Get(); err == nil && s != nil && strings.TrimSpace(s.ConnectivityCheckURL) != "" {
-			checkURL = strings.TrimSpace(s.ConnectivityCheckURL)
-		}
-	}
-	if checkURL == "" {
-		checkURL = storage.DefaultConnectivityCheckURL
+	checkURL, err := h.resolveProbeCheckURL(r.Context(), req.URL)
+	if err != nil {
+		response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "BAD_REQUEST")
+		return
 	}
 
 	probeFn := h.probeInterfaceFn

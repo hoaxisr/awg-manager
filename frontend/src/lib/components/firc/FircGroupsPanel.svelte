@@ -52,6 +52,7 @@
 		allFallbackInterfaceIds,
 		buildAvailableInterfaces,
 		buildCatalogTunnelOptions,
+		buildGroupCheckFromProxyGroup,
 		domainCopyNotice,
 		emptyExtConfig,
 		emptyGroupForm,
@@ -64,9 +65,11 @@
 		groupServiceKey,
 		groupsFromPresets,
 		isSpecialIface,
+		matchingProxyGroup,
 		normalizeExtConfig,
 		normalizeGroup,
 		normalizeIfaceList,
+		normalizeProxyGroupForSave,
 		parseImportedGroups,
 		parseRulesText,
 		presetSrsUrl,
@@ -81,6 +84,7 @@
 		extractFircGroupDomainLines,
 		type FircDeviceSelector,
 		type FircGroup,
+		type FircGroupCheck,
 		type FircGroupLive,
 		type FircHost,
 		type FircInterfaceOption,
@@ -135,7 +139,12 @@
 	let loading = $state(true);
 	let saving = $state(false);
 	let syncingGroup = $state<Record<string, boolean>>({});
-	const probes = createFircProbes((id) => friendlyIfaceLabel(id, interfaces, tunnelsState));
+	const probes = createFircProbes(
+		(id) => friendlyIfaceLabel(id, interfaces, tunnelsState),
+		() => {
+			void pollLiveState();
+		},
+	);
 	const probeFallbackInterfaces = probes.probe;
 	let searchQuery = $state('');
 	let expandedGroups = $state<Record<string, boolean>>({});
@@ -316,7 +325,7 @@
 	async function openProxyGroupsModal() {
 		openPickerGroupId = null;
 		if (!(await refreshProxyGroups())) return;
-		pgDraft = proxyGroupsDraft(extConfig.proxyGroups);
+		pgDraft = proxyGroupsDraft(extConfig.proxyGroups, groups);
 		proxyGroupsModalOpen = true;
 	}
 
@@ -330,11 +339,7 @@
 		try {
 			const nextExt: FircExtConfig = {
 				...extConfig,
-				proxyGroups: pgDraft.map((pg) => ({
-					id: pg.id || randomHexId(),
-					name: pg.name.trim(),
-					interfaces: pg.interfaces.slice(0, MAX_GROUP_IFACES),
-				})),
+				proxyGroups: pgDraft.map(normalizeProxyGroupForSave),
 			};
 			const saved = await api.fircSaveExt(nextExt);
 			extConfig = saved;
@@ -538,12 +543,18 @@
 	// Список зависит от выбранного в форме выхода: служебный интерфейс виден, только пока он выбран.
 	let availableInterfaces = $derived(buildAvailableInterfaces(interfaces, groupForm.form.iface));
 
-	let gmShowCheck = $derived(
-		groupForm.mode === 'edit' &&
-			groupForm.index !== null &&
-			normalizeIfaceList(groups[groupForm.index]?.interface ?? '').length >= 2 &&
+	let gmEditGroup = $derived(
+		groupForm.mode === 'edit' && groupForm.index !== null ? groups[groupForm.index] : undefined,
+	);
+	let gmHasChain = $derived(
+		Boolean(gmEditGroup) &&
+			normalizeIfaceList(gmEditGroup?.interface ?? '').length >= 2 &&
 			!isSpecialIface(groupForm.form.iface),
 	);
+	let gmManagedProxyGroup = $derived(
+		gmHasChain && gmEditGroup ? matchingProxyGroup(extConfig.proxyGroups, gmEditGroup) : undefined,
+	);
+	let gmShowCheck = $derived(gmHasChain && !gmManagedProxyGroup);
 
 	function openCreateGroupModal() {
 		groupForm.openWith('create', null, emptyGroupForm(availableInterfaces[0]?.value ?? 'block'));
@@ -558,7 +569,7 @@
 	function submitGroupModal() {
 		const idx = groupForm.index;
 		const cur = groupForm.mode === 'edit' && idx !== null ? groups[idx] : undefined;
-		const next = groupFromForm(groupForm.form, cur, groups.length);
+		const next = groupFromForm(groupForm.form, cur, groups.length, extConfig.proxyGroups);
 		if (cur && idx !== null) {
 			groups[idx] = next;
 		} else {
@@ -829,7 +840,16 @@
 			onSelectAllVisible={() => selection.setGroups(filteredGroups.map((entry) => entry.group.id))}
 			onDeselectAll={() => selection.setGroups([])}
 			onDone={toggleGroupSelectMode}
-			onSetInterface={(iface) => runBulkGroupAction({ kind: 'setInterface', iface })}
+			onSetInterface={(iface) => {
+				let check: FircGroupCheck | undefined;
+				if (Array.isArray(iface)) {
+					const matched = matchingProxyGroup(extConfig.proxyGroups, { interface: iface });
+					check =
+						(matched ? buildGroupCheckFromProxyGroup(matched) : undefined) ??
+						(iface.length >= 2 ? { mode: 'url', url: '' } : { mode: 'none', url: '' });
+				}
+				runBulkGroupAction({ kind: 'setInterface', iface, check });
+			}}
 			onOpenDevices={openBulkDevicesModal}
 			onEnable={() => runBulkGroupAction({ kind: 'enable', enable: true })}
 			onDisable={() => runBulkGroupAction({ kind: 'enable', enable: false })}
@@ -964,6 +984,7 @@
 	bind:form={groupForm.form}
 	{availableInterfaces}
 	showCheck={gmShowCheck}
+	managedProxyGroupName={gmManagedProxyGroup?.name ?? ''}
 	catalog={groupForm.catalog}
 	previewLoading={groupForm.previewLoading}
 	previewData={groupForm.previewData}

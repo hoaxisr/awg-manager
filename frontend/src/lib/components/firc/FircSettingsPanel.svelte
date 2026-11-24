@@ -13,7 +13,12 @@
   } from '$lib/types/firc';
   import { fircInterfaceProbeResults, fircProbeResults, fircTunnelsState } from '$lib/stores/firc';
   import { friendlyIfaceLabel } from '$lib/utils/fircFallback';
-  import type { FircGroupsRuntime } from '$lib/utils/fircGroups';
+  import {
+    normalizeProxyGroupForSave,
+    proxyGroupsDraft,
+    proxyGroupsDraftError,
+    type FircGroupsRuntime,
+  } from '$lib/utils/fircGroups';
   import { openFircMigrationModal } from '$lib/stores/fircMigrationModal';
   import { Button } from '$lib/components/ui';
   import { notifications } from '$lib/stores/notifications';
@@ -164,35 +169,17 @@
   }
 
   function openPgModal() {
-    pgDraft = extConfig.proxyGroups.map((pg) => ({
-      id: pg.id,
-      name: pg.name,
-      interfaces: [...pg.interfaces],
-    }));
-    if (pgDraft.length === 0) {
-      pgDraft = [
-        {
-          id: Math.random().toString(16).slice(2, 10),
-          name: 'KeenDNS Fallback + Direct',
-          interfaces: [],
-        },
-      ];
-    }
+    pgDraft = proxyGroupsDraft(extConfig.proxyGroups);
     pgModalOpen = true;
   }
 
   function applyPgModal() {
-    for (const pg of pgDraft) {
-      if (!pg.name.trim() || pg.interfaces.length === 0) {
-        notifications.error(m.firc_settings_pg_invalid());
-        return;
-      }
+    const draftErr = proxyGroupsDraftError(pgDraft);
+    if (draftErr) {
+      notifications.error(draftErr);
+      return;
     }
-    extConfig.proxyGroups = pgDraft.map((pg) => ({
-      id: pg.id,
-      name: pg.name.trim(),
-      interfaces: [...pg.interfaces],
-    }));
+    extConfig.proxyGroups = pgDraft.map(normalizeProxyGroupForSave);
     if (!extConfig.keenDnsCloud.proxyGroupId && extConfig.proxyGroups.length > 0) {
       extConfig.keenDnsCloud.proxyGroupId = extConfig.proxyGroups[0].id;
       extConfig.keenDnsCloud.interfaces = [...extConfig.proxyGroups[0].interfaces];

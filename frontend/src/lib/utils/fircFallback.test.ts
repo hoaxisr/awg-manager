@@ -164,6 +164,74 @@ describe('fircFallback', () => {
 		expect(standalone.isOnBackup).toBe(true);
 	});
 
+	it('treats live:false with all configured interfaces dead as allDead even when active field lingers', () => {
+		const group: Pick<FircGroup, 'interface'> = {
+			interface: ['eth3', 'tunvless4'],
+		};
+		const blockedLive: FircGroupLive = {
+			live: false,
+			active: 'eth3',
+			interfaces: [
+				{ name: 'eth3', state: 'dead', since: 10, error: 'timeout' },
+				{ name: 'tunvless4', state: 'dead', since: 10, error: 'down' },
+			],
+		};
+		expect(resolveGroupActiveInterface(group, blockedLive, {}, [], IFACES)).toEqual({
+			active: null,
+			isBackup: false,
+			allDead: true,
+		});
+	});
+
+	it('prefers per-group checked/failed-over group over unchecked group sharing same chain and flags divergence', () => {
+		const pg: FircProxyGroup = {
+			id: 'pg_keen',
+			name: 'KeenDNS Fallback + Direct',
+			interfaces: ['eth3', 'tunvless4'],
+		};
+		const groups: FircGroup[] = [
+			{
+				id: 'c100d001',
+				name: 'KeenDNS Cloud',
+				interface: ['eth3', 'tunvless4'],
+				enable: true,
+				check: { mode: 'none' },
+				rules: [],
+			},
+			{
+				id: 'c100d002',
+				name: 'Global',
+				interface: ['eth3', 'tunvless4'],
+				enable: true,
+				check: { mode: 'url' },
+				rules: [],
+			},
+		];
+		const liveMap: Record<string, FircGroupLive> = {
+			c100d001: {
+				live: true,
+				active: 'eth3',
+				interfaces: [
+					{ name: 'eth3', state: 'alive', since: 10, error: '' },
+					{ name: 'tunvless4', state: 'alive', since: 10, error: '' },
+				],
+			},
+			c100d002: {
+				live: true,
+				active: 'tunvless4',
+				interfaces: [
+					{ name: 'eth3', state: 'dead', since: 20, error: 'timeout' },
+					{ name: 'tunvless4', state: 'alive', since: 20, error: '' },
+				],
+			},
+		};
+		const rt = resolveProxyGroupRuntime(pg, groups, liveMap, [], IFACES, {}, {});
+		expect(rt.activeIface).toBe('tunvless4');
+		expect(rt.isOnBackup).toBe(true);
+		expect(rt.hasDivergentActive).toBe(true);
+		expect(rt.divergentSummary).toBe('KeenDNS Cloud -> Direct (eth3); Global -> tt-usa');
+	});
+
 	it('prefers explicit interface probe over tunnel node probe fallback', () => {
 		const tunnelsState = [makeTunnelState('tunvless4', 'up', 'tun_4')];
 		const tunnelProbes: Record<string, Record<string, FircTunnelProbeRow>> = {
