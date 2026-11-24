@@ -206,7 +206,6 @@ func TestScenario_ResolveAfterExternalRemoval(t *testing.T) {
 
 	_, _ = q.WGServers.ListSystemTunnels(ctx)
 	_ = q.Interfaces.ResolveSystemName(ctx, "Wireguard0")
-	_ = q.Interfaces.SystemNames(ctx, []string{"Wireguard0"})
 
 	if f.E != 0 {
 		t.Fatalf("E=%d, want 0: имя снятого X спрошено по имени", f.E)
@@ -231,8 +230,8 @@ func TestScenario_HookSystemName(t *testing.T) {
 	defer d.Stop()
 	waitDrain(t, done)
 
-	if got := q.Interfaces.SystemNames(ctx, []string{"UsbQmi0"}); got["UsbQmi0"] != "usb0" {
-		t.Fatalf("SystemNames = %v, want usb0 из хука", got)
+	if got := q.Interfaces.ResolveSystemName(ctx, "UsbQmi0"); got != "usb0" {
+		t.Fatalf("ResolveSystemName = %q, want usb0 из хука", got)
 	}
 	for _, p := range f.Posts {
 		if strings.Contains(p, "system-name") {

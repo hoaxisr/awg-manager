@@ -54,7 +54,7 @@ const (
 	SubBypassSet      = "bypass-set"
 	SubSubscription   = "subscription"
 	SubDeviceProxy    = "deviceproxy"
-	SubHrNeo          = "hrneo"
+	SubGeoData        = "geodata"
 	SubZapret         = "zapret"
 	SubRoutingCatalog = "catalog"
 	SubAWGOutbounds   = "awg-outbounds"
@@ -125,7 +125,7 @@ var KnownSubgroups = map[string][]string{
 	},
 	GroupRouting: {
 		SubDnsRoute, SubStaticRoute, SubAccessPolicy, SubClientRoute,
-		SubSingboxRouter, SubBypassSet, SubSubscription, SubDeviceProxy, SubHrNeo, SubZapret, SubRoutingCatalog,
+		SubSingboxRouter, SubBypassSet, SubSubscription, SubDeviceProxy, SubGeoData, SubZapret, SubRoutingCatalog,
 		SubAWGOutbounds, SubProxy,
 	},
 	GroupServer: {

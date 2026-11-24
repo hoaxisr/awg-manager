@@ -18,7 +18,7 @@ const (
 
 // Features — что включено на установке. Только флаги: ни чисел, ни имён,
 // ни адресов сюда не положить — их нет в типе. Семантика по источнику:
-// sing-box — включён в настройках, HydraRoute — процесс запущен, остальные —
+// sing-box — включён в настройках, остальные —
 // есть хотя бы одна включённая запись.
 type Features struct {
 	SingboxRouter bool
@@ -26,7 +26,6 @@ type Features struct {
 	// knownSingboxModes, остальное — "other".
 	SingboxMode string
 	DNSRoute    bool // DNS-маршруты NDMS
-	HydraRoute  bool // HydraRoute Neo запущен
 	ClientRoute bool // per-client маршрутизация
 	DeviceProxy bool // прокси для устройств
 }
@@ -51,7 +50,6 @@ func (f Features) tokens() []string {
 		name string
 	}{
 		{f.DNSRoute, "dnsroute"},
-		{f.HydraRoute, "hydraroute"},
 		{f.ClientRoute, "clientroute"},
 		{f.DeviceProxy, "deviceproxy"},
 	} {

@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 // Guard (F688): `.error-text` из app.css невидим (opacity: 0) без `.visible`.
 // Элемент без `visible` / `class:visible` не показывает ошибку вовсе, а свой
 // scoped `.error-text` (правило 8 CLAUDE.md) opacity не сбрасывает и только
-// маскирует это в коде. Так молча пропадали ошибки в HrNeoEditModal,
+// маскирует это в коде. Так молча пропадали ошибки в HrNeoEditModal (удалена),
 // IconPickerModal и AdoptTunnelDialog.
 const srcDir = resolve(process.cwd(), 'src');
 const files = (readdirSync(srcDir, { recursive: true }) as string[]).filter((f) => f.endsWith('.svelte'));

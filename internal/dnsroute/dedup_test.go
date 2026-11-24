@@ -315,12 +315,6 @@ func (r *noopResolver) ResolveInterface(ctx context.Context, tunnelID string) (s
 	return tunnelID, nil
 }
 
-func (r *noopResolver) GetKernelIfaceName(ctx context.Context, tunnelID string) (string, error) {
-	return tunnelID, nil
-}
-
-func (r *noopResolver) SystemTunnelsByIface(context.Context) map[string]string { return nil }
-
 // --- BuildIndex tests ---
 
 func TestBuildIndex_RebuildAfterDelete(t *testing.T) {

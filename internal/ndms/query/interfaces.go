@@ -7,7 +7,7 @@
 // repolling. Read paths (Get / GetDetails / List / ResolveSystemName
 // / ListWAN / ListAll) answer purely from the cached snapshot.
 //
-// Имя ядра (ResolveSystemName / SystemNames / ListWAN / ListAll) — тоже
+// Имя ядра (ResolveSystemName / ListWAN / ListAll) — тоже
 // память, RCI по требованию нет (F570). Источники: таблица ndms.KernelName
 // (Wireguard, OpkgTun, Proxy, Bridge), `system_name` из хуков
 // (OnSystemName) и ОДИН пакетный резолвер `show interface system-name`
@@ -858,23 +858,6 @@ func (s *InterfaceStore) resolveSystemNames(ctx context.Context, todo []string) 
 	for i, item := range items {
 		s.rememberSystemName(todo[i], parseSystemName(item))
 	}
-}
-
-// SystemNames — имена ядра для ids (id → имя; неизвестных в карте нет). То же,
-// что ResolveSystemName по каждому id, под одним замком; RCI — никогда.
-func (s *InterfaceStore) SystemNames(ctx context.Context, ids []string) map[string]string {
-	out := make(map[string]string, len(ids))
-	if len(ids) == 0 || s.ensureBootstrap(ctx) != nil {
-		return out
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	for _, id := range ids {
-		if name := s.systemNameLocked(id); name != "" {
-			out[id] = name
-		}
-	}
-	return out
 }
 
 // fetchSystemName resolves an NDMS interface id to its kernel name via
