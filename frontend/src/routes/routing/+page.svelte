@@ -90,7 +90,7 @@
     const ROUTING_TABS = ['geodata', 'dns', 'ip', 'policy', 'clientvpn', 'firc', 'singbox', 'fakeip', 'zapret', 'autolist'] as const;
     type RoutingTab = (typeof ROUTING_TABS)[number];
 
-    // «Любимая» вкладка — открывается первой вместо NDMS. Per-browser
+    // «Любимая» вкладка — открывается первой вместо FIRC. Per-browser
     // удобство, поэтому localStorage, а не настройки роутера.
     const FAVORITE_TAB_KEY = 'awgm.routing.favoriteTab';
 
@@ -118,7 +118,7 @@
         }
     }
 
-    let activeTab = $state<RoutingTab>(savedFavoriteTab ?? 'dns');
+    let activeTab = $state<RoutingTab>(savedFavoriteTab ?? 'firc');
 
     // ?policy=Policy1 — прямой переход из настроек sing-box в редактор
     // конкретной политики (#573).
@@ -381,7 +381,7 @@
     $effect(() => {
         if (!$systemInfo.data) return;
         if (!singboxInstalled && (activeTab === 'singbox' || activeTab === 'fakeip' || activeTab === 'autolist')) {
-            activeTab = 'dns';
+            activeTab = 'firc';
         }
     });
 
@@ -497,7 +497,7 @@
         skipMemorySearchParams={['policy', 'rule', 'edit']}
         memoryReady={$settings !== null && $systemInfo.lastFetchedAt > 0 && (!singboxInstalled || $singboxSettings !== null)}
         restoreMemory={savedFavoriteTab === null}
-        defaultTab={favoriteTab ?? 'dns'}
+        defaultTab={favoriteTab ?? 'firc'}
     />
 
     {#if activeTab === 'dns'}
