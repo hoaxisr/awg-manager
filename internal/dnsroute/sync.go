@@ -167,7 +167,6 @@ func (s *ServiceImpl) reconcile(ctx context.Context) error {
 	allRoutes, err := s.queries.DNSProxy.Fetch(ctx)
 	if errors.Is(err, query.ErrNotSupportedOnOS4) {
 		// OS4 has no NDMS dns-proxy; dnsroute is a no-op on this platform.
-		// HR Neo handles DNS routing on OS4 via the hr_delegate path.
 		return nil
 	}
 	if err != nil {

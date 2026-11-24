@@ -12046,28 +12046,7 @@ paths:
       summary: Upgrade the installed FIRC runtime package
       tags:
       - firc
-  /health:
-    get:
-      description: Cheap check for frontend pollers; no NDMS or I/O.
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.HealthResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      summary: Health / liveness
-      tags:
-      - system
-  /hydraroute/geo-expand:
+  /geo/expand:
     get:
       parameters:
       - description: geosite or geoip
@@ -12096,8 +12075,8 @@ paths:
       - CookieAuth: []
       summary: Geo tag expand
       tags:
-      - hydraroute
-  /hydraroute/geo-files:
+      - geo
+  /geo/files:
     get:
       produces:
       - application/json
@@ -12114,8 +12093,8 @@ paths:
       - CookieAuth: []
       summary: List geo files
       tags:
-      - hydraroute
-  /hydraroute/geo-files/add:
+      - geo
+  /geo/files/add:
     post:
       consumes:
       - application/json
@@ -12145,8 +12124,8 @@ paths:
       - CookieAuth: []
       summary: Add geo file
       tags:
-      - hydraroute
-  /hydraroute/geo-files/delete:
+      - geo
+  /geo/files/delete:
     delete:
       description: 'Removes the tracked geo data file at the given path. A file of
         another program (external) stays on disk: only the catalog entry is removed.'
@@ -12175,8 +12154,8 @@ paths:
       - CookieAuth: []
       summary: Delete geo file
       tags:
-      - hydraroute
-  /hydraroute/geo-files/update:
+      - geo
+  /geo/files/update:
     post:
       consumes:
       - application/json
@@ -12209,8 +12188,8 @@ paths:
       - CookieAuth: []
       summary: Refresh geo file(s)
       tags:
-      - hydraroute
-  /hydraroute/geo-tags:
+      - geo
+  /geo/tags:
     get:
       parameters:
       - description: Geo file path
@@ -12229,7 +12208,28 @@ paths:
       - CookieAuth: []
       summary: Geo tags
       tags:
-      - hydraroute
+      - geo
+  /health:
+    get:
+      description: Cheap check for frontend pollers; no NDMS or I/O.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.HealthResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      summary: Health / liveness
+      tags:
+      - system
   /import/conf:
     post:
       consumes:

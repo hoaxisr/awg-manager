@@ -1,4 +1,4 @@
-package hydraroute
+package geodata
 
 import (
 	"bytes"
@@ -101,8 +101,8 @@ func TestGeoDataStore_LogsDownloadAndUpdateRouteURLs(t *testing.T) {
 		if e.Action != "download-url" && e.Action != "update-url" {
 			continue
 		}
-		if e.Group != logging.GroupRouting || e.Subgroup != logging.SubHrNeo {
-			t.Fatalf("scope = %s/%s, want routing/hrneo", e.Group, e.Subgroup)
+		if e.Group != logging.GroupRouting || e.Subgroup != logging.SubGeoData {
+			t.Fatalf("scope = %s/%s, want routing/geodata", e.Group, e.Subgroup)
 		}
 		got = append(got, e.Message)
 	}

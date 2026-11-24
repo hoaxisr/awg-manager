@@ -1,4 +1,4 @@
-package hydraroute
+package geodata
 
 import (
 	"context"

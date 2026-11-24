@@ -488,12 +488,12 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux, h *routeHandlers) {
 	// Geo data files (protected + boot guarded)
 	if s.geoData != nil {
 		geoHandler := api.NewGeoDataHandler(s.geoData, s.downloadSvc)
-		mux.HandleFunc("/api/hydraroute/geo-files", h.guarded(geoHandler.ListGeoFiles))
-		mux.HandleFunc("/api/hydraroute/geo-files/add", h.guarded(geoHandler.AddGeoFile))
-		mux.HandleFunc("/api/hydraroute/geo-files/delete", h.guarded(geoHandler.DeleteGeoFile))
-		mux.HandleFunc("/api/hydraroute/geo-files/update", h.guarded(geoHandler.UpdateGeoFile))
-		mux.HandleFunc("/api/hydraroute/geo-tags", h.guarded(geoHandler.GetGeoTags))
-		mux.HandleFunc("/api/hydraroute/geo-expand", h.guarded(geoHandler.ExpandGeoTag))
+		mux.HandleFunc("/api/geo/files", h.guarded(geoHandler.ListGeoFiles))
+		mux.HandleFunc("/api/geo/files/add", h.guarded(geoHandler.AddGeoFile))
+		mux.HandleFunc("/api/geo/files/delete", h.guarded(geoHandler.DeleteGeoFile))
+		mux.HandleFunc("/api/geo/files/update", h.guarded(geoHandler.UpdateGeoFile))
+		mux.HandleFunc("/api/geo/tags", h.guarded(geoHandler.GetGeoTags))
+		mux.HandleFunc("/api/geo/expand", h.guarded(geoHandler.ExpandGeoTag))
 	}
 
 	// Update endpoints (protected + boot guarded)
@@ -582,7 +582,7 @@ func (s *Server) registerRoutingRoutes(mux *http.ServeMux, h *routeHandlers) {
 
 	// Zapret (внешний anti-DPI движок). Чтение — любому вошедшему, а
 	// управление демоном и запись его файлов — только expert: UI показывает
-	// вкладку тому же уровню, что и HR Neo, и API не должен быть шире UI.
+	// вкладку тому же уровню, и API не должен быть шире UI.
 	// Ставится только если сервис есть — без него вкладка не показывается.
 	if s.zapretService != nil {
 		zapretHandler := api.NewZapretHandler(s.zapretService, h.appLog)

@@ -20,31 +20,31 @@ type geoFilesIn struct {
 }
 
 type geoFilesOut struct {
-	Files []HydraRouteGeoFile `json:"files,omitempty"`
-	Tags  *HydraRouteGeoTags  `json:"tags,omitempty"`
+	Files []GeoFile `json:"files,omitempty"`
+	Tags  *GeoTags  `json:"tags,omitempty"`
 }
 
 type geoUpdateIn struct {
-	Path string `json:"path,omitempty" jsonschema:"one geo file's path from list_hydraroute_geo_files; omit to update every downloaded file"`
+	Path string `json:"path,omitempty" jsonschema:"one geo file's path from list_geo_files; omit to update every downloaded file"`
 }
 
-func registerHydraRouteTools(s *mcp.Server, d Deps) {
+func registerGeoDataTools(s *mcp.Server, d Deps) {
 	mcp.AddTool(s, &mcp.Tool{
-		Name:        "list_hydraroute_geo_files",
+		Name:        "list_geo_files",
 		Description: "Geo data files (geoip, geosite) — where geoip:/geosite: tags in sing-box rules come from. With path, the tags of that file instead, paged.",
 		Annotations: readOnly("List geo files"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in geoFilesIn) (*mcp.CallToolResult, geoFilesOut, error) {
 		if in.Path == "" {
-			files, err := d.ListHydraRouteGeoFiles(ctx)
+			files, err := d.ListGeoFiles(ctx)
 			return nil, geoFilesOut{Files: orEmpty(files)}, err
 		}
 		if !geoPathShape.MatchString(in.Path) || strings.Contains(in.Path, "..") {
-			return nil, geoFilesOut{}, fmt.Errorf("path must be a geo file's path from list_hydraroute_geo_files")
+			return nil, geoFilesOut{}, fmt.Errorf("path must be a geo file's path from list_geo_files")
 		}
 		if in.Offset < 0 {
 			return nil, geoFilesOut{}, fmt.Errorf("offset must not be negative")
 		}
-		tags, err := d.HydraRouteGeoTags(ctx, in.Path, in.Offset)
+		tags, err := d.GeoTags(ctx, in.Path, in.Offset)
 		if err != nil {
 			return nil, geoFilesOut{}, err
 		}
@@ -53,15 +53,15 @@ func registerHydraRouteTools(s *mcp.Server, d Deps) {
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
-		Name: "update_hydraroute_geo_files",
+		Name: "update_geo_files",
 		Description: "Download geo files again — one, or every file awg-manager downloaded — and wait. " +
 			"Network work: it can take a while, and a slow source can run past the call's deadline.",
 		Annotations: safeWrite("Update geo files", true),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in geoUpdateIn) (*mcp.CallToolResult, HydraRouteGeoUpdate, error) {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in geoUpdateIn) (*mcp.CallToolResult, GeoUpdate, error) {
 		if in.Path != "" && (!geoPathShape.MatchString(in.Path) || strings.Contains(in.Path, "..")) {
-			return nil, HydraRouteGeoUpdate{}, fmt.Errorf("path must be a geo file's path from list_hydraroute_geo_files")
+			return nil, GeoUpdate{}, fmt.Errorf("path must be a geo file's path from list_geo_files")
 		}
-		out, err := d.UpdateHydraRouteGeoFiles(ctx, in.Path)
+		out, err := d.UpdateGeoFiles(ctx, in.Path)
 		return nil, out, err
 	})
 }

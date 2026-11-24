@@ -1156,9 +1156,7 @@ func nextListID(lists []DomainList) string {
 
 // deduplicateDomains returns a trimmed, deduplicated list. Real domains get
 // lowercased (DNS is case-insensitive). geosite:/geoip: tags are preserved
-// as-is — HR Neo matches them byte-for-byte against the .dat file, which
-// uses upper-case geosite tags (GOOGLE) and lower-case geoip country codes
-// (ru). Dedup is case-insensitive in either case.
+// as-is. Dedup is case-insensitive in either case.
 func deduplicateDomains(domains []string) []string {
 	seen := make(map[string]bool, len(domains))
 	result := make([]string, 0, len(domains))

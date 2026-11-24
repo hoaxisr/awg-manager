@@ -10,7 +10,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/clientroute"
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
 	"github.com/hoaxisr/awg-manager/internal/events"
-	"github.com/hoaxisr/awg-manager/internal/hydraroute"
+	"github.com/hoaxisr/awg-manager/internal/geodata"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsevents "github.com/hoaxisr/awg-manager/internal/ndms/events"
@@ -169,7 +169,7 @@ func (a *app) setupTunnels() {
 	a.autolistService = autolistdetect.NewService()
 	a.autolistService.SetInstaller(opkg.NewClient(), a.settingsStore, version)
 
-	a.geoDataStore = hydraroute.NewGeoDataStore(a.dataDir)
+	a.geoDataStore = geodata.NewGeoDataStore(a.dataDir)
 	a.geoDataStore.SetAppLogger(a.loggingService)
 	// Warm up tag cache for entries with TagCount=0 in a background goroutine.
 	// Runs sequentially (one file at a time) to keep I/O pressure low — the

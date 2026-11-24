@@ -1,4 +1,4 @@
-package hydraroute
+package geodata
 
 import (
 	"context"
@@ -36,7 +36,7 @@ func NewGeoRefreshScheduler(store *GeoDataStore, settings *storage.SettingsStore
 		store:    store,
 		settings: settings,
 		resolve:  resolve,
-		appLog:   logging.NewScopedLogger(appLogger, logging.GroupRouting, logging.SubHrNeo),
+		appLog:   logging.NewScopedLogger(appLogger, logging.GroupRouting, logging.SubGeoData),
 		stop:     make(chan struct{}),
 		done:     make(chan struct{}),
 	}

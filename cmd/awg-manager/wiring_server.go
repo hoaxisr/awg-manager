@@ -23,7 +23,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/diagnostics"
 	"github.com/hoaxisr/awg-manager/internal/dnscheck"
 	"github.com/hoaxisr/awg-manager/internal/downloader"
-	"github.com/hoaxisr/awg-manager/internal/hydraroute"
+	"github.com/hoaxisr/awg-manager/internal/geodata"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/monitoring"
 	"github.com/hoaxisr/awg-manager/internal/server"
@@ -418,7 +418,7 @@ func (a *app) setupDeviceProxy() {
 		a.settingsStore,
 		a.awgStore,
 	)
-	a.geoRefreshScheduler = hydraroute.NewGeoRefreshScheduler(
+	a.geoRefreshScheduler = geodata.NewGeoRefreshScheduler(
 		a.geoDataStore, a.settingsStore, a.loggingService,
 		func(ctx context.Context) (*http.Client, string, func(), error) {
 			lease, err := sharedDownloadSvc.ResolveClient(ctx, nil)

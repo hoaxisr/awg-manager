@@ -131,7 +131,7 @@ export class SystemClient extends TunnelsClient {
 	}
 
 	async getGeoFiles(): Promise<GeoFileEntry[]> {
-		return this.request('/hydraroute/geo-files');
+		return this.request('/geo/files');
 	}
 
 	async listDownloadOutbounds(): Promise<DownloadOutbound[]> {
@@ -139,25 +139,25 @@ export class SystemClient extends TunnelsClient {
 	}
 
 	async addGeoFile(type: 'geosite' | 'geoip', url: string, route?: DownloadRoute): Promise<GeoFileEntry> {
-		return this.request('/hydraroute/geo-files/add', {
+		return this.request('/geo/files/add', {
 			method: 'POST',
 			body: JSON.stringify({ type, url, route }),
 		});
 	}
 
 	async deleteGeoFile(path: string): Promise<void> {
-		await this.request(`/hydraroute/geo-files/delete?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
+		await this.request(`/geo/files/delete?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
 	}
 
 	async updateGeoFile(path?: string, route?: DownloadRoute): Promise<{ updated: number; partial?: boolean; error?: string }> {
-		return this.request('/hydraroute/geo-files/update', {
+		return this.request('/geo/files/update', {
 			method: 'POST',
 			body: JSON.stringify({ path: path || '', route }),
 		});
 	}
 
 	async getGeoTags(path: string): Promise<GeoTag[]> {
-		return this.request(`/hydraroute/geo-tags?path=${encodeURIComponent(path)}`);
+		return this.request(`/geo/tags?path=${encodeURIComponent(path)}`);
 	}
 
 	async expandGeoTag(
@@ -165,7 +165,7 @@ export class SystemClient extends TunnelsClient {
 		tag: string,
 	): Promise<{ lines: string[]; path: string; count: number }> {
 		const q = new URLSearchParams({ kind, tag });
-		return this.request(`/hydraroute/geo-expand?${q.toString()}`);
+		return this.request(`/geo/expand?${q.toString()}`);
 	}
 
 	async getWANInterfaces(): Promise<WANInterface[]> {

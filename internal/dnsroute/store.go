@@ -243,8 +243,6 @@ func migrateRawEditorText(data *StoreData) {
 	for i := range data.Lists {
 		list := &data.Lists[i]
 
-		// HR Neo rules are sourced from HR files; keep this migration scoped to
-		// NDMS/stored DNS routes only.
 		if isHydraRoute(list.Backend) {
 			continue
 		}

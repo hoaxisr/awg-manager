@@ -164,13 +164,13 @@ type Deps interface {
 	// parameters, read from the router.
 	GetWireguardServer(ctx context.Context, id string) (WireguardServerDetail, error)
 	SetWireguardServerObfuscation(ctx context.Context, id string, params map[string]any) (WireguardServer, error)
-	ListHydraRouteGeoFiles(ctx context.Context) ([]HydraRouteGeoFile, error)
-	// HydraRouteGeoTags returns one page of a geo file's tags.
-	HydraRouteGeoTags(ctx context.Context, path string, offset int) (HydraRouteGeoTags, error)
-	// UpdateHydraRouteGeoFiles downloads one file again (path) or every
+	ListGeoFiles(ctx context.Context) ([]GeoFile, error)
+	// GeoTags returns one page of a geo file's tags.
+	GeoTags(ctx context.Context, path string, offset int) (GeoTags, error)
+	// UpdateGeoFiles downloads one file again (path) or every
 	// file ("") and waits. A download that failed for some files is in the
 	// result with its reason.
-	UpdateHydraRouteGeoFiles(ctx context.Context, path string) (HydraRouteGeoUpdate, error)
+	UpdateGeoFiles(ctx context.Context, path string) (GeoUpdate, error)
 	// ServerPeerConfig renders the client .conf, private key included.
 	ServerPeerConfig(ctx context.Context, serverID, publicKey string) (string, error)
 	ControlSingbox(ctx context.Context, action string) (SingboxStatus, error)

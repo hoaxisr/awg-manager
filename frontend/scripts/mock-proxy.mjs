@@ -2233,7 +2233,7 @@ let mockSBSettings = {
 	ingressInterfaces: [],
 };
 
-// Теги geoip-файлов из мока /hydraroute/geo-files. Суммы подобраны так,
+// Теги geoip-файлов из мока /geo/files. Суммы подобраны так,
 // чтобы cn+us+ru перебирали предел набора (262144) — превышение бюджета
 // в UI обхода по geoip проверяемо без роутера.
 const MOCK_GEO_TAGS = {
@@ -4396,8 +4396,8 @@ function wait(ms) {
 // `style: 'envelope'` → backend error shape {error, message, code} @ 400.
 // `style: 'updateInfo'` → /system/update/check returns 200 with data.error.
 const DOWNLOAD_FAULT_ROUTES = [
-	{ method: 'POST', path: '/hydraroute/geo-files/update', style: 'envelope', code: 'GEO_UPDATE_ERROR' },
-	{ method: 'POST', path: '/hydraroute/geo-files/add', style: 'envelope', code: 'GEO_DOWNLOAD_ERROR' },
+	{ method: 'POST', path: '/geo/files/update', style: 'envelope', code: 'GEO_UPDATE_ERROR' },
+	{ method: 'POST', path: '/geo/files/add', style: 'envelope', code: 'GEO_DOWNLOAD_ERROR' },
 	{ method: 'POST', path: '/dns-routes/refresh', style: 'envelope', code: 'DNS_ROUTE_REFRESH_ERROR' },
 	{ method: 'POST', path: '/singbox/install', style: 'envelope', code: 'SINGBOX_INSTALL_ERROR' },
 	{ method: 'POST', path: '/singbox/update', style: 'envelope', code: 'SINGBOX_UPDATE_ERROR' },
@@ -4759,8 +4759,8 @@ const APP_LOG_TEMPLATES = [
 	{ group: 'routing', subgroup: 'singbox-router',level:'info', action: 'reload',   target: '',        message: 'sing-box router config reloaded (12 rules)' },
 	{ group: 'routing', subgroup: 'deviceproxy', level: 'info',  action: 'enable',   target: 'vless-1', message: 'Device proxy enabled on :1099 via vless-1' },
 	{ group: 'routing', subgroup: 'deviceproxy', level: 'info',  action: 'change-outbound', target: 'vless-2', message: 'Device proxy outbound switched to vless-2' },
-	{ group: 'routing', subgroup: 'hrneo',       level: 'info',  action: 'download', target: '',        message: 'geoip downloaded' },
-	{ group: 'routing', subgroup: 'hrneo',       level: 'warn',  action: 'download', target: 'https://example.com/geoip.dat', message: 'geoip: read tcp: i/o timeout' },
+	{ group: 'routing', subgroup: 'geodata',     level: 'info',  action: 'download', target: '',        message: 'geoip downloaded' },
+	{ group: 'routing', subgroup: 'geodata',     level: 'warn',  action: 'download', target: 'https://example.com/geoip.dat', message: 'geoip: read tcp: i/o timeout' },
 	{ group: 'routing', subgroup: 'catalog',     level: 'warn',  action: 'snapshot-section', target: 'staticRoutes', message: 'failed to load static routes section' },
 	// server
 	{ group: 'server',  subgroup: 'managed',     level: 'info',  action: 'create',   target: 'wg-server-1', message: 'Managed WG server provisioned' },
@@ -4833,7 +4833,7 @@ function buildFakeSingboxEntries() {
 
 const KNOWN_SUBGROUPS_MOCK = {
 	tunnel: ['lifecycle', 'ops', 'state', 'firewall', 'pingcheck', 'connectivity', 'test', 'signature'],
-	routing: ['dns-route', 'static-route', 'access-policy', 'client-route', 'singbox-router', 'deviceproxy', 'hrneo', 'catalog', 'awg-outbounds'],
+	routing: ['dns-route', 'static-route', 'access-policy', 'client-route', 'singbox-router', 'deviceproxy', 'geodata', 'catalog', 'awg-outbounds'],
 	server: ['managed'],
 	system: ['boot', 'auth', 'settings', 'update', 'wan', 'system-tunnels', 'cleanup', 'dnscheck', 'connections', 'traffic', 'diagnostics', 'rci', 'ndms'],
 	singbox: ['process', 'inbound', 'outbound', 'dns', 'router', 'runtime'],
@@ -5109,7 +5109,7 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
-	if (req.method === 'GET' && path === '/hydraroute/geo-files') {
+	if (req.method === 'GET' && path === '/geo/files') {
 		const ago = (min) => new Date(Date.now() - min * 60_000).toISOString();
 		send(res, 200, {
 			success: true,
@@ -5155,7 +5155,7 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
-	if (req.method === 'GET' && path === '/hydraroute/geo-tags') {
+	if (req.method === 'GET' && path === '/geo/tags') {
 		send(res, 200, {
 			success: true,
 			data: MOCK_GEO_TAGS[url.searchParams.get('path') ?? ''] ?? [],

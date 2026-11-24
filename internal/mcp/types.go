@@ -1079,17 +1079,17 @@ type LANSegment struct {
 	Subnet string `json:"subnet,omitempty"`
 }
 
-// HydraRouteGeoUpdate is the outcome of update_hydraroute_geo_files.
-type HydraRouteGeoUpdate struct {
+// GeoUpdate is the outcome of update_geo_files.
+type GeoUpdate struct {
 	Updated int `json:"updated" jsonschema:"geo files downloaded again"`
 	// DownloadError is set when some files were not downloaded; Updated
 	// counts the rest. The source addresses in it are cut to their host.
 	DownloadError string `json:"downloadError,omitempty" jsonschema:"set when some files failed to download — the reason, source addresses cut to their host; updated counts the ones that did"`
 }
 
-// HydraRouteGeoFile is one geo data file. Only the host of its URL is
+// GeoFile is one geo data file. Only the host of its URL is
 // returned.
-type HydraRouteGeoFile struct {
+type GeoFile struct {
 	Type     string `json:"type" jsonschema:"geoip or geosite"`
 	Path     string `json:"path" jsonschema:"the id the geo tools take"`
 	Host     string `json:"host,omitempty" jsonschema:"host it is downloaded from"`
@@ -1099,16 +1099,16 @@ type HydraRouteGeoFile struct {
 	External bool   `json:"external" jsonschema:"a file of another program: read only, never updated"`
 }
 
-// HydraRouteGeoTags is one page of a geo file's tags.
-type HydraRouteGeoTags struct {
-	Path      string             `json:"path"`
-	Tags      []HydraRouteGeoTag `json:"tags"`
-	Total     int                `json:"total"`
-	Truncated bool               `json:"truncated"`
+// GeoTags is one page of a geo file's tags.
+type GeoTags struct {
+	Path      string   `json:"path"`
+	Tags      []GeoTag `json:"tags"`
+	Total     int      `json:"total"`
+	Truncated bool     `json:"truncated"`
 }
 
-// HydraRouteGeoTag is one tag of a geo file.
-type HydraRouteGeoTag struct {
+// GeoTag is one tag of a geo file.
+type GeoTag struct {
 	Name  string `json:"name"`
 	Count int    `json:"count"`
 }

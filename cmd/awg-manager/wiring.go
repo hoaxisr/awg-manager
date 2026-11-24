@@ -17,7 +17,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/downloader"
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/firc"
-	"github.com/hoaxisr/awg-manager/internal/hydraroute"
+	"github.com/hoaxisr/awg-manager/internal/geodata"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
 	"github.com/hoaxisr/awg-manager/internal/monitoring"
@@ -165,8 +165,8 @@ type app struct {
 	// routing / aux services
 	zapretService       *zapret.Service
 	autolistService     *autolistdetect.Service
-	geoDataStore        *hydraroute.GeoDataStore
-	geoRefreshScheduler *hydraroute.GeoRefreshScheduler
+	geoDataStore        *geodata.GeoDataStore
+	geoRefreshScheduler *geodata.GeoRefreshScheduler
 	dnsRouteStore       *dnsroute.Store
 	dnsRouteService     *dnsroute.ServiceImpl
 	dnsFailover         *dnsroute.FailoverManager

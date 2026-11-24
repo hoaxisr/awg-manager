@@ -209,7 +209,7 @@ func (a *app) setupEventWiring() {
 	// Stream geo-file download progress over SSE so the UI can show a
 	// real progress bar instead of a guess.
 	a.geoDataStore.SetProgressReporter(func(rawURL, fileType, phase string, downloaded, total int64, errMsg string) {
-		a.eventBus.Publish("hydraroute:geo-progress", events.GeoDownloadProgressEvent{
+		a.eventBus.Publish("geo:progress", events.GeoDownloadProgressEvent{
 			URL:        rawURL,
 			FileType:   fileType,
 			Downloaded: downloaded,

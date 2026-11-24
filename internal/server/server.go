@@ -31,7 +31,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/dnscheck"
 	"github.com/hoaxisr/awg-manager/internal/downloader"
 	"github.com/hoaxisr/awg-manager/internal/events"
-	"github.com/hoaxisr/awg-manager/internal/hydraroute"
+	"github.com/hoaxisr/awg-manager/internal/geodata"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/presets"
 	"github.com/hoaxisr/awg-manager/internal/routing"
@@ -109,7 +109,7 @@ type Server struct {
 	accessPolicyService        accesspolicy.Service
 	clientRouteService         clientroute.Service
 	catalog                    routing.Catalog
-	geoData                    *hydraroute.GeoDataStore
+	geoData                    *geodata.GeoDataStore
 	zapretService              *zapret.Service
 	autolistService            *autolistdetect.Service
 	autolistRemovedBackupProbe func(ctx context.Context) (bool, time.Time, error)
@@ -235,7 +235,7 @@ type Deps struct {
 	Catalog             routing.Catalog
 	Orch                *orchestrator.Orchestrator
 	Bus                 *events.Bus
-	GeoData             *hydraroute.GeoDataStore
+	GeoData             *geodata.GeoDataStore
 	ZapretService       *zapret.Service
 	AutolistService     *autolistdetect.Service
 	// AutolistRemovedBackupProbe — «у панели есть снимок объектов Autolist,

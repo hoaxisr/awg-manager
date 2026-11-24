@@ -1,4 +1,4 @@
-package hydraroute
+package geodata
 
 import (
 	"bytes"
@@ -24,10 +24,12 @@ import (
 )
 
 // geoDataFile is the JSON storage filename for geo data entries.
+// Имя прежнее, от времён пакета hydraroute: переименование потребовало бы
+// миграции каталога без пользы для пользователя.
 const geoDataFile = "hydraroute-geodata.json"
 
 // Ground-Zerro/Geo-Aggregator publishes the canonical .dat files that
-// HydraRoute ships by default (daily-refreshed aggregate of v2fly +
+// the panel offers as presets (daily-refreshed aggregate of v2fly +
 // Russian blocklists).
 const (
 	GroundZerroGeoIPURL   = "https://raw.githubusercontent.com/Ground-Zerro/Geo-Aggregator/main/geodat/geoip_GA.dat"
@@ -84,7 +86,7 @@ var (
 func (s *GeoDataStore) SetAppLogger(appLogger logging.AppLogger) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.appLog = logging.NewScopedLogger(appLogger, logging.GroupRouting, logging.SubHrNeo)
+	s.appLog = logging.NewScopedLogger(appLogger, logging.GroupRouting, logging.SubGeoData)
 }
 
 // SetProgressReporter wires a callback that receives lifecycle events for

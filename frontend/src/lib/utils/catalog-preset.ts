@@ -4,10 +4,10 @@ import type { CatalogPreset } from '$lib/types';
 /** Preset with optional composite covers (catalog + sing-box router). */
 export type PresetCoverRef = Pick<CatalogPreset, 'id' | 'name' | 'covers'>;
 
-/** Inline DNS entries above this — warn in NDMS / HR Neo pickers. */
+/** Inline DNS entries above this — warn in NDMS pickers. */
 export const DNS_LARGE_LIST_THRESHOLD = 300;
 
-/** Shown on catalog tiles with large DNS lists (NDMS / HR Neo only). */
+/** Shown on catalog tiles with large DNS lists (NDMS only). */
 export function dnsLargeListNotice(): string {
 	return m.catalog_preset_dns_large_list_notice();
 }

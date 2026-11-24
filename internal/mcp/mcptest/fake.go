@@ -44,14 +44,14 @@ type Fake struct {
 	// tools use Servers and Peers); WGObfuscation the last ASC write.
 	WGServers     []mcpsrv.WireguardServer
 	WGObfuscation map[string]any
-	// HydraGeo is the geo files and HydraGeoTags their tags by path.
-	HydraGeo     []mcpsrv.HydraRouteGeoFile
-	HydraGeoTags map[string][]mcpsrv.HydraRouteGeoTag
-	ClientRoutes []mcpsrv.ClientRoute
-	Policies     []mcpsrv.AccessPolicy
-	Devices      []mcpsrv.Device
-	Logs         []mcpsrv.LogEntry
-	Singbox      mcpsrv.SingboxStatus
+	// GeoFiles is the geo files and GeoTagsByPath their tags by path.
+	GeoFiles      []mcpsrv.GeoFile
+	GeoTagsByPath map[string][]mcpsrv.GeoTag
+	ClientRoutes  []mcpsrv.ClientRoute
+	Policies      []mcpsrv.AccessPolicy
+	Devices       []mcpsrv.Device
+	Logs          []mcpsrv.LogEntry
+	Singbox       mcpsrv.SingboxStatus
 	// SingboxTunnels are the proxies inside sing-box; Delays maps a tag to
 	// the latency a probe answers with (0 = the proxy stayed silent).
 	SingboxTunnels []mcpsrv.SingboxTunnel
@@ -256,11 +256,11 @@ func New() *Fake {
 		},
 		ServerAddresses: map[string]string{"Wireguard0": "10.0.0.1/24"},
 		WGServers:       []mcpsrv.WireguardServer{{ID: "Wireguard0", Description: "Home", Address: "10.0.0.1", Mask: "24", ListenPort: 51820, NATMode: "full", PeerCount: 2}},
-		HydraGeo: []mcpsrv.HydraRouteGeoFile{
+		GeoFiles: []mcpsrv.GeoFile{
 			{Type: "geoip", Path: "/opt/etc/awg-manager/geo/geoip.dat", Host: "github.com", Size: 4096, TagCount: 3, Updated: "2026-09-01T00:00:00Z"},
 			{Type: "geosite", Path: "/opt/etc/HydraRoute/geosite.dat", Size: 2048, TagCount: 1, External: true},
 		},
-		HydraGeoTags: map[string][]mcpsrv.HydraRouteGeoTag{
+		GeoTagsByPath: map[string][]mcpsrv.GeoTag{
 			"/opt/etc/awg-manager/geo/geoip.dat": {{Name: "ru", Count: 90000}, {Name: "us", Count: 50000}, {Name: "nl", Count: 9000}},
 			"/opt/etc/HydraRoute/geosite.dat":    {{Name: "youtube", Count: 300}},
 		},
@@ -2760,48 +2760,48 @@ func (f *Fake) SetWireguardServerObfuscation(_ context.Context, id string, param
 	return f.WGServers[i], nil
 }
 
-func (f *Fake) ListHydraRouteGeoFiles(context.Context) ([]mcpsrv.HydraRouteGeoFile, error) {
+func (f *Fake) ListGeoFiles(context.Context) ([]mcpsrv.GeoFile, error) {
 	if f.Err != nil {
 		return nil, f.Err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return slices.Clone(f.HydraGeo), nil
+	return slices.Clone(f.GeoFiles), nil
 }
 
-func (f *Fake) HydraRouteGeoTags(_ context.Context, path string, offset int) (mcpsrv.HydraRouteGeoTags, error) {
+func (f *Fake) GeoTags(_ context.Context, path string, offset int) (mcpsrv.GeoTags, error) {
 	if f.Err != nil {
-		return mcpsrv.HydraRouteGeoTags{}, f.Err
+		return mcpsrv.GeoTags{}, f.Err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	tags, ok := f.HydraGeoTags[path]
+	tags, ok := f.GeoTagsByPath[path]
 	if !ok {
-		return mcpsrv.HydraRouteGeoTags{}, fmt.Errorf("%q is not a geo file (use list_hydraroute_geo_files)", path)
+		return mcpsrv.GeoTags{}, fmt.Errorf("%q is not a geo file (use list_geo_files)", path)
 	}
 	offset = min(offset, len(tags))
 	end := min(offset+mcpsrv.MaxGeoTagsInOutput, len(tags))
-	return mcpsrv.HydraRouteGeoTags{Path: path, Tags: slices.Clone(tags[offset:end]), Total: len(tags), Truncated: end < len(tags)}, nil
+	return mcpsrv.GeoTags{Path: path, Tags: slices.Clone(tags[offset:end]), Total: len(tags), Truncated: end < len(tags)}, nil
 }
 
-func (f *Fake) UpdateHydraRouteGeoFiles(_ context.Context, path string) (mcpsrv.HydraRouteGeoUpdate, error) {
+func (f *Fake) UpdateGeoFiles(_ context.Context, path string) (mcpsrv.GeoUpdate, error) {
 	if f.Err != nil {
-		return mcpsrv.HydraRouteGeoUpdate{}, f.Err
+		return mcpsrv.GeoUpdate{}, f.Err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	n := 0
-	for i, g := range f.HydraGeo {
+	for i, g := range f.GeoFiles {
 		if g.External || (path != "" && g.Path != path) {
 			continue
 		}
-		f.HydraGeo[i].Updated = "2026-09-02T00:00:00Z"
+		f.GeoFiles[i].Updated = "2026-09-02T00:00:00Z"
 		n++
 	}
 	if path != "" && n == 0 {
-		return mcpsrv.HydraRouteGeoUpdate{}, fmt.Errorf("%q is not a geo file awg-manager downloads", path)
+		return mcpsrv.GeoUpdate{}, fmt.Errorf("%q is not a geo file awg-manager downloads", path)
 	}
-	return mcpsrv.HydraRouteGeoUpdate{Updated: n}, nil
+	return mcpsrv.GeoUpdate{Updated: n}, nil
 }
 
 func (f *Fake) OpenAPISpec() []byte { return f.Spec }

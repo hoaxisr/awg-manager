@@ -431,10 +431,10 @@ func (c *CatalogImpl) GetKernelIfaceName(ctx context.Context, tunnelID string) (
 
 // SetSnapshotProvider registers a named snapshot provider function.
 // Valid names: "dnsRoutes", "staticRoutes", "accessPolicies",
-// "policyDevices", "policyInterfaces", "clientRoutes". Статусы HR Neo и
-// Zapret сюда не входят: GetStatus не возвращает ошибок, в missing они не
-// попали бы никогда, а снимок refresh клиенту не отдаёт — стоило бы это
-// обхода /proc впустую. Свежесть их статуса даёт инвалидация стора.
+// "policyDevices", "policyInterfaces", "clientRoutes". Статус Zapret
+// сюда не входит: GetStatus не возвращает ошибок, в missing он не
+// попал бы никогда, а снимок refresh клиенту не отдаёт — стоило бы это
+// обхода /proc впустую. Свежесть статуса даёт инвалидация стора.
 func (c *CatalogImpl) SetSnapshotProvider(name string, fn SnapshotFunc) {
 	switch name {
 	case "dnsRoutes":

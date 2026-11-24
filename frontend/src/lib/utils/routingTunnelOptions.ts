@@ -148,7 +148,7 @@ export interface PolicyInterfaceGroup {
 	items: PolicyGlobalInterface[];
 }
 
-/** Unassigned policy ifaces grouped for the «Добавить» picker (HR Neo + NDMS policies). */
+/** Unassigned policy ifaces grouped for the «Добавить» picker (NDMS policies). */
 export function groupPolicyGlobalInterfaces(items: PolicyGlobalInterface[]): PolicyInterfaceGroup[] {
 	const byGroup = new Map<RoutingGroupId, PolicyGlobalInterface[]>();
 	for (const gi of items) {

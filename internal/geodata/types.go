@@ -1,4 +1,4 @@
-package hydraroute
+package geodata
 
 type GeoFileEntry struct {
 	Type     string `json:"type"`

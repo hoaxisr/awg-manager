@@ -6,7 +6,7 @@ import (
 	"net/http"
 
 	"github.com/hoaxisr/awg-manager/internal/downloader"
-	"github.com/hoaxisr/awg-manager/internal/hydraroute"
+	"github.com/hoaxisr/awg-manager/internal/geodata"
 	"github.com/hoaxisr/awg-manager/internal/response"
 )
 
@@ -23,7 +23,7 @@ type GeoFileEntryDTO struct {
 	External bool   `json:"external,omitempty" example:"true"`
 }
 
-// GeoFilesResponse is the envelope for GET /hydraroute/geo-files.
+// GeoFilesResponse is the envelope for GET /geo/files.
 type GeoFilesResponse struct {
 	Success bool              `json:"success" example:"true"`
 	Data    []GeoFileEntryDTO `json:"data"`
@@ -35,13 +35,13 @@ type GeoTagDTO struct {
 	Count int    `json:"count" example:"1250"`
 }
 
-// GeoTagsResponse is the envelope for GET /hydraroute/geo-tags.
+// GeoTagsResponse is the envelope for GET /geo/tags.
 type GeoTagsResponse struct {
 	Success bool        `json:"success" example:"true"`
 	Data    []GeoTagDTO `json:"data"`
 }
 
-// GeoExpandData is the payload for GET /hydraroute/geo-expand.
+// GeoExpandData is the payload for GET /geo/expand.
 type GeoExpandData struct {
 	Lines []string `json:"lines"`
 	Path  string   `json:"path"`
@@ -49,14 +49,14 @@ type GeoExpandData struct {
 }
 
 // GeoFileResponse is the envelope for endpoints that return a single
-// geo file entry (POST /hydraroute/geo-files/add).
+// geo file entry (POST /geo/files/add).
 type GeoFileResponse struct {
 	Success bool            `json:"success" example:"true"`
 	Data    GeoFileEntryDTO `json:"data"`
 }
 
 // GeoFileUpdatedData reports how many geo files were re-downloaded by
-// POST /hydraroute/geo-files/update. The shape is the same whether the
+// POST /geo/files/update. The shape is the same whether the
 // caller targeted one path or all paths.
 type GeoFileUpdatedData struct {
 	Updated int    `json:"updated" example:"1"`
@@ -64,7 +64,7 @@ type GeoFileUpdatedData struct {
 	Error   string `json:"error,omitempty"`
 }
 
-// GeoFileUpdatedResponse is the envelope for POST /hydraroute/geo-files/update.
+// GeoFileUpdatedResponse is the envelope for POST /geo/files/update.
 type GeoFileUpdatedResponse struct {
 	Success bool               `json:"success" example:"true"`
 	Data    GeoFileUpdatedData `json:"data"`
@@ -72,14 +72,14 @@ type GeoFileUpdatedResponse struct {
 
 // ── Request DTOs ─────────────────────────────────────────────────
 
-// AddGeoFileRequest is the body for POST /hydraroute/geo-files/add.
+// AddGeoFileRequest is the body for POST /geo/files/add.
 type AddGeoFileRequest struct {
 	Type  string            `json:"type" example:"geosite"`
 	URL   string            `json:"url" example:"https://cdn.example.com/geosite.db"`
 	Route *DownloadRouteDTO `json:"route,omitempty"`
 }
 
-// UpdateGeoFileRequest is the body for POST /hydraroute/geo-files/update.
+// UpdateGeoFileRequest is the body for POST /geo/files/update.
 // Empty path triggers a bulk refresh of every tracked geo file.
 type UpdateGeoFileRequest struct {
 	Path  string            `json:"path" example:"/opt/etc/awg-manager/geo/geosite.dat"`
@@ -88,12 +88,12 @@ type UpdateGeoFileRequest struct {
 
 // GeoDataHandler handles geo data file endpoints.
 type GeoDataHandler struct {
-	store       *hydraroute.GeoDataStore
+	store       *geodata.GeoDataStore
 	downloadSvc *downloader.Service
 }
 
 // NewGeoDataHandler creates a new geo data handler.
-func NewGeoDataHandler(store *hydraroute.GeoDataStore, downloadSvc *downloader.Service) *GeoDataHandler {
+func NewGeoDataHandler(store *geodata.GeoDataStore, downloadSvc *downloader.Service) *GeoDataHandler {
 	if downloadSvc == nil {
 		downloadSvc = downloader.NewService(downloader.Deps{})
 	}
@@ -113,12 +113,12 @@ func toDownloaderRoute(route *DownloadRouteDTO) *downloader.Route {
 // ListGeoFiles returns all tracked geo data files.
 //
 //	@Summary		List geo files
-//	@Tags			hydraroute
+//	@Tags			geo
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Success		200	{object}	GeoFilesResponse
 //	@Failure		500	{object}	APIErrorEnvelope
-//	@Router			/hydraroute/geo-files [get]
+//	@Router			/geo/files [get]
 func (h *GeoDataHandler) ListGeoFiles(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -131,7 +131,7 @@ func (h *GeoDataHandler) ListGeoFiles(w http.ResponseWriter, r *http.Request) {
 // AddGeoFile downloads and registers a new geo data file.
 //
 //	@Summary		Add geo file
-//	@Tags			hydraroute
+//	@Tags			geo
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
@@ -139,7 +139,7 @@ func (h *GeoDataHandler) ListGeoFiles(w http.ResponseWriter, r *http.Request) {
 //	@Success		200		{object}	GeoFileResponse
 //	@Failure		400		{object}	APIErrorEnvelope
 //	@Failure		500		{object}	APIErrorEnvelope
-//	@Router			/hydraroute/geo-files/add [post]
+//	@Router			/geo/files/add [post]
 func (h *GeoDataHandler) AddGeoFile(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -174,14 +174,14 @@ func (h *GeoDataHandler) AddGeoFile(w http.ResponseWriter, r *http.Request) {
 //
 //	@Summary		Delete geo file
 //	@Description	Removes the tracked geo data file at the given path. A file of another program (external) stays on disk: only the catalog entry is removed.
-//	@Tags			hydraroute
+//	@Tags			geo
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			path	query		string	true	"Filesystem path of the geo file"
 //	@Success		200		{object}	OkResponse
 //	@Failure		400		{object}	APIErrorEnvelope
 //	@Failure		500		{object}	APIErrorEnvelope
-//	@Router			/hydraroute/geo-files/delete [delete]
+//	@Router			/geo/files/delete [delete]
 func (h *GeoDataHandler) DeleteGeoFile(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		response.MethodNotAllowed(w)
@@ -206,7 +206,7 @@ func (h *GeoDataHandler) DeleteGeoFile(w http.ResponseWriter, r *http.Request) {
 //
 //	@Summary		Refresh geo file(s)
 //	@Description	Empty path triggers a bulk refresh of every tracked geo file. Single path refreshes one file. Both branches return an updated count for caller-side feedback; the frontend refetches the list afterwards.
-//	@Tags			hydraroute
+//	@Tags			geo
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
@@ -214,7 +214,7 @@ func (h *GeoDataHandler) DeleteGeoFile(w http.ResponseWriter, r *http.Request) {
 //	@Success		200		{object}	GeoFileUpdatedResponse
 //	@Failure		400		{object}	APIErrorEnvelope
 //	@Failure		500		{object}	APIErrorEnvelope
-//	@Router			/hydraroute/geo-files/update [post]
+//	@Router			/geo/files/update [post]
 func (h *GeoDataHandler) UpdateGeoFile(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.MethodNotAllowed(w)
@@ -262,12 +262,12 @@ func (h *GeoDataHandler) UpdateGeoFile(w http.ResponseWriter, r *http.Request) {
 // GetGeoTags returns the tag list for a specific geo data file.
 //
 //	@Summary		Geo tags
-//	@Tags			hydraroute
+//	@Tags			geo
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			path	query	string	true	"Geo file path"
 //	@Success		200	{object}	GeoTagsResponse
-//	@Router			/hydraroute/geo-tags [get]
+//	@Router			/geo/tags [get]
 func (h *GeoDataHandler) GetGeoTags(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
@@ -292,13 +292,13 @@ func (h *GeoDataHandler) GetGeoTags(w http.ResponseWriter, r *http.Request) {
 // ExpandGeoTag expands a geosite:/geoip: tag into inline rule list lines.
 //
 //	@Summary		Geo tag expand
-//	@Tags			hydraroute
+//	@Tags			geo
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			kind	query	string	true	"geosite or geoip"
 //	@Param			tag	query	string	true	"Tag name"
 //	@Success		200	{object}	APIEnvelope{data=GeoExpandData}
-//	@Router			/hydraroute/geo-expand [get]
+//	@Router			/geo/expand [get]
 func (h *GeoDataHandler) ExpandGeoTag(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		response.MethodNotAllowed(w)
