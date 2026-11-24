@@ -1,22 +1,22 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/svelte';
-import HrNeoGeoRefreshSettings from './HrNeoGeoRefreshSettings.svelte';
+import GeoRefreshSettings from './GeoRefreshSettings.svelte';
 import type { GeoFileSettings } from '$lib/types';
 
 function geoFile(p: Partial<GeoFileSettings>): GeoFileSettings {
 	return { autoRefreshEnabled: false, refreshIntervalHours: 0, ...p };
 }
 
-describe('HrNeoGeoRefreshSettings', () => {
+describe('GeoRefreshSettings', () => {
 	it('collapsed when disabled', () => {
-		render(HrNeoGeoRefreshSettings, {
+		render(GeoRefreshSettings, {
 			props: { value: geoFile({ autoRefreshEnabled: false }), saving: false, onToggle: vi.fn(), onSave: vi.fn() },
 		});
 		expect(screen.queryByText('Режим обновления:')).toBeNull();
 	});
 
 	it('shows interval controls when enabled (mode empty → interval default)', () => {
-		render(HrNeoGeoRefreshSettings, {
+		render(GeoRefreshSettings, {
 			props: { value: geoFile({ autoRefreshEnabled: true, refreshMode: undefined }), saving: false, onToggle: vi.fn(), onSave: vi.fn() },
 		});
 		expect(screen.getByText('Режим обновления:')).toBeTruthy();
@@ -27,7 +27,7 @@ describe('HrNeoGeoRefreshSettings', () => {
 		const value = geoFile({ autoRefreshEnabled: true, refreshMode: 'interval', refreshIntervalHours: 6 });
 		// Сохранить не удалось: value остаётся прежним.
 		const onSave = vi.fn(async () => {});
-		const { container } = render(HrNeoGeoRefreshSettings, {
+		const { container } = render(GeoRefreshSettings, {
 			props: { value, saving: false, onToggle: vi.fn(), onSave },
 		});
 		const input = container.querySelector('input[type="number"]') as HTMLInputElement;

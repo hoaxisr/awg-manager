@@ -1,5 +1,5 @@
 <!--
-  Контейнер карточки «Интеграции» (MC2): статусы sing-box, Hydra, zapret и
+  Контейнер карточки «Интеграции» (MC2): статусы sing-box, zapret и
   подсистем прокси живут в своих сторах, поэтому установка/обновление/снос —
   здесь. Bootstrap-DNS и порт Clash меняют общие настройки — их сохраняет
   страница (onsaveBootstrapDNS, onsaveClashPort).
@@ -9,7 +9,6 @@
 	import { m, type UiText } from '$lib/i18n';
 	import { notifications } from '$lib/stores/notifications';
 	import { singboxStatus } from '$lib/stores/singbox';
-	import { hydrarouteStatus } from '$lib/stores/hydraroute';
 	import {
 		zapretStatusIfExpert,
 		zapretTunnelsCardHidden,
@@ -21,7 +20,6 @@
 
 	interface Props {
 		showSingbox: boolean;
-		showHydra: boolean;
 		bootstrapDNS: string;
 		bootstrapSaving: boolean;
 		onsaveBootstrapDNS: (value: string) => void;
@@ -33,7 +31,6 @@
 
 	let {
 		showSingbox,
-		showHydra,
 		bootstrapDNS,
 		bootstrapSaving,
 		onsaveBootstrapDNS,
@@ -54,12 +51,6 @@
 		$singboxStatus.lastFetchedAt === 0 &&
 		($singboxStatus.status === 'idle' || $singboxStatus.status === 'loading')
 	);
-	const hydraStatusValue = $derived($hydrarouteStatus.data ?? null);
-	const hydraStatusLoading = $derived(
-		$hydrarouteStatus.lastFetchedAt === 0 &&
-		($hydrarouteStatus.status === 'idle' || $hydrarouteStatus.status === 'loading')
-	);
-	const hydraStatusError = $derived($hydrarouteStatus.error);
 	const zapretStatusValue = $derived($zapretStatusIfExpert?.data ?? null);
 
 	async function installSingbox() {
@@ -178,9 +169,6 @@
 <IntegrationsCard
 	singboxStatus={singboxStatusValue}
 	{singboxStatusLoading}
-	hydraStatus={hydraStatusValue}
-	{hydraStatusLoading}
-	{hydraStatusError}
 	{singboxInstalling}
 	{singboxUpdating}
 	{singboxInstallError}
@@ -190,7 +178,6 @@
 	onuninstallSingbox={uninstallSingbox}
 	{singboxUninstalling}
 	{showSingbox}
-	{showHydra}
 	zapretStatus={zapretStatusValue}
 	zapretCardOnTunnels={!$zapretTunnelsCardHidden}
 	onzapretCardOnTunnels={(show) => setZapretTunnelsCardHidden(!show)}

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { m, uiText, type UiText } from '$lib/i18n';
-	import type { SingboxStatus, HydraRouteStatus, ZapretStatus } from '$lib/types';
+	import type { SingboxStatus, ZapretStatus } from '$lib/types';
 	import type { ProxySubsystem } from '$lib/api/proxyInstances';
 	import { Button, ConfirmModal, Input, Modal, StatusDot, Toggle } from '$lib/components/ui';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
@@ -31,9 +31,6 @@
 	interface Props {
 		singboxStatus: SingboxStatus | null;
 		singboxStatusLoading?: boolean;
-		hydraStatus: HydraRouteStatus | null;
-		hydraStatusLoading?: boolean;
-		hydraStatusError?: string | null;
 		zapretStatus?: ZapretStatus | null;
 		zapretCardOnTunnels?: boolean;
 		onzapretCardOnTunnels?: (show: boolean) => void;
@@ -46,7 +43,6 @@
 		onuninstallSingbox?: () => void;
 		singboxUninstalling?: boolean;
 		showSingbox?: boolean;
-		showHydra?: boolean;
 		/** Адрес bootstrap-резолвера sing-box; пусто = адрес не навязывается. */
 		bootstrapDNS?: string;
 		onsaveBootstrapDNS?: (value: string) => void;
@@ -63,9 +59,6 @@
 	let {
 		singboxStatus,
 		singboxStatusLoading = false,
-		hydraStatus,
-		hydraStatusLoading = false,
-		hydraStatusError = null,
 		zapretStatus = null,
 		zapretCardOnTunnels = true,
 		onzapretCardOnTunnels,
@@ -78,7 +71,6 @@
 		onuninstallSingbox,
 		singboxUninstalling = false,
 		showSingbox = true,
-		showHydra = true,
 		bootstrapDNS = '',
 		onsaveBootstrapDNS,
 		bootstrapSaving = false,
@@ -131,11 +123,6 @@
 	const singboxInstalled = $derived(singboxStatus?.installed ?? false);
 	const singboxRunning = $derived(singboxStatus?.running ?? false);
 	const singboxNeedsUpdate = $derived(singboxStatus?.updateAvailable ?? false);
-	const hydraInstalled = $derived(hydraStatus?.installed ?? false);
-	const hydraRunning = $derived(hydraStatus?.running ?? false);
-	const hydraProcessState = $derived(
-		hydraStatus?.processState ?? (hydraStatus?.running ? 'running' : hydraStatus?.installed ? 'stopped' : 'not_installed')
-	);
 	const zapretInstalled = $derived(zapretStatus?.installed ?? false);
 	const zapretRunning = $derived(zapretStatus?.running ?? false);
 	const singboxFatalLines = $derived.by(() => {
@@ -206,7 +193,7 @@
 	});
 </script>
 
-{#if showSingbox || showHydra || proxyBinaries.length > 0}
+{#if showSingbox || proxyBinaries.length > 0}
 	<div class="settings-block">
 		<div class="card">
 		<SettingsSectionLabel label={m.settings_integrations_title()} icon={Blocks} tone="purple" header />
@@ -420,70 +407,6 @@
 				</div>
 			</div>
 		{/each}
-
-		{#if showHydra}
-			<div class="setting-row">
-				<div class="integration-item">
-					<StatusDot
-						variant={hydraStatusLoading ? 'muted' : (hydraInstalled && hydraRunning ? 'success' : 'muted')}
-						size="md"
-						ariaLabel={
-							hydraStatusLoading
-								? m.settings_integrations_hydra_loading_aria()
-								: hydraProcessState === 'dead'
-									? 'HydraRoute: stale pid'
-									: hydraInstalled && hydraRunning
-									? m.settings_integrations_hydra_running_aria()
-									: m.settings_integrations_hydra_stopped_aria()
-						}
-					/>
-					<div class="integration-meta">
-						<span class="font-medium">HydraRoute Neo</span>
-						{#if hydraStatusLoading}
-							<span class="integration-sub">{m.settings_integrations_loading()}</span>
-						{:else if hydraInstalled}
-							<span class="integration-sub">
-								v{hydraStatus?.version ?? '?'}
-								{#if hydraRunning && hydraStatus?.pid}
-									· pid {hydraStatus.pid}
-								{:else if hydraProcessState === 'dead' && hydraStatus?.stalePid}
-									· dead pid {hydraStatus.stalePid}
-								{:else}
-									· {m.settings_integrations_stopped()}
-								{/if}
-							</span>
-						{:else}
-							<span class="integration-sub">{m.settings_integrations_not_installed()}</span>
-						{/if}
-						{#if !hydraRunning && hydraStatus?.lastError}
-							<span class="setting-description warning" title={hydraStatus.lastError}>{hydraStatus.lastError}</span>
-						{/if}
-						{#if !hydraStatusLoading && !hydraStatus && hydraStatusError}
-							<span class="setting-description warning">{m.settings_integrations_hydra_no_response({ error: hydraStatusError })}</span>
-						{/if}
-					</div>
-				</div>
-				{#if hydraInstalled}
-					<Button variant="secondary" size="sm" href="/routing?tab=hrneo">{m.settings_integrations_open()}</Button>
-				{:else if hydraStatusLoading}
-					<Button variant="secondary" size="sm" disabled>{m.settings_integrations_waiting()}</Button>
-				{:else}
-					<!-- HydraRoute ставится не отсюда: своего установщика у нас нет, ссылка ведёт
-					     на инструкцию проекта. Кнопка поэтому и подписана иначе, и выглядит иначе,
-					     чем «Установить» у остальных интеграций — те действительно ставят. -->
-					<Button
-						variant="outline-primary"
-						size="sm"
-						href="https://github.com/Ground-Zerro/HydraRoute"
-						target="_blank"
-						rel="noopener noreferrer"
-						title={m.settings_integrations_hydra_guide_title()}
-					>
-						{m.settings_integrations_hydra_guide()}
-					</Button>
-				{/if}
-			</div>
-		{/if}
 
 		{#if zapretInstalled}
 			<div class="setting-row">

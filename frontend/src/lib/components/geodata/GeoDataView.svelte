@@ -124,26 +124,26 @@
 	function downloadActionLabel(d: LastDownload): string {
 		switch (d.action) {
 			case 'add':
-				return m.hrneo_geo_action_add();
+				return m.geodata_action_add();
 			case 'preset':
-				return m.hrneo_geo_action_preset();
+				return m.geodata_action_preset();
 			case 'update':
-				return m.hrneo_geo_action_update({ file: d.file ?? '' });
+				return m.geodata_action_update({ file: d.file ?? '' });
 			default:
-				return m.hrneo_geo_action_sync();
+				return m.geodata_action_sync();
 		}
 	}
 
 	function downloadSuccessMessage(d: LastDownload): string {
 		switch (d.action) {
 			case 'add':
-				return m.hrneo_geo_msg_added();
+				return m.geodata_msg_added();
 			case 'preset':
-				return m.hrneo_geo_msg_preset();
+				return m.geodata_msg_preset();
 			case 'update':
-				return m.hrneo_geo_msg_updated();
+				return m.geodata_msg_updated();
 			default:
-				return m.hrneo_geo_msg_synced();
+				return m.geodata_msg_synced();
 		}
 	}
 
@@ -246,7 +246,6 @@
 	}
 
 	let pendingDelete = $state<GeoFileEntry | null>(null);
-	let pendingTakeControl = $state<GeoFileEntry | null>(null);
 	let sourceModalFile = $state<GeoFileEntry | null>(null);
 	let copiedSource = $state(false);
 
@@ -260,7 +259,7 @@
 		pendingDelete = f;
 	}
 
-	async function syncFromHR() {
+	async function updateAll() {
 		if (!routeSettingsReady || routeSettingsError) return;
 		const op = captureDownloadOperation('sync', 'all');
 		busy = 'sync';
@@ -270,21 +269,12 @@
 		const notes: string[] = [];
 		try {
 			try {
-				await api.rescanGeoFiles();
-			} catch (e: unknown) {
-				// Нет HR / hrneo.conf — всё равно обновляем уже известные файлы.
-				notes.push(e instanceof Error ? e.message : String(e));
-			}
-			// Список после rescan — HR External видны даже если update упадёт.
-			await onrefresh();
-
-			try {
 				const upd = await api.updateGeoFile('', { tag: op.routeTag, kind: op.routeKind });
 				await onrefresh();
 				if (upd.partial && upd.error) {
 					notes.push(
 						upd.updated > 0
-							? m.hrneo_geo_sync_partial({ updated: upd.updated, error: upd.error })
+							? m.geodata_sync_partial({ updated: upd.updated, error: upd.error })
 							: upd.error,
 					);
 				}
@@ -313,24 +303,8 @@
 		}
 	}
 
-	async function confirmTakeControl() {
-		if (!pendingTakeControl) return;
-		const f = pendingTakeControl;
-		busy = f.path;
-		err = '';
-		try {
-			await api.takeGeoFileControl(f.path);
-			pendingTakeControl = null;
-			onrefresh();
-		} catch (e: unknown) {
-			err = e instanceof Error ? e.message : String(e);
-		} finally {
-			busy = null;
-		}
-	}
-
 	function canUpdate(f: GeoFileEntry): boolean {
-		// external — управляется HR Neo; «локальный» (без url) обновлять неоткуда
+		// external — принадлежит другой программе; «локальный» (без url) обновлять неоткуда
 		// (нет источника), иначе «Обновить» затёр бы файл дефолтным Ground-Zerro.
 		if (f.external) return false;
 		return !!f.url;
@@ -386,8 +360,8 @@
 <div class="geo-pane">
 	<header class="pane-header">
 		<div class="pane-title">
-			<h2>{m.hrneo_sidebar_geodata()}</h2>
-			<span class="pane-meta">{m.hrneo_geo_files_count({ count: files.length })}</span>
+			<h2>{m.geodata_title()}</h2>
+			<span class="pane-meta">{m.geodata_files_count({ count: files.length })}</span>
 		</div>
 
 		<div class="pane-actions">
@@ -397,10 +371,10 @@
 				fullWidth
 				disabled={routeActionsDisabled}
 				loading={busy === 'sync'}
-				onclick={syncFromHR}
-				title={m.hrneo_geo_sync_title()}
+				onclick={updateAll}
+				title={m.geodata_sync_title()}
 			>
-				{m.hrneo_geo_sync()}
+				{m.geodata_sync()}
 			</Button>
 		</div>
 	</header>
@@ -410,26 +384,26 @@
     <div>
 		{#if routeSettingsError}
 		<div class="route-status route-status-error">
-			{m.hrneo_geo_route_error({ error: routeSettingsError })}
+			{m.geodata_route_error({ error: routeSettingsError })}
 		</div>
 		{:else if !routeSettingsReady}
 		<div class="route-status route-status-live">
-			{m.hrneo_geo_route_loading()}
+			{m.geodata_route_loading()}
 		</div>
 		{:else if routeSettingsWarning}
 		<div class="route-status route-status-warn">
-			{m.hrneo_geo_route_warn_prefix()}<strong>{downloadRouteLabel}</strong>{m.hrneo_geo_route_warn_suffix({ warning: routeSettingsWarning })}
+			{m.geodata_route_warn_prefix()}<strong>{downloadRouteLabel}</strong>{m.geodata_route_warn_suffix({ warning: routeSettingsWarning })}
 		</div>
 	{/if}
 	{#if !activeDownload && lastDownload}
 		{#if lastDownload.ok}
 			<div class="route-status route-status-ok">
-				{m.hrneo_geo_last_ok({ action: downloadActionLabel(lastDownload), route: lastDownload.routeLabel, message: downloadSuccessMessage(lastDownload) })}
+				{m.geodata_last_ok({ action: downloadActionLabel(lastDownload), route: lastDownload.routeLabel, message: downloadSuccessMessage(lastDownload) })}
 			</div>
 		{:else}
 			<div class="route-status route-status-error">
 				<span class="route-status-head">
-					{m.hrneo_geo_last_failed({ action: downloadActionLabel(lastDownload), route: lastDownload.routeLabel })}
+					{m.geodata_last_failed({ action: downloadActionLabel(lastDownload), route: lastDownload.routeLabel })}
 				</span>
 				<DownloadErrorNotice error={lastDownload.error} />
 			</div>
@@ -438,7 +412,7 @@
 	</div>
 	
 	{#if files.length === 0}
-		<div class="empty">{m.hrneo_geo_empty()}</div>
+		<div class="empty">{m.geodata_empty()}</div>
 	{:else}
 		<div class="files">
 			{#each files as f (f.path)}
@@ -449,7 +423,7 @@
 						<button
 							type="button"
 							class="file-name"
-							title={expandedPaths.has(f.path) ? m.hrneo_geo_hide_path() : f.path}
+							title={expandedPaths.has(f.path) ? m.geodata_hide_path() : f.path}
 							onclick={() => togglePathExpanded(f.path)}
 						>
 							{#if expandedPaths.has(f.path)}
@@ -463,45 +437,35 @@
 						{#if f.external}
 							<span
 								class="file-external"
-								title={m.hrneo_geo_external_title()}
+								title={m.geodata_external_title()}
 							>External</span>
 						{/if}
 						<span class="file-meta">{humanSize(f.size)} · {m.routing_singbox_geo_tags_count({ count: f.tagCount })} · {formatRelativeTime(f.updated)}</span>
 						{#if f.external}
-							<!-- External (HR Neo) — источник нам неизвестен (бэкенд лишь
-							     подставляет догадочный default-URL), показываем только бейдж External -->
+							<!-- External — источник нам неизвестен (в каталоге лишь догадочный
+							     default-URL), показываем только бейдж External -->
 						{:else if f.url}
 							<IconButton
-								ariaLabel={m.hrneo_geo_source_aria()}
-								title={m.hrneo_geo_source_title()}
+								ariaLabel={m.geodata_source_aria()}
+								title={m.geodata_source_title()}
 								onclick={() => { sourceModalFile = f; copiedSource = false; }}
 							>
 								<Link size={14} />
 							</IconButton>
 						{:else}
-							<span class="file-local" title={m.hrneo_geo_local_title()}>{m.hrneo_geo_local()}</span>
+							<span class="file-local" title={m.geodata_local_title()}>{m.geodata_local()}</span>
 						{/if}
 						{#if busy === f.path && fp}
 							<span class="row-progress">
 								{#if fp.phase === 'download'}
 									{fmtPercent(fp)} {humanSize(fp.downloaded)}
 								{:else if fp.phase === 'validate'}
-									{m.hrneo_geo_validating()}
+									{m.geodata_validating()}
 								{/if}
 							</span>
 						{/if}
 					</div>
 					<div class="file-actions">
-						{#if f.external}
-							<Button
-								variant="secondary"
-								size="sm"
-								disabled={busy !== null}
-								onclick={() => (pendingTakeControl = f)}
-							>
-								{m.hrneo_geo_take_control()}
-							</Button>
-						{/if}
 						{#if canUpdate(f)}
 							<Button
 								variant="secondary"
@@ -528,7 +492,7 @@
 	{/if}
 
 	<div class="add-form">
-		<div class="form-label">{m.hrneo_geo_presets()}</div>
+		<div class="form-label">{m.geodata_presets()}</div>
 		<div class="preset-row">
 			<Button
 				variant="secondary"
@@ -546,9 +510,9 @@
 			>
 				+ geosite_GA.dat
 			</Button>
-			<span class="preset-hint">{m.hrneo_geo_preset_hint()}</span>
+			<span class="preset-hint">{m.geodata_preset_hint()}</span>
 		</div>
-		<div class="form-label form-label-spaced">{m.hrneo_geo_add_by_url()}</div>
+		<div class="form-label form-label-spaced">{m.geodata_add_by_url()}</div>
 		<div class="add-row">
 			<div class="add-type-select">
 				<Dropdown
@@ -583,21 +547,21 @@
 			<div class="busy-hint">
 				{#if progress?.phase === 'download'}
 					{progress.total > 0
-						? m.hrneo_geo_downloading_of({
+						? m.geodata_downloading_of({
 								route: activeDownload?.routeLabel ?? downloadRouteLabel,
 								percent: fmtPercent(progress),
 								downloaded: humanSize(progress.downloaded),
 								total: humanSize(progress.total),
 							})
-						: m.hrneo_geo_downloading({
+						: m.geodata_downloading({
 								route: activeDownload?.routeLabel ?? downloadRouteLabel,
 								percent: fmtPercent(progress),
 								downloaded: humanSize(progress.downloaded),
 							})}
 				{:else if progress?.phase === 'validate'}
-					{m.hrneo_geo_validating_file()}
+					{m.geodata_validating_file()}
 				{:else}
-					{m.hrneo_geo_connecting({ route: activeDownload?.routeLabel ?? downloadRouteLabel })}
+					{m.geodata_connecting({ route: activeDownload?.routeLabel ?? downloadRouteLabel })}
 				{/if}
 				<div class="progress-bar">
 					{#if progress && progress.total > 0}
@@ -612,37 +576,20 @@
 			</div>
 		{/if}
 		<div class="form-hint">
-			{m.hrneo_geo_type_hint_prefix()}<code>{addType}</code>{m.hrneo_geo_type_hint_suffix()}
+			{m.geodata_type_hint_prefix()}<code>{addType}</code>{m.geodata_type_hint_suffix()}
 		</div>
 	</div>
 </div>
 
-{#if pendingTakeControl}
-	{@const pt = pendingTakeControl}
-	<ConfirmModal
-		open={true}
-		title={m.hrneo_geo_take_control()}
-		message={m.hrneo_geo_take_control_message({ file: fileName(pt.path) })}
-		secondary={m.hrneo_geo_take_control_secondary()}
-		confirmLabel={m.hrneo_geo_take_control_confirm()}
-		variant="primary"
-		busy={busy === pt.path}
-		onConfirm={confirmTakeControl}
-		onClose={() => (pendingTakeControl = null)}
-	/>
-{/if}
-
 {#if pendingDelete}
 	{@const pd = pendingDelete}
-	{@const hrKey = pd.type === 'geosite' ? 'GeoSiteFile' : 'GeoIPFile'}
 	<ConfirmModal
 		open={true}
-		title={m.hrneo_geo_delete_title()}
+		title={m.geodata_delete_title()}
 		message={pd.external
-			? m.hrneo_geo_delete_external_message({ file: fileName(pd.path) })
-			: m.hrneo_geo_delete_message({ file: fileName(pd.path) })}
+			? m.geodata_delete_external_message({ file: fileName(pd.path) })
+			: m.geodata_delete_message({ file: fileName(pd.path) })}
 		filePath={pd.path}
-		secondary={m.hrneo_geo_delete_secondary({ key: hrKey, path: pd.path })}
 		busy={busy === pd.path}
 		onConfirm={confirmRemove}
 		onClose={() => (pendingDelete = null)}
@@ -650,7 +597,7 @@
 {/if}
 
 {#if sourceModalFile}
-	<Modal open title={m.hrneo_geo_source_modal_title()} size="md" onclose={() => (sourceModalFile = null)}>
+	<Modal open title={m.geodata_source_modal_title()} size="md" onclose={() => (sourceModalFile = null)}>
 		<div class="source-modal">
 			<code class="source-url">{sourceModalFile.url}</code>
 			<Button variant="secondary" size="sm" onclick={copySource}>

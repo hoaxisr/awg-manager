@@ -173,16 +173,6 @@ export function applyPresetToggle(
 	return next;
 }
 
-/** HR Neo: resolved inline domain/CIDR (no subscription-only lists). */
-export function hrNeoCatalogPresetFilter(
-	p: CatalogPreset,
-	catalog: CatalogPreset[] = [],
-): boolean {
-	if (p.engines.dns?.subscriptionUrl) return false;
-	if (catalog.length === 0) return presetDnsEntryCount(p) > 0;
-	return resolvedPresetDnsEntryCount(p, catalog) > 0;
-}
-
 export function dnsRouteCatalogPresetFilter(
 	p: CatalogPreset,
 	catalog: CatalogPreset[] = [],

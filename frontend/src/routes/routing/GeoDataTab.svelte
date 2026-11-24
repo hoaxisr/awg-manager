@@ -2,7 +2,7 @@
 	import { m } from '$lib/i18n';
 	import { api } from '$lib/api/client';
 	import type { GeoFileEntry, GeoFileSettings, Settings } from '$lib/types';
-	import { HrNeoGeoDataView, HrNeoGeoRefreshSettings } from '$lib/components/hrneo';
+	import { GeoDataView, GeoRefreshSettings } from '$lib/components/geodata';
 	import { Button } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
 
@@ -12,7 +12,6 @@
 	let updatingAll = $state(false);
 
 	async function loadGeoFiles() {
-		try { await api.rescanGeoFiles(); } catch { /* HR не установлен — не ломаем вкладку */ }
 		try { geoFiles = (await api.getGeoFiles()) ?? []; } catch { geoFiles = []; }
 	}
 
@@ -72,11 +71,11 @@
 	}
 </script>
 
-<HrNeoGeoDataView files={geoFiles} onrefresh={loadGeoFiles} />
+<GeoDataView files={geoFiles} onrefresh={loadGeoFiles} />
 
 {#if settings}
 	<div class="geo-settings">
-		<HrNeoGeoRefreshSettings value={settings.geoFile} saving={saving} onToggle={toggleAutoRefresh} onSave={saveGeo} />
+		<GeoRefreshSettings value={settings.geoFile} saving={saving} onToggle={toggleAutoRefresh} onSave={saveGeo} />
 	</div>
 {/if}
 

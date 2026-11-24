@@ -221,7 +221,7 @@ export interface BuildRoutingTunnelDropdownOptions {
 }
 
 /**
- * Builds grouped `DropdownOption[]` for NDMS / HydraRoute tunnel pickers.
+ * Builds grouped `DropdownOption[]` for NDMS tunnel pickers.
  * Mirrors sing-box router outbound grouping where the catalog overlaps.
  */
 export function buildRoutingTunnelDropdownOptions(

@@ -11,14 +11,13 @@
 	interface Props {
 		kind: 'geosite' | 'geoip';
 		files: string[];
-		maxelem?: number;
 		/** Уменьшенная высота списка тегов (для inline-редакторов в модалках). */
 		compact?: boolean;
 		onpick: (token: string) => void;
 		onclose: () => void;
 	}
 
-	let { kind, files, maxelem = 0, compact = false, onpick, onclose }: Props = $props();
+	let { kind, files, compact = false, onpick, onclose }: Props = $props();
 
 	let query = $state('');
 	let allTags = $state<Array<{ tag: GeoTag; file: string }>>([]);
@@ -56,7 +55,7 @@
 	}
 </script>
 
-<div class="picker" class:compact role="dialog" aria-label={m.hrneo_geo_picker_aria({ kind })}>
+<div class="picker" class:compact role="dialog" aria-label={m.geodata_picker_aria({ kind })}>
 	<div class="picker-header">
 		<input
 			class="form-input picker-search"
@@ -79,13 +78,9 @@
 		<div class="picker-count">{m.routing_singbox_geo_tags_count({ count: filtered.length })}</div>
 		<div class="picker-results">
 			{#each filtered as r}
-				{@const tooBig = kind === 'geoip' && maxelem > 0 && r.tag.count >= maxelem}
 				<button
 					type="button"
 					class="picker-result"
-					class:disabled-tag={tooBig}
-					disabled={tooBig}
-					title={tooBig ? m.routing_singbox_geo_too_big({ count: r.tag.count, max: maxelem }) : ''}
 					onclick={() => pick(r.tag)}
 				>
 					<span class="result-name">{r.tag.name}</span>
@@ -155,13 +150,6 @@
 	}
 	.picker-result:hover {
 		border-color: var(--accent);
-	}
-	.picker-result.disabled-tag {
-		opacity: 0.45;
-		cursor: not-allowed;
-	}
-	.picker-result.disabled-tag:hover {
-		border-color: transparent;
 	}
 
 	.result-name {

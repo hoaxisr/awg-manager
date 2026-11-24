@@ -36,7 +36,6 @@
         editRuleId?: string;
         editRuleCounter?: number;
         isOS5?: boolean;
-        hasDnsEngine?: boolean;
         /** Тело вкладки ещё грузится — шапка видна, ниже скелетон. */
         bodyLoading?: boolean;
     }
@@ -47,7 +46,6 @@
         editRuleId = '',
         editRuleCounter = 0,
         isOS5 = false,
-        hasDnsEngine = false,
         bodyLoading = false,
     }: Props = $props();
 
@@ -343,11 +341,6 @@
     }
 </script>
 
-{#if !hasDnsEngine}
-    <div class="empty-state">
-        <p>{m.routing_dns_requires_pre()} <a href="https://github.com/Ground-Zerro/HydraRoute" target="_blank" rel="noopener">HydraRoute Neo</a></p>
-    </div>
-{:else}
 <NdmsDisclaimerBanner {isOS5} />
 <div class="section-header">
     {#if !dnsSelectionMode}
@@ -551,8 +544,6 @@
         }}
     />
 {/if}
-{/if}
-
 <style>
     .orphan-section {
         margin-bottom: 18px;
@@ -571,17 +562,6 @@
         font-size: 0.75rem;
         color: var(--text-muted);
         margin: 0 0 10px 0;
-    }
-
-    .empty-state {
-        text-align: center;
-        padding: 2rem;
-        color: var(--text-muted);
-    }
-
-    .empty-state a {
-        color: var(--accent);
-        text-decoration: none;
     }
 
     /* Rich empty state */
