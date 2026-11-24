@@ -35,7 +35,10 @@
 	let busy = $state(false);
 	let confirmImport = $state(false);
 	let confirmProxyRegister = $state(false);
+	// Не $state намеренно: эффект ниже и читает, и пишет защёлку, реактивная
+	// переменная запускала бы его повторно.
 	let wasOpen = false;
+	const viaRelay = $derived(!!relayUrl.trim());
 	const proxyKeyLocked = $derived(!!accountKeyInUseBy.trim() || !!accountKeyCheckError.trim());
 
 	const altTabOptions: SegmentedOption<'import' | 'proxy'>[] = $derived([
@@ -177,9 +180,9 @@
 
 <ConfirmModal
 	open={confirmProxyRegister}
-	title={m.warpscout_confirm_reissue_title()}
-	message={m.warpscout_confirm_reissue_msg()}
-	secondary={m.warpscout_confirm_reissue_sec()}
+	title={viaRelay ? m.warpscout_confirm_relay_title() : m.warpscout_confirm_reissue_title()}
+	message={viaRelay ? m.warpscout_confirm_relay_msg() : m.warpscout_confirm_reissue_msg()}
+	secondary={viaRelay ? m.warpscout_confirm_import_sec() : m.warpscout_confirm_reissue_sec()}
 	confirmLabel={m.warpscout_proxy_register_btn()}
 	variant="danger"
 	{busy}

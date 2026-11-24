@@ -740,6 +740,33 @@ describe('WarpScoutTab', () => {
 		expect(reopenedRelay.value).toBe('');
 	});
 
+	it('does not promise to keep WARP+ when registering over an account via relay', async () => {
+		const view = await mount(acctState());
+		await fireEvent.click(chip(view.container, 0));
+		await fireEvent.click(await screen.findByRole('button', { name: 'Импорт / прокси' }));
+		await fireEvent.click(await screen.findByRole('button', { name: 'Прокси / Relay' }));
+		const doc = view.container.ownerDocument;
+		const relayInput = await waitFor(() => doc.querySelector<HTMLInputElement>('#warp-relay-url')!);
+		await fireEvent.input(relayInput, { target: { value: 'https://warp-relay.example.com' } });
+		await fireEvent.click(await screen.findByRole('button', { name: 'Зарегистрировать' }));
+		await screen.findByText(/Лицензия WARP\+ на неё не переносится/);
+		expect(screen.queryByText(/с сохранением WARP\+/)).toBeNull();
+		expect(api.warpscoutRegister).not.toHaveBeenCalled();
+	});
+
+	it('promises to keep WARP+ when reissuing via proxy only', async () => {
+		const view = await mount(acctState());
+		await fireEvent.click(chip(view.container, 0));
+		await fireEvent.click(await screen.findByRole('button', { name: 'Импорт / прокси' }));
+		await fireEvent.click(await screen.findByRole('button', { name: 'Прокси / Relay' }));
+		const doc = view.container.ownerDocument;
+		const proxyInput = await waitFor(() => doc.querySelector<HTMLInputElement>('#warp-proxy-url')!);
+		await fireEvent.input(proxyInput, { target: { value: 'socks5://127.0.0.1:1080' } });
+		await fireEvent.click(await screen.findByRole('button', { name: 'Зарегистрировать' }));
+		await screen.findByText(/с сохранением WARP\+/);
+		expect(screen.queryByText(/Лицензия WARP\+ на неё не переносится/)).toBeNull();
+	});
+
 	it('requires confirmation before overwriting an existing account on import', async () => {
 		const initial = acctState();
 		api.warpscoutImportAccount.mockResolvedValue({
