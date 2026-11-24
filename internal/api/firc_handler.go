@@ -1088,7 +1088,7 @@ func (h *FircHandler) handleProbeInterfaces(w http.ResponseWriter, r *http.Reque
 		if iface == "" {
 			continue
 		}
-		if iface == "blackhole" || iface == "block" || !fircProbeIfaceNameRe.MatchString(iface) {
+		if iface == "blackhole" || iface == "block" || iface == firc.DNSOnlyInterface || !fircProbeIfaceNameRe.MatchString(iface) {
 			response.ErrorWithStatus(w, http.StatusBadRequest, fmt.Sprintf("invalid interface %q", iface), "BAD_REQUEST")
 			return
 		}
@@ -1271,6 +1271,11 @@ func (h *FircHandler) handlePutGroups(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, firc.ErrRecoveryRequired) {
 			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "RECOVERY_REQUIRED")
+			return
+		}
+		var invalid *firc.GroupValidationError
+		if errors.As(err, &invalid) {
+			response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "INVALID_GROUPS")
 			return
 		}
 		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "APPLY_GROUPS_FAILED")
@@ -1940,8 +1945,11 @@ func (h *FircHandler) handleV1Proxy(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			w.Header().Set("Content-Type", "application/json")
 			status := http.StatusInternalServerError
+			var invalid *firc.GroupValidationError
 			if errors.Is(err, firc.ErrRecoveryRequired) {
 				status = http.StatusConflict
+			} else if errors.As(err, &invalid) {
+				status = http.StatusBadRequest
 			}
 			w.WriteHeader(status)
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -2470,7 +2478,7 @@ func (h *FircHandler) enrichAutolistStatus(ctx context.Context, st *firc.Autolis
 	if !matchedGroup && len(groups) > 0 {
 		for i := len(groups) - 1; i >= 0; i-- {
 			g := groups[i]
-			if g.Enable && g.Block == "" {
+			if g.Enable && g.Block == "" && !g.IsDNSOnly() {
 				st.GroupID = g.ID
 				st.Group = g.ID
 				st.GroupName = g.Name
@@ -2596,6 +2604,10 @@ func (h *FircHandler) handleConfigureAutolist(w http.ResponseWriter, r *http.Req
 	resolvedGroupID := ""
 	for _, g := range groups {
 		if rawTarget != "" && (g.ID == rawTarget || strings.EqualFold(g.Name, rawTarget)) {
+			if req.Enabled && g.IsDNSOnly() {
+				response.ErrorWithStatus(w, http.StatusBadRequest, firc.ErrCandidateGroupDNSOnly.Error(), "GROUP_DNS_ONLY")
+				return
+			}
 			resolvedGroupID = g.ID
 			break
 		}
@@ -2603,13 +2615,13 @@ func (h *FircHandler) handleConfigureAutolist(w http.ResponseWriter, r *http.Req
 	if resolvedGroupID == "" && req.Enabled && len(groups) > 0 {
 		for i := len(groups) - 1; i >= 0; i-- {
 			g := groups[i]
-			if g.Enable && g.Block == "" {
+			if g.Enable && g.Block == "" && !g.IsDNSOnly() {
 				resolvedGroupID = g.ID
 				break
 			}
 		}
-		if resolvedGroupID == "" {
-			resolvedGroupID = groups[len(groups)-1].ID
+		if last := groups[len(groups)-1]; resolvedGroupID == "" && !last.IsDNSOnly() {
+			resolvedGroupID = last.ID
 		}
 	}
 	if req.Enabled && resolvedGroupID == "" {
@@ -2733,6 +2745,10 @@ func (h *FircHandler) execConfirmedAutolistCandidateAdd(w http.ResponseWriter, r
 		}
 		if errors.Is(err, firc.ErrCandidateDomainRequired) {
 			response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "BAD_REQUEST")
+			return
+		}
+		if errors.Is(err, firc.ErrCandidateGroupDNSOnly) {
+			response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "GROUP_DNS_ONLY")
 			return
 		}
 		if errors.Is(err, firc.ErrCandidateGroupRequired) {

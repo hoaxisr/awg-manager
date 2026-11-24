@@ -202,6 +202,7 @@ func TestHandleProbeInterfaces_Validation(t *testing.T) {
 		{name: "whitespace only", body: `{"interfaces":["   "]}`},
 		{name: "blackhole", body: `{"interfaces":["blackhole"]}`},
 		{name: "block", body: `{"interfaces":["block"]}`},
+		{name: "dns", body: `{"interfaces":["dns"]}`},
 		{name: "invalid chars", body: `{"interfaces":["tun0;id"]}`},
 		{name: "invalid url scheme", body: `{"interfaces":["tunvless0"],"url":"ftp://example.com/file"}`},
 		{name: "url with credentials", body: `{"interfaces":["tunvless0"],"url":"https://user:pass@example.com/204"}`},
