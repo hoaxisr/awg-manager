@@ -1013,6 +1013,51 @@ func probeFircInterfaceHTTP(ctx context.Context, ifaceName, checkURL string) fir
 	}
 }
 
+func isValidProbeHTTPURL(raw string) (string, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", false
+	}
+	u, err := url.Parse(trimmed)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
+		return "", false
+	}
+	return u.String(), true
+}
+
+// resolveProbeCheckURL выбирает адрес пробы: из запроса, app.check.url работающего
+// fircd (им же он проверяет интерфейсы), общая настройка, умолчание.
+func (h *FircHandler) resolveProbeCheckURL(ctx context.Context, reqURL string) (string, error) {
+	if strings.TrimSpace(reqURL) != "" {
+		normalized, ok := isValidProbeHTTPURL(reqURL)
+		if !ok {
+			return "", errors.New("invalid probe url")
+		}
+		return normalized, nil
+	}
+
+	if h.op != nil {
+		sCtx, cancel := context.WithTimeout(ctx, 750*time.Millisecond)
+		defer cancel()
+		if h.op.IsRunning(sCtx) {
+			if st, err := h.op.Client().GetSettings(sCtx); err == nil && st != nil {
+				appURL, _ := st.Settings["app.check.url"].(string)
+				if normalized, ok := isValidProbeHTTPURL(appURL); ok {
+					return normalized, nil
+				}
+			}
+		}
+	}
+	if h.settingsStore != nil {
+		if s, err := h.settingsStore.Get(); err == nil && s != nil {
+			if settingsURL := strings.TrimSpace(s.ConnectivityCheckURL); settingsURL != "" {
+				return settingsURL, nil
+			}
+		}
+	}
+	return storage.DefaultConnectivityCheckURL, nil
+}
+
 func (h *FircHandler) handleProbeInterfaces(w http.ResponseWriter, r *http.Request) {
 	if h.op == nil {
 		response.ErrorWithStatus(w, http.StatusServiceUnavailable, "firc operator not initialized", "UNAVAILABLE")
@@ -1058,21 +1103,10 @@ func (h *FircHandler) handleProbeInterfaces(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	checkURL := strings.TrimSpace(req.URL)
-	if checkURL != "" {
-		u, err := url.Parse(checkURL)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
-			response.ErrorWithStatus(w, http.StatusBadRequest, "invalid probe url", "BAD_REQUEST")
-			return
-		}
-		checkURL = u.String()
-	} else if h.settingsStore != nil {
-		if s, err := h.settingsStore.Get(); err == nil && s != nil && strings.TrimSpace(s.ConnectivityCheckURL) != "" {
-			checkURL = strings.TrimSpace(s.ConnectivityCheckURL)
-		}
-	}
-	if checkURL == "" {
-		checkURL = storage.DefaultConnectivityCheckURL
+	checkURL, err := h.resolveProbeCheckURL(r.Context(), req.URL)
+	if err != nil {
+		response.ErrorWithStatus(w, http.StatusBadRequest, err.Error(), "BAD_REQUEST")
+		return
 	}
 
 	probeFn := h.probeInterfaceFn
@@ -2225,6 +2259,17 @@ func (h *FircHandler) handlePutExt(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		response.ErrorWithStatus(w, http.StatusBadRequest, "invalid request body", "BAD_REQUEST")
 		return
+	}
+	// Проверка прокси-группы уходит в группы: с негодным URL fircd отвергнет и
+	// правку групп, и groups.yaml на старте.
+	for _, pg := range req.ProxyGroups {
+		if pg.Check == nil || strings.TrimSpace(pg.Check.URL) == "" {
+			continue
+		}
+		if _, ok := isValidProbeHTTPURL(pg.Check.URL); !ok {
+			response.ErrorWithStatus(w, http.StatusBadRequest, fmt.Sprintf("invalid check url in proxy group %q", pg.Name), "BAD_REQUEST")
+			return
+		}
 	}
 	var (
 		ext firc.ExtConfig

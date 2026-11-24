@@ -64,6 +64,9 @@
 	let primaryProbe = $derived(
 		!isBlock && !isBlackhole && (activeIface || ifaceVal) ? getIfaceProbe(rt, activeIface || ifaceVal) : null,
 	);
+	let primaryProbeFailed = $derived(
+		Boolean(!isBlock && !isBlackhole && primaryProbe && !primaryProbe.ok && !(isFallbackGroup && activeRes.allDead)),
+	);
 </script>
 
 <div class="compact-group-card">
@@ -91,8 +94,9 @@
 				<ArrowRight size={13} class="compact-out-arrow" />
 				<span
 					class="iface-dot"
-					class:alive={Boolean(activeIface) && !activeBackup}
-					class:backup={Boolean(activeBackup)}
+					class:alive={Boolean(activeIface) && !activeBackup && !primaryProbeFailed}
+					class:backup={Boolean(activeBackup) && !primaryProbeFailed}
+					class:warn={Boolean(activeIface) && primaryProbeFailed && !activeRes.allDead}
 					class:dead={activeRes.allDead}
 					class:unknown={!activeIface && !activeRes.allDead}
 				></span>
@@ -122,7 +126,11 @@
 				<span class="compact-chain-probe">
 					<IconButton
 						disabled={isGridTesting}
-						onclick={() => onprobe(ifaceList, { groupKey: `grp:${group.id}` })}
+						onclick={() =>
+							onprobe(ifaceList, {
+								groupKey: `grp:${group.id}`,
+								url: group.check?.mode === 'url' && group.check.url ? group.check.url : undefined,
+							})}
 						title={m.firc_fallback_test_chain_title()}
 						ariaLabel={m.firc_fallback_test_chain_title()}
 					>
@@ -281,7 +289,8 @@
 		box-shadow: 0 0 4px var(--color-success-border);
 	}
 
-	.iface-dot.backup {
+	.iface-dot.backup,
+	.iface-dot.warn {
 		background: var(--color-warning);
 		box-shadow: 0 0 4px var(--color-warning-border);
 	}

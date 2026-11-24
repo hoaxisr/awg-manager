@@ -259,3 +259,109 @@ func TestHandleProbeInterfaces_Validation(t *testing.T) {
 		}
 	})
 }
+
+func TestHandleProbeInterfaces_CheckURLOrder(t *testing.T) {
+	tmpDir := t.TempDir()
+	settingsStore := storage.NewSettingsStore(tmpDir)
+	_, _ = settingsStore.Load()
+	if err := settingsStore.Update(func(s *storage.Settings) error {
+		s.SingboxRouter.RoutingEngine = "firc"
+		s.ConnectivityCheckURL = storage.DefaultConnectivityCheckURL
+		return nil
+	}); err != nil {
+		t.Fatalf("update settings: %v", err)
+	}
+
+	fircMux := http.NewServeMux()
+	fircMux.HandleFunc("/api/v1/system/netfilter", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"dirty": false})
+	})
+	fircMux.HandleFunc("/api/v1/system/settings", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"boot":           "ok",
+			"restarting":     false,
+			"pendingRestart": []string{},
+			"settings": map[string]any{
+				"app.check.url": "http://cp.cloudflare.com/generate_204",
+			},
+			"classes": map[string]string{},
+		})
+	})
+	mockFirc := httptest.NewServer(fircMux)
+	defer mockFirc.Close()
+
+	op := firc.NewOperator(firc.Options{ConfigDir: tmpDir})
+	op.SetClient(firc.NewHTTPClient(mockFirc.URL, mockFirc.Client()))
+	h := NewFircHandler(op)
+	h.SetSettingsStore(settingsStore)
+
+	var seenURL string
+	h.probeInterfaceFn = func(_ context.Context, ifaceName, checkURL string) fircInterfaceProbeResult {
+		seenURL = checkURL
+		return fircInterfaceProbeResult{Interface: ifaceName, Ok: true, LatencyMs: 45, HTTPCode: http.StatusNoContent}
+	}
+
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, func(next http.HandlerFunc) http.HandlerFunc { return next })
+
+	// 1. Default ConnectivityCheckURL -> uses running fircd app.check.url.
+	req := httptest.NewRequest(http.MethodPost, "/api/firc/interfaces/probe", strings.NewReader(`{"interfaces":["qmi_br0"]}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || seenURL != "http://cp.cloudflare.com/generate_204" {
+		t.Fatalf("status=%d seenURL=%q, want http://cp.cloudflare.com/generate_204", rec.Code, seenURL)
+	}
+
+	// 2. Общая настройка не перебивает app.check.url: пробы сверяются с тем, что проверяет fircd.
+	if err := settingsStore.Update(func(s *storage.Settings) error {
+		s.ConnectivityCheckURL = "https://custom.probe.test/204"
+		return nil
+	}); err != nil {
+		t.Fatalf("update custom settings URL: %v", err)
+	}
+	probe := func() string {
+		t.Helper()
+		seenURL = ""
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/firc/interfaces/probe", strings.NewReader(`{"interfaces":["qmi_br0"]}`)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		return seenURL
+	}
+	if got := probe(); got != "http://cp.cloudflare.com/generate_204" {
+		t.Fatalf("seenURL=%q, want app.check.url", got)
+	}
+
+	// 3. Демон не отвечает — общая настройка, без неё — умолчание.
+	mockFirc.Close()
+	if got := probe(); got != "https://custom.probe.test/204" {
+		t.Fatalf("seenURL=%q, want settings URL", got)
+	}
+	if err := settingsStore.Update(func(s *storage.Settings) error {
+		s.ConnectivityCheckURL = ""
+		return nil
+	}); err != nil {
+		t.Fatalf("clear settings URL: %v", err)
+	}
+	if got := probe(); got != storage.DefaultConnectivityCheckURL {
+		t.Fatalf("seenURL=%q, want default", got)
+	}
+}
+
+func TestHandlePutExt_RejectsInvalidProxyGroupCheckURL(t *testing.T) {
+	op := firc.NewOperator(firc.Options{ConfigDir: t.TempDir()})
+	h := NewFircHandler(op)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, func(next http.HandlerFunc) http.HandlerFunc { return next })
+
+	body := `{"proxyGroups":[{"id":"pg1","name":"A","interfaces":["eth3","tunvless0"],"check":{"mode":"url","url":"example.com/204"}}]}`
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/api/firc/ext", strings.NewReader(body)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s, want 400", rec.Code, rec.Body.String())
+	}
+	if got := op.LoadExtConfig().ProxyGroups; len(got) != 0 {
+		t.Fatalf("rejected ext must not be saved, got %+v", got)
+	}
+}

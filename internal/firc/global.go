@@ -18,13 +18,15 @@ func globalGroup(ext ExtConfig) (Group, bool) {
 		return Group{}, false
 	}
 	var interfaces []string
+	var matchedPG *ProxyGroup
 	switch kind {
 	case "iface":
 		interfaces = []string{target}
 	case "pg":
-		for _, pg := range ext.ProxyGroups {
-			if pg.ID == target {
-				interfaces = slices.Clone(pg.Interfaces)
+		for i := range ext.ProxyGroups {
+			if ext.ProxyGroups[i].ID == target {
+				matchedPG = &ext.ProxyGroups[i]
+				interfaces = slices.Clone(matchedPG.Interfaces)
 				break
 			}
 		}
@@ -32,7 +34,14 @@ func globalGroup(ext ExtConfig) (Group, bool) {
 	if len(interfaces) == 0 {
 		return Group{}, false
 	}
-	g := Group{ID: globalGroupID, Name: "Global", Enable: true, Interface: GroupInterface(interfaces)}
+	// nil — прокси-группа проверкой не управляет, у Global остаётся своя: fircd при
+	// отсутствии check сохраняет check группы (check_from_req), а без него живёт на
+	// поинтерфейсной проверке (firc_ifchoose).
+	var check *GroupCheck
+	if matchedPG != nil {
+		check = normalizeProxyGroupCheck(matchedPG.Check, len(interfaces))
+	}
+	g := Group{ID: globalGroupID, Name: "Global", Enable: true, Interface: GroupInterface(interfaces), Check: check}
 	for i, cidr := range strings.Fields(globalCIDRs) {
 		typ := "subnet"
 		if strings.Contains(cidr, ":") {

@@ -22,7 +22,10 @@ export interface FircProbesController {
 }
 
 /** label — человекочитаемое имя интерфейса для тоста. */
-export function createFircProbes(label: (id: string) => string): FircProbesController {
+export function createFircProbes(
+	label: (id: string) => string,
+	onAfterProbe?: () => void,
+): FircProbesController {
 	let ifaces = $state<Record<string, boolean>>({});
 	let groups = $state<Record<string, boolean>>({});
 	let destroyed = false;
@@ -57,6 +60,7 @@ export function createFircProbes(label: (id: string) => string): FircProbesContr
 				...prev,
 				...allResults,
 			}));
+			onAfterProbe?.();
 
 			if (!opts?.silent) {
 				if (uniqueIds.length === 1) {
