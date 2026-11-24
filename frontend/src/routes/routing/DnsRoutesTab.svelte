@@ -36,7 +36,6 @@
         editRuleId?: string;
         editRuleCounter?: number;
         isOS5?: boolean;
-        hasDnsEngine?: boolean;
         /** Тело вкладки ещё грузится — шапка видна, ниже скелетон. */
         bodyLoading?: boolean;
     }
@@ -47,16 +46,12 @@
         editRuleId = '',
         editRuleCounter = 0,
         isOS5 = false,
-        hasDnsEngine = false,
         bodyLoading = false,
     }: Props = $props();
 
-    // HR-backed rules live in their own tab now; this tab shows only NDMS.
-    // By name, as the HR Neo tab lists its rules (#851): the order of lists
-    // means nothing to the router — only the order of tunnels inside a list does.
-    let dnsRoutes = $derived(
-        allDnsRoutes.filter((r) => r.backend !== 'hydraroute').sort((a, b) => a.name.localeCompare(b.name))
-    );
+    // By name (#851): the order of lists means nothing to the router — only the
+    // order of tunnels inside a list does.
+    let dnsRoutes = $derived([...allDnsRoutes].sort((a, b) => a.name.localeCompare(b.name)));
 
     // Open edit modal when search result is clicked.
     // Capture counter at mount to skip stale values on tab re-mount.
@@ -239,7 +234,7 @@
             const beforeCount = dnsRoutes.length;
             const fresh = await api.deleteDnsRouteBatch(ids);
             dnsRoutesStore.applyMutationResponse(fresh);
-            const deleted = Math.max(0, beforeCount - fresh.filter(r => r.backend !== 'hydraroute').length);
+            const deleted = Math.max(0, beforeCount - fresh.length);
 
             exitDnsSelection();
             notifications.success(m.routing_bulk_deleted_rules({ count: deleted }));
@@ -343,11 +338,6 @@
     }
 </script>
 
-{#if !hasDnsEngine}
-    <div class="empty-state">
-        <p>{m.routing_dns_requires_pre()} <a href="https://github.com/Ground-Zerro/HydraRoute" target="_blank" rel="noopener">HydraRoute Neo</a></p>
-    </div>
-{:else}
 <NdmsDisclaimerBanner {isOS5} />
 <div class="section-header">
     {#if !dnsSelectionMode}
@@ -551,8 +541,6 @@
         }}
     />
 {/if}
-{/if}
-
 <style>
     .orphan-section {
         margin-bottom: 18px;
@@ -571,17 +559,6 @@
         font-size: 0.75rem;
         color: var(--text-muted);
         margin: 0 0 10px 0;
-    }
-
-    .empty-state {
-        text-align: center;
-        padding: 2rem;
-        color: var(--text-muted);
-    }
-
-    .empty-state a {
-        color: var(--accent);
-        text-decoration: none;
     }
 
     /* Rich empty state */

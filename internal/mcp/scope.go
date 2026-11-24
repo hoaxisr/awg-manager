@@ -53,8 +53,7 @@ var readOnlyTools = map[string]bool{
 	"list_policy_interfaces":        true,
 	"list_wireguard_server_options": true,
 	"get_wireguard_server":          true,
-	"get_hydraroute_status":         true,
-	"list_hydraroute_geo_files":     true,
+	"list_geo_files":                true,
 }
 
 // credentialTools change nothing on the router but hand out material

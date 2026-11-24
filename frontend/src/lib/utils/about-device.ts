@@ -4,7 +4,6 @@ import type {
 	DeviceProxyConfig,
 	DeviceProxyRuntime,
 	DnsCheckStartResponse,
-	HydraRouteStatus,
 	PolicyDevice,
 	Settings,
 	SingboxStatus,
@@ -78,7 +77,6 @@ export interface AwgmServicesSnapshot {
 	pingCheck: string;
 	singbox: string;
 	/** null — строка скрыта (ещё грузится). */
-	hydraRoute: string | null;
 	deviceProxy: string;
 	clientRoutes: string;
 	dnsRoutes: string;
@@ -376,9 +374,6 @@ export function buildAwgmServicesSnapshot(input: {
 	authenticated: boolean;
 	login: string | null;
 	singbox: SingboxStatus | null;
-	hydra: HydraRouteStatus | null;
-	hydraLoaded?: boolean;
-	showHydra?: boolean;
 	deviceProxy: DeviceProxyConfig | null;
 	deviceProxyRuntime: DeviceProxyRuntime | null;
 	clientRoutesTotal: number;
@@ -429,21 +424,6 @@ export function buildAwgmServicesSnapshot(input: {
 			: m.about_device_value_not_installed();
 	}
 
-	let hydra: string | null = null;
-	if (input.showHydra) {
-		if (input.hydraLoaded) {
-			if (input.hydra) {
-				hydra = input.hydra.installed
-					? input.hydra.running
-						? m.about_device_value_running()
-						: m.about_device_value_stopped()
-					: m.about_device_value_not_installed();
-			} else {
-				hydra = '—';
-			}
-		}
-	}
-
 	let deviceProxy = '—';
 	if (input.deviceProxy) {
 		const cfg = input.deviceProxy;
@@ -486,7 +466,6 @@ export function buildAwgmServicesSnapshot(input: {
 		logging,
 		pingCheck: ping,
 		singbox,
-		hydraRoute: hydra,
 		deviceProxy,
 		clientRoutes,
 		dnsRoutes,
@@ -505,9 +484,6 @@ export function awgmServicesRows(s: AwgmServicesSnapshot): AboutInfoRow[] {
 		{ id: 'pingCheck', label: 'Ping-check', value: s.pingCheck },
 		{ id: 'singbox', label: 'Sing-box', value: s.singbox },
 	];
-	if (s.hydraRoute !== null) {
-		rows.push({ id: 'hydraRoute', label: 'HydraRoute Neo', value: s.hydraRoute });
-	}
 	rows.push(
 		// Прокси (SOCKS5/HTTP) и «VPN для устройств» (client routes) — разные
 		// подсистемы; до #663 прокси показывался под именем вкладки client routes.

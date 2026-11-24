@@ -270,8 +270,7 @@ func registerExplainTools(s *mcp.Server, d Deps) {
 
 		// Full records in one call: the list view caps Domains, and matching
 		// against a truncated list would answer "no rule covers this" for a
-		// rule that does; per-id reads would re-read HydraRoute's files
-		// once per list.
+		// rule that does.
 		details, err := d.ListDNSRouteDetails(ctx)
 		if err != nil {
 			return nil, explainOut{}, err

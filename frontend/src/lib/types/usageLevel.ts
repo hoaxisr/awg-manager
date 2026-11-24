@@ -37,7 +37,6 @@ export type RoutingSubTab =
 	| 'clientRoutes'
 	| 'dnsRoutes'
 	| 'ipRoutes'
-	| 'hrNeo'
 	| 'zapret'
 	| 'geoData'
 	| 'autolist'
@@ -62,13 +61,11 @@ const ROUTING_SUBTAB_MIN_LEVEL: Record<RoutingSubTab, UsageLevel> = {
 	clientRoutes: 'basic',
 	dnsRoutes: 'basic',
 	ipRoutes: 'advanced',
-	hrNeo: 'expert',
-	// Zapret — правка параметров чужого демона и его списков: тот же
-	// уровень доверия, что у HR Neo.
+	// Zapret — правка параметров чужого демона и его списков.
 	zapret: 'expert',
 	geoData: 'expert',
 	// Autolist — сателлит, чей auto-режим добавляет правила в маршрутизацию
-	// без ручного подтверждения каждого: уровень доверия HR Neo/Zapret.
+	// без ручного подтверждения каждого: уровень доверия Zapret.
 	autolist: 'expert',
 	singboxRouter: 'expert',
 };

@@ -7,7 +7,7 @@
  * захардкоженных `/opt/zapret2` — бэкенд сам отдаёт фактические.
  */
 
-/** Тот же закрытый набор, что у hydraroute, чтобы переиспользовать бейджи. */
+/** Закрытый набор состояний демона. */
 export type ZapretProcessState = 'not_installed' | 'stopped' | 'running';
 
 /** Действия POST /api/zapret/control. */

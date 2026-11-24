@@ -9,7 +9,6 @@ import {
 	dnsRouteCatalogPresetFilter,
 	findAddedCompositeForMember,
 	findCoveringPreset,
-	hrNeoCatalogPresetFilter,
 	isPresetFullyAdded,
 	memberOfAddedCompositeTitle,
 	normalizeCatalogSelection,
@@ -33,7 +32,7 @@ const base = {
 };
 
 describe('splitPresetDnsEntries', () => {
-	it('maps domains and subnets arrays to HR editor fields', () => {
+	it('maps domains and subnets arrays to editor fields', () => {
 		const p: CatalogPreset = {
 			...base,
 			engines: {
@@ -50,15 +49,7 @@ describe('splitPresetDnsEntries', () => {
 	});
 });
 
-describe('hrNeoCatalogPresetFilter', () => {
-	it('accepts subnet-only presets', () => {
-		const p: CatalogPreset = {
-			...base,
-			engines: { dns: { subnets: ['10.0.0.0/8'] } },
-		};
-		expect(hrNeoCatalogPresetFilter(p)).toBe(true);
-	});
-
+describe('dnsRouteCatalogPresetFilter', () => {
 	it('accepts composite parent with empty own DNS via covers', () => {
 		const catalog: CatalogPreset[] = [
 			{
@@ -73,7 +64,6 @@ describe('hrNeoCatalogPresetFilter', () => {
 				engines: { dns: { domains: ['instagram.com'] } },
 			},
 		];
-		expect(hrNeoCatalogPresetFilter(catalog[0], catalog)).toBe(true);
 		expect(dnsRouteCatalogPresetFilter(catalog[0], catalog)).toBe(true);
 	});
 });

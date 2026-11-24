@@ -201,8 +201,8 @@
 			onSingboxDelay: (data) => singboxApplyDelay(data.tag, data.delay),
 			onSingboxMemory: applySingboxMemory,
 
-			// HydraRoute geo download progress
-			onHydraRouteGeoProgress: (data) => geoDownloadProgress.ingest(data),
+			// Geo file download progress
+			onGeoProgress: (data) => geoDownloadProgress.ingest(data),
 			onSingboxInstallProgress: (data) => singboxInstallProgress.ingest(data),
 
 			// DNS-route failover — user-visible notification, not a state stream

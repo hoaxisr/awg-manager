@@ -165,41 +165,6 @@ func TestLocal_UpdateDNSRouteTargetsAndSubscriptions(t *testing.T) {
 	}
 }
 
-// TestLocal_UpdateDNSRouteRefusesWhatHydraRouteLacks — HydraRoute берёт одну
-// цель и не знает исключений, подписок и Kill Switch: запись молча их
-// потеряла бы.
-func TestLocal_UpdateDNSRouteRefusesWhatHydraRouteLacks(t *testing.T) {
-	fd := &fakeDNSRoutes{getKnowsHR: true, lists: []dnsroute.DomainList{{
-		ID: "hr:1:awgm0:0", Name: "hr", Backend: "hydraroute", HRRouteMode: "interface",
-		ManualDomains: []string{"a.com"}, Routes: []dnsroute.RouteTarget{{TunnelID: "tn-1"}},
-	}}}
-	l := New(Config{DNSRoutes: fd, Targets: catalogHarness()})
-	on := true
-	for name, in := range map[string]mcpsrv.DNSRouteUpdate{
-		"two targets":  {RouteID: "hr:1:awgm0:0", Targets: []string{"tn-1", "system:Proxy0"}},
-		"kill switch":  {RouteID: "hr:1:awgm0:0", KillSwitch: &on},
-		"excludes":     {RouteID: "hr:1:awgm0:0", Excludes: []string{"b.com"}},
-		"subscription": {RouteID: "hr:1:awgm0:0", AddSubscriptionURLs: []string{"https://a.example/l"}},
-	} {
-		if _, _, err := l.UpdateDNSRoute(context.Background(), in); err == nil || !strings.Contains(err.Error(), "HydraRoute") {
-			t.Errorf("%s: err = %v", name, err)
-		}
-	}
-	if _, _, err := l.UpdateDNSRoute(context.Background(), mcpsrv.DNSRouteUpdate{RouteID: "hr:1:awgm0:0", Targets: []string{"system:Proxy0"}}); err != nil {
-		t.Fatalf("one target is fine: %v", err)
-	}
-	if r := fd.updated.Routes; len(r) != 1 || r[0].TunnelID != "system:Proxy0" {
-		t.Fatalf("routes = %+v", r)
-	}
-
-	// A policy-mode list routes through a policy, not a target: one target
-	// given as targets is refused just as tunnelId is.
-	fd.lists[0].HRRouteMode, fd.lists[0].HRPolicyName = "policy", "VPN"
-	if _, _, err := l.UpdateDNSRoute(context.Background(), mcpsrv.DNSRouteUpdate{RouteID: "hr:1:awgm0:0", Targets: []string{"system:Proxy0"}}); err == nil || !strings.Contains(err.Error(), "policy") {
-		t.Fatalf("err = %v", err)
-	}
-}
-
 // TestLocal_StaticRouteKillSwitchSurvivesAnEdit — staticroute.Update берёт
 // fallback и включённость как прислали: разреженная правка выключила бы
 // Kill Switch и сам список.

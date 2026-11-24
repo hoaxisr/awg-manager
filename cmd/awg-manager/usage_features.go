@@ -20,7 +20,6 @@ func (a *app) usageFeatures() updater.Features {
 			}
 		}
 	}
-	f.HydraRoute = a.hydraService.GetStatus().Running
 	if routes, err := a.clientRouteService.List(); err == nil {
 		for _, r := range routes {
 			if r.Enabled {
