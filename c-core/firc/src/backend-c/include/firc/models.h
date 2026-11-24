@@ -94,6 +94,7 @@ typedef struct firc_group {
     firc_group_resolve_t resolve;
     firc_group_check_t check;
     firc_block_answer_t block;
+    bool cloudflare;
     firc_group_list_t *list; /* NULL: a manual group */
 } firc_group_t;
 

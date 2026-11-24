@@ -1,5 +1,6 @@
 #include "firc/app.h"
 
+#include <arpa/inet.h>
 #include <errno.h>
 #include <ifaddrs.h>
 #include <linux/if.h>
@@ -111,6 +112,14 @@ typedef struct set_job {
     bool done;
     firc_err_t err;
 } set_job_t;
+
+typedef struct cf_group {
+    firc_id_t id;
+    char iface[FIRC_IFACE_NAME_CAP];
+    uint32_t field;
+    bool blocked;
+    uint64_t tag;
+} cf_group_t;
 
 struct firc_app {
     firc_lograte_t said_snapshot;
@@ -266,12 +275,21 @@ struct firc_app {
     firc_ip_t reject_base[2]; /* the pool prefixes, for the FORWARD barrier */
     uint8_t reject_len[2];
     bool reject_has[2];
+    firc_cftable_t *cf;
+    firc_cfjobs_t *cf_jobs;
+    cf_group_t *cf_groups;
+    size_t n_cf_groups;
+    size_t cap_cf_groups;
+    uint64_t cf_tag;
+    int cf_soon_timer;
 };
 
 /* every entry point that mutates the registry or drives an iptables engine must hold this */
 static void app_nf_enter(firc_app_t *app);
 static bool ktcp_redirected(const firc_app_t *app, int dev);
 static void app_nf_leave(firc_app_t *app);
+static void cf_done(void *ud, const char *gid, unsigned fam, uint64_t tag, const firc_cfprobe_t *r, size_t n);
+static void cf_check_soon(firc_app_t *app, const char *gid);
 static void on_tap_readable(firc_loop_t *loop, int fd, uint32_t events, void *ud);
 static void tap_reader_down(firc_app_t *app);
 static void on_tap_deadline(firc_loop_t *loop, void *ud);
@@ -928,6 +946,7 @@ static void hold_if_newly_routed(firc_app_t *app, firc_ruleset_t *rs, bool was_r
     char id[FIRC_ID_STR_LEN];
     firc_id_format(firc_ruleset_group(rs)->id, id);
     if (firc_fakeip_uncommit_group(app->pool, id) > 0) { firc_app_pool_changed(app); }
+    if (firc_ruleset_group(rs)->cloudflare) { cf_check_soon(app, id); }
 }
 
 /* the flush waits for the pass that writes the narrower chain, or the old one would mark the next packet again */
@@ -1052,8 +1071,112 @@ static size_t drop_pool_addrs(firc_resolver_addr_t *arr, size_t n, const firc_fa
     return kept;
 }
 
+static bool cf_eligible(const firc_app_t *app, const firc_ruleset_t *rs) {
+    const firc_group_t *g = firc_ruleset_group(rs);
+    return g->cloudflare && !firc_group_is_block(g) && firc_ruleset_routed(rs) &&
+           !ktcp_redirected(app, group_tunnel(app, rs));
+}
+
+static bool cf_key_moved(const cf_group_t *e, const firc_ruleset_t *rs) {
+    bool blocked = false;
+    (void)firc_ruleset_active(rs, &blocked);
+    return e->blocked != blocked || e->field != firc_ruleset_mark_field(rs) ||
+           strncmp(e->iface, firc_ruleset_active_iface(rs), sizeof(e->iface)) != 0;
+}
+
+static void cf_key_take(cf_group_t *e, const firc_ruleset_t *rs) {
+    (void)firc_ruleset_active(rs, &e->blocked);
+    e->field = firc_ruleset_mark_field(rs);
+    snprintf(e->iface, sizeof(e->iface), "%s", firc_ruleset_active_iface(rs));
+}
+
+static void cf_say(const char *name, unsigned fam, const firc_ip_t *t) {
+    char a[INET6_ADDRSTRLEN] = "none";
+    if (t != NULL) { (void)inet_ntop(t->len == 4 ? AF_INET : AF_INET6, t->b, a, sizeof(a)); }
+    FIRC_INFO("cloudflare target %s for %s %s", a, name != NULL ? name : "", fam == FIRC_FAM_V4 ? "v4" : "v6");
+}
+
+static void on_cf_soon(firc_loop_t *loop, void *ud) {
+    (void)loop;
+    firc_app_t *app = ud;
+    app->cf_soon_timer = 0;
+    firc_app_cf_tick(app);
+}
+
+static void cf_check_soon(firc_app_t *app, const char *gid) {
+    if (!firc_cftable_recheck(app->cf, gid) || app->loop == NULL || app->cf_soon_timer != 0) { return; }
+    int id = 0;
+    if (firc_loop_add_timer(app->loop, 0, 0, on_cf_soon, app, &id) == FIRC_OK) { app->cf_soon_timer = id; }
+}
+
+static bool cf_withdraw(firc_app_t *app, cf_group_t *e, const firc_ruleset_t *rs, bool keep) {
+    char gid[FIRC_ID_STR_LEN];
+    firc_id_format(e->id, gid);
+    bool changed = false;
+    for (unsigned fam = 0; fam < 2; fam++) {
+        uint64_t before = firc_fakeip_gen(app->pool);
+        firc_fakeip_set_cf_target(app->pool, gid, fam, NULL);
+        if (firc_fakeip_gen(app->pool) == before) { continue; }
+        changed = true;
+        if (rs != NULL) { cf_say(firc_ruleset_group(rs)->name, fam, NULL); }
+    }
+    e->tag = ++app->cf_tag;
+    if (keep) {
+        cf_check_soon(app, gid);
+        cf_key_take(e, rs);
+    } else {
+        firc_cftable_forget(app->cf, gid);
+    }
+    return changed;
+}
+
+static void cf_reconcile(firc_app_t *app) {
+    if (app->pool == NULL) { return; }
+    size_t kept = 0;
+    bool changed = false;
+    for (size_t i = 0; i < app->n_cf_groups; i++) {
+        cf_group_t e = app->cf_groups[i];
+        const firc_ruleset_t *rs = firc_app_find_group_by_id(app, e.id);
+        if (rs == NULL || !cf_eligible(app, rs)) {
+            changed |= cf_withdraw(app, &e, rs, false);
+            continue;
+        }
+        if (cf_key_moved(&e, rs)) { changed |= cf_withdraw(app, &e, rs, true); }
+        app->cf_groups[kept++] = e;
+    }
+    app->n_cf_groups = kept;
+    if (changed) { firc_app_pool_changed(app); }
+}
+
+static cf_group_t *cf_group_of(firc_app_t *app, firc_id_t id) {
+    for (size_t i = 0; i < app->n_cf_groups; i++) {
+        if (firc_id_equal(app->cf_groups[i].id, id)) { return &app->cf_groups[i]; }
+    }
+    return NULL;
+}
+
+static cf_group_t *cf_group_add(firc_app_t *app, const firc_ruleset_t *rs) {
+    cf_group_t *e = cf_group_of(app, firc_ruleset_group(rs)->id);
+    if (e != NULL) { return e; }
+    if (app->n_cf_groups == app->cap_cf_groups) {
+        size_t cap = app->cap_cf_groups ? app->cap_cf_groups * 2 : 4;
+        cf_group_t *v = realloc(app->cf_groups, cap * sizeof(*v));
+        if (v == NULL) { return NULL; }
+        app->cf_groups = v;
+        app->cap_cf_groups = cap;
+    }
+    e = &app->cf_groups[app->n_cf_groups++];
+    memset(e, 0, sizeof(*e));
+    e->id = firc_ruleset_group(rs)->id;
+    e->tag = ++app->cf_tag;
+    cf_key_take(e, rs);
+    return e;
+}
+
 void firc_app_republish_resolve_routes(firc_app_t *app) {
-    if (app == NULL || app->router == NULL) { return; }
+    if (app == NULL) { return; }
+    cf_reconcile(app);
+    if (app->router == NULL) { return; }
     size_t n = app->n_rulesets;
     firc_resolve_input_t *in = n ? calloc(n, sizeof(*in)) : NULL;
     firc_resolver_addr_t (*fw)[FIRC_RESOLVE_MAX_SERVERS] = n ? calloc(n, sizeof(*fw)) : NULL;
@@ -1186,6 +1309,12 @@ firc_app_t *firc_app_create(const firc_app_deps_t *deps) {
         firc_app_destroy(app);
         return NULL;
     }
+    app->cf = firc_cftable_new();
+    app->cf_jobs = firc_cfjobs_new(app->loop, cf_done, app);
+    if (app->cf == NULL || app->cf_jobs == NULL) {
+        firc_app_destroy(app);
+        return NULL;
+    }
 
     firc_ruleset_deps_t rdeps = ruleset_deps(app);
     for (size_t i = 0; i < app->cfg->n_groups; i++) {
@@ -1241,8 +1370,17 @@ static firc_err_t write_stop_state(firc_app_t *app) {
 void firc_app_destroy(firc_app_t *app) {
     if (!app) { return; }
     firc_app_stop_netfilter_committer(app); /* nothing below is safe while a rebuild can still read the registry */
+    firc_cfjobs_free(app->cf_jobs);
+    app->cf_jobs = NULL;
+    firc_cftable_free(app->cf);
+    app->cf = NULL;
+    free(app->cf_groups);
+    app->cf_groups = NULL;
+    app->n_cf_groups = 0;
     if (app->retry_timer != 0) { (void)firc_loop_del_timer(app->loop, app->retry_timer); }
     app->retry_timer = 0;
+    if (app->cf_soon_timer != 0) { (void)firc_loop_del_timer(app->loop, app->cf_soon_timer); }
+    app->cf_soon_timer = 0;
     if (app->set_retry_timer != 0) { (void)firc_loop_del_timer(app->loop, app->set_retry_timer); }
     app->set_retry_timer = 0;
     firc_app_stop_list_worker(app); /* before the config it reports about goes: a result it posts could reach a loop whose app no longer exists */
@@ -1788,6 +1926,7 @@ static void group_move_into(firc_app_t *app, firc_group_t *into, firc_group_t *f
     into->check = from->check;
     memset(&from->check, 0, sizeof(from->check));
     into->block = from->block;
+    into->cloudflare = from->cloudflare;
     if (into->list != NULL) { /* hand_over_list: after it, into's list is either carried into from's (blank) or finished with */
         hand_over_list(app, into, from);
         firc_group_list_free(into->list);
@@ -5460,4 +5599,98 @@ bool firc_app_ktcp_real_of(firc_app_t *app, uint8_t dev, const uint8_t fake[4], 
     }
     *real = r;
     return true;
+}
+
+static void cf_done(void *ud, const char *gid, unsigned fam, uint64_t tag, const firc_cfprobe_t *r, size_t n) {
+    firc_app_t *app = ud;
+    firc_id_t id;
+    if (app->pool == NULL || firc_id_parse(gid, &id) != FIRC_OK) { return; }
+    app_nf_enter(app);
+    cf_reconcile(app);
+    const cf_group_t *e = cf_group_of(app, id);
+    const firc_ruleset_t *rs = firc_app_find_group_by_id(app, id);
+    if (e == NULL || e->tag != tag || rs == NULL || !cf_eligible(app, rs)) {
+        app_nf_leave(app);
+        return;
+    }
+    (void)firc_cftable_apply(app->cf, gid, fam, r, n, (int64_t)(app->mono_ms() / 1000u));
+    firc_fakeip_cf_cand_t t;
+    bool has = firc_cftable_target(app->cf, gid, fam, &t);
+    uint64_t before = firc_fakeip_gen(app->pool);
+    firc_fakeip_set_cf_target(app->pool, gid, fam, has ? &t.addr : NULL);
+    if (firc_fakeip_gen(app->pool) != before) {
+        cf_say(firc_ruleset_group(rs)->name, fam, has ? &t.addr : NULL);
+        firc_app_pool_changed(app);
+    }
+    app_nf_leave(app);
+}
+
+static size_t cf_probe_set(const firc_app_t *app, const char *gid, unsigned fam, firc_fakeip_cf_cand_t *c) {
+    size_t n = firc_fakeip_cf_candidates(app->pool, gid, fam, c, FIRC_CFPROBE_MAX);
+    firc_fakeip_cf_cand_t cur;
+    if (!firc_cftable_target(app->cf, gid, fam, &cur)) { return n; }
+    for (size_t i = 0; i < n; i++) {
+        if (c[i].addr.len == cur.addr.len && memcmp(c[i].addr.b, cur.addr.b, cur.addr.len) == 0) { return n; }
+    }
+    if (n == FIRC_CFPROBE_MAX) { n--; }
+    c[n++] = cur;
+    return n;
+}
+
+static bool cf_tick_needed(firc_app_t *app, int64_t now) {
+    for (size_t i = 0; i < app->n_cf_groups; i++) {
+        const firc_ruleset_t *rs = firc_app_find_group_by_id(app, app->cf_groups[i].id);
+        if (rs == NULL || !cf_eligible(app, rs) || cf_key_moved(&app->cf_groups[i], rs)) { return true; }
+    }
+    for (size_t i = 0; i < app->n_rulesets; i++) {
+        const firc_ruleset_t *rs = app->rulesets[i];
+        if (!cf_eligible(app, rs)) { continue; }
+        char gid[FIRC_ID_STR_LEN];
+        firc_id_format(firc_ruleset_group(rs)->id, gid);
+        for (unsigned fam = 0; fam < 2; fam++) {
+            firc_fakeip_cf_cand_t c[1];
+            if (!firc_cfjobs_busy(app->cf_jobs, gid, fam) &&
+                (firc_cftable_target(app->cf, gid, fam, c) ||
+                 firc_fakeip_cf_candidates(app->pool, gid, fam, c, 1) > 0) &&
+                firc_cftable_due(app->cf, gid, fam, now)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+void firc_app_cf_tick(firc_app_t *app) {
+    if (app == NULL || app->pool == NULL || app->cf_jobs == NULL) { return; }
+    if (!cf_tick_needed(app, (int64_t)(app->mono_ms() / 1000u))) { return; }
+    app_nf_enter(app);
+    cf_reconcile(app);
+    int64_t now = (int64_t)(app->mono_ms() / 1000u);
+    for (size_t i = 0; i < app->n_rulesets; i++) {
+        const firc_ruleset_t *rs = app->rulesets[i];
+        if (!cf_eligible(app, rs)) { continue; }
+        const cf_group_t *e = cf_group_add(app, rs);
+        if (e == NULL) { continue; }
+        uint64_t tag = e->tag;
+        char gid[FIRC_ID_STR_LEN];
+        firc_id_format(firc_ruleset_group(rs)->id, gid);
+        uint32_t mark = firc_ruleset_mark_field(rs) | FIRC_MARK_HANDLED;
+        for (unsigned fam = 0; fam < 2; fam++) {
+            firc_fakeip_cf_cand_t c[FIRC_CFPROBE_MAX];
+            size_t n = cf_probe_set(app, gid, fam, c);
+            if (n == 0 || !firc_cftable_due(app->cf, gid, fam, now)) { continue; }
+            (void)firc_cfjobs_start(app->cf_jobs, gid, fam, tag, mark, c, n);
+        }
+    }
+    app_nf_leave(app);
+}
+
+void firc_app_set_cfprobe_for_test(firc_app_t *app, firc_cfprobe_fn probe, void *ud) {
+    if (app != NULL) { firc_cfjobs_set_probe(app->cf_jobs, probe, ud); }
+}
+
+bool firc_app_cf_busy_for_test(const firc_app_t *app, firc_id_t id, unsigned fam) {
+    char gid[FIRC_ID_STR_LEN];
+    firc_id_format(id, gid);
+    return app != NULL && firc_cfjobs_busy(app->cf_jobs, gid, fam);
 }

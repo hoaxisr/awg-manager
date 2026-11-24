@@ -415,6 +415,27 @@ static firc_err_t block_from_req(const cJSON *req, const firc_group_t *existing,
     return FIRC_OK;
 }
 
+static firc_err_t cloudflare_from_req(const cJSON *req, const firc_group_t *existing, firc_group_t *group,
+                                      const char **err_msg, const char **err_field) {
+    const cJSON *c = cJSON_GetObjectItemCaseSensitive(req, "cloudflare");
+    if (c == NULL) {
+        group->cloudflare = existing != NULL && existing->cloudflare && !firc_group_is_block(group);
+        return FIRC_OK;
+    }
+    if (!cJSON_IsBool(c)) {
+        *err_msg = "cloudflare must be a boolean";
+        *err_field = "cloudflare";
+        return FIRC_ERR_INVAL;
+    }
+    if (cJSON_IsTrue(c) && firc_group_is_block(group)) {
+        *err_msg = "cloudflare is not for a group whose interface is block";
+        *err_field = "cloudflare";
+        return FIRC_ERR_INVAL;
+    }
+    group->cloudflare = cJSON_IsTrue(c);
+    return FIRC_OK;
+}
+
 /* group_id is "" for a POST with no "id": a dialog for an id the client was never given would be wrong to mark */
 static void write_group_error(firc_http_res_t *res, const char *msg, const char *field, const char *group_id) {
     if (field == NULL) {
@@ -535,6 +556,7 @@ static firc_err_t group_from_req(const cJSON *req, const firc_group_t *existing,
         err = check_from_req(req, existing, &group->check, err_msg, err_field, msgbuf, msgbuf_len);
     }
     if (err == FIRC_OK) { err = block_from_req(req, existing, group, err_msg, err_field); }
+    if (err == FIRC_OK) { err = cloudflare_from_req(req, existing, group, err_msg, err_field); }
     if (err != FIRC_OK) {
         firc_group_free(group);
         return err;
@@ -725,6 +747,7 @@ cJSON *firc_groups_group_json(firc_app_t *app, const firc_group_t *g, bool with_
     }
     cJSON_AddBoolToObject(obj, "enable", g->enable);
     if (firc_group_is_block(g)) { cJSON_AddStringToObject(obj, "block", firc_block_answer_name(g->block)); }
+    cJSON_AddBoolToObject(obj, "cloudflare", g->cloudflare);
     if (app != NULL) {
         const char *reason = NULL;
         bool live = firc_app_group_live(app, g->id, &reason);

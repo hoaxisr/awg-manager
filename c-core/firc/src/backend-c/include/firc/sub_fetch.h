@@ -35,6 +35,7 @@ typedef struct firc_sub_fetch_info {
     bool timed_out;
     bool refused;
     bool unreachable;
+    double appconnect_s;
 } firc_sub_fetch_info_t;
 
 typedef struct firc_sub_fetch_opts {

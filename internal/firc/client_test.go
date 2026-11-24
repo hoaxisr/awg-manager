@@ -2183,3 +2183,32 @@ func TestClientProbeTunnelKeysAndProgress(t *testing.T) {
 		t.Fatalf("unexpected probe result: %+v", res)
 	}
 }
+
+func TestGroupsFile_KeepsCloudflare(t *testing.T) {
+	op := NewOperator(Options{ConfigDir: filepath.Join(t.TempDir(), "firc")})
+	if err := os.MkdirAll(op.configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	yamlIn := "configVersion: 0.7.0\ngroups:\n  - id: g1\n    name: CF\n    interface: nwg0\n    enable: true\n    cloudflare: true\n"
+	if err := os.WriteFile(op.GroupsPath(), []byte(yamlIn), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	grps, err := op.LoadGroupsFile()
+	if err != nil || len(grps) != 1 || !grps[0].Cloudflare {
+		t.Fatalf("load: grps=%+v err=%v", grps, err)
+	}
+	if err := op.SaveGroupsFile(grps); err != nil {
+		t.Fatal(err)
+	}
+	if again, err := op.LoadGroupsFile(); err != nil || len(again) != 1 || !again[0].Cloudflare {
+		t.Fatalf("after save: grps=%+v err=%v", again, err)
+	}
+
+	var g Group
+	if err := json.Unmarshal([]byte(`{"id":"g1","name":"CF","interface":"nwg0","enable":true,"cloudflare":true}`), &g); err != nil || !g.Cloudflare {
+		t.Fatalf("json in: %+v err=%v", g, err)
+	}
+	if out, _ := json.Marshal(g); !strings.Contains(string(out), `"cloudflare":true`) {
+		t.Fatalf("json out lost cloudflare: %s", out)
+	}
+}

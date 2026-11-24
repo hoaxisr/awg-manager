@@ -40,12 +40,17 @@ static void set_address_rr(firc_dns_rr_t *rr, const firc_dns_question_t *q, cons
     rr->rdata_len = ip->len;
 }
 
-firc_err_t firc_dns_msg_collapse(firc_dns_msg_t *msg, const firc_ip_t *fake4,
-                                 const firc_ip_t *fake6, uint32_t ttl) {
+firc_err_t firc_dns_msg_collapse(firc_dns_msg_t *msg, const firc_ip_t *fake4, size_t n4,
+                                 const firc_ip_t *fake6, size_t n6, uint32_t ttl) {
     if (msg == NULL || msg->n_questions == 0 || msg->questions == NULL) { return FIRC_ERR_INVAL; }
-    if (fake4 != NULL && fake4->len != 4) { return FIRC_ERR_INVAL; }
-    if (fake6 != NULL && fake6->len != 16) { return FIRC_ERR_INVAL; }
-    if (fake4 == NULL && fake6 == NULL) {
+    if ((n4 > 0 && fake4 == NULL) || (n6 > 0 && fake6 == NULL)) { return FIRC_ERR_INVAL; }
+    for (size_t i = 0; i < n4; i++) {
+        if (fake4[i].len != 4) { return FIRC_ERR_INVAL; }
+    }
+    for (size_t i = 0; i < n6; i++) {
+        if (fake6[i].len != 16) { return FIRC_ERR_INVAL; }
+    }
+    if (n4 == 0 && n6 == 0) {
         for (size_t i = 0; i < msg->n_answers; i++) {
             uint16_t t = msg->answers[i].rtype;
             if (t == FIRC_DNS_TYPE_A || t == FIRC_DNS_TYPE_AAAA) { return FIRC_ERR_INVAL; }
@@ -53,16 +58,21 @@ firc_err_t firc_dns_msg_collapse(firc_dns_msg_t *msg, const firc_ip_t *fake4,
     }
 
     /* Everything that can fail is allocated before anything is touched. */
-    size_t n_new = (fake4 != NULL ? 1u : 0u) + (fake6 != NULL ? 1u : 0u);
+    size_t n_new = n4 + n6;
     firc_dns_rr_t *grown = NULL;
-    uint8_t *rd4 = NULL, *rd6 = NULL;
+    uint8_t **rds = NULL;
     if (n_new > 0) {
         grown = realloc(msg->answers, (msg->n_answers + n_new) * sizeof(*grown));
         if (grown == NULL) { return FIRC_ERR_NOMEM; }
         msg->answers = grown;
-        if (fake4 != NULL && (rd4 = malloc(4)) == NULL) { return FIRC_ERR_NOMEM; }
-        if (fake6 != NULL && (rd6 = malloc(16)) == NULL) {
-            free(rd4);
+        rds = calloc(n_new, sizeof(*rds));
+        if (rds == NULL) { return FIRC_ERR_NOMEM; }
+    }
+    for (size_t i = 0; i < n_new; i++) {
+        rds[i] = malloc(i < n4 ? 4 : 16);
+        if (rds[i] == NULL) {
+            for (size_t j = 0; j < i; j++) { free(rds[j]); }
+            free(rds);
             return FIRC_ERR_NOMEM;
         }
     }
@@ -72,7 +82,9 @@ firc_err_t firc_dns_msg_collapse(firc_dns_msg_t *msg, const firc_ip_t *fake4,
     drop_rrs(msg->additional, &msg->n_additional, is_hint);
 
     const firc_dns_question_t *q = &msg->questions[0];
-    if (fake4 != NULL) { set_address_rr(&msg->answers[msg->n_answers++], q, fake4, rd4, ttl); }
-    if (fake6 != NULL) { set_address_rr(&msg->answers[msg->n_answers++], q, fake6, rd6, ttl); }
+    for (size_t i = 0; i < n_new; i++) {
+        set_address_rr(&msg->answers[msg->n_answers++], q, i < n4 ? &fake4[i] : &fake6[i - n4], rds[i], ttl);
+    }
+    free(rds);
     return FIRC_OK;
 }

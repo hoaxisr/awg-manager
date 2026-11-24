@@ -607,6 +607,18 @@ static firc_err_t load_block(yaml_document_t *doc, node_t *n, firc_group_t *g)
     return FIRC_OK;
 }
 
+static firc_err_t load_cloudflare(yaml_document_t *doc, node_t *n, firc_group_t *g)
+{
+    firc_err_t err = FIRC_OK;
+    GET_OR_FAIL(get_bool(map_get(doc, n, "cloudflare"), &g->cloudflare, &err));
+    if (g->cloudflare && firc_group_is_block(g)) {
+        FIRC_ERROR("config: group \"%s\": cloudflare is not for a group whose interface is block",
+                   g->name != NULL ? g->name : "");
+        return FIRC_ERR_INVAL;
+    }
+    return FIRC_OK;
+}
+
 /* url is required: a list with nothing to fetch is refused at load, naming the group */
 static firc_err_t load_group_list(yaml_document_t *doc, node_t *n, firc_group_list_t *l,
                                   const char *group_name)
@@ -856,6 +868,11 @@ static firc_err_t load_group(yaml_document_t *doc, node_t *n, firc_group_t *g)
     }
 
     err = load_block(doc, n, g);
+    if (err != FIRC_OK) {
+        return err;
+    }
+
+    err = load_cloudflare(doc, n, g);
     if (err != FIRC_OK) {
         return err;
     }

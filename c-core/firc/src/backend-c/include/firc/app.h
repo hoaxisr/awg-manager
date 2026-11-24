@@ -9,6 +9,7 @@
 #include "firc/autolistcheck.h"
 #include "firc/autolistprobes.h"
 #include "firc/cancel.h"
+#include "firc/cfedge.h"
 #include "firc/fakeip.h"
 #include "firc/dnspipeline.h"
 #include "firc/dnsproxy.h"
@@ -495,6 +496,10 @@ firc_err_t firc_app_autolist_recheck_now(firc_app_t *app);
 
 void firc_app_set_autolist_probe_for_test(firc_app_t *app, firc_autolist_probe_fn probe);
 void firc_app_autolist_tick_for_test(firc_app_t *app); /* test seam: what the probe queue's timer does when it fires */
+
+void firc_app_cf_tick(firc_app_t *app);
+void firc_app_set_cfprobe_for_test(firc_app_t *app, firc_cfprobe_fn probe, void *ud);
+bool firc_app_cf_busy_for_test(const firc_app_t *app, firc_id_t id, unsigned fam);
 
 /* What the DNS pipeline tells the automatic list about an unmatched answer; loop thread. */
 void firc_app_autolist_hint_for_test(firc_app_t *app, const firc_ip_t *client, const char *name,

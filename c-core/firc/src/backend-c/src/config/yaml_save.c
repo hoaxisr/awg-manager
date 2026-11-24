@@ -335,6 +335,10 @@ static void emit_group(emitter_ctx_t *ctx, const firc_group_t *g)
         emit_plain(ctx, "block");
         emit_string(ctx, firc_block_answer_name(g->block));
     }
+    if (g->cloudflare) {
+        emit_plain(ctx, "cloudflare");
+        emit_bool(ctx, true);
+    }
     emit_plain(ctx, "rules");
     seq_start(ctx, g->n_rules == 0);
     for (size_t i = 0; i < g->n_rules; i++) {

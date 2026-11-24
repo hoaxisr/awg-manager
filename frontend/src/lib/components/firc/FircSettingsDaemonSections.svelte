@@ -19,6 +19,7 @@
   function numVal(key: string, fallback = 0): number {
     const v = settings[key];
     if (typeof v === 'number' && Number.isFinite(v)) return v;
+    if (typeof v !== 'string' || v.trim() === '') return fallback;
     const parsed = Number(v);
     return Number.isFinite(parsed) ? parsed : fallback;
   }
@@ -222,8 +223,8 @@
         class="inp mono"
         type="number"
         min="1"
-        max="3600"
-        value={numVal('app.addressPool.ttlClamp', 60)}
+        max="15724800"
+        value={numVal('app.addressPool.ttlClamp', 300)}
         oninput={(e) => setField('app.addressPool.ttlClamp', Number((e.currentTarget as HTMLInputElement).value))}
       />
       <span class="hint">{m.firc_settings_pool_ttl_hint()}</span>
@@ -236,7 +237,7 @@
         type="number"
         min="256"
         max="262144"
-        value={numVal('app.addressPool.maxNames', 16384)}
+        value={numVal('app.addressPool.maxNames', 65536)}
         oninput={(e) => setField('app.addressPool.maxNames', Number((e.currentTarget as HTMLInputElement).value))}
       />
       <span class="hint">{m.firc_settings_pool_max_hint()}</span>
@@ -290,7 +291,7 @@
         type="number"
         min="32"
         max="128"
-        value={numVal('app.addressPool.v6.chunk', 112)}
+        value={numVal('app.addressPool.v6.chunk', 64)}
         oninput={(e) => setField('app.addressPool.v6.chunk', Number((e.currentTarget as HTMLInputElement).value))}
       />
     </div>

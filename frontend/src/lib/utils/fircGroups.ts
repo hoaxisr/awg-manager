@@ -124,6 +124,7 @@ export function normalizeGroup(g: FircGroup): FircGroup {
 			: {}),
 		...(g.resolver ? { resolver: g.resolver } : {}),
 		...(g.block ? { block: g.block } : {}),
+		...(g.cloudflare ? { cloudflare: true } : {}),
 	};
 }
 
