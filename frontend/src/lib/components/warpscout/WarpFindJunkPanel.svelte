@@ -1,9 +1,21 @@
+<script lang="ts" module>
+	import type { SignatureHostPreset } from '$lib/utils/protocols';
+
+	export interface FindJunkForm {
+		profile: string;
+		hostPreset: SignatureHostPreset;
+		domains: string;
+		maxAttempts: number;
+		thresholdPct: number;
+		selectedAttempt: number | null;
+	}
+</script>
+
 <script lang="ts">
 	import { Sparkles, Square } from 'lucide-svelte';
 	import { api } from '$lib/api/client';
 	import { m } from '$lib/i18n';
 	import { notifications } from '$lib/stores/notifications';
-	import type { SignatureHostPreset } from '$lib/utils/protocols';
 	import { Badge, Button, Dropdown } from '$lib/components/ui';
 	import type { DropdownOption } from '$lib/components/ui';
 	import type { WarpAWGParams, WarpFindJunkStatus } from '$lib/types/warpscout';
@@ -21,6 +33,8 @@
 	} from './warpscoutUi';
 
 	interface Props {
+		/** Поля формы: живут у родителя, потому что панель размонтируется при закрытии. */
+		form: FindJunkForm;
 		awg: WarpAWGParams;
 		findJunk: WarpFindJunkStatus | null;
 		engineAvailable: boolean;
@@ -34,6 +48,7 @@
 	}
 
 	let {
+		form = $bindable(),
 		awg,
 		findJunk,
 		engineAvailable,
@@ -46,33 +61,17 @@
 		onfindjunkchanged,
 	}: Props = $props();
 
-	let junkProfile = $state<string>('random');
-	let junkHostPreset = $state<SignatureHostPreset>('default');
-	let junkDomains = $state<string>('');
-	let junkMaxAttempts = $state<number>(LIMITS.findJunkAttempts.def);
-	let junkThresholdPct = $state<number>(LIMITS.findJunkThreshold.def);
 	let startingJunk = $state(false);
 	let stoppingJunk = $state(false);
 	let applyingJunk = $state(false);
-	let selectedAttempt = $state<number | null>(null);
-	// Не $state: хранит предыдущий runId для сброса локального выбора только при новом запуске.
-	let lastRunId = 0;
-
-	$effect(() => {
-		const rid = findJunk?.runId ?? 0;
-		if (rid !== lastRunId) {
-			lastRunId = rid;
-			selectedAttempt = null;
-		}
-	});
 
 	const junkRunning = $derived(findJunk?.running ?? false);
 	const junkAttempts = $derived(findJunk?.attempts ?? []);
-	const activeAttempt = $derived(resolveSelectedJunkAttempt(findJunk, selectedAttempt));
-	const junkCanApply = $derived(canApplyFindJunk(findJunk, selectedAttempt));
+	const activeAttempt = $derived(resolveSelectedJunkAttempt(findJunk, form.selectedAttempt));
+	const junkCanApply = $derived(canApplyFindJunk(findJunk, form.selectedAttempt));
 	const selectedIsApplied = $derived(isAttemptAlreadyApplied(findJunk, activeAttempt));
 	const junkCustomDomainsValid = $derived(
-		junkProfile === 'none' || junkHostPreset !== 'custom' || isValidDomainListInput(junkDomains),
+		form.profile === 'none' || form.hostPreset !== 'custom' || isValidDomainListInput(form.domains),
 	);
 
 	const findJunkProfileOptions = $derived<DropdownOption[]>(
@@ -92,17 +91,17 @@
 			notifications.error(m.warpscout_awg_domain_invalid());
 			return;
 		}
-		junkMaxAttempts = sanitizeInt(junkMaxAttempts, LIMITS.findJunkAttempts);
-		junkThresholdPct = sanitizeInt(junkThresholdPct, LIMITS.findJunkThreshold);
-		selectedAttempt = null;
+		form.maxAttempts = sanitizeInt(form.maxAttempts, LIMITS.findJunkAttempts);
+		form.thresholdPct = sanitizeInt(form.thresholdPct, LIMITS.findJunkThreshold);
+		form.selectedAttempt = null;
 		startingJunk = true;
 		try {
 			await api.warpscoutFindJunkStart({
-				i1Profile: junkProfile,
-				hostPreset: junkProfile !== 'none' && junkHostPreset !== 'default' ? junkHostPreset : undefined,
-				domains: junkProfile !== 'none' && junkHostPreset === 'custom' ? junkDomains.trim() : undefined,
-				maxAttempts: junkMaxAttempts,
-				thresholdPct: junkThresholdPct,
+				i1Profile: form.profile,
+				hostPreset: form.profile !== 'none' && form.hostPreset !== 'default' ? form.hostPreset : undefined,
+				domains: form.profile !== 'none' && form.hostPreset === 'custom' ? form.domains.trim() : undefined,
+				maxAttempts: form.maxAttempts,
+				thresholdPct: form.thresholdPct,
 				ifname: scanInterface.trim() || undefined,
 			});
 			await onfindjunkchanged?.();
@@ -176,11 +175,11 @@
 		<div class="fj-prof">
 			<Dropdown
 				label={m.warpscout_findjunk_profile_label()}
-				value={junkProfile}
+				value={form.profile}
 				options={findJunkProfileOptions}
 				fullWidth
 				disabled={junkRunning}
-				onchange={(v) => (junkProfile = v)}
+				onchange={(v) => (form.profile = v)}
 			/>
 		</div>
 		<label class="num-field">
@@ -190,7 +189,7 @@
 				type="number"
 				min={LIMITS.findJunkAttempts.min}
 				max={LIMITS.findJunkAttempts.max}
-				bind:value={junkMaxAttempts}
+				bind:value={form.maxAttempts}
 				disabled={junkRunning}
 			/>
 		</label>
@@ -201,23 +200,23 @@
 				type="number"
 				min={LIMITS.findJunkThreshold.min}
 				max={LIMITS.findJunkThreshold.max}
-				bind:value={junkThresholdPct}
+				bind:value={form.thresholdPct}
 				disabled={junkRunning}
 			/>
 		</label>
 	</div>
 
-	{#if junkProfile !== 'none'}
+	{#if form.profile !== 'none'}
 		<div class="sig-domain-box">
 			<Dropdown
 				label={m.warpscout_findjunk_domain_preset_label()}
-				value={junkHostPreset}
+				value={form.hostPreset}
 				options={domainPresetOptions}
 				fullWidth
 				disabled={junkRunning}
-				onchange={(v) => (junkHostPreset = v as SignatureHostPreset)}
+				onchange={(v) => (form.hostPreset = v as SignatureHostPreset)}
 			/>
-			{#if junkHostPreset === 'custom'}
+			{#if form.hostPreset === 'custom'}
 				<input
 					class="field-input mono"
 					class:input-invalid={!junkCustomDomainsValid}
@@ -225,7 +224,7 @@
 					placeholder={m.warpscout_awg_domain_custom_placeholder()}
 					spellcheck="false"
 					autocomplete="off"
-					bind:value={junkDomains}
+					bind:value={form.domains}
 					disabled={junkRunning}
 				/>
 				{#if !junkCustomDomainsValid}
@@ -240,7 +239,7 @@
 			<div class="fj-status mono">
 				{m.warpscout_findjunk_running({
 					cur: Math.max(1, findJunk?.attempt ?? 1),
-					max: findJunk?.maxAttempts ?? junkMaxAttempts,
+					max: findJunk?.maxAttempts ?? form.maxAttempts,
 				})}
 			</div>
 		{/if}
@@ -263,7 +262,7 @@
 						disabled={junkRunning || !usable}
 						aria-pressed={isSel}
 						onclick={() => {
-							if (usable) selectedAttempt = att.attempt;
+							if (usable) form.selectedAttempt = att.attempt;
 						}}
 					>
 						<span class="mono">#{att.attempt}</span>
@@ -338,8 +337,6 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.6rem;
-		padding: 0;
-		border-top: 0;
 	}
 	.fj-head {
 		display: flex;

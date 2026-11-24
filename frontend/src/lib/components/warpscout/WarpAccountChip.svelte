@@ -2,7 +2,7 @@
 	import { KeyRound, Network, RefreshCcw, SlidersHorizontal, Trash2, UserPlus } from 'lucide-svelte';
 	import { api } from '$lib/api/client';
 	import { m } from '$lib/i18n';
-	import { Button, ConfirmModal, Input } from '$lib/components/ui';
+	import { Button, ConfirmModal, IconButton, Input } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
 	import type { WarpAccount, WarpTunnelRef } from '$lib/types/warpscout';
 	import WarpAccountAltModal from './WarpAccountAltModal.svelte';
@@ -279,18 +279,19 @@
 					{#snippet iconBefore()}<RefreshCcw size={13} />{/snippet}
 					{m.warpscout_reissue_btn()}
 				</Button>
-				<Button
-					size="sm"
-					variant="outline-danger"
+				<!-- Иконка: три подписи не помещаются в строку поповера. -->
+				<IconButton
+					variant="danger"
+					ariaLabel={m.common_delete()}
+					title={m.common_delete()}
 					disabled={accountBusy || keyLocked}
 					onclick={() => {
 						close();
 						confirmDelete = true;
 					}}
 				>
-					{#snippet iconBefore()}<Trash2 size={13} />{/snippet}
-					{m.common_delete()}
-				</Button>
+					<Trash2 size={14} />
+				</IconButton>
 			</div>
 		{/snippet}
 	</WarpChipPopover>

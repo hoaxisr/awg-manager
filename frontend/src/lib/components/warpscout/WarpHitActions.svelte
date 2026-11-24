@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Download, MoreHorizontal, Plus, Repeat } from 'lucide-svelte';
 	import { m } from '$lib/i18n';
-	import { Button, IconButton } from '$lib/components/ui';
+	import { Button } from '$lib/components/ui';
 	import type { WarpHit } from '$lib/types/warpscout';
 
 	interface Props {
@@ -59,15 +59,17 @@
 		{#snippet iconBefore()}<Repeat size={12} />{/snippet}
 		{m.warpscout_swap_btn()}
 	</Button>
-	<span class="row-more-wrap" class:open={menuOpen}>
-		<IconButton
-			ariaLabel={m.warpscout_row_more_aria()}
-			title={m.warpscout_row_more_aria()}
-			onclick={(e) => ontogglemenu(hit, e)}
-		>
-			<MoreHorizontal size={14} />
-		</IconButton>
-	</span>
+	<!-- Переключатель с aria-expanded: IconButton его не умеет, поэтому кнопка своя. -->
+	<button
+		type="button"
+		class="row-more-btn"
+		aria-label={m.warpscout_row_more_aria()}
+		title={m.warpscout_row_more_aria()}
+		aria-expanded={menuOpen}
+		onclick={(e) => ontogglemenu(hit, e)}
+	>
+		<MoreHorizontal size={16} aria-hidden="true" />
+	</button>
 </div>
 
 <style>
@@ -80,12 +82,28 @@
 	.actions-mobile {
 		display: none;
 	}
-	.row-more-wrap {
+	.row-more-btn {
 		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 28px;
+		height: 28px;
+		padding: 0;
+		border: 1px solid transparent;
+		border-radius: var(--radius-sm);
+		background: transparent;
+		color: var(--color-text-muted);
+		cursor: pointer;
+		transition: background var(--t-fast) ease, color var(--t-fast) ease;
 	}
-	.row-more-wrap.open :global(.icon-btn) {
+	.row-more-btn:hover,
+	.row-more-btn[aria-expanded='true'] {
 		background: var(--color-bg-hover);
 		color: var(--color-accent);
+	}
+	.row-more-btn:focus-visible {
+		outline: 2px solid var(--color-accent);
+		outline-offset: 2px;
 	}
 
 	@media (max-width: 600px) {

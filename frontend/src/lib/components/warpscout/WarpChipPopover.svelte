@@ -8,9 +8,8 @@
 	interface Props {
 		/** Содержимое кнопки-чипа (без шеврона). */
 		chip: Snippet;
-		/** Заголовок поповера; он же доступное имя, если не задан ariaLabel. */
+		/** Заголовок поповера; он же доступное имя. */
 		title: string;
-		ariaLabel?: string;
 		chipTitle?: string;
 		/** Ширина поповера на широком экране (CSS-длина). */
 		width: string;
@@ -20,7 +19,7 @@
 		children: Snippet<[() => void]>;
 	}
 
-	let { chip, title, ariaLabel, chipTitle, width, alignRight = false, headExtra, children }: Props = $props();
+	let { chip, title, chipTitle, width, alignRight = false, headExtra, children }: Props = $props();
 
 	let open = $state(false);
 	let isMobile = $state(false);
@@ -89,7 +88,7 @@
 			class:align-right={alignRight}
 			style:--pop-width={width}
 			role="dialog"
-			aria-label={ariaLabel ?? title}
+			aria-label={title}
 		>
 			<div class="pop-head">
 				<div class="pop-head-left">

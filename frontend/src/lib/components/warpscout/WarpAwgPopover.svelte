@@ -6,6 +6,7 @@
 	import type { DropdownOption, SegmentedOption } from '$lib/components/ui';
 	import WarpChipButton from './WarpChipButton.svelte';
 	import WarpFindJunkPanel from './WarpFindJunkPanel.svelte';
+	import type { FindJunkForm } from './WarpFindJunkPanel.svelte';
 	import type {
 		WarpAWGParams,
 		WarpFindJunkStatus,
@@ -74,6 +75,24 @@
 	}
 
 	let cpFieldOpen = $state(false);
+	let junkForm = $state<FindJunkForm>({
+		profile: 'random',
+		hostPreset: 'default',
+		domains: '',
+		maxAttempts: LIMITS.findJunkAttempts.def,
+		thresholdPct: LIMITS.findJunkThreshold.def,
+		selectedAttempt: null,
+	});
+	// Не $state: хранит предыдущий runId для сброса локального выбора только при новом запуске.
+	let lastRunId = 0;
+	$effect(() => {
+		const rid = findJunk?.runId ?? 0;
+		if (rid !== lastRunId) {
+			lastRunId = rid;
+			junkForm.selectedAttempt = null;
+		}
+	});
+
 	const junkRunning = $derived(findJunk?.running ?? false);
 	// Не $state: хранит предыдущее значение для детекции фронта false -> true без повторного запуска $effect.
 	let prevJunkRunning = false;
@@ -385,6 +404,7 @@
 
 		<div class:tab-hidden={awgTab !== 'findjunk'}>
 			<WarpFindJunkPanel
+				bind:form={junkForm}
 				{awg}
 				{findJunk}
 				{engineAvailable}

@@ -272,25 +272,22 @@
 
 	<!-- Встроенная компактная полоса фильтров (на телефоне сворачивается в аккордеон) -->
 	<div class="filter-strip">
-		<div class="mobile-filters-toggle">
-			<Button
-				variant="ghost"
-				size="sm"
-				fullWidth
-				onclick={() => (mobileFiltersOpen = !mobileFiltersOpen)}
-			>
-				<span class="mft-inner">
-					<span class="mft-left">
-						<SlidersHorizontal size={13} />
-						<span class="mft-title">{m.warpscout_filters_toggle()}</span>
-						{#each filterSummaryChips as chip (chip)}
-							<span class="mft-chip">{chip}</span>
-						{/each}
-					</span>
-					<span class="mono mft-sign">{mobileFiltersOpen ? '−' : '+'}</span>
-				</span>
-			</Button>
-		</div>
+		<!-- Аккордеон с aria-expanded: Button его не умеет, поэтому кнопка своя. -->
+		<button
+			type="button"
+			class="mobile-filters-toggle"
+			aria-expanded={mobileFiltersOpen}
+			onclick={() => (mobileFiltersOpen = !mobileFiltersOpen)}
+		>
+			<span class="mft-left">
+				<SlidersHorizontal size={13} aria-hidden="true" />
+				<span class="mft-title">{m.warpscout_filters_toggle()}</span>
+				{#each filterSummaryChips as chip (chip)}
+					<span class="mft-chip">{chip}</span>
+				{/each}
+			</span>
+			<span class="mono mft-sign" aria-hidden="true">{mobileFiltersOpen ? '−' : '+'}</span>
+		</button>
 		<div class="filter-strip-body" class:mobile-open={mobileFiltersOpen}>
 			<WarpFiltersEditor bind:filters hideProtocol disabled={running} idPrefix="scan" />
 		</div>
@@ -449,26 +446,23 @@
 	}
 	.mobile-filters-toggle {
 		display: none;
-		width: 100%;
-	}
-	.mobile-filters-toggle :global(.btn.full-width) {
-		height: auto;
-		min-height: 30px;
-		max-height: none;
-		white-space: normal;
-		text-align: left;
-		padding: 0.2rem 0.25rem;
-		font-weight: 400;
-	}
-	.mobile-filters-toggle :global(.btn-label) {
-		width: 100%;
-	}
-	.mft-inner {
-		display: flex;
 		align-items: center;
 		justify-content: space-between;
 		gap: 0.5rem;
 		width: 100%;
+		min-height: 30px;
+		padding: 0.2rem 0.25rem;
+		border: 0;
+		border-radius: var(--radius-sm);
+		background: transparent;
+		font: inherit;
+		font-size: 12px;
+		text-align: left;
+		cursor: pointer;
+	}
+	.mobile-filters-toggle:focus-visible {
+		outline: 2px solid var(--color-accent);
+		outline-offset: 2px;
 	}
 	.mft-left {
 		display: flex;
@@ -548,7 +542,7 @@
 
 	@media (max-width: 768px) {
 		.mobile-filters-toggle {
-			display: block;
+			display: flex;
 		}
 		.filter-strip-body {
 			display: none;

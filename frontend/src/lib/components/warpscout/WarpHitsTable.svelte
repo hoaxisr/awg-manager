@@ -22,7 +22,7 @@
 
 	let rowMenuHit = $state<WarpHit | null>(null);
 	let rowMenuIndex = $state(-1);
-	let rowMenuPos = $state({ top: 0, right: 16, openUp: false });
+	let rowMenuPos = $state({ top: 0, right: 16 });
 	let rowMenuTriggerEl = $state<HTMLButtonElement | null>(null);
 
 	function toggleRowMenu(h: WarpHit, e: MouseEvent): void {
@@ -40,7 +40,6 @@
 		rowMenuPos = {
 			top: openUp ? Math.max(8, rect.top - menuH - 4) : rect.bottom + 4,
 			right: Math.max(8, window.innerWidth - rect.right),
-			openUp,
 		};
 		rowMenuTriggerEl = btn;
 		rowMenuIndex = hits.findIndex((item) => item.endpoint === h.endpoint);
@@ -52,13 +51,16 @@
 		rowMenuIndex = -1;
 	}
 
+	function restoreRowMenuFocus(): void {
+		rowMenuTriggerEl?.focus({ preventScroll: true });
+	}
+
 	$effect(() => {
 		if (!rowMenuHit) return;
 		const idx = hits.findIndex((item) => item.endpoint === rowMenuHit?.endpoint);
-		if (idx === -1 || idx !== rowMenuIndex) {
-			rowMenuHit = null;
-			rowMenuIndex = -1;
-		}
+		if (idx === rowMenuIndex) return;
+		closeRowMenu();
+		if (idx !== -1) restoreRowMenuFocus();
 	});
 
 	async function copyEndpoint(ep: string): Promise<void> {
@@ -68,7 +70,7 @@
 	}
 </script>
 
-<div class="hits-table-wrap" onscroll={closeRowMenu}>
+<div class="hits-table-wrap">
 	<table class="hits">
 		<thead>
 			<tr>
@@ -143,7 +145,7 @@
 	{onexport}
 	oncopy={(ep) => void copyEndpoint(ep)}
 	onclose={closeRowMenu}
-	onrestorefocus={() => rowMenuTriggerEl?.focus()}
+	onrestorefocus={restoreRowMenuFocus}
 />
 
 <style>
@@ -297,6 +299,17 @@
 		}
 		.hits tbody tr:last-child {
 			border-bottom: 0;
+		}
+		/* Строка — сетка с отступами: фон на ячейках оставлял бы полосы между ними. */
+		.hits tr.top-hit {
+			background: color-mix(in srgb, var(--color-accent-tint) 45%, transparent);
+		}
+		.hits tr:hover {
+			background: var(--color-bg-hover);
+		}
+		.hits tr.top-hit td,
+		.hits tr:hover td {
+			background: transparent;
 		}
 		.hits td {
 			border-bottom: 0;

@@ -7,11 +7,12 @@
 
 	interface Props {
 		hit: WarpHit | null;
-		pos: { top: number; right: number; openUp: boolean };
+		pos: { top: number; right: number };
 		onexport?: (h: WarpHit) => void;
 		oncopy: (endpoint: string) => void;
 		onclose: () => void;
-		onrestorefocus?: () => void;
+		/** Вернуть фокус на кнопку «⋯», открывшую меню. */
+		onrestorefocus: () => void;
 	}
 
 	let { hit, pos, onexport, oncopy, onclose, onrestorefocus }: Props = $props();
@@ -23,16 +24,11 @@
 		return Array.from(menuEl.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));
 	}
 
-	function handleMenuKeyDown(e: KeyboardEvent): void {
-		if (e.key === 'Escape') {
+	function handleKeyDown(e: KeyboardEvent): void {
+		if (e.key === 'Escape' || e.key === 'Tab') {
 			e.preventDefault();
-			e.stopPropagation();
 			onclose();
-			onrestorefocus?.();
-			return;
-		}
-		if (e.key === 'Tab') {
-			onclose();
+			onrestorefocus();
 			return;
 		}
 		const items = menuButtons();
@@ -57,12 +53,15 @@
 		const target = hit;
 		onclose();
 		if (target) onexport?.(target);
+		onrestorefocus();
 	}
 
 	function triggerCopy(): void {
 		const target = hit;
 		onclose();
 		if (target) oncopy(target.endpoint);
+		// После oncopy: копирование по plain HTTP уводит фокус в скрытый textarea.
+		onrestorefocus();
 	}
 
 	$effect(() => {
@@ -74,30 +73,19 @@
 
 		function handlePointerDown(e: PointerEvent): void {
 			const t = e.target as HTMLElement | null;
-			if (t?.closest('.row-overflow-menu') || t?.closest('.row-more-wrap')) return;
+			if (t?.closest('.row-overflow-menu') || t?.closest('.row-more-btn')) return;
 			onclose();
-		}
-
-		function handleResize(): void {
-			onclose();
-		}
-
-		function handleWindowKeyDown(e: KeyboardEvent): void {
-			if (e.key !== 'Escape') return;
-			e.preventDefault();
-			onclose();
-			onrestorefocus?.();
 		}
 
 		window.addEventListener('pointerdown', handlePointerDown);
 		window.addEventListener('scroll', onclose, true);
-		window.addEventListener('resize', handleResize);
-		window.addEventListener('keydown', handleWindowKeyDown);
+		window.addEventListener('resize', onclose);
+		window.addEventListener('keydown', handleKeyDown);
 		return () => {
 			window.removeEventListener('pointerdown', handlePointerDown);
 			window.removeEventListener('scroll', onclose, true);
-			window.removeEventListener('resize', handleResize);
-			window.removeEventListener('keydown', handleWindowKeyDown);
+			window.removeEventListener('resize', onclose);
+			window.removeEventListener('keydown', handleKeyDown);
 		};
 	});
 </script>
@@ -106,22 +94,18 @@
 	<div
 		bind:this={menuEl}
 		class="row-overflow-menu"
-		class:open-up={pos.openUp}
-		role="menu"
-		tabindex="-1"
 		style:top={`${pos.top}px`}
 		style:right={`${pos.right}px`}
-		onkeydown={handleMenuKeyDown}
 	>
 		{#if onexport}
-			<div class="row-menu-item" role="none">
+			<div class="row-menu-item">
 				<Button size="sm" variant="ghost" fullWidth onclick={triggerExport}>
 					{#snippet iconBefore()}<Download size={13} />{/snippet}
 					{m.warpscout_download_conf_menu()}
 				</Button>
 			</div>
 		{/if}
-		<div class="row-menu-item" role="none">
+		<div class="row-menu-item">
 			<Button size="sm" variant="ghost" fullWidth onclick={triggerCopy}>
 				{#snippet iconBefore()}<Copy size={13} />{/snippet}
 				{m.warpscout_copy_ep_menu()}
@@ -143,9 +127,6 @@
 		display: flex;
 		flex-direction: column;
 		gap: 1px;
-	}
-	.row-overflow-menu.open-up {
-		transform-origin: bottom right;
 	}
 	.row-menu-item :global(.btn.full-width) {
 		justify-content: flex-start;
