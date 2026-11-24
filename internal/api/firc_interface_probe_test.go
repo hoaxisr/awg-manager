@@ -260,7 +260,7 @@ func TestHandleProbeInterfaces_Validation(t *testing.T) {
 	})
 }
 
-func TestHandleProbeInterfaces_PrefersRunningFircAppCheckURLOverDefaultSettings(t *testing.T) {
+func TestHandleProbeInterfaces_CheckURLOrder(t *testing.T) {
 	tmpDir := t.TempDir()
 	settingsStore := storage.NewSettingsStore(tmpDir)
 	_, _ = settingsStore.Load()
@@ -312,17 +312,56 @@ func TestHandleProbeInterfaces_PrefersRunningFircAppCheckURLOverDefaultSettings(
 		t.Fatalf("status=%d seenURL=%q, want http://cp.cloudflare.com/generate_204", rec.Code, seenURL)
 	}
 
-	// 2. Explicitly customized ConnectivityCheckURL -> honors settings over app.check.url.
+	// 2. Общая настройка не перебивает app.check.url: пробы сверяются с тем, что проверяет fircd.
 	if err := settingsStore.Update(func(s *storage.Settings) error {
 		s.ConnectivityCheckURL = "https://custom.probe.test/204"
 		return nil
 	}); err != nil {
 		t.Fatalf("update custom settings URL: %v", err)
 	}
-	req2 := httptest.NewRequest(http.MethodPost, "/api/firc/interfaces/probe", strings.NewReader(`{"interfaces":["qmi_br0"]}`))
-	rec2 := httptest.NewRecorder()
-	mux.ServeHTTP(rec2, req2)
-	if rec2.Code != http.StatusOK || seenURL != "https://custom.probe.test/204" {
-		t.Fatalf("custom settings URL: status=%d seenURL=%q, want https://custom.probe.test/204", rec2.Code, seenURL)
+	probe := func() string {
+		t.Helper()
+		seenURL = ""
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/firc/interfaces/probe", strings.NewReader(`{"interfaces":["qmi_br0"]}`)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		return seenURL
+	}
+	if got := probe(); got != "http://cp.cloudflare.com/generate_204" {
+		t.Fatalf("seenURL=%q, want app.check.url", got)
+	}
+
+	// 3. Демон не отвечает — общая настройка, без неё — умолчание.
+	mockFirc.Close()
+	if got := probe(); got != "https://custom.probe.test/204" {
+		t.Fatalf("seenURL=%q, want settings URL", got)
+	}
+	if err := settingsStore.Update(func(s *storage.Settings) error {
+		s.ConnectivityCheckURL = ""
+		return nil
+	}); err != nil {
+		t.Fatalf("clear settings URL: %v", err)
+	}
+	if got := probe(); got != storage.DefaultConnectivityCheckURL {
+		t.Fatalf("seenURL=%q, want default", got)
+	}
+}
+
+func TestHandlePutExt_RejectsInvalidProxyGroupCheckURL(t *testing.T) {
+	op := firc.NewOperator(firc.Options{ConfigDir: t.TempDir()})
+	h := NewFircHandler(op)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, func(next http.HandlerFunc) http.HandlerFunc { return next })
+
+	body := `{"proxyGroups":[{"id":"pg1","name":"A","interfaces":["eth3","tunvless0"],"check":{"mode":"url","url":"example.com/204"}}]}`
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/api/firc/ext", strings.NewReader(body)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s, want 400", rec.Code, rec.Body.String())
+	}
+	if got := op.LoadExtConfig().ProxyGroups; len(got) != 0 {
+		t.Fatalf("rejected ext must not be saved, got %+v", got)
 	}
 }

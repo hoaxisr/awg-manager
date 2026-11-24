@@ -34,13 +34,12 @@ func globalGroup(ext ExtConfig) (Group, bool) {
 	if len(interfaces) == 0 {
 		return Group{}, false
 	}
-	check := &GroupCheck{Mode: "none"}
-	if len(interfaces) >= 2 {
-		if matchedPG != nil && matchedPG.Check != nil {
-			check = normalizeProxyGroupCheck(matchedPG.Check, len(interfaces))
-		} else {
-			check = &GroupCheck{Mode: "url"}
-		}
+	// nil — прокси-группа проверкой не управляет, у Global остаётся своя: fircd при
+	// отсутствии check сохраняет check группы (check_from_req), а без него живёт на
+	// поинтерфейсной проверке (firc_ifchoose).
+	var check *GroupCheck
+	if matchedPG != nil {
+		check = normalizeProxyGroupCheck(matchedPG.Check, len(interfaces))
 	}
 	g := Group{ID: globalGroupID, Name: "Global", Enable: true, Interface: GroupInterface(interfaces), Check: check}
 	for i, cidr := range strings.Fields(globalCIDRs) {

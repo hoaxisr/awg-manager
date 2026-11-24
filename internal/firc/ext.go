@@ -790,7 +790,8 @@ func normalizeProxyGroupCheck(c *GroupCheck, ifaceCount int) *GroupCheck {
 			out.TimeoutMs = 5000
 		}
 	default:
-		return &GroupCheck{Mode: "none"}
+		out.Mode = "none"
+		out.URL = ""
 	}
 	return &out
 }
@@ -808,24 +809,33 @@ func findProxyGroupByID(ext ExtConfig, id string) (ProxyGroup, bool) {
 	return ProxyGroup{}, false
 }
 
-func findProxyGroupByInterfaces(ext ExtConfig, ifaces []string) (ProxyGroup, bool) {
+// proxyGroupCheckForChain возвращает проверку прокси-группы с той же цепочкой
+// интерфейсов; nil — цепочкой никто не управляет.
+func proxyGroupCheckForChain(ext ExtConfig, ifaces []string) *GroupCheck {
 	if len(ifaces) < 2 {
-		return ProxyGroup{}, false
+		return nil
 	}
-	var firstMatch ProxyGroup
-	found := false
 	for _, pg := range ext.ProxyGroups {
-		if equalStringSlices(pg.Interfaces, ifaces) {
-			if pg.Check != nil {
-				return pg, true
-			}
-			if !found {
-				firstMatch = pg
-				found = true
-			}
+		if pg.Check != nil && equalStringSlices(pg.Interfaces, ifaces) {
+			return normalizeProxyGroupCheck(pg.Check, len(ifaces))
 		}
 	}
-	return firstMatch, found
+	return nil
+}
+
+// keepOmittedProxyGroupChecks возвращает прокси-группам без поля check сохранённую
+// проверку: вкладка со старым фронтом его не присылает, отсутствие — «не менять».
+func (op *Operator) keepOmittedProxyGroupChecks(ext ExtConfig) {
+	saved := op.LoadExtConfig()
+	for i := range ext.ProxyGroups {
+		pg := &ext.ProxyGroups[i]
+		if pg.Check != nil {
+			continue
+		}
+		if old, ok := findProxyGroupByID(saved, pg.ID); ok {
+			pg.Check = old.Check
+		}
+	}
 }
 
 func resolveKeenDNSCheck(ext ExtConfig, kdIfaces []string, existingCheck *GroupCheck) *GroupCheck {
@@ -1046,6 +1056,9 @@ func syncGroupsWithExtWithWG(groups []Group, ext ExtConfig, wgServers []DynamicW
 	for _, g := range groups {
 		if g.ID == globalGroupID {
 			foundGlobal = true
+			if global.Check == nil {
+				global.Check = g.Check
+			}
 			if !wantGlobal || !g.Enable || !slices.Equal(g.Interface, global.Interface) || !keenDNSRulesEqual(g.Rules, global.Rules) || !groupCheckEqual(g.Check, global.Check) {
 				changed = true
 			}
@@ -1101,14 +1114,9 @@ func syncGroupsWithExtWithWG(groups []Group, ext ExtConfig, wgServers []DynamicW
 			}
 		}
 
-		if len(g.Interface) >= 2 {
-			if pg, ok := findProxyGroupByInterfaces(ext, []string(g.Interface)); ok && pg.Check != nil {
-				desired := normalizeProxyGroupCheck(pg.Check, len(g.Interface))
-				if !groupCheckEqual(g.Check, desired) {
-					g.Check = desired
-					changed = true
-				}
-			}
+		if desired := proxyGroupCheckForChain(ext, g.Interface); desired != nil && !groupCheckEqual(g.Check, desired) {
+			g.Check = desired
+			changed = true
 		}
 
 		filtered = append(filtered, g)
@@ -1178,6 +1186,7 @@ func groupCheckEqual(a, b *GroupCheck) bool {
 // ApplyExtConfig saves the new ExtConfig, synchronizes FIRC groups (KeenDNS Cloud + server subnets),
 // and reconciles iptables hooks for server DNS redirection and OUTPUT chain routing.
 func (op *Operator) ApplyExtConfig(ctx context.Context, ext ExtConfig) (ExtConfig, error) {
+	op.keepOmittedProxyGroupChecks(ext)
 	ext = normalizeExtConfig(ext)
 	if err := op.SaveExtConfig(ext); err != nil {
 		return op.enrichExtRuntimeStatus(ctx, ext), err
@@ -1195,6 +1204,7 @@ func (op *Operator) StageExtConfigOffline(ctx context.Context, ext ExtConfig) (E
 	op.mutationMu.Lock()
 	defer op.mutationMu.Unlock()
 
+	op.keepOmittedProxyGroupChecks(ext)
 	ext = normalizeExtConfig(ext)
 	if err := op.checkMutationAllowed(); err != nil {
 		return op.enrichExtRuntimeStatus(ctx, ext), err

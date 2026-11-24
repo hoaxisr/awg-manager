@@ -45,33 +45,18 @@ func TestGlobalGroupCheckConfiguration(t *testing.T) {
 	if !changed || len(groups) != 1 {
 		t.Fatalf("unexpected sync result: changed=%v groups=%+v", changed, groups)
 	}
-	if groups[0].Check == nil || groups[0].Check.Mode != "url" {
-		t.Fatalf("multi-iface Global group must set Check.Mode=url, got %+v", groups[0].Check)
+	if groups[0].Check != nil {
+		t.Fatalf("proxy group without check must not set one on Global, got %+v", groups[0].Check)
 	}
 
-	// Legacy Global groups persisted with Check=nil or Mode="none" must upgrade to Mode="url".
-	legacyNil := groups[0]
-	legacyNil.Check = nil
-	upgraded, changed := syncGroupsWithExt([]Group{legacyNil}, multiExt)
-	if !changed || upgraded[0].Check == nil || upgraded[0].Check.Mode != "url" {
-		t.Fatalf("legacy nil-check Global group did not upgrade: changed=%v check=%+v", changed, upgraded[0].Check)
-	}
-
-	legacyNone := groups[0]
-	legacyNone.Check = &GroupCheck{Mode: "none"}
-	upgraded, changed = syncGroupsWithExt([]Group{legacyNone}, multiExt)
-	if !changed || upgraded[0].Check == nil || upgraded[0].Check.Mode != "url" {
-		t.Fatalf("legacy mode=none Global group did not upgrade: changed=%v check=%+v", changed, upgraded[0].Check)
-	}
-
-	// Single-interface Global group explicitly clears check with Mode="none".
-	singleExt := ExtConfig{GlobalTarget: "iface:eth3"}
-	singleGroups, changed := syncGroupsWithExt(upgraded, singleExt)
-	if !changed || len(singleGroups) != 1 {
-		t.Fatalf("single-iface sync mismatch: changed=%v groups=%+v", changed, singleGroups)
-	}
-	if singleGroups[0].Check == nil || singleGroups[0].Check.Mode != "none" {
-		t.Fatalf("single-iface Global group must set Check.Mode=none, got %+v", singleGroups[0].Check)
+	// Прокси-группа без check не трогает проверку Global: ни выключенную, ни свою.
+	for _, own := range []*GroupCheck{nil, {Mode: "none"}, {Mode: "url", URL: "https://own.example/204", IntervalSec: 30}} {
+		cur := groups[0]
+		cur.Check = own
+		kept, changed := syncGroupsWithExt([]Group{cur}, multiExt)
+		if changed || !groupCheckEqual(kept[0].Check, own) {
+			t.Fatalf("Global must keep its own check %+v: changed=%v got %+v", own, changed, kept[0].Check)
+		}
 	}
 
 	// Global inherits explicit ProxyGroup.Check settings (url, keendns, none).

@@ -2215,8 +2215,8 @@ func TestSyncGroupsWithExt_ProxyGroupCheckNormalizationAndPropagation(t *testing
 	if norm.ProxyGroups[2].Check == nil || norm.ProxyGroups[2].Check.Mode != "keendns" || norm.ProxyGroups[2].Check.TimeoutMs != 5000 || norm.ProxyGroups[2].Check.URL != "" {
 		t.Fatalf("keendns PG check must set TimeoutMs=5000 and strip URL, got %+v", norm.ProxyGroups[2].Check)
 	}
-	if norm.ProxyGroups[3].Check == nil || norm.ProxyGroups[3].Check.Mode != "none" || norm.ProxyGroups[3].Check.TimeoutMs != 0 {
-		t.Fatalf("invalid/none PG check must normalize to zeroed mode=none, got %+v", norm.ProxyGroups[3].Check)
+	if off := norm.ProxyGroups[3].Check; off == nil || off.Mode != "none" || off.URL != "" || off.TimeoutMs != 1234 {
+		t.Fatalf("unknown PG check mode must become none and keep thresholds, got %+v", off)
 	}
 
 	// KeenDNS inherits PG check when CloudHealthCheck is false, while CloudHealthCheck=true still enforces keendns.
@@ -2316,6 +2316,38 @@ func TestSyncGroupsWithExt_ProxyGroupCheckNormalizationAndPropagation(t *testing
 	dupSynced, dupChanged := syncGroupsWithExt([]Group{matchedUserGroup}, dupExt)
 	if !dupChanged || dupSynced[0].Check == nil || dupSynced[0].Check.Mode != "url" || dupSynced[0].Check.URL != "https://preferred.example/204" {
 		t.Fatalf("expected duplicate-chain lookup to prefer non-nil PG.Check, got changed=%v check=%+v", dupChanged, dupSynced[0].Check)
+	}
+}
+
+// Вкладка со старым фронтом не присылает check: сохранённая проверка остаётся.
+func TestStageExtConfigOffline_OmittedProxyGroupCheckKeepsSaved(t *testing.T) {
+	op := NewOperator(Options{ConfigDir: t.TempDir()})
+	saved := GroupCheck{Mode: "url", URL: "https://probe.example/204", IntervalSec: 30}
+	if err := op.SaveExtConfig(ExtConfig{ProxyGroups: []ProxyGroup{
+		{ID: "pg1", Name: "Old", Interfaces: []string{"eth3", "tunvless0"}, Check: &saved},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	ext, err := op.StageExtConfigOffline(context.Background(), ExtConfig{ProxyGroups: []ProxyGroup{
+		{ID: "pg1", Name: "Renamed", Interfaces: []string{"eth3", "tunvless0"}},
+		{ID: "pg2", Name: "New", Interfaces: []string{"eth3", "tunvless1"}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ext.ProxyGroups[0]; got.Name != "Renamed" || got.Check == nil || *got.Check != saved {
+		t.Fatalf("omitted check must keep the saved one, got %+v check=%+v", got, got.Check)
+	}
+	if ext.ProxyGroups[1].Check != nil {
+		t.Fatalf("new proxy group must stay without check, got %+v", ext.ProxyGroups[1].Check)
+	}
+
+	ext, err = op.StageExtConfigOffline(context.Background(), ExtConfig{ProxyGroups: []ProxyGroup{
+		{ID: "pg1", Name: "Renamed", Interfaces: []string{"eth3", "tunvless0"}, Check: &GroupCheck{Mode: "none"}},
+	}})
+	if err != nil || ext.ProxyGroups[0].Check == nil || ext.ProxyGroups[0].Check.Mode != "none" {
+		t.Fatalf("explicit none must replace the saved check, got %+v err=%v", ext.ProxyGroups, err)
 	}
 }
 
