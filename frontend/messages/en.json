@@ -8145,7 +8145,6 @@
 	"warpscout_row_more_aria": "More actions",
 	"warpscout_download_conf_menu": "Download .conf",
 	"warpscout_copy_ep_menu": "Copy IP:port",
-	"warpscout_start_scan_btn": "Start scan",
 	"uplink_phase_pending": "Pending check",
 	"uplink_phase_healthy": "Healthy",
 	"uplink_phase_suspect": "Checking failure",

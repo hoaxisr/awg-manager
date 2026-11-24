@@ -634,7 +634,24 @@ describe('WarpScoutTab', () => {
 				expect(el).not.toBeNull();
 				return el!;
 			});
-			const exportItem = Array.from(menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find((btn) =>
+			const menuButtons = Array.from(menu.querySelectorAll<HTMLButtonElement>('button'));
+			expect(menuButtons.length).toBe(2);
+			await waitFor(() => expect(document.activeElement).toBe(menuButtons[0]));
+
+			await fireEvent.keyDown(menu, { key: 'ArrowDown' });
+			expect(document.activeElement).toBe(menuButtons[1]);
+
+			await fireEvent.keyDown(menu, { key: 'Escape' });
+			await waitFor(() => expect(view.container.querySelector('.row-overflow-menu')).toBeNull());
+			expect(document.activeElement).toBe(moreBtn);
+
+			await fireEvent.click(moreBtn!);
+			const reopened = await waitFor(() => {
+				const el = view.container.querySelector<HTMLElement>('.row-overflow-menu[role="menu"]');
+				expect(el).not.toBeNull();
+				return el!;
+			});
+			const exportItem = Array.from(reopened.querySelectorAll<HTMLButtonElement>('button')).find((btn) =>
 				btn.textContent?.includes('Скачать .conf'),
 			);
 			expect(exportItem).not.toBeUndefined();
@@ -657,10 +674,78 @@ describe('WarpScoutTab', () => {
 			const wrap = view.container.querySelector<HTMLElement>('.hits-table-wrap')!;
 			await fireEvent.scroll(wrap);
 			await waitFor(() => expect(view.container.querySelector('.row-overflow-menu')).toBeNull());
+
+			// Сдвигаем строку при живом обновлении SSE — плавающее меню закрывается вместо зависания.
+			await fireEvent.click(moreBtn!);
+			await waitFor(() => expect(view.container.querySelector('.row-overflow-menu')).not.toBeNull());
+			warpScanPush.set({
+				running: true,
+				owner: 'manual',
+				total: 2,
+				done: 2,
+				hits: [
+					{
+						endpoint: '162.159.193.5:2408',
+						handshakeMs: 10,
+						pingMs: 12,
+						colo: 'ARN',
+						loc: 'SE',
+						warp: 'on',
+						tgOk: true,
+					},
+					initial.scan.hits![0],
+				],
+			});
+			await waitFor(() => expect(view.container.querySelector('.row-overflow-menu')).toBeNull());
 		} finally {
 			clickSpy.mockRestore();
 			URL.createObjectURL = origCreateUrl;
 			URL.revokeObjectURL = origRevokeUrl;
+		}
+	});
+
+	it('renders WarpChipPopover inside SideDrawer on mobile viewports', async () => {
+		const origMatchMedia = window.matchMedia;
+		Object.defineProperty(window, 'matchMedia', {
+			configurable: true,
+			writable: true,
+			value: (query: string) => ({
+				matches: query === '(max-width: 768px)',
+				media: query,
+				onchange: null,
+				addListener: vi.fn(),
+				removeListener: vi.fn(),
+				addEventListener: vi.fn(),
+				removeEventListener: vi.fn(),
+				dispatchEvent: vi.fn(),
+			}),
+		});
+		try {
+			const { container } = await mount(acctState());
+			const filterToggle = container.querySelector<HTMLButtonElement>('.mobile-filters-toggle button');
+			expect(filterToggle).not.toBeNull();
+			expect(filterToggle?.hasAttribute('aria-label')).toBe(false);
+
+			await fireEvent.click(chip(container, 0));
+
+			const drawer = await waitFor(() => {
+				const el = container.querySelector<HTMLElement>('.drawer[role="dialog"][aria-modal="true"]');
+				expect(el).not.toBeNull();
+				return el!;
+			});
+			expect(drawer.querySelector('.drawer-handle')).not.toBeNull();
+			expect(container.querySelector('.popover')).toBeNull();
+
+			const backdrop = container.querySelector<HTMLElement>('.backdrop');
+			expect(backdrop).not.toBeNull();
+			await fireEvent.click(backdrop!);
+			await waitFor(() => expect(container.querySelector('.drawer')).toBeNull());
+		} finally {
+			Object.defineProperty(window, 'matchMedia', {
+				configurable: true,
+				writable: true,
+				value: origMatchMedia,
+			});
 		}
 	});
 

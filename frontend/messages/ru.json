@@ -8545,7 +8545,6 @@
 	"warpscout_row_more_aria": "Дополнительные действия",
 	"warpscout_download_conf_menu": "Скачать .conf",
 	"warpscout_copy_ep_menu": "Копировать IP:порт",
-	"warpscout_start_scan_btn": "Начать сканирование",
 	"uplink_phase_pending": "Ожидает проверки",
 	"uplink_phase_healthy": "Работает",
 	"uplink_phase_suspect": "Проверяем отказ",

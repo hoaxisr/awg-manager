@@ -272,21 +272,25 @@
 
 	<!-- Встроенная компактная полоса фильтров (на телефоне сворачивается в аккордеон) -->
 	<div class="filter-strip">
-		<button
-			type="button"
-			class="mobile-filters-toggle"
-			aria-expanded={mobileFiltersOpen}
-			onclick={() => (mobileFiltersOpen = !mobileFiltersOpen)}
-		>
-			<span class="mft-left">
-				<SlidersHorizontal size={13} />
-				<span class="mft-title">{m.warpscout_filters_toggle()}</span>
-				{#each filterSummaryChips as chip (chip)}
-					<span class="mft-chip">{chip}</span>
-				{/each}
-			</span>
-			<span class="mono mft-sign">{mobileFiltersOpen ? '−' : '+'}</span>
-		</button>
+		<div class="mobile-filters-toggle">
+			<Button
+				variant="ghost"
+				size="sm"
+				fullWidth
+				onclick={() => (mobileFiltersOpen = !mobileFiltersOpen)}
+			>
+				<span class="mft-inner">
+					<span class="mft-left">
+						<SlidersHorizontal size={13} />
+						<span class="mft-title">{m.warpscout_filters_toggle()}</span>
+						{#each filterSummaryChips as chip (chip)}
+							<span class="mft-chip">{chip}</span>
+						{/each}
+					</span>
+					<span class="mono mft-sign">{mobileFiltersOpen ? '−' : '+'}</span>
+				</span>
+			</Button>
+		</div>
 		<div class="filter-strip-body" class:mobile-open={mobileFiltersOpen}>
 			<WarpFiltersEditor bind:filters hideProtocol disabled={running} idPrefix="scan" />
 		</div>
@@ -348,18 +352,6 @@
 					: m.warpscout_empty_ready_wg({ route: effectiveRoute })}
 			>
 				{#snippet icon()}<Radar />{/snippet}
-				{#snippet action()}
-					<Button
-						variant="primary"
-						size="sm"
-						loading={starting}
-						onclick={startScan}
-						disabled={!engineAvailable || !hasAccount || findJunkRunning}
-					>
-						{#snippet iconBefore()}<Play size={13} />{/snippet}
-						{m.warpscout_start_scan_btn()}
-					</Button>
-				{/snippet}
 			</EmptyState>
 		{/if}
 	</div>
@@ -458,17 +450,25 @@
 	.mobile-filters-toggle {
 		display: none;
 		width: 100%;
+	}
+	.mobile-filters-toggle :global(.btn.full-width) {
+		height: auto;
+		min-height: 30px;
+		max-height: none;
+		white-space: normal;
+		text-align: left;
+		padding: 0.2rem 0.25rem;
+		font-weight: 400;
+	}
+	.mobile-filters-toggle :global(.btn-label) {
+		width: 100%;
+	}
+	.mft-inner {
+		display: flex;
 		align-items: center;
 		justify-content: space-between;
 		gap: 0.5rem;
-		padding: 0.15rem 0;
-		border: 0;
-		background: transparent;
-		color: var(--color-text-primary);
-		font: inherit;
-		font-size: 0.78rem;
-		cursor: pointer;
-		text-align: left;
+		width: 100%;
 	}
 	.mft-left {
 		display: flex;
@@ -548,7 +548,7 @@
 
 	@media (max-width: 768px) {
 		.mobile-filters-toggle {
-			display: flex;
+			display: block;
 		}
 		.filter-strip-body {
 			display: none;

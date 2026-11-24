@@ -414,6 +414,12 @@
 		gap: 0.75rem;
 		margin-top: 0.55rem;
 	}
+	.warp-tab :global(.pop-hint) {
+		margin: 0;
+		font-size: 0.72rem;
+		line-height: 1.38;
+		color: var(--color-text-muted);
+	}
 	.top-bar {
 		display: flex;
 		align-items: center;

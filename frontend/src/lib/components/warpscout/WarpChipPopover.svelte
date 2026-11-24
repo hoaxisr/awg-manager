@@ -2,7 +2,7 @@
 	import type { Snippet } from 'svelte';
 	import { X } from 'lucide-svelte';
 	import { m } from '$lib/i18n';
-	import { IconButton } from '$lib/components/ui';
+	import { IconButton, SideDrawer } from '$lib/components/ui';
 	import WarpChipButton from './WarpChipButton.svelte';
 
 	interface Props {
@@ -23,17 +23,29 @@
 	let { chip, title, ariaLabel, chipTitle, width, alignRight = false, headExtra, children }: Props = $props();
 
 	let open = $state(false);
+	let isMobile = $state(false);
 	let rootEl = $state<HTMLDivElement | null>(null);
 	let chipEl = $state<HTMLButtonElement | null>(null);
 
 	function close(): void {
 		open = false;
-		chipEl?.focus();
+		chipEl?.focus({ preventScroll: true });
 	}
 
-	// Слушатели живут только пока поповер открыт.
 	$effect(() => {
-		if (!open) return;
+		if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+		const mq = window.matchMedia('(max-width: 768px)');
+		const sync = () => {
+			isMobile = mq.matches;
+		};
+		sync();
+		mq.addEventListener('change', sync);
+		return () => mq.removeEventListener('change', sync);
+	});
+
+	// Слушатели живут только пока открыт десктопный поповер (у SideDrawer свои обработчики).
+	$effect(() => {
+		if (!open || isMobile) return;
 
 		function handlePointerDown(e: PointerEvent): void {
 			const target = e.target as HTMLElement | null;
@@ -62,8 +74,16 @@
 		{@render chip()}
 	</WarpChipButton>
 
-	{#if open}
-		<div class="pop-backdrop" role="presentation" onclick={() => (open = false)}></div>
+	{#if isMobile}
+		<SideDrawer {open} {title} onClose={close}>
+			<div class="drawer-pop-body">
+				{#if headExtra}
+					<div class="drawer-head-extra">{@render headExtra()}</div>
+				{/if}
+				{@render children(close)}
+			</div>
+		</SideDrawer>
+	{:else if open}
 		<div
 			class="popover"
 			class:align-right={alignRight}
@@ -92,9 +112,6 @@
 		min-width: 0;
 		max-width: 100%;
 	}
-	.pop-backdrop {
-		display: none;
-	}
 
 	.popover {
 		position: absolute;
@@ -122,6 +139,20 @@
 		left: auto;
 		right: 0;
 	}
+	.drawer-pop-body {
+		display: flex;
+		flex-direction: column;
+		gap: 0.65rem;
+		min-width: 0;
+		max-width: 100%;
+		overflow-x: hidden;
+	}
+	.drawer-head-extra {
+		display: flex;
+		align-items: center;
+		gap: 0.45rem;
+		flex-wrap: wrap;
+	}
 	.pop-head {
 		display: flex;
 		align-items: center;
@@ -140,13 +171,8 @@
 		font-weight: 600;
 		color: var(--color-text-primary);
 	}
-	.popover :global(.pop-hint) {
-		margin: 0;
-		font-size: 0.72rem;
-		line-height: 1.38;
-		color: var(--color-text-muted);
-	}
-	.popover :global(.pop-foot) {
+	.popover :global(.pop-foot),
+	.drawer-pop-body :global(.pop-foot) {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
@@ -155,36 +181,8 @@
 		padding-top: 0.5rem;
 		border-top: 1px solid var(--color-border);
 	}
-	.popover :global(.pop-foot.end) {
+	.popover :global(.pop-foot.end),
+	.drawer-pop-body :global(.pop-foot.end) {
 		justify-content: flex-end;
-	}
-
-	@media (max-width: 768px) {
-		.pop-backdrop {
-			display: block;
-			position: fixed;
-			inset: 0;
-			background: rgba(0, 0, 0, 0.45);
-			z-index: var(--z-drawer-backdrop);
-		}
-		.popover,
-		.popover.align-right {
-			position: fixed;
-			top: auto;
-			right: 0;
-			bottom: 0;
-			left: 0;
-			transform: none;
-			z-index: var(--z-drawer);
-			width: 100%;
-			max-width: none;
-			max-height: 85dvh;
-			border-radius: 16px 16px 0 0;
-			border-left: 0;
-			border-right: 0;
-			border-bottom: 0;
-			box-shadow: none;
-			padding: 0.9rem 1rem 1.1rem;
-		}
 	}
 </style>

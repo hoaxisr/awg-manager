@@ -1,10 +1,12 @@
 <script lang="ts">
-	import { Copy, Download, MoreHorizontal, Plus, Repeat } from 'lucide-svelte';
+	import { Copy } from 'lucide-svelte';
 	import { m } from '$lib/i18n';
-	import { Button, IconButton } from '$lib/components/ui';
+	import { IconButton } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
 	import { copyToClipboard } from '$lib/utils/clipboard';
 	import type { WarpHit } from '$lib/types/warpscout';
+	import WarpHitActions from './WarpHitActions.svelte';
+	import WarpHitRowMenu from './WarpHitRowMenu.svelte';
 	import { countryFlag, latencyTone } from './warpscoutUi';
 
 	interface Props {
@@ -19,12 +21,15 @@
 	let { hits, showTgCol = true, oncreate, onswap, onexport }: Props = $props();
 
 	let rowMenuHit = $state<WarpHit | null>(null);
+	let rowMenuIndex = $state(-1);
 	let rowMenuPos = $state({ top: 0, right: 16, openUp: false });
+	let rowMenuTriggerEl = $state<HTMLButtonElement | null>(null);
 
 	function toggleRowMenu(h: WarpHit, e: MouseEvent): void {
 		e.stopPropagation();
 		if (rowMenuHit?.endpoint === h.endpoint) {
 			rowMenuHit = null;
+			rowMenuIndex = -1;
 			return;
 		}
 		const btn = e.currentTarget as HTMLButtonElement;
@@ -37,42 +42,23 @@
 			right: Math.max(8, window.innerWidth - rect.right),
 			openUp,
 		};
+		rowMenuTriggerEl = btn;
+		rowMenuIndex = hits.findIndex((item) => item.endpoint === h.endpoint);
 		rowMenuHit = h;
 	}
 
 	function closeRowMenu(): void {
 		rowMenuHit = null;
-	}
-
-	function handleMenuExport(): void {
-		const hit = rowMenuHit;
-		closeRowMenu();
-		if (hit) onexport?.(hit);
-	}
-
-	function handleMenuCopy(): void {
-		const hit = rowMenuHit;
-		closeRowMenu();
-		if (hit) void copyEndpoint(hit.endpoint);
-	}
-
-	function handleWindowPointerDown(e: PointerEvent): void {
-		if (!rowMenuHit) return;
-		const t = e.target as HTMLElement | null;
-		if (t?.closest('.row-overflow-menu') || t?.closest('.row-more-wrap')) return;
-		closeRowMenu();
-	}
-
-	function handleWindowKeyDown(e: KeyboardEvent): void {
-		if (e.key === 'Escape' && rowMenuHit) closeRowMenu();
+		rowMenuIndex = -1;
 	}
 
 	$effect(() => {
 		if (!rowMenuHit) return;
-		window.addEventListener('scroll', closeRowMenu, true);
-		return () => {
-			window.removeEventListener('scroll', closeRowMenu, true);
-		};
+		const idx = hits.findIndex((item) => item.endpoint === rowMenuHit?.endpoint);
+		if (idx === -1 || idx !== rowMenuIndex) {
+			rowMenuHit = null;
+			rowMenuIndex = -1;
+		}
 	});
 
 	async function copyEndpoint(ep: string): Promise<void> {
@@ -81,12 +67,6 @@
 		else notifications.error(m.warpscout_copy_failed());
 	}
 </script>
-
-<svelte:window
-	onpointerdown={handleWindowPointerDown}
-	onkeydown={handleWindowKeyDown}
-	onresize={closeRowMenu}
-/>
 
 <div class="hits-table-wrap" onscroll={closeRowMenu}>
 	<table class="hits">
@@ -142,59 +122,14 @@
 						</td>
 					{/if}
 					<td class="actions-cell">
-						<!-- Мобильная карточка (<= 600px): прямой доступ к действиям без горизонтального скролла -->
-						<div class="actions-mobile" class:has-export={Boolean(onexport)}>
-							{#if onexport}
-								<Button
-									size="sm"
-									variant="ghost"
-									title={m.warpscout_export_conf_tip()}
-									onclick={() => onexport(h)}
-								>
-									{#snippet iconBefore()}<Download size={12} />{/snippet}
-									{m.warpscout_export_conf_btn()}
-								</Button>
-							{/if}
-							<Button
-								size="sm"
-								variant="outline-primary"
-								title={m.warpscout_create_tunnel_tip()}
-								onclick={() => oncreate(h)}
-							>
-								{#snippet iconBefore()}<Plus size={12} />{/snippet}
-								{m.warpscout_tunnel_btn()}
-							</Button>
-							<Button size="sm" variant="secondary" title={m.warpscout_swap_ep_tip()} onclick={() => onswap(h)}>
-								{#snippet iconBefore()}<Repeat size={12} />{/snippet}
-								{m.warpscout_swap_btn()}
-							</Button>
-						</div>
-
-						<!-- Десктоп / компактный вид: видимые основные действия + меню «⋯» -->
-						<div class="actions-desktop">
-							<Button
-								size="sm"
-								variant="outline-primary"
-								title={m.warpscout_create_tunnel_tip()}
-								onclick={() => oncreate(h)}
-							>
-								{#snippet iconBefore()}<Plus size={12} />{/snippet}
-								{m.warpscout_tunnel_btn()}
-							</Button>
-							<Button size="sm" variant="secondary" title={m.warpscout_swap_ep_tip()} onclick={() => onswap(h)}>
-								{#snippet iconBefore()}<Repeat size={12} />{/snippet}
-								{m.warpscout_swap_btn()}
-							</Button>
-							<span class="row-more-wrap" class:open={rowMenuHit?.endpoint === h.endpoint}>
-								<IconButton
-									ariaLabel={m.warpscout_row_more_aria()}
-									title={m.warpscout_row_more_aria()}
-									onclick={(e) => toggleRowMenu(h, e)}
-								>
-									<MoreHorizontal size={14} />
-								</IconButton>
-							</span>
-						</div>
+						<WarpHitActions
+							hit={h}
+							menuOpen={rowMenuHit?.endpoint === h.endpoint}
+							{oncreate}
+							{onswap}
+							{onexport}
+							ontogglemenu={toggleRowMenu}
+						/>
 					</td>
 				</tr>
 			{/each}
@@ -202,36 +137,14 @@
 	</table>
 </div>
 
-{#if rowMenuHit}
-	<div
-		class="row-overflow-menu"
-		class:open-up={rowMenuPos.openUp}
-		role="menu"
-		style:top={`${rowMenuPos.top}px`}
-		style:right={`${rowMenuPos.right}px`}
-	>
-		{#if onexport}
-			<button
-				type="button"
-				class="row-menu-item"
-				role="menuitem"
-				onclick={handleMenuExport}
-			>
-				<Download size={13} />
-				<span>{m.warpscout_download_conf_menu()}</span>
-			</button>
-		{/if}
-		<button
-			type="button"
-			class="row-menu-item"
-			role="menuitem"
-			onclick={handleMenuCopy}
-		>
-			<Copy size={13} />
-			<span>{m.warpscout_copy_ep_menu()}</span>
-		</button>
-	</div>
-{/if}
+<WarpHitRowMenu
+	hit={rowMenuHit}
+	pos={rowMenuPos}
+	{onexport}
+	oncopy={(ep) => void copyEndpoint(ep)}
+	onclose={closeRowMenu}
+	onrestorefocus={() => rowMenuTriggerEl?.focus()}
+/>
 
 <style>
 	.hits-table-wrap {
@@ -340,57 +253,6 @@
 	.actions-cell {
 		width: 1%;
 	}
-	.actions-desktop {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.25rem;
-		justify-content: flex-end;
-	}
-	.actions-mobile {
-		display: none;
-	}
-	.row-more-wrap {
-		display: inline-flex;
-	}
-	.row-more-wrap.open :global(.icon-btn) {
-		background: var(--color-bg-hover);
-		color: var(--color-accent);
-	}
-	.row-overflow-menu {
-		position: fixed;
-		z-index: var(--z-floating);
-		min-width: 11.25rem;
-		padding: 0.25rem;
-		background: var(--color-bg-secondary);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-sm);
-		box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
-		display: flex;
-		flex-direction: column;
-		gap: 1px;
-	}
-	.row-overflow-menu.open-up {
-		transform-origin: bottom right;
-	}
-	.row-menu-item {
-		display: flex;
-		align-items: center;
-		gap: 0.45rem;
-		width: 100%;
-		padding: 0.42rem 0.55rem;
-		border: 0;
-		border-radius: calc(var(--radius-sm) - 2px);
-		background: transparent;
-		color: var(--color-text-primary);
-		font: inherit;
-		font-size: 0.78rem;
-		text-align: left;
-		cursor: pointer;
-		white-space: nowrap;
-	}
-	.row-menu-item:hover {
-		background: var(--color-bg-hover);
-	}
 	.ok {
 		color: var(--color-success);
 		font-weight: 600;
@@ -466,35 +328,6 @@
 		}
 		.ep {
 			flex-wrap: wrap;
-		}
-		.actions-desktop {
-			display: none;
-		}
-		.actions-mobile {
-			display: flex;
-			flex-wrap: wrap;
-			align-items: center;
-			justify-content: flex-start;
-			width: 100%;
-			gap: 0.35rem;
-		}
-		.actions-mobile :global(button) {
-			min-height: 32px;
-		}
-		.actions-mobile.has-export :global(button:nth-child(1)) {
-			order: 3;
-		}
-		.actions-mobile.has-export :global(button:nth-child(2)) {
-			order: 2;
-		}
-		.actions-mobile.has-export :global(button:nth-child(3)) {
-			order: 1;
-		}
-		.actions-mobile:not(.has-export) :global(button:nth-child(1)) {
-			order: 2;
-		}
-		.actions-mobile:not(.has-export) :global(button:nth-child(2)) {
-			order: 1;
 		}
 	}
 </style>
