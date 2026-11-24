@@ -73,8 +73,8 @@ func TestIsUnsupportedFlagErr(t *testing.T) {
 	}{
 		{"diag flag", "flag provided but not defined: -diag\nUsage of wt-client:", true},
 		{"diag-key flag", "flag provided but not defined: -diag-key", true},
-		{"diag-ports flag", "flag provided but not defined: -diag-ports", true},
 		{"turn-transport flag", "flag provided but not defined: -turn-transport", true},
+		{"unrelated flag", "flag provided but not defined: -other-flag", false},
 		{"unrelated error", "dial udp: i/o timeout", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

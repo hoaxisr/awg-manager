@@ -217,4 +217,43 @@ describe("ShareDetail: смена ключа диагностики", () => {
     expect(onrestart).not.toHaveBeenCalled();
     expect(notify.success).toHaveBeenCalledWith("Ключ диагностики обновлён");
   });
+
+  it("чужая мутация блокирует «Сменить ключ», но не включает её спиннер загрузки", async () => {
+    let resolveSecond!: (v: ReturnType<typeof settings>) => void;
+    apiMock.singboxRouterGetSettings
+      .mockResolvedValueOnce(settings())
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSecond = resolve;
+          }),
+      );
+
+    const r = render(ShareDetail, {
+      props: {
+        row,
+        wdttServer,
+        onstart: () => {},
+        onstop: () => {},
+        onrestart: async () => {},
+        onsave: async () => null,
+        onreload: () => {},
+      },
+    });
+    await waitFor(() =>
+      expect(apiMock.singboxRouterGetSettings).toHaveBeenCalledTimes(1),
+    );
+    await fireEvent.click(r.getByRole("button", { name: "Настройки" }));
+    await fireEvent.click(r.getByRole("button", { name: "Дополнительно" }));
+
+    const toggle = r.getByRole("checkbox", { name: "Маршрутизация через sing-box" });
+    await fireEvent.click(toggle);
+
+    const btn = await r.findByRole("button", { name: "Сменить ключ" });
+    await waitFor(() => expect(btn.hasAttribute("disabled")).toBe(true));
+    expect(btn.getAttribute("aria-busy")).toBe("false");
+
+    resolveSecond(settings());
+    await waitFor(() => expect(btn.hasAttribute("disabled")).toBe(false));
+  });
 });

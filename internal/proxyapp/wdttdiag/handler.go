@@ -156,6 +156,11 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, key string) {
 		for i := range verdict.Actions {
 			verdict.Actions[i] = redactSecrets(verdict.Actions[i], cfg.Password, effectiveKey, req.DiagKey)
 		}
+		for k, v := range verdict.Facts {
+			if s, ok := v.(string); ok {
+				verdict.Facts[k] = redactSecrets(s, cfg.Password, effectiveKey, req.DiagKey)
+			}
+		}
 		response.Success(w, Result{
 			Mode:       mode,
 			Transport:  req.Transport,

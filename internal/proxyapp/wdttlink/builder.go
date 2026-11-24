@@ -146,6 +146,12 @@ func (b *Builder) BuildLink(ctx context.Context, rec instancestore.Record, req L
 	var diagKey string
 	if req.IncludeDiagKey {
 		diagKey = ReadDiagToken(cfg.ConfigDir)
+		if diagKey == "" {
+			return nil, &LinkError{
+				Code: "WDTT_DIAG_KEY_MISSING",
+				Msg:  "ключ диагностики сервера ещё не создан: запустите сервер или нажмите «Сменить ключ» в настройках",
+			}
+		}
 	}
 	qLink, err := EncodeQwdttLinkWithOptions(peer, linkPassword, hashes, name, 0, 0, mode, QwdttLinkOptions{
 		DiagKey: diagKey,

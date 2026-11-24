@@ -55,8 +55,8 @@
 		void generate();
 	});
 
-	async function generate() {
-		if (busy) return;
+	async function generate(): Promise<boolean> {
+		if (busy) return false;
 		busy = true;
 		try {
 			let peerParam = peer.trim();
@@ -77,10 +77,20 @@
 			});
 			link = res.link ?? '';
 			linkQwdtt = res.linkQwdtt ?? '';
+			return true;
 		} catch (e) {
 			notifications.error(errText(e));
+			return false;
 		} finally {
 			busy = false;
+		}
+	}
+
+	async function toggleDiagKey(on: boolean) {
+		const prev = includeDiagKey;
+		includeDiagKey = on;
+		if (!(await generate())) {
+			includeDiagKey = prev;
 		}
 	}
 
@@ -152,13 +162,11 @@
 			<Toggle
 				size="sm"
 				spinner="none"
+				controlled
 				label={m.proxy_link_panel_include_diag_key()}
 				checked={includeDiagKey}
 				disabled={busy}
-				onchange={(on) => {
-					includeDiagKey = on;
-					void generate();
-				}}
+				onchange={toggleDiagKey}
 			/>
 			<FieldHint
 				text={m.proxy_link_panel_include_diag_key_hint()}

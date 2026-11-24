@@ -72,6 +72,11 @@ function gatewayMessage(status: number): string | undefined {
 }
 
 
+/** Распознаёт отмену запроса (DOMException AbortError или Error c name === 'AbortError'). */
+export function isAbortError(err: unknown): boolean {
+	return (err instanceof DOMException || err instanceof Error) && err.name === 'AbortError';
+}
+
 /** Объединяет глобальный AbortSignal клиента с опциональным сигналом конкретного запроса. */
 export function combineAbortSignals(
 	globalSignal: AbortSignal,
@@ -153,7 +158,7 @@ export class CoreClient {
 					}
 				});
 			} catch (e) {
-				if ((e instanceof Error && e.name === 'AbortError') || signal.aborted) {
+				if (isAbortError(e) || signal.aborted) {
 					throw e;
 				}
 				this.onConnectionLost?.();
@@ -204,7 +209,7 @@ export class CoreClient {
 			try {
 				data = await response.json();
 			} catch (e) {
-				if ((e instanceof Error && e.name === 'AbortError') || signal.aborted) {
+				if (isAbortError(e) || signal.aborted) {
 					throw e;
 				}
 				throw new Error(m.api_bad_response({ status: response.status }));

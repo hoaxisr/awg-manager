@@ -14,6 +14,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -21,6 +22,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -168,11 +170,27 @@ type QwdttLinkOptions struct {
 	DiagKey string
 }
 
+var (
+	errDiagKeyNoDir  = errors.New("configDir сервера не задан")
+	errDiagKeyBadDir = errors.New("configDir сервера должен быть абсолютным путём без «..»")
+)
+
+func validateDiagConfigDir(configDir string) (string, error) {
+	dir := strings.TrimSpace(configDir)
+	if dir == "" {
+		return "", errDiagKeyNoDir
+	}
+	if !filepath.IsAbs(dir) || slices.Contains(strings.Split(filepath.ToSlash(dir), "/"), "..") {
+		return "", errDiagKeyBadDir
+	}
+	return dir, nil
+}
+
 // ReadDiagToken читает diag.key (32 случайных байта в hex) из configDir сервера и
 // кодирует его в base64url без '=' (формат dk= в ссылках и -diag-key клиента).
 func ReadDiagToken(configDir string) string {
-	dir := strings.TrimSpace(configDir)
-	if dir == "" {
+	dir, err := validateDiagConfigDir(configDir)
+	if err != nil {
 		return ""
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "diag.key"))
@@ -189,9 +207,9 @@ func ReadDiagToken(configDir string) string {
 // RotateDiagKey генерирует новый 32-байтовый ключ диагностики и атомарно
 // перезаписывает diag.key в configDir сервера (права 0600).
 func RotateDiagKey(configDir string) error {
-	dir := strings.TrimSpace(configDir)
-	if dir == "" {
-		return fmt.Errorf("configDir сервера не задан")
+	dir, err := validateDiagConfigDir(configDir)
+	if err != nil {
+		return err
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("создание %s: %w", dir, err)

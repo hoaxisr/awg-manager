@@ -119,7 +119,7 @@ func isUnsupportedFlagErr(output string) bool {
 	if !strings.Contains(output, "flag provided but not defined:") {
 		return false
 	}
-	for _, flag := range []string{"-diag", "-diag-key", "-diag-ports", "-turn-transport"} {
+	for _, flag := range []string{"-diag", "-diag-key", "-turn-transport"} {
 		if strings.Contains(output, flag) {
 			return true
 		}

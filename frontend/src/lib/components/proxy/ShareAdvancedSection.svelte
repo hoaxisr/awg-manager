@@ -27,6 +27,7 @@
 		 * не приехал либо не отдался: поле остаётся, но выбирать не из чего.
 		 */
 		wanOptions?: { value: string; label: string }[];
+		busy?: boolean;
 		/** Смена diag.key сервера (только WDTT). */
 		onrotatediagkey?: () => Promise<void> | void;
 		rotatingDiagKey?: boolean;
@@ -37,6 +38,7 @@
 		ftServer = $bindable(),
 		ports,
 		wanOptions = [],
+		busy = false,
 		onrotatediagkey,
 		rotatingDiagKey = false,
 	}: Props = $props();
@@ -137,7 +139,7 @@
 					variant="secondary"
 					size="sm"
 					loading={rotatingDiagKey}
-					disabled={rotatingDiagKey}
+					disabled={busy || rotatingDiagKey}
 					onclick={() => onrotatediagkey?.()}
 				>
 					{m.proxy_adv_diag_key_rotate()}

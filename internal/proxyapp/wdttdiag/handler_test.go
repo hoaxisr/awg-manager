@@ -94,7 +94,7 @@ func TestHandler_VerdictWithExitCode2Returns200AndSafeArgs(t *testing.T) {
 			stdout := strings.Join([]string{
 				`DIAG|{"ev":"start","run":1,"mode":"raw"}`,
 				`DIAG|{"ev":"step","run":1,"step":"turn","title":"TURN VK","state":"ok","text":"udp:1.2.3.4:3478"}`,
-				`DIAG|{"ev":"verdict","run":1,"code":"password_unknown","sev":"error","title":"Сервер не принял пароль","text":"Проверьте ссылку","actions":["Перевыпустите ссылку"],"facts":{"turn":"ok"}}`,
+				`DIAG|{"ev":"verdict","run":1,"code":"password_unknown","sev":"error","title":"Сервер не принял пароль","text":"Проверьте ссылку","actions":["Перевыпустите ссылку"],"facts":{"turn":"ok","detail":"pw=client-secret-pw dk=override-dk","attempts":2}}`,
 				`DIAG|{"ev":"end","run":1}`,
 			}, "\n")
 			return stdout, "", 2, errors.New("exit status 2")
@@ -115,6 +115,10 @@ func TestHandler_VerdictWithExitCode2Returns200AndSafeArgs(t *testing.T) {
 	}
 	if res.Verdict == nil || res.Verdict.Sev != "error" || res.Verdict.Code != "password_unknown" {
 		t.Fatalf("verdict = %+v", res.Verdict)
+	}
+	detailFact, _ := res.Verdict.Facts["detail"].(string)
+	if strings.Contains(detailFact, "client-secret-pw") || strings.Contains(detailFact, "override-dk") || !strings.Contains(detailFact, "[REDACTED]") {
+		t.Fatalf("verdict.Facts string was not redacted: %q", detailFact)
 	}
 	if gotBinary != "/opt/bin/wt-client" {
 		t.Fatalf("binary = %q", gotBinary)

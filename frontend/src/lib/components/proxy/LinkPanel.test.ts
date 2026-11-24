@@ -92,4 +92,35 @@ describe('LinkPanel: включение ключа диагностики в qwd
 			}),
 		);
 	});
+
+	it('откатывает тумблер обратно в false, если бэкенд отказал из-за отсутствия diag.key', async () => {
+		apiMock.generateWdttServerLink
+			.mockResolvedValueOnce({
+				link: 'wdtt://x',
+				linkQwdtt: 'qwdtt://x',
+				peer: '203.0.113.10:56002',
+			})
+			.mockRejectedValueOnce(new Error('ключ диагностики сервера ещё не создан'));
+
+		const { getByRole } = render(LinkPanel, {
+			props: {
+				serverId: 'default',
+				serverName: 'Сервер',
+				server,
+				user,
+				onclose: () => {},
+			},
+		});
+
+		await waitFor(() => expect(apiMock.generateWdttServerLink).toHaveBeenCalledTimes(1));
+		const toggle = getByRole('checkbox', { name: 'Включать ключ диагностики' }) as HTMLInputElement;
+		expect(toggle.checked).toBe(false);
+
+		await fireEvent.click(toggle);
+
+		await waitFor(() =>
+			expect(notify.error).toHaveBeenCalledWith('ключ диагностики сервера ещё не создан'),
+		);
+		await waitFor(() => expect(toggle.checked).toBe(false));
+	});
 });

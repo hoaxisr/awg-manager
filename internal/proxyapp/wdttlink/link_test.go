@@ -327,6 +327,19 @@ func TestRotateDiagKey_CreatesAndRotatesFile(t *testing.T) {
 	if err := RotateDiagKey("   "); err == nil {
 		t.Fatal("empty dir must fail")
 	}
+	if err := RotateDiagKey("relative/dir"); err == nil {
+		t.Fatal("relative dir must fail")
+	}
+	traversalDir := filepath.ToSlash(t.TempDir()) + "/../escape"
+	if err := RotateDiagKey(traversalDir); err == nil {
+		t.Fatal("traversal dir must fail")
+	}
+	if got := ReadDiagToken("relative/dir"); got != "" {
+		t.Fatalf("relative dir ReadDiagToken = %q, want empty", got)
+	}
+	if got := ReadDiagToken(traversalDir); got != "" {
+		t.Fatalf("traversal dir ReadDiagToken = %q, want empty", got)
+	}
 
 	dir := t.TempDir()
 	if err := RotateDiagKey(dir); err != nil {

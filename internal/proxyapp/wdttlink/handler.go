@@ -362,8 +362,12 @@ func (h *Handler) RotateDiagKey(w http.ResponseWriter, r *http.Request, key stri
 		response.Error(w, err.Error(), "BAD_REQUEST")
 		return
 	}
-	if strings.TrimSpace(cfg.ConfigDir) == "" {
-		response.Error(w, "у сервера не задан каталог конфигурации (configDir)", "WDTT_DIAG_KEY_NO_DIR")
+	if _, err := validateDiagConfigDir(cfg.ConfigDir); err != nil {
+		if errors.Is(err, errDiagKeyNoDir) {
+			response.Error(w, "у сервера не задан каталог конфигурации (configDir)", "WDTT_DIAG_KEY_NO_DIR")
+			return
+		}
+		response.Error(w, err.Error(), "BAD_REQUEST")
 		return
 	}
 	if err := RotateDiagKey(cfg.ConfigDir); err != nil {
