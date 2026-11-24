@@ -236,7 +236,7 @@
         type="number"
         min="256"
         max="262144"
-        value={numVal('app.addressPool.maxNames', 16384)}
+        value={numVal('app.addressPool.maxNames', 65536)}
         oninput={(e) => setField('app.addressPool.maxNames', Number((e.currentTarget as HTMLInputElement).value))}
       />
       <span class="hint">{m.firc_settings_pool_max_hint()}</span>

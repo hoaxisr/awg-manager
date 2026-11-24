@@ -70,6 +70,7 @@ static firc_err_t append_group(firc_ruleset_snapshot_t *snap, const firc_group_t
     entry_build_t b;
     firc_err_t err = entry_begin(&b, g->id, g->name, &g->devices);
     if (err == FIRC_OK) { b.gs->block = firc_group_is_block(g) ? (int8_t)g->block : -1; }
+    if (err == FIRC_OK) { b.gs->cloudflare = g->cloudflare; }
     for (size_t j = 0; err == FIRC_OK && j < g->n_rules; j++) {
         const firc_rule_t *r = g->rules[j];
         err = entry_add(&b, r->type, r->rule, r->enable, false);
