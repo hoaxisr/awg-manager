@@ -271,7 +271,32 @@ export interface IpInspectResult {
 // #region Page Resource Scanner
 // ─────────────────────────────────────────────
 
-export type PageScanFetchMode = 'auto' | 'direct' | 'proxy';
+export type PageScanFetchMode = 'auto' | 'direct' | 'proxy' | 'interface';
+
+export interface PageScanParams {
+	fetchMode?: PageScanFetchMode;
+	interface?: string;
+	proxyUrl?: string;
+}
+
+export interface PageScanInterfaceOption {
+	name: string;
+	label: string;
+	up: boolean;
+}
+
+export interface PageScanProxyOption {
+	url: string;
+	label: string;
+	kind?: string;
+}
+
+export interface PageScanOptions {
+	defaultProxy?: string;
+	defaultProxyLabel?: string;
+	proxies: PageScanProxyOption[];
+	interfaces: PageScanInterfaceOption[];
+}
 
 export interface PageScanResource {
 	host: string;
@@ -292,7 +317,10 @@ export interface PageScanResult {
 	finalUrl: string;
 	statusCode: number;
 	contentType?: string;
-	fetchVia: 'direct' | 'proxy' | string;
+	fetchVia: 'direct' | 'proxy' | 'interface' | string;
+	fetchTarget?: string;
+	fetchTargetLabel?: string;
+	defaultProxy?: string;
 	proxyAvailable: boolean;
 	bodyBytes: number;
 	bodyTruncated?: boolean;

@@ -19,6 +19,36 @@ const maxPageScanReqBytes = 4096
 type PageScanRequestDTO struct {
 	URL       string `json:"url" example:"https://www.themoviedb.org"`
 	FetchMode string `json:"fetchMode,omitempty" example:"auto"`
+	Interface string `json:"interface,omitempty" example:"opkgtun11"`
+	ProxyURL  string `json:"proxyUrl,omitempty" example:"socks5://127.0.0.1:1080"`
+}
+
+// PageScanInterfaceOptionDTO mirrors pagescan.InterfaceOption for OpenAPI schema generation.
+type PageScanInterfaceOptionDTO struct {
+	Name  string `json:"name" example:"opkgtun11"`
+	Label string `json:"label" example:"VPN DE (opkgtun11)"`
+	Up    bool   `json:"up" example:"true"`
+}
+
+// PageScanProxyOptionDTO mirrors pagescan.ProxyOption for OpenAPI schema generation.
+type PageScanProxyOptionDTO struct {
+	URL   string `json:"url" example:"http://127.0.0.1:1099"`
+	Label string `json:"label" example:"FIRC inbound (127.0.0.1:1099)"`
+	Kind  string `json:"kind,omitempty" example:"firc"`
+}
+
+// PageScanOptionsDTO mirrors pagescan.ScanOptionsResult for OpenAPI schema generation.
+type PageScanOptionsDTO struct {
+	DefaultProxy      string                       `json:"defaultProxy,omitempty" example:"http://127.0.0.1:1099"`
+	DefaultProxyLabel string                       `json:"defaultProxyLabel,omitempty" example:"FIRC inbound (127.0.0.1:1099)"`
+	Proxies           []PageScanProxyOptionDTO     `json:"proxies"`
+	Interfaces        []PageScanInterfaceOptionDTO `json:"interfaces"`
+}
+
+// PageScanOptionsEnvelope is the response envelope for GET /diagnostics/page-scan/options.
+type PageScanOptionsEnvelope struct {
+	Success bool               `json:"success" example:"true"`
+	Data    PageScanOptionsDTO `json:"data"`
 }
 
 // PageScanResourceDTO mirrors pagescan.Resource for OpenAPI schema generation.
@@ -38,18 +68,21 @@ type PageScanResourceDTO struct {
 
 // PageScanResultDTO mirrors pagescan.Result for OpenAPI schema generation.
 type PageScanResultDTO struct {
-	RequestedURL   string                `json:"requestedUrl" example:"https://www.themoviedb.org"`
-	FinalURL       string                `json:"finalUrl" example:"https://www.themoviedb.org/"`
-	StatusCode     int                   `json:"statusCode" example:"200"`
-	ContentType    string                `json:"contentType,omitempty" example:"text/html; charset=utf-8"`
-	FetchVia       string                `json:"fetchVia" example:"direct"`
-	ProxyAvailable bool                  `json:"proxyAvailable" example:"true"`
-	BodyBytes      int                   `json:"bodyBytes" example:"65536"`
-	BodyTruncated  bool                  `json:"bodyTruncated,omitempty" example:"false"`
-	TotalHosts     int                   `json:"totalHosts" example:"8"`
-	HostsTruncated bool                  `json:"hostsTruncated,omitempty" example:"false"`
-	DurationMs     int64                 `json:"durationMs" example:"420"`
-	Resources      []PageScanResourceDTO `json:"resources"`
+	RequestedURL     string                `json:"requestedUrl" example:"https://www.themoviedb.org"`
+	FinalURL         string                `json:"finalUrl" example:"https://www.themoviedb.org/"`
+	StatusCode       int                   `json:"statusCode" example:"200"`
+	ContentType      string                `json:"contentType,omitempty" example:"text/html; charset=utf-8"`
+	FetchVia         string                `json:"fetchVia" example:"direct"`
+	FetchTarget      string                `json:"fetchTarget,omitempty" example:"http://127.0.0.1:1099"`
+	FetchTargetLabel string                `json:"fetchTargetLabel,omitempty" example:"FIRC inbound (127.0.0.1:1099)"`
+	DefaultProxy     string                `json:"defaultProxy,omitempty" example:"http://127.0.0.1:1099"`
+	ProxyAvailable   bool                  `json:"proxyAvailable" example:"true"`
+	BodyBytes        int                   `json:"bodyBytes" example:"65536"`
+	BodyTruncated    bool                  `json:"bodyTruncated,omitempty" example:"false"`
+	TotalHosts       int                   `json:"totalHosts" example:"8"`
+	HostsTruncated   bool                  `json:"hostsTruncated,omitempty" example:"false"`
+	DurationMs       int64                 `json:"durationMs" example:"420"`
+	Resources        []PageScanResourceDTO `json:"resources"`
 }
 
 // PageScanEnvelope is the response envelope for POST /diagnostics/page-scan.
@@ -58,7 +91,7 @@ type PageScanEnvelope struct {
 	Data    PageScanResultDTO `json:"data"`
 }
 
-// PageScanHandler handles POST /api/diagnostics/page-scan.
+// PageScanHandler handles GET /api/diagnostics/page-scan/options and POST /api/diagnostics/page-scan.
 type PageScanHandler struct {
 	svc *pagescan.Service
 }
@@ -71,6 +104,26 @@ func NewPageScanHandler(svc *pagescan.Service) *PageScanHandler {
 	return &PageScanHandler{svc: svc}
 }
 
+// GetOptions lists reachable local proxies and active router tunnel interfaces available for page scanning.
+//
+//	@Summary		List page scan egress options
+//	@Description	Discovers active router tunnel interfaces and reachable local proxies available for on-demand page scanning.
+//	@Tags			diagnostics
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	PageScanOptionsEnvelope
+//	@Failure		405	{object}	APIErrorEnvelope
+//	@Router			/diagnostics/page-scan/options [get]
+func (h *PageScanHandler) GetOptions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		response.MethodNotAllowed(w)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	response.Success(w, h.svc.Options(ctx))
+}
+
 // Post fetches a page on demand, extracts external resource hostnames, checks active routing, and resolves PTR/ASN metadata.
 //
 //	@Summary		Scan page resources
@@ -79,7 +132,7 @@ func NewPageScanHandler(svc *pagescan.Service) *PageScanHandler {
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			request	body		PageScanRequestDTO	true	"Target URL and optional fetch mode (auto, direct, proxy)"
+//	@Param			request	body		PageScanRequestDTO	true	"Target URL and optional fetch mode (auto, direct, proxy, interface) with interface/proxyUrl"
 //	@Success		200		{object}	PageScanEnvelope
 //	@Failure		400		{object}	APIErrorEnvelope
 //	@Failure		405		{object}	APIErrorEnvelope
@@ -113,12 +166,19 @@ func (h *PageScanHandler) Post(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 22*time.Second)
 	defer cancel()
 
-	res, err := h.svc.Scan(ctx, req.URL, mode)
+	res, err := h.svc.ScanWithOptions(ctx, pagescan.ScanRequest{
+		URL:       req.URL,
+		Mode:      mode,
+		Interface: req.Interface,
+		ProxyURL:  req.ProxyURL,
+	})
 	if err != nil {
 		switch {
 		case errors.Is(err, pagescan.ErrInvalidURL),
 			errors.Is(err, pagescan.ErrBlockedAddress),
-			errors.Is(err, pagescan.ErrInvalidFetchMode):
+			errors.Is(err, pagescan.ErrInvalidFetchMode),
+			errors.Is(err, pagescan.ErrInvalidInterface),
+			errors.Is(err, pagescan.ErrInvalidProxy):
 			response.BadRequest(w, err.Error())
 		case errors.Is(err, pagescan.ErrProxyUnavailable):
 			response.ErrorWithStatus(w, http.StatusServiceUnavailable, err.Error(), "PROXY_UNAVAILABLE")

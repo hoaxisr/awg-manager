@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { m, uiText } from '$lib/i18n';
-	import type { PageScanFetchMode, PageScanResult } from '$lib/types/diagnostics';
+	import type { PageScanFetchMode, PageScanOptions, PageScanResult } from '$lib/types/diagnostics';
 	import { Button, Badge } from '$lib/components/ui';
 	import { IpInspectSection, PageScanSection } from '$lib/components/diagnostics';
-	import { ArrowRight, CheckCircle2, Globe } from 'lucide-svelte';
+	import { ArrowRight, CheckCircle2, Globe, RefreshCw } from 'lucide-svelte';
 	import { formatOutboundLabel, type FircDomainCheckView } from './fircMonitorFormat';
 
 	interface Props {
@@ -13,8 +13,15 @@
 		scanningPage: boolean;
 		pageScanResult: PageScanResult | null;
 		pageScanError: string;
+		pageScanExit: string;
+		customProxyUrl: string;
+		pageScanMissingCustomProxy: boolean;
+		pageScanOptions: PageScanOptions | null;
+		loadingPageScanOptions: boolean;
+		onLoadOptions: (force?: boolean) => void;
 		onCheck: (domain?: string) => void;
 		onScan: (mode?: PageScanFetchMode) => void;
+		onRetryScan: () => void;
 		onOpenQuickAdd: (target: { ip?: string; domain?: string; prefix?: string }) => void;
 		onRoutesChanged: () => void;
 	}
@@ -26,8 +33,15 @@
 		scanningPage,
 		pageScanResult,
 		pageScanError,
+		pageScanExit = $bindable(),
+		customProxyUrl = $bindable(),
+		pageScanMissingCustomProxy = $bindable(),
+		pageScanOptions,
+		loadingPageScanOptions,
+		onLoadOptions,
 		onCheck,
 		onScan,
+		onRetryScan,
 		onOpenQuickAdd,
 		onRoutesChanged,
 	}: Props = $props();
@@ -43,7 +57,14 @@
 </script>
 
 <!-- Instant Domain Routing Checker -->
-<details class="domain-checker">
+<details
+	class="domain-checker"
+	ontoggle={(e) => {
+		if (e.currentTarget.open && !pageScanOptions && !loadingPageScanOptions) {
+			onLoadOptions();
+		}
+	}}
+>
 	<summary>{m.firc_monitor_checker_summary()}</summary>
 <div class="checker-box">
 	<div class="checker-top">
@@ -95,6 +116,66 @@
 		</Button>
 	</form>
 
+	<div class="checker-scan-exit">
+		<label class="checker-scan-exit-label" for="firc-scan-exit-select">
+			{m.page_scan_exit_label()}
+		</label>
+		<div class="checker-scan-exit-controls">
+			<select
+				id="firc-scan-exit-select"
+				class="checker-scan-select"
+				bind:value={pageScanExit}
+				onchange={() => (pageScanMissingCustomProxy = false)}
+				disabled={scanningPage}
+			>
+				<option value="auto">
+					{pageScanOptions?.defaultProxy
+						? m.page_scan_exit_auto_with_proxy({
+								proxy: pageScanOptions.defaultProxyLabel || pageScanOptions.defaultProxy,
+							})
+						: m.page_scan_exit_auto()}
+				</option>
+				<option value="direct">{m.page_scan_exit_direct()}</option>
+				{#if (pageScanOptions?.interfaces.length ?? 0) > 0}
+					<optgroup label={m.page_scan_exit_group_tunnels()}>
+						{#each pageScanOptions?.interfaces ?? [] as ifaceOpt (ifaceOpt.name)}
+							<option value={`iface:${ifaceOpt.name}`}>{ifaceOpt.label}</option>
+						{/each}
+					</optgroup>
+				{/if}
+				{#if (pageScanOptions?.proxies.length ?? 0) > 0}
+					<optgroup label={m.page_scan_exit_group_proxies()}>
+						{#each pageScanOptions?.proxies ?? [] as proxyOpt (proxyOpt.url)}
+							<option value={`proxy:${proxyOpt.url}`}>{proxyOpt.label}</option>
+						{/each}
+					</optgroup>
+				{/if}
+				<option value="custom">{m.page_scan_exit_custom_proxy()}</option>
+			</select>
+			<button
+				type="button"
+				class="checker-scan-refresh"
+				title={m.page_scan_refresh_options_title()}
+				aria-label={m.page_scan_refresh_options_title()}
+				disabled={loadingPageScanOptions || scanningPage}
+				onclick={() => onLoadOptions(true)}
+			>
+				<RefreshCw size={13} aria-hidden="true" />
+			</button>
+		</div>
+		{#if pageScanExit === 'custom'}
+			<input
+				type="text"
+				class="checker-scan-proxy-input"
+				aria-label={m.page_scan_exit_custom_proxy()}
+				placeholder={m.page_scan_custom_proxy_placeholder()}
+				bind:value={customProxyUrl}
+				oninput={() => (pageScanMissingCustomProxy = false)}
+				disabled={scanningPage}
+			/>
+		{/if}
+	</div>
+
 	{#if checkResult}
 		<div class="checker-res" class:is-routed={checkResult.routed} class:is-error={Boolean(checkResult.error)}>
 			{#if checkResult.error}
@@ -134,13 +215,14 @@
 		{/if}
 	{/if}
 
-	{#if scanningPage || pageScanResult || pageScanError}
+	{#if scanningPage || pageScanResult || pageScanError || pageScanMissingCustomProxy}
 		<PageScanSection
 			loading={scanningPage}
-			error={pageScanError}
+			error={pageScanMissingCustomProxy ? m.page_scan_custom_proxy_required() : pageScanError}
 			result={pageScanResult}
 			{onOpenQuickAdd}
 			onRescan={(mode) => onScan(mode)}
+			onRetry={onRetryScan}
 			{onRoutesChanged}
 		/>
 	{/if}
@@ -226,6 +308,71 @@
 		color: var(--text-primary);
 		font-family: var(--font-mono);
 		font-size: 0.8rem;
+	}
+
+	.checker-scan-exit {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 0.45rem;
+		min-width: 0;
+	}
+
+	.checker-scan-exit-label {
+		font-size: 0.75rem;
+		color: var(--text-secondary);
+		white-space: nowrap;
+	}
+
+	.checker-scan-exit-controls {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		min-width: 0;
+		max-width: 100%;
+	}
+
+	.checker-scan-select {
+		height: 28px;
+		max-width: 100%;
+		padding: 0 0.5rem;
+		border-radius: 6px;
+		border: 1px solid var(--border);
+		background: var(--bg-primary, var(--bg-secondary));
+		color: var(--text-primary);
+		font-size: 0.76rem;
+		font-family: var(--font-mono);
+	}
+
+	.checker-scan-refresh {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 28px;
+		height: 28px;
+		border-radius: 6px;
+		border: 1px solid var(--border);
+		background: var(--bg-secondary);
+		color: var(--text-secondary);
+		cursor: pointer;
+	}
+
+	.checker-scan-refresh:hover:not(:disabled) {
+		border-color: var(--accent);
+		color: var(--text-primary);
+	}
+
+	.checker-scan-proxy-input {
+		flex: 1 1 220px;
+		min-width: 0;
+		height: 28px;
+		padding: 0 0.55rem;
+		border-radius: 6px;
+		border: 1px solid var(--border);
+		background: var(--bg-primary, var(--bg-secondary));
+		color: var(--text-primary);
+		font-family: var(--font-mono);
+		font-size: 0.76rem;
 	}
 
 	.checker-res {

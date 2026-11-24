@@ -4,7 +4,7 @@
 	import { api } from '$lib/api/client';
 	import { startVisiblePoll } from '$lib/utils/visiblePoll';
 	import type { FircMonitorSnapshot } from '$lib/types/firc';
-	import type { PageScanFetchMode, PageScanResult } from '$lib/types/diagnostics';
+	import type { PageScanFetchMode, PageScanOptions, PageScanParams, PageScanResult } from '$lib/types/diagnostics';
 	import { Button, Badge, StatusDot } from '$lib/components/ui';
 	import { QuickAddRouteModal } from '$lib/components/diagnostics';
 	import { Activity, RefreshCw, Play, Pause } from 'lucide-svelte';
@@ -29,9 +29,14 @@
 	let checkResult = $state<FircDomainCheckView | null>(null);
 
 	let scanningPage = $state(false);
-	let pageScanMode = $state<PageScanFetchMode>('auto');
+	let lastPageScanParams = $state<PageScanParams | null>(null);
 	let pageScanResult = $state<PageScanResult | null>(null);
 	let pageScanError = $state<UiText>('');
+	let pageScanOptions = $state<PageScanOptions | null>(null);
+	let loadingPageScanOptions = $state(false);
+	let pageScanExit = $state<string>('auto');
+	let customProxyUrl = $state('');
+	let pageScanMissingCustomProxy = $state(false);
 
 	let inspectedEventSeq = $state<number | null>(null);
 	let quickAddOpen = $state(false);
@@ -83,15 +88,76 @@
 		}
 	}
 
-	async function runPageScan(targetOverride?: string, modeOverride?: PageScanFetchMode) {
+	async function loadPageScanOptions(force = false) {
+		if (disposed || loadingPageScanOptions) return;
+		if (pageScanOptions && !force) return;
+		loadingPageScanOptions = true;
+		try {
+			const next = await api.getPageScanOptions();
+			if (disposed) return;
+			pageScanOptions = next;
+		} catch {
+			// Best-effort egress discovery; Auto/Direct/Custom still work.
+		} finally {
+			loadingPageScanOptions = false;
+		}
+	}
+
+	function resolveScanParams(modeOverride?: PageScanFetchMode): PageScanParams | null {
+		if (modeOverride === 'direct') {
+			pageScanExit = 'direct';
+			pageScanMissingCustomProxy = false;
+			return { fetchMode: 'direct' };
+		}
+		if (modeOverride === 'proxy') {
+			pageScanMissingCustomProxy = false;
+			if (pageScanExit.startsWith('proxy:')) {
+				return { fetchMode: 'proxy', proxyUrl: pageScanExit.slice(6) };
+			}
+			if (pageScanExit === 'custom' && customProxyUrl.trim()) {
+				return { fetchMode: 'proxy', proxyUrl: customProxyUrl.trim() };
+			}
+			if (pageScanOptions?.defaultProxy) {
+				pageScanExit = `proxy:${pageScanOptions.defaultProxy}`;
+			} else {
+				pageScanExit = 'auto';
+			}
+			return { fetchMode: 'proxy' };
+		}
+		if (pageScanExit === 'direct') {
+			return { fetchMode: 'direct' };
+		}
+		if (pageScanExit.startsWith('iface:')) {
+			return { fetchMode: 'interface', interface: pageScanExit.slice(6) };
+		}
+		if (pageScanExit.startsWith('proxy:')) {
+			return { fetchMode: 'proxy', proxyUrl: pageScanExit.slice(6) };
+		}
+		if (pageScanExit === 'custom') {
+			const proxyUrl = customProxyUrl.trim();
+			if (!proxyUrl) {
+				pageScanResult = null;
+				pageScanError = '';
+				pageScanMissingCustomProxy = true;
+				return null;
+			}
+			return { fetchMode: 'proxy', proxyUrl };
+		}
+		return { fetchMode: 'auto' };
+	}
+
+	async function runPageScan(targetOverride?: string, override?: PageScanFetchMode | PageScanParams) {
 		const target = (targetOverride ?? testDomain).trim();
 		if (!target) return;
-		const mode = modeOverride ?? 'auto';
-		pageScanMode = mode;
+		const params = typeof override === 'object' ? override : resolveScanParams(override);
+		if (!params) return;
+		lastPageScanParams = params;
 		scanningPage = true;
+		pageScanResult = null;
 		pageScanError = '';
+		pageScanMissingCustomProxy = false;
 		try {
-			pageScanResult = await api.scanPage(target, mode);
+			pageScanResult = await api.scanPage(target, params);
 			await loadMonitor(true);
 		} catch (e) {
 			pageScanError = (e as Error).message || (() => m.firc_monitor_request_failed());
@@ -187,12 +253,19 @@
 		{scanningPage}
 		{pageScanResult}
 		pageScanError={uiText(pageScanError)}
+		bind:pageScanExit
+		bind:customProxyUrl
+		bind:pageScanMissingCustomProxy
+		{pageScanOptions}
+		{loadingPageScanOptions}
+		onLoadOptions={(force) => void loadPageScanOptions(force)}
 		onCheck={(dom) => void runDomainCheck(dom)}
 		onScan={(mode) => void runPageScan(undefined, mode)}
+		onRetryScan={() => void runPageScan()}
 		onOpenQuickAdd={openQuickAdd}
 		onRoutesChanged={() => {
 			void loadMonitor(true);
-			if (pageScanResult) void runPageScan(undefined, pageScanMode);
+			if (pageScanResult) void runPageScan(undefined, lastPageScanParams ?? undefined);
 		}}
 	/>
 
@@ -213,7 +286,7 @@
 	onclose={() => (quickAddOpen = false)}
 	onadded={() => {
 		void loadMonitor(true);
-		if (pageScanResult) void runPageScan(undefined, pageScanMode);
+		if (pageScanResult) void runPageScan(undefined, lastPageScanParams ?? undefined);
 	}}
 />
 
