@@ -93,6 +93,17 @@
 		}
 	}
 
+	/** Статус проверки интернета: «интернет работает» вместо «открывается». */
+	function wanVerdictText(v?: string): string {
+		switch (v) {
+			case 'not-checked': return m.autolist_wan_verdict_not_checked();
+			case 'blocked': return m.autolist_wan_verdict_blocked();
+			case 'reachable': return m.autolist_wan_verdict_reachable();
+			case 'error': return m.autolist_wan_verdict_error();
+			default: return '—';
+		}
+	}
+
 	function verdictClass(v?: string): string {
 		switch (v) {
 			case 'blocked': return 'text-error';
@@ -137,7 +148,7 @@
 				</span>
 				<span>
 					<span class="opacity-60">{m.autolist_col_wan()}:</span>
-					<span class={verdictClass(shown.wan?.verdict)}>{verdictText(shown.wan?.verdict)}</span>
+					<span class={verdictClass(shown.wan?.verdict)}>{wanVerdictText(shown.wan?.verdict)}</span>
 					<span class="opacity-60">{formatAutolistDuration(shown.wan?.durationMs)}</span>
 				</span>
 			</div>

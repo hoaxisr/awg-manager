@@ -26,7 +26,11 @@ const (
 	// headerCap bounds the separate header stream.
 	headerCap = 1 << 20
 
-	userAgent      = "awgmautolist-probe/0.10.0"
+	// Браузерный User-Agent: сайты с WAF (например savepic.org) обрывают
+	// HTTP/2-поток небраузерному клиенту (curl: (92) PROTOCOL_ERROR), и
+	// проверка «открывается ли сайт» уходила в «ошибка» вместо «открывается».
+	// Совместимость сохраняется: awgmautolist виден в user-agent.
+	userAgent      = "Mozilla/5.0 (compatible; awgmautolist/0.10.0)"
 	curlMetaMarker = "\n__AWGL_PROBE__|"
 )
 

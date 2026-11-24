@@ -424,6 +424,17 @@
 		}
 	}
 
+	/** Статус проверки интернета: «интернет работает» вместо «открывается». */
+	function wanVerdictText(v?: AutolistVerdict | string): string {
+		switch (v) {
+			case 'not-checked': return m.autolist_wan_verdict_not_checked();
+			case 'blocked': return m.autolist_wan_verdict_blocked();
+			case 'reachable': return m.autolist_wan_verdict_reachable();
+			case 'error': return m.autolist_wan_verdict_error();
+			default: return '—';
+		}
+	}
+
 	function verdictClass(v?: AutolistVerdict | string): string {
 		switch (v) {
 			case 'blocked': return 'text-error';
@@ -943,7 +954,7 @@
 				</span>
 				<span>
 					<span class="opacity-60">{m.autolist_col_wan()}:</span>
-					<span class={verdictClass(c.wan?.verdict)}>{verdictText(c.wan?.verdict)}</span>
+					<span class={verdictClass(c.wan?.verdict)}>{wanVerdictText(c.wan?.verdict)}</span>
 					<span class="opacity-60">{formatAutolistDuration(c.wan?.durationMs)}</span>
 				</span>
 			</div>
@@ -1001,7 +1012,7 @@
 				<div class="border-t border-base-200 pt-1.5">
 					<div class="font-medium">
 						{key === 'direct' ? m.autolist_col_direct() : key === 'wan' ? m.autolist_col_wan() : m.autolist_col_tunnel()}:
-						<span class={verdictClass(e?.verdict)}>{verdictText(e?.verdict)}</span>
+						<span class={verdictClass(e?.verdict)}>{key === 'wan' ? wanVerdictText(e?.verdict) : verdictText(e?.verdict)}</span>
 						<span class="opacity-60">{formatAutolistDuration(e?.durationMs)} · {formatAutolistBytes(e?.bytes)}</span>
 					</div>
 					{#if e?.detail}
@@ -1132,7 +1143,7 @@
 				label={m.autolist_adds_hour()}
 			/>
 			<Stat
-				value={verdictText(status?.lastWAN?.verdict)}
+				value={wanVerdictText(status?.lastWAN?.verdict)}
 				label={m.autolist_last_wan()}
 				sub={formatAutolistTime(status?.lastWAN?.checkedAt)}
 			/>

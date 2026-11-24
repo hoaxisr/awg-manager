@@ -606,12 +606,21 @@ export function normalizeRulesForUI(rules: SingboxRouterRule[]): SingboxRouterRu
 	return rules.map(normalizeRuleForUI);
 }
 
+/**
+ * Служебный rule-set автолиста: его наполняет спутник (awgmautolist), а
+ * правило автолиста — единственный, кто на него ссылается. В интерфейсе он
+ * скрыт: пользователь не должен ни выбрать его в правиле, ни править его
+ * содержимое — это рассинхронизирует панель со спутником.
+ */
+export const AUTOLIST_RULESET_TAG = 'awgm-autolist';
+
 /** Hide compiled .srs companions when the inline base is already listed. */
 export function normalizeRuleSetsForUI(ruleSets: SingboxRouterRuleSet[]): SingboxRouterRuleSet[] {
 	const inlineTags = new Set(
 		ruleSets.filter((rs) => rs.type === 'inline' && rs.tag).map((rs) => rs.tag),
 	);
 	return ruleSets.filter((rs) => {
+		if (rs.tag === AUTOLIST_RULESET_TAG) return false;
 		if (!isCompiledSRSCompanion(rs)) return true;
 		const base = inlineTagFromSRSTag(rs.tag);
 		return !(base && inlineTags.has(base));
