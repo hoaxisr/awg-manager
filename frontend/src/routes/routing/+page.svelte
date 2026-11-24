@@ -128,11 +128,13 @@
 
     // awgmautolist: вкладка видна expert-уровню всегда, когда статус получен, —
     // и неустановленному сателлиту (там кнопка установки), и отключённому.
+    // Но автолист работает только с маршрутизацией sing-box: без установленного
+    // sing-box кандидаты бессмысленны, поэтому вкладки не показываем.
     // Ниже expert статус не опрашивается (autolistStatusIfExpert в сторе).
     let autolistWaitingCount = $derived(
         ($autolistStatusIfExpert?.data?.candidates ?? []).filter((c) => c.state === 'waiting').length,
     );
-    let autolistAvailable = $derived($autolistStatusIfExpert?.data != null);
+    let autolistAvailable = $derived($autolistStatusIfExpert?.data != null && singboxInstalled);
 
     let pendingTab = $state<string | null>(null);
 
@@ -396,10 +398,11 @@
     );
 
     // If the user deep-linked / had the tab active and sing-box disappeared
-    // (uninstall while the page is open), bounce them off.
+    // (uninstall while the page is open), bounce them off. Автолист без
+    // sing-box тоже не работает — его вкладка уходит вместе с движком.
     $effect(() => {
         if (!$systemInfo.data) return;
-        if (!singboxInstalled && (activeTab === 'singbox' || activeTab === 'fakeip')) {
+        if (!singboxInstalled && (activeTab === 'singbox' || activeTab === 'fakeip' || activeTab === 'autolist')) {
             activeTab = 'dns';
         }
     });
@@ -420,7 +423,7 @@
 
         if (
             !systemKnown &&
-            (activeTab === 'dns' || activeTab === 'singbox' || activeTab === 'fakeip') &&
+            (activeTab === 'dns' || activeTab === 'singbox' || activeTab === 'fakeip' || activeTab === 'autolist') &&
             !tabsInclude(items, activeTab)
         ) {
             return;
