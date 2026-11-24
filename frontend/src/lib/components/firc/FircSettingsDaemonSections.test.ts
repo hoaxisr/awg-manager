@@ -28,6 +28,14 @@ describe('FircSettingsDaemonSections fallbacks', () => {
 		).toEqual(want);
 	});
 
+	it('lets ttlClamp reach the daemon limit of 182 days', () => {
+		cleanup();
+		const { container } = render(FircSettingsDaemonSections, {
+			props: { settings: {}, onfield: () => {} },
+		});
+		expect((container.querySelector('#firc-pool-ttl') as HTMLInputElement).max).toBe(String(182 * 24 * 3600));
+	});
+
 	it('keeps a value the daemon sent', () => {
 		expect(
 			poolInputs({

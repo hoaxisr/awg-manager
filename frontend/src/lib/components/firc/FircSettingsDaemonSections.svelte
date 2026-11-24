@@ -223,7 +223,7 @@
         class="inp mono"
         type="number"
         min="1"
-        max="3600"
+        max="15724800"
         value={numVal('app.addressPool.ttlClamp', 300)}
         oninput={(e) => setField('app.addressPool.ttlClamp', Number((e.currentTarget as HTMLInputElement).value))}
       />
