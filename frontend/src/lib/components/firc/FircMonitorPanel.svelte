@@ -37,6 +37,12 @@
 	let quickAddOpen = $state(false);
 	let quickAddTarget = $state<{ ip?: string; domain?: string; prefix?: string }>({});
 
+	function openClientEvents(ip: string) {
+		searchFilter = ip;
+		sourceFilter = 'all';
+		view = 'events';
+	}
+
 	function openQuickAdd(target: { ip?: string; domain?: string; prefix?: string }) {
 		quickAddTarget = target;
 		quickAddOpen = true;
@@ -197,7 +203,7 @@
 	/>
 
 	{#if view === 'sources' || view === 'details'}
-		<FircMonitorTables {view} {snapshot} />
+		<FircMonitorTables {view} {snapshot} onFilterClientEvents={openClientEvents} />
 	{/if}
 
 	{#if view === 'events'}

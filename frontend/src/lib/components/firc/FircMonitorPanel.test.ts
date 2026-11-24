@@ -134,4 +134,169 @@ describe('FIRC compact monitor', () => {
 		expect(res.skippedRegexOrCidr).toBe(2);
 		expect(res.skippedRemoteLists).toBe(1);
 	});
+
+	it('expands active session devices per group, per source, and globally without extra tables and jumps to filtered events', async () => {
+		fircGetMonitor.mockResolvedValue({
+			running: true,
+			totalConns: 20,
+			totalClients: 2,
+			totalTxBytes: 677000,
+			totalRxBytes: 3250000,
+			totalMatched: 10,
+			totalDns: 20,
+			timestamp: 1700000000,
+			clients: [
+				{
+					ip: '192.168.1.50',
+					name: 'Workstation',
+					mac: 'AA:BB:CC:DD:EE:01',
+					policy: 'Policy3',
+					sourceId: 'lan_br0',
+					sourceName: 'LAN / Wi-Fi',
+					conns: 15,
+					txBytes: 500000,
+					rxBytes: 2500000,
+					groups: ['Telegram'],
+				},
+				{
+					ip: '10.10.0.5',
+					sourceId: 'awg_server',
+					sourceName: 'AWGM WireGuard',
+					conns: 5,
+					txBytes: 177000,
+					rxBytes: 750000,
+					groups: ['Telegram'],
+				},
+			],
+			servers: [
+				{
+					id: 'lan_br0',
+					name: 'Домашняя сеть',
+					category: 'lan',
+					detail: 'br0 · 192.168.1.0/24',
+					running: true,
+					routingEnabled: true,
+					dnsPackets: 20,
+					dnsBytes: 100,
+					matchedQueries: 10,
+					activeConns: 15,
+					activeClients: 1,
+					clients: [
+						{
+							ip: '192.168.1.50',
+							name: 'Workstation',
+							mac: 'AA:BB:CC:DD:EE:01',
+							sourceId: 'lan_br0',
+							sourceName: 'LAN / Wi-Fi',
+							conns: 15,
+							txBytes: 500000,
+							rxBytes: 2500000,
+							groups: ['Telegram'],
+						},
+					],
+					txBytes: 500000,
+					rxBytes: 2500000,
+				},
+			],
+			groups: [
+				{
+					id: 'tg',
+					name: 'Telegram',
+					activeOutbound: 'opkgtun10',
+					live: true,
+					activeConns: 20,
+					activeClients: 2,
+					clients: [
+						{
+							ip: '192.168.1.50',
+							name: 'Workstation',
+							mac: 'AA:BB:CC:DD:EE:01',
+							policy: 'Policy3',
+							sourceId: 'lan_br0',
+							sourceName: 'LAN / Wi-Fi',
+							conns: 15,
+							txBytes: 500000,
+							rxBytes: 2500000,
+						},
+						{
+							ip: '10.10.0.5',
+							sourceId: 'awg_server',
+							sourceName: 'AWGM WireGuard',
+							conns: 5,
+							txBytes: 177000,
+							rxBytes: 750000,
+						},
+					],
+					matchedPackets: 10,
+					matchedBytes: 100,
+					connTxBytes: 677000,
+					connRxBytes: 3250000,
+					matchedQueries: 10,
+				},
+			],
+			recentMatches: [
+				{
+					seq: 1,
+					at: 1700000000,
+					clientIp: '192.168.1.50',
+					sourceId: 'lan_br0',
+					sourceName: 'LAN / Wi-Fi',
+					domain: 'api.telegram.org',
+					groupId: 'tg',
+					groupName: 'Telegram',
+					outbound: 'opkgtun10',
+				},
+				{
+					seq: 2,
+					at: 1700000001,
+					clientIp: '10.10.0.5',
+					sourceId: 'awg_server',
+					sourceName: 'AWGM WireGuard',
+					domain: 'web.telegram.org',
+					groupId: 'tg',
+					groupName: 'Telegram',
+					outbound: 'opkgtun10',
+				},
+			],
+		});
+
+		const { container } = render(FircMonitorPanel);
+		await screen.findByText('Telegram');
+
+		await fireEvent.click(screen.getByRole('button', { name: m.firc_monitor_view_sources() }));
+		expect(container.querySelectorAll('table')).toHaveLength(1);
+		const srvToggle = screen.getByRole('button', {
+			name: m.firc_monitor_devices({ n: 1 }).trim(),
+		});
+		await fireEvent.click(srvToggle);
+		expect(screen.getByTestId('firc-mon-server-clients-lan_br0')).toBeTruthy();
+		expect(screen.getByText('Workstation')).toBeTruthy();
+		expect(container.querySelectorAll('table')).toHaveLength(1);
+
+		await fireEvent.click(screen.getByRole('button', { name: m.firc_monitor_view_details() }));
+		expect(container.querySelectorAll('table')).toHaveLength(1);
+		const grpToggle = screen.getByRole('button', {
+			name: m.firc_monitor_devices({ n: 2 }).trim(),
+		});
+		await fireEvent.click(grpToggle);
+		const grpCard = screen.getByTestId('firc-mon-group-clients-tg');
+		expect(grpCard).toBeTruthy();
+		expect(grpCard.textContent).toContain('Workstation');
+		expect(grpCard.textContent).toContain('192.168.1.50');
+		expect(grpCard.textContent).toContain('10.10.0.5');
+		expect(grpCard.textContent).toContain('AWGM WireGuard');
+		expect(container.querySelectorAll('table')).toHaveLength(1);
+
+		await fireEvent.click(screen.getByRole('button', { name: m.firc_monitor_clients_toggle_aria() }));
+		const globalCard = screen.getByTestId('firc-mon-global-clients');
+		expect(globalCard).toBeTruthy();
+		expect(globalCard.textContent).toContain('Workstation');
+
+		const eventBtns = globalCard.querySelectorAll('button.mon-client-events-btn');
+		await fireEvent.click(eventBtns[0]);
+		await waitFor(() => {
+			expect(screen.getByText('api.telegram.org')).toBeTruthy();
+		});
+		expect(screen.queryByText('web.telegram.org')).toBeNull();
+	});
 });

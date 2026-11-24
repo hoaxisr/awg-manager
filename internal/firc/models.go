@@ -803,6 +803,20 @@ type SystemInterface struct {
 	Role     string `json:"role,omitempty"`
 }
 
+// SystemHost represents a LAN host known to fircd via GET /api/v1/system/hosts.
+type SystemHost struct {
+	Name              string   `json:"name"`
+	MAC               string   `json:"mac"`
+	IP                string   `json:"ip"`
+	IP6               []string `json:"ip6,omitempty"`
+	Active            bool     `json:"active"`
+	Online            *bool    `json:"online,omitempty"`
+	Registered        bool     `json:"registered,omitempty"`
+	Segment           string   `json:"segment,omitempty"`
+	Policy            string   `json:"policy,omitempty"`
+	PolicyFromSegment bool     `json:"policyFromSegment,omitempty"`
+}
+
 // SystemEventGroup identifies the matched FIRC group in a DNS or bypass event.
 type SystemEventGroup struct {
 	ID   string `json:"id"`

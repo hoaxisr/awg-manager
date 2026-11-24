@@ -1,15 +1,29 @@
 <script lang="ts">
 	import { m } from '$lib/i18n';
-	import type { FircMonitorSnapshot } from '$lib/types/firc';
+	import type { FircMonitorClientStat, FircMonitorSnapshot } from '$lib/types/firc';
 	import { Badge, StatusDot } from '$lib/components/ui';
+	import { ChevronDown, ChevronRight, Monitor } from 'lucide-svelte';
 	import { formatBytes, formatTime, formatOutboundLabel } from './fircMonitorFormat';
 
 	interface Props {
 		view: 'sources' | 'details';
 		snapshot: FircMonitorSnapshot | null;
+		onFilterClientEvents?: (ip: string) => void;
 	}
 
-	let { view, snapshot }: Props = $props();
+	let { view, snapshot, onFilterClientEvents }: Props = $props();
+
+	let showGlobalClients = $state(false);
+	let expandedGroupClients = $state<Record<string, boolean>>({});
+	let expandedServerClients = $state<Record<string, boolean>>({});
+
+	function toggleGroupClients(id: string) {
+		expandedGroupClients = { ...expandedGroupClients, [id]: !expandedGroupClients[id] };
+	}
+
+	function toggleServerClients(id: string) {
+		expandedServerClients = { ...expandedServerClients, [id]: !expandedServerClients[id] };
+	}
 
 	let totalTxBytes = $derived.by(() => {
 		if (snapshot?.totalTxBytes !== undefined) return snapshot.totalTxBytes;
@@ -89,7 +103,19 @@
 									<div>
 										<span class="conn-pill">{m.firc_monitor_sessions({ n: srv.activeConns })}</span>
 										{#if srv.activeClients}
-											<span class="bytes-meta">{m.firc_monitor_devices({ n: srv.activeClients })}</span>
+											{#if srv.clients && srv.clients.length > 0}
+												<button
+													type="button"
+													class="mon-clients-trigger"
+													aria-expanded={Boolean(expandedServerClients[srv.id])}
+													onclick={() => toggleServerClients(srv.id)}
+												>
+													<span>{m.firc_monitor_devices({ n: srv.activeClients })}</span>
+													{#if expandedServerClients[srv.id]}<ChevronDown size={11} />{:else}<ChevronRight size={11} />{/if}
+												</button>
+											{:else}
+												<span class="bytes-meta">{m.firc_monitor_devices({ n: srv.activeClients })}</span>
+											{/if}
 										{/if}
 									</div>
 									<div class="bytes-meta">
@@ -116,6 +142,16 @@
 								{/if}
 							</td>
 						</tr>
+						{#if expandedServerClients[srv.id] && srv.clients && srv.clients.length > 0}
+							<tr class="mon-clients-subrow" data-testid="firc-mon-server-clients-{srv.id}">
+								<td colspan="5">
+									<div class="mon-clients-box">
+										<div class="mon-clients-box-head">{m.firc_monitor_clients_source_title({ source: srv.name })}</div>
+										{@render clientsList(srv.clients, true)}
+									</div>
+								</td>
+							</tr>
+						{/if}
 					{/each}
 				</tbody>
 			</table>
@@ -132,6 +168,23 @@
 			<div class="kpi-hint">
 				{snapshot?.totalClients ? m.firc_monitor_kpi_conns_clients({ n: snapshot.totalClients }) : m.firc_monitor_kpi_conns_hint()}
 			</div>
+			{#if snapshot?.clients && snapshot.clients.length > 0}
+				<button
+					type="button"
+					class="mon-clients-toggle"
+					aria-expanded={showGlobalClients}
+					aria-label={m.firc_monitor_clients_toggle_aria()}
+					onclick={() => (showGlobalClients = !showGlobalClients)}
+				>
+					{#if showGlobalClients}
+						<ChevronDown size={12} />
+						<span>{m.firc_monitor_clients_hide()}</span>
+					{:else}
+						<ChevronRight size={12} />
+						<span>{m.firc_monitor_clients_show({ count: snapshot.clients.length })}</span>
+					{/if}
+				</button>
+			{/if}
 		</div>
 		<div class="kpi-card">
 			<div class="kpi-label">{m.firc_monitor_kpi_volume()}</div>
@@ -155,6 +208,18 @@
 			</div>
 		</div>
 	</div>
+
+	{#if showGlobalClients && snapshot?.clients && snapshot.clients.length > 0}
+		<div class="mon-card" data-testid="firc-mon-global-clients">
+			<div class="mon-card-head">
+				<span>{m.firc_monitor_active_clients_title()}</span>
+				<span class="mon-card-sub">{snapshot.clients.length}</span>
+			</div>
+			<div class="mon-clients-panel-body">
+				{@render clientsList(snapshot.clients, true)}
+			</div>
+		</div>
+	{/if}
 
 	<div class="mon-card">
 		<div class="mon-card-head">
@@ -211,7 +276,19 @@
 									<div>
 										<span class="conn-pill">{m.firc_monitor_sessions({ n: grp.activeConns })}</span>
 										{#if grp.activeClients}
-											<span class="bytes-meta">{m.firc_monitor_devices({ n: grp.activeClients })}</span>
+											{#if grp.clients && grp.clients.length > 0}
+												<button
+													type="button"
+													class="mon-clients-trigger"
+													aria-expanded={Boolean(expandedGroupClients[grp.id])}
+													onclick={() => toggleGroupClients(grp.id)}
+												>
+													<span>{m.firc_monitor_devices({ n: grp.activeClients })}</span>
+													{#if expandedGroupClients[grp.id]}<ChevronDown size={11} />{:else}<ChevronRight size={11} />{/if}
+												</button>
+											{:else}
+												<span class="bytes-meta">{m.firc_monitor_devices({ n: grp.activeClients })}</span>
+											{/if}
 										{/if}
 									</div>
 									<div class="bytes-meta">{m.firc_monitor_received()} <strong>{formatBytes(grp.connRxBytes)}</strong></div>
@@ -248,6 +325,16 @@
 								<div class="muted-meta">{m.firc_monitor_out_packets()}</div>
 							</td>
 						</tr>
+						{#if expandedGroupClients[grp.id] && grp.clients && grp.clients.length > 0}
+							<tr class="mon-clients-subrow" data-testid="firc-mon-group-clients-{grp.id}">
+								<td colspan="5">
+									<div class="mon-clients-box">
+										<div class="mon-clients-box-head">{m.firc_monitor_clients_group_title({ group: grp.name })}</div>
+										{@render clientsList(grp.clients, false)}
+									</div>
+								</td>
+							</tr>
+						{/if}
 					{/each}
 				</tbody>
 			</table>
@@ -261,6 +348,58 @@
 	</div>
 	{/if}
 </div>
+
+{#snippet clientsList(clients: FircMonitorClientStat[], showGroups: boolean)}
+	<div class="mon-clients-list">
+		{#each clients as c (c.ip)}
+			<div class="mon-client-row">
+				<div class="mon-client-main">
+					<Monitor size={13} class="mon-client-icon" />
+					<div class="mon-client-info">
+						<div class="mon-client-title">
+							<span class="mon-client-name">{c.name || c.ip}</span>
+							{#if c.name}
+								<span class="mon-client-ip mono">{c.ip}</span>
+							{/if}
+							{#if c.sourceName && c.sourceId !== 'lan_br0'}
+								<Badge variant="accent" size="xs">{c.sourceName}</Badge>
+							{/if}
+							{#if c.policy}
+								<Badge variant="default" size="xs">{c.policy}</Badge>
+							{/if}
+						</div>
+						{#if c.mac || (showGroups && c.groups && c.groups.length > 0)}
+							<div class="mon-client-meta">
+								{#if c.mac}
+									<span class="mono">{c.mac.toUpperCase()}</span>
+								{/if}
+								{#if showGroups && c.groups && c.groups.length > 0}
+									{#each c.groups as gName (gName)}
+										<Badge variant="info" size="xs">{gName}</Badge>
+									{/each}
+								{/if}
+							</div>
+						{/if}
+					</div>
+				</div>
+				<div class="mon-client-stats">
+					<span class="conn-pill mono">{m.firc_monitor_clients_col_conns({ count: c.conns })}</span>
+					<span class="mon-client-traffic mono">↓{formatBytes(c.rxBytes)} · ↑{formatBytes(c.txBytes)}</span>
+					{#if onFilterClientEvents}
+						<button
+							type="button"
+							class="mon-client-events-btn"
+							title={m.firc_monitor_clients_filter_events_title({ ip: c.ip })}
+							onclick={() => onFilterClientEvents(c.ip)}
+						>
+							{m.firc_monitor_clients_filter_events()}
+						</button>
+					{/if}
+				</div>
+			</div>
+		{/each}
+	</div>
+{/snippet}
 
 <style>
 	.counters-kpi-grid {
@@ -463,5 +602,157 @@
 	.domain-text {
 		color: var(--text-primary);
 		font-weight: 500;
+	}
+
+	.mon-clients-toggle,
+	.mon-clients-trigger {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+		border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+		border-radius: 5px;
+		background: color-mix(in srgb, var(--accent) 10%, transparent);
+		color: var(--text-primary);
+		font: inherit;
+		font-size: 0.71rem;
+		font-weight: 500;
+		cursor: pointer;
+		padding: 1px 6px;
+		transition: background 0.15s ease, border-color 0.15s ease;
+	}
+
+	.mon-clients-toggle {
+		align-self: flex-start;
+		margin-top: 0.2rem;
+		padding: 2px 8px;
+	}
+
+	.mon-clients-trigger {
+		margin-left: 0.25rem;
+	}
+
+	.mon-clients-toggle:hover,
+	.mon-clients-trigger:hover {
+		background: color-mix(in srgb, var(--accent) 18%, transparent);
+		border-color: var(--accent);
+	}
+
+	.mon-clients-panel-body {
+		padding: 0.55rem 0.75rem;
+	}
+
+	.mon-table tr.mon-clients-subrow td {
+		padding: 0.35rem 0.65rem 0.6rem;
+		background: color-mix(in srgb, var(--bg-secondary) 70%, transparent);
+	}
+
+	.mon-clients-box {
+		display: flex;
+		flex-direction: column;
+		gap: 0.4rem;
+		padding: 0.5rem 0.65rem;
+		border-radius: 6px;
+		border: 1px solid var(--border);
+		background: var(--bg-primary, rgba(0, 0, 0, 0.12));
+	}
+
+	.mon-clients-box-head {
+		font-size: 0.72rem;
+		font-weight: 600;
+		color: var(--text-secondary);
+	}
+
+	.mon-clients-list {
+		display: flex;
+		flex-direction: column;
+		gap: 0.35rem;
+	}
+
+	.mon-client-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.6rem;
+		flex-wrap: wrap;
+		padding: 0.35rem 0.5rem;
+		border-radius: 5px;
+		border: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+		background: color-mix(in srgb, var(--bg-secondary) 65%, transparent);
+	}
+
+	.mon-client-main {
+		display: flex;
+		align-items: center;
+		gap: 0.45rem;
+		min-width: 0;
+		flex: 1 1 220px;
+	}
+
+	:global(.mon-client-icon) {
+		color: var(--text-muted);
+		flex-shrink: 0;
+	}
+
+	.mon-client-info {
+		display: flex;
+		flex-direction: column;
+		gap: 0.15rem;
+		min-width: 0;
+	}
+
+	.mon-client-title {
+		display: flex;
+		align-items: center;
+		gap: 0.35rem;
+		flex-wrap: wrap;
+	}
+
+	.mon-client-name {
+		font-size: 0.76rem;
+		font-weight: 600;
+		color: var(--text-primary);
+	}
+
+	.mon-client-ip {
+		font-size: 0.71rem;
+		color: var(--text-muted);
+	}
+
+	.mon-client-meta {
+		display: flex;
+		align-items: center;
+		gap: 0.35rem;
+		flex-wrap: wrap;
+		font-size: 0.69rem;
+		color: var(--text-muted);
+	}
+
+	.mon-client-stats {
+		display: flex;
+		align-items: center;
+		gap: 0.45rem;
+		flex-wrap: wrap;
+	}
+
+	.mon-client-traffic {
+		font-size: 0.71rem;
+		color: var(--text-secondary);
+	}
+
+	.mon-client-events-btn {
+		border: 1px solid var(--border);
+		border-radius: 4px;
+		background: transparent;
+		color: var(--text-secondary);
+		font: inherit;
+		font-size: 0.69rem;
+		padding: 1px 6px;
+		cursor: pointer;
+	}
+
+	.mon-client-events-btn:hover {
+		border-color: var(--accent);
+		color: var(--text-primary);
+		background: color-mix(in srgb, var(--accent) 12%, transparent);
 	}
 </style>

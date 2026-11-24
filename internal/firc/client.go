@@ -184,6 +184,17 @@ func (c *Client) GetInterfaces(ctx context.Context) ([]SystemInterface, error) {
 	return out.Interfaces, nil
 }
 
+// GetHosts lists cached LAN hosts known to fircd via GET /api/v1/system/hosts.
+func (c *Client) GetHosts(ctx context.Context) ([]SystemHost, error) {
+	var out struct {
+		Hosts []SystemHost `json:"hosts"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/system/hosts", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Hosts, nil
+}
+
 // GetEvents reads the fircd event ring (logs, DNS decisions, bypasses) since the given sequence cursor.
 func (c *Client) GetEvents(ctx context.Context, since uint64) (*EventsResponse, error) {
 	var out EventsResponse

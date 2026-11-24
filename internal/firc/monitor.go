@@ -7,9 +7,12 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"net/netip"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,26 +27,41 @@ type MonitorDomainStat struct {
 	LastAt  int64  `json:"lastAt,omitempty"`
 }
 
+// MonitorClientStat summarizes active conntrack sessions and traffic for a single client IP.
+type MonitorClientStat struct {
+	IP         string   `json:"ip"`
+	Name       string   `json:"name,omitempty"`
+	MAC        string   `json:"mac,omitempty"`
+	Policy     string   `json:"policy,omitempty"`
+	SourceID   string   `json:"sourceId,omitempty"`
+	SourceName string   `json:"sourceName,omitempty"`
+	Conns      int      `json:"conns"`
+	TxBytes    uint64   `json:"txBytes"`
+	RxBytes    uint64   `json:"rxBytes"`
+	Groups     []string `json:"groups,omitempty"`
+}
+
 // MonitorServerRow summarizes live FIRC routing telemetry for an inbound VPN server or LAN segment.
 type MonitorServerRow struct {
-	ID                string `json:"id"`
-	Name              string `json:"name"`
-	Category          string `json:"category"` // "awgm" | "system" | "lan"
-	Detail            string `json:"detail"`
-	Running           bool   `json:"running"`
-	RoutingEnabled    bool   `json:"routingEnabled"`
-	DNSPackets        uint64 `json:"dnsPackets"`
-	DNSBytes          uint64 `json:"dnsBytes"`
-	MatchedQueries    int    `json:"matchedQueries"`
-	ActiveConns       int    `json:"activeConns"`
-	ActiveClients     int    `json:"activeClients"`
-	TxBytes           uint64 `json:"txBytes"`
-	RxBytes           uint64 `json:"rxBytes"`
-	LastDomain        string `json:"lastDomain,omitempty"`
-	LastGroup         string `json:"lastGroup,omitempty"`
-	LastOutbound      string `json:"lastOutbound,omitempty"`
-	LastOutboundLabel string `json:"lastOutboundLabel,omitempty"`
-	LastAt            int64  `json:"lastAt,omitempty"`
+	ID                string              `json:"id"`
+	Name              string              `json:"name"`
+	Category          string              `json:"category"` // "awgm" | "system" | "lan"
+	Detail            string              `json:"detail"`
+	Running           bool                `json:"running"`
+	RoutingEnabled    bool                `json:"routingEnabled"`
+	DNSPackets        uint64              `json:"dnsPackets"`
+	DNSBytes          uint64              `json:"dnsBytes"`
+	MatchedQueries    int                 `json:"matchedQueries"`
+	ActiveConns       int                 `json:"activeConns"`
+	ActiveClients     int                 `json:"activeClients"`
+	Clients           []MonitorClientStat `json:"clients,omitempty"`
+	TxBytes           uint64              `json:"txBytes"`
+	RxBytes           uint64              `json:"rxBytes"`
+	LastDomain        string              `json:"lastDomain,omitempty"`
+	LastGroup         string              `json:"lastGroup,omitempty"`
+	LastOutbound      string              `json:"lastOutbound,omitempty"`
+	LastOutboundLabel string              `json:"lastOutboundLabel,omitempty"`
+	LastAt            int64               `json:"lastAt,omitempty"`
 }
 
 // MonitorGroupRow summarizes live FIRC packet/byte counters and active sessions for a routing group.
@@ -61,6 +79,7 @@ type MonitorGroupRow struct {
 	MatchedBytes        uint64              `json:"matchedBytes"`
 	ActiveConns         int                 `json:"activeConns"`
 	ActiveClients       int                 `json:"activeClients"`
+	Clients             []MonitorClientStat `json:"clients,omitempty"`
 	ConnTxBytes         uint64              `json:"connTxBytes"`
 	ConnRxBytes         uint64              `json:"connRxBytes"`
 	MatchedQueries      int                 `json:"matchedQueries"`
@@ -92,6 +111,7 @@ type MonitorSnapshot struct {
 	Running       bool                `json:"running"`
 	TotalConns    int                 `json:"totalConns"`
 	TotalClients  int                 `json:"totalClients"`
+	Clients       []MonitorClientStat `json:"clients,omitempty"`
 	TotalTxBytes  uint64              `json:"totalTxBytes"`
 	TotalRxBytes  uint64              `json:"totalRxBytes"`
 	TotalDNS      uint64              `json:"totalDns"`
@@ -350,6 +370,337 @@ func parseGroupMangleChain(ctx context.Context, groupID string) groupMangleInfo 
 	return info
 }
 
+type fakeNetGroupEntry struct {
+	net *net.IPNet
+	idx int
+}
+
+type monitorHostMeta struct {
+	Name   string
+	MAC    string
+	Policy string
+	active bool
+}
+
+const (
+	monitorHostsCacheTTL      = 30 * time.Second
+	monitorHostsRetryBackoff  = 10 * time.Second
+	monitorHostsLookupTimeout = 800 * time.Millisecond
+	maxMonitorClients         = 128
+)
+
+func canonicalMonitorIP(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	if addr, err := netip.ParseAddr(trimmed); err == nil {
+		return addr.Unmap().String()
+	}
+	return strings.ToLower(trimmed)
+}
+
+func isHostOnlineOrActive(h SystemHost) bool {
+	if h.Online != nil {
+		return *h.Online || h.Active
+	}
+	return h.Active
+}
+
+func setMonitorHostMeta(dst map[string]monitorHostMeta, ip string, cand monitorHostMeta) {
+	if ip == "" || ip == "0.0.0.0" {
+		return
+	}
+	if prev, exists := dst[ip]; exists {
+		if prev.active && !cand.active {
+			return
+		}
+		if prev.active == cand.active && prev.Name != "" && cand.Name == "" {
+			return
+		}
+	}
+	dst[ip] = cand
+}
+
+func (op *Operator) resolveMonitorHostMap(ctx context.Context) map[string]monitorHostMeta {
+	if op == nil {
+		return nil
+	}
+	now := time.Now()
+	op.mu.Lock()
+	cached := op.monitorHostsCache
+	cacheFresh := cached != nil && now.Sub(op.monitorHostsCacheAt) < monitorHostsCacheTTL
+	retrySuppressed := !op.monitorHostsRetryAt.IsZero() && now.Before(op.monitorHostsRetryAt)
+	client := op.client
+	op.mu.Unlock()
+
+	if cacheFresh || retrySuppressed || client == nil {
+		return cached
+	}
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, monitorHostsLookupTimeout)
+	hosts, err := client.GetHosts(lookupCtx)
+	cancel()
+
+	if err != nil {
+		op.mu.Lock()
+		op.monitorHostsRetryAt = time.Now().Add(monitorHostsRetryBackoff)
+		out := op.monitorHostsCache
+		op.mu.Unlock()
+		return out
+	}
+
+	next := make(map[string]monitorHostMeta, len(hosts))
+	for _, h := range hosts {
+		meta := monitorHostMeta{
+			Name:   strings.TrimSpace(h.Name),
+			MAC:    strings.TrimSpace(h.MAC),
+			Policy: strings.TrimSpace(h.Policy),
+			active: isHostOnlineOrActive(h),
+		}
+		if ip := canonicalMonitorIP(h.IP); ip != "" && ip != "0.0.0.0" {
+			setMonitorHostMeta(next, ip, meta)
+		}
+		for _, raw6 := range h.IP6 {
+			if ip6 := canonicalMonitorIP(raw6); ip6 != "" {
+				setMonitorHostMeta(next, ip6, meta)
+			}
+		}
+	}
+
+	op.mu.Lock()
+	op.monitorHostsCache = next
+	op.monitorHostsCacheAt = time.Now()
+	op.monitorHostsRetryAt = time.Time{}
+	op.mu.Unlock()
+	return next
+}
+
+type monitorClientAcc struct {
+	ip         string
+	sourceID   string
+	sourceName string
+	conns      int
+	txBytes    uint64
+	rxBytes    uint64
+	groups     map[string]struct{}
+}
+
+func recordClientAcc(accMap map[string]*monitorClientAcc, ip, srvID, srvName, groupName string, txBytes, rxBytes uint64) {
+	c := accMap[ip]
+	if c == nil {
+		c = &monitorClientAcc{
+			ip:         ip,
+			sourceID:   srvID,
+			sourceName: srvName,
+		}
+		accMap[ip] = c
+	} else if c.sourceID == "" && srvID != "" {
+		c.sourceID = srvID
+		c.sourceName = srvName
+	}
+	c.conns++
+	c.txBytes += txBytes
+	c.rxBytes += rxBytes
+	if groupName != "" {
+		if c.groups == nil {
+			c.groups = make(map[string]struct{})
+		}
+		c.groups[groupName] = struct{}{}
+	}
+}
+
+func materializeMonitorClients(accMap map[string]*monitorClientAcc, hostMap map[string]monitorHostMeta, includeGroups bool) []MonitorClientStat {
+	if len(accMap) == 0 {
+		return nil
+	}
+	out := make([]MonitorClientStat, 0, len(accMap))
+	for _, acc := range accMap {
+		meta := hostMap[acc.ip]
+		st := MonitorClientStat{
+			IP:         acc.ip,
+			Name:       meta.Name,
+			MAC:        meta.MAC,
+			Policy:     meta.Policy,
+			SourceID:   acc.sourceID,
+			SourceName: acc.sourceName,
+			Conns:      acc.conns,
+			TxBytes:    acc.txBytes,
+			RxBytes:    acc.rxBytes,
+		}
+		if includeGroups && len(acc.groups) > 0 {
+			grps := make([]string, 0, len(acc.groups))
+			for g := range acc.groups {
+				grps = append(grps, g)
+			}
+			sort.Strings(grps)
+			st.Groups = grps
+		}
+		out = append(out, st)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if a.Conns != b.Conns {
+			return a.Conns > b.Conns
+		}
+		aTotal := a.RxBytes + a.TxBytes
+		bTotal := b.RxBytes + b.TxBytes
+		if aTotal != bTotal {
+			return aTotal > bTotal
+		}
+		aLabel := strings.ToLower(a.Name)
+		if aLabel == "" {
+			aLabel = a.IP
+		}
+		bLabel := strings.ToLower(b.Name)
+		if bLabel == "" {
+			bLabel = b.IP
+		}
+		if aLabel != bLabel {
+			return aLabel < bLabel
+		}
+		return a.IP < b.IP
+	})
+	if len(out) > maxMonitorClients {
+		out = out[:maxMonitorClients]
+	}
+	return out
+}
+
+func applyConntrackSnapshot(
+	r io.Reader,
+	snap *MonitorSnapshot,
+	markToGroupIdx map[uint32]int,
+	fakeNetGroups []fakeNetGroupEntry,
+	serverIndex map[string]int,
+	serverNameMap map[string]string,
+	cidrs []parsedCIDRSource,
+	hostMap map[string]monitorHostMeta,
+	lazyHostMap func() map[string]monitorHostMeta,
+) {
+	globalAcc := make(map[string]*monitorClientAcc)
+	groupAcc := make([]map[string]*monitorClientAcc, len(snap.Groups))
+	for i := range groupAcc {
+		groupAcc[i] = make(map[string]*monitorClientAcc)
+	}
+	serverAcc := make([]map[string]*monitorClientAcc, len(snap.Servers))
+	for i := range serverAcc {
+		serverAcc[i] = make(map[string]*monitorClientAcc)
+	}
+
+	if r != nil {
+		scanner := bufio.NewScanner(r)
+		scanner.Buffer(make([]byte, 64*1024), 256*1024)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if !strings.Contains(line, "mark=") {
+				continue
+			}
+			var markDec uint64
+			if mIdx := strings.Index(line, "mark="); mIdx >= 0 {
+				rest := line[mIdx+5:]
+				end := strings.IndexByte(rest, ' ')
+				if end > 0 {
+					rest = rest[:end]
+				}
+				markDec, _ = strconv.ParseUint(rest, 10, 64)
+			}
+			mark32 := uint32(markDec)
+			grpIdx, matchedGrp := markToGroupIdx[mark32&0x40ff0000]
+
+			var firstSrc, firstDst string
+			var txBytes, rxBytes uint64
+			bytesCount := 0
+			for _, tok := range strings.Fields(line) {
+				if firstSrc == "" && strings.HasPrefix(tok, "src=") {
+					firstSrc = canonicalMonitorIP(strings.TrimPrefix(tok, "src="))
+				} else if firstDst == "" && strings.HasPrefix(tok, "dst=") {
+					firstDst = canonicalMonitorIP(strings.TrimPrefix(tok, "dst="))
+				} else if strings.HasPrefix(tok, "bytes=") {
+					val, _ := strconv.ParseUint(strings.TrimPrefix(tok, "bytes="), 10, 64)
+					if bytesCount == 0 {
+						txBytes = val
+					} else if bytesCount == 1 {
+						rxBytes = val
+					}
+					bytesCount++
+				}
+			}
+
+			if !matchedGrp && (strings.HasPrefix(firstDst, "198.18.") || strings.HasPrefix(firstDst, "198.19.")) {
+				if dstIP := net.ParseIP(firstDst); dstIP != nil {
+					for _, fg := range fakeNetGroups {
+						if fg.net.Contains(dstIP) {
+							grpIdx = fg.idx
+							matchedGrp = true
+							break
+						}
+					}
+				}
+			}
+
+			if !matchedGrp {
+				continue
+			}
+
+			snap.TotalConns++
+			snap.TotalTxBytes += txBytes
+			snap.TotalRxBytes += rxBytes
+			snap.Groups[grpIdx].ActiveConns++
+			snap.Groups[grpIdx].ConnTxBytes += txBytes
+			snap.Groups[grpIdx].ConnRxBytes += rxBytes
+
+			var srvID string
+			if (mark32&0xffff) == XHTTPServerFircMark || firstSrc == "127.0.0.1" {
+				srvID = "vless_xhttp_server"
+			} else {
+				srvID = classifyClientIP(firstSrc, cidrs)
+			}
+			srvName := serverNameMap[srvID]
+			if srvName == "" {
+				srvName = srvID
+			}
+			grpLabel := snap.Groups[grpIdx].Name
+			if grpLabel == "" {
+				grpLabel = snap.Groups[grpIdx].ID
+			}
+
+			if firstSrc != "" {
+				recordClientAcc(globalAcc, firstSrc, srvID, srvName, grpLabel, txBytes, rxBytes)
+				recordClientAcc(groupAcc[grpIdx], firstSrc, srvID, srvName, grpLabel, txBytes, rxBytes)
+			}
+
+			if sIdx, ok := serverIndex[srvID]; ok {
+				snap.Servers[sIdx].ActiveConns++
+				snap.Servers[sIdx].TxBytes += txBytes
+				snap.Servers[sIdx].RxBytes += rxBytes
+				if firstSrc != "" {
+					recordClientAcc(serverAcc[sIdx], firstSrc, srvID, srvName, grpLabel, txBytes, rxBytes)
+				}
+			}
+		}
+		_ = scanner.Err()
+	}
+
+	if len(globalAcc) > 0 && hostMap == nil && lazyHostMap != nil {
+		hostMap = lazyHostMap()
+	}
+
+	snap.Clients = materializeMonitorClients(globalAcc, hostMap, true)
+	snap.TotalClients = len(globalAcc)
+	for i := range snap.Groups {
+		snap.Groups[i].Clients = materializeMonitorClients(groupAcc[i], hostMap, false)
+		snap.Groups[i].ActiveClients = len(groupAcc[i])
+	}
+	for i := range snap.Servers {
+		snap.Servers[i].Clients = materializeMonitorClients(serverAcc[i], hostMap, true)
+		snap.Servers[i].ActiveClients = len(serverAcc[i])
+	}
+}
+
 // GetMonitorSnapshot collects real-time FIRC traffic counters, active conntrack sessions, and recent DNS matches.
 func (op *Operator) GetMonitorSnapshot(ctx context.Context) MonitorSnapshot {
 	return op.getMonitorSnapshot(ctx, op.IsRunning(ctx))
@@ -520,10 +871,7 @@ func (op *Operator) getMonitorSnapshot(ctx context.Context, running bool) Monito
 
 	groupIndex := make(map[string]int)
 	markToGroupIdx := make(map[uint32]int)
-	var fakeNetGroups []struct {
-		net *net.IPNet
-		idx int
-	}
+	var fakeNetGroups []fakeNetGroupEntry
 
 	for _, g := range groups {
 		if !g.Enable || g.ID == "" {
@@ -540,10 +888,7 @@ func (op *Operator) getMonitorSnapshot(ctx context.Context, running bool) Monito
 			markToGroupIdx[mInfo.markVal] = idx
 		}
 		if mInfo.fakeNet != nil {
-			fakeNetGroups = append(fakeNetGroups, struct {
-				net *net.IPNet
-				idx int
-			}{net: mInfo.fakeNet, idx: idx})
+			fakeNetGroups = append(fakeNetGroups, fakeNetGroupEntry{net: mInfo.fakeNet, idx: idx})
 		}
 		rulesTotal := len(g.Rules)
 		if g.List != nil && g.List.RulesTotal > 0 {
@@ -564,107 +909,28 @@ func (op *Operator) getMonitorSnapshot(ctx context.Context, running bool) Monito
 		})
 	}
 
-	globalClients := make(map[string]struct{})
-	groupClients := make([]map[string]struct{}, len(snap.Groups))
-	for i := range groupClients {
-		groupClients[i] = make(map[string]struct{})
+	// Parse /proc/net/nf_conntrack for active FIRC sessions, per-device breakdown, and byte counters.
+	var ctReader io.Reader
+	var ctFile *os.File
+	if f, err := os.Open("/proc/net/nf_conntrack"); err == nil {
+		ctFile = f
+		ctReader = f
 	}
-	serverClients := make([]map[string]struct{}, len(snap.Servers))
-	for i := range serverClients {
-		serverClients[i] = make(map[string]struct{})
-	}
-
-	// Parse /proc/net/nf_conntrack for active FIRC sessions and byte counters.
-	if ctFile, err := os.Open("/proc/net/nf_conntrack"); err == nil {
-		scanner := bufio.NewScanner(ctFile)
-		scanner.Buffer(make([]byte, 64*1024), 256*1024)
-		for scanner.Scan() {
-			line := scanner.Text()
-			if !strings.Contains(line, "mark=") {
-				continue
-			}
-			var markDec uint64
-			if mIdx := strings.Index(line, "mark="); mIdx >= 0 {
-				rest := line[mIdx+5:]
-				end := strings.IndexByte(rest, ' ')
-				if end > 0 {
-					rest = rest[:end]
-				}
-				markDec, _ = strconv.ParseUint(rest, 10, 64)
-			}
-			mark32 := uint32(markDec)
-			grpIdx, matchedGrp := markToGroupIdx[mark32&0x40ff0000]
-
-			var firstSrc, firstDst string
-			var txBytes, rxBytes uint64
-			bytesCount := 0
-			for _, tok := range strings.Fields(line) {
-				if firstSrc == "" && strings.HasPrefix(tok, "src=") {
-					firstSrc = strings.TrimPrefix(tok, "src=")
-				} else if firstDst == "" && strings.HasPrefix(tok, "dst=") {
-					firstDst = strings.TrimPrefix(tok, "dst=")
-				} else if strings.HasPrefix(tok, "bytes=") {
-					val, _ := strconv.ParseUint(strings.TrimPrefix(tok, "bytes="), 10, 64)
-					if bytesCount == 0 {
-						txBytes = val
-					} else if bytesCount == 1 {
-						rxBytes = val
-					}
-					bytesCount++
-				}
-			}
-
-			if !matchedGrp && (strings.HasPrefix(firstDst, "198.18.") || strings.HasPrefix(firstDst, "198.19.")) {
-				if dstIP := net.ParseIP(firstDst); dstIP != nil {
-					for _, fg := range fakeNetGroups {
-						if fg.net.Contains(dstIP) {
-							grpIdx = fg.idx
-							matchedGrp = true
-							break
-						}
-					}
-				}
-			}
-
-			if !matchedGrp {
-				continue
-			}
-
-			snap.TotalConns++
-			snap.TotalTxBytes += txBytes
-			snap.TotalRxBytes += rxBytes
-			snap.Groups[grpIdx].ActiveConns++
-			snap.Groups[grpIdx].ConnTxBytes += txBytes
-			snap.Groups[grpIdx].ConnRxBytes += rxBytes
-			if firstSrc != "" {
-				globalClients[firstSrc] = struct{}{}
-				groupClients[grpIdx][firstSrc] = struct{}{}
-			}
-
-			var srvID string
-			if (mark32&0xffff) == XHTTPServerFircMark || firstSrc == "127.0.0.1" {
-				srvID = "vless_xhttp_server"
-			} else {
-				srvID = classifyClientIP(firstSrc, cidrs)
-			}
-			if sIdx, ok := serverIndex[srvID]; ok {
-				snap.Servers[sIdx].ActiveConns++
-				snap.Servers[sIdx].TxBytes += txBytes
-				snap.Servers[sIdx].RxBytes += rxBytes
-				if firstSrc != "" {
-					serverClients[sIdx][firstSrc] = struct{}{}
-				}
-			}
-		}
+	applyConntrackSnapshot(
+		ctReader,
+		&snap,
+		markToGroupIdx,
+		fakeNetGroups,
+		serverIndex,
+		serverNameMap,
+		cidrs,
+		nil,
+		func() map[string]monitorHostMeta {
+			return op.resolveMonitorHostMap(ctx)
+		},
+	)
+	if ctFile != nil {
 		_ = ctFile.Close()
-	}
-
-	snap.TotalClients = len(globalClients)
-	for i := range snap.Groups {
-		snap.Groups[i].ActiveClients = len(groupClients[i])
-	}
-	for i := range snap.Servers {
-		snap.Servers[i].ActiveClients = len(serverClients[i])
 	}
 
 	// Read all available pages of recent DNS events from fircd so timestamps are always up to the current second.
