@@ -16,23 +16,20 @@ var (
 	fakeIPPrefix = netip.MustParsePrefix("198.18.0.0/15")
 )
 
+// systemDNSTimeout — срок системного DNS при привязанном интерфейсе. Попытка
+// Go-резолвера длится 5 с, проба FIRC — 4 с: без своего срока до публичного DNS
+// очередь не доходит.
+const systemDNSTimeout = 1500 * time.Millisecond
+
 // isFakeIPv4 reports whether ip falls inside FIRC / Sing-box FakeIP range (198.18.0.0/15).
 func isFakeIPv4(ip net.IP) bool {
-	ip4 := ip.To4()
-	return ip4 != nil && ip4[0] == 198 && (ip4[1] == 18 || ip4[1] == 19)
+	addr, ok := netip.AddrFromSlice(ip.To4())
+	return ok && fakeIPPrefix.Contains(addr)
 }
 
 func isPublicIPv4(ip net.IP) bool {
-	ip4 := ip.To4()
-	if ip4 == nil {
-		return false
-	}
-	addr, ok := netip.AddrFromSlice(ip4)
-	if !ok {
-		return false
-	}
-	addr = addr.Unmap()
-	return addr.Is4() &&
+	addr, ok := netip.AddrFromSlice(ip.To4())
+	return ok &&
 		addr.IsGlobalUnicast() &&
 		!addr.IsPrivate() &&
 		!cgnatPrefix.Contains(addr) &&
@@ -60,40 +57,29 @@ var lookupPublicIPv4 = lookupIPv4ViaPublicDNS
 // queryPublicDNSA is swappable in tests.
 var queryPublicDNSA = lookupAViaDNS
 
+// lookupIPv4ViaPublicDNS спрашивает публичный DNS только через bindIface: мимо
+// туннеля имя открытым текстом не уходит.
 func lookupIPv4ViaPublicDNS(ctx context.Context, host, bindIface string) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
+	bindIface = strings.TrimSpace(bindIface)
+	if bindIface == "" {
+		return "", errors.New("public DNS requires a bound interface")
 	}
-	var ifaces []string
-	if trimmed := strings.TrimSpace(bindIface); trimmed != "" {
-		ifaces = []string{trimmed, ""}
-	} else {
-		ifaces = []string{""}
-	}
-	servers := []string{"1.1.1.1", "8.8.8.8"}
 	var lastErr error
-	for _, ifName := range ifaces {
-		for _, srv := range servers {
-			if ctx.Err() != nil {
-				return "", ctx.Err()
-			}
-			subCtx, cancel := context.WithTimeout(ctx, 1200*time.Millisecond)
-			ipStr, err := queryPublicDNSA(subCtx, host, srv, ifName, 0)
-			cancel()
-			if err == nil {
-				if parsed := net.ParseIP(ipStr); parsed != nil && isPublicIPv4(parsed) {
-					if ip4 := parsed.To4(); ip4 != nil {
-						return ip4.String(), nil
-					}
-				}
-				lastErr = fmt.Errorf("non-public IPv4 %q from %s", ipStr, srv)
-				continue
-			}
-			lastErr = err
+	for _, srv := range []string{"1.1.1.1", "8.8.8.8"} {
+		if err := ctx.Err(); err != nil {
+			return "", err
 		}
-	}
-	if lastErr == nil {
-		lastErr = fmt.Errorf("no public DNS response")
+		subCtx, cancel := context.WithTimeout(ctx, 1200*time.Millisecond)
+		ip, err := queryPublicDNSA(subCtx, host, srv, bindIface, 0)
+		cancel()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if isPublicIPv4(net.ParseIP(ip)) {
+			return ip, nil
+		}
+		lastErr = fmt.Errorf("non-public IPv4 %q from %s", ip, srv)
 	}
 	return "", lastErr
 }
@@ -166,7 +152,13 @@ func LookupIPv4ForBind(ctx context.Context, host string, dnsServers []string, bi
 		return "", fmt.Errorf("httpclient: no DNS servers configured for %q", host)
 	}
 
-	ips, err := lookupSystemIPv4(ctx, host)
+	sysCtx := ctx
+	if bindIface != "" {
+		var cancel context.CancelFunc
+		sysCtx, cancel = context.WithTimeout(ctx, systemDNSTimeout)
+		defer cancel()
+	}
+	ips, err := lookupSystemIPv4(sysCtx, host)
 	if err != nil {
 		if bindIface != "" && ctx.Err() == nil && isDNSTimeout(err) {
 			if pubIP, pubErr := lookupPublicIPv4(ctx, host, bindIface); pubErr == nil {
