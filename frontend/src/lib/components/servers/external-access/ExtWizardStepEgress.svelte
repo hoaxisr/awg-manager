@@ -71,7 +71,7 @@
 				{draft.selectedKind === 'both' ? m.servers_ext_wiz_s4_vless_both() : m.servers_ext_wiz_s4_vless_route()}
 			</div>
 
-			{#if currentXrayEgressOption && !currentXrayEgressOption.available}
+			{#if currentXrayEgressOption && !currentXrayEgressOption.available && currentXrayEgressOption.unavailable_reason !== egressValidation.reason}
 				<div class="legacy-egress-banner">
 					<AlertTriangle size={15} />
 					<span>
@@ -304,7 +304,7 @@
 
 	.legacy-egress-banner {
 		display: flex;
-		align-items: center;
+		align-items: flex-start;
 		gap: 8px;
 		padding: 9px 12px;
 		border-radius: var(--radius-sm);
@@ -312,6 +312,12 @@
 		background: var(--color-warning-tint);
 		color: var(--color-warning);
 		font-size: 12px;
+	}
+
+	/* Причина бывает в три строки: иконка не сжимается и стоит у первой. */
+	.legacy-egress-banner :global(svg) {
+		flex-shrink: 0;
+		margin-top: 1px;
 	}
 
 	.egress-list {

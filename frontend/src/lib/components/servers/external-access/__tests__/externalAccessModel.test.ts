@@ -540,13 +540,14 @@ describe('externalAccessModel', () => {
 				name: 'По правилам роутера',
 				iface: 'router',
 				available,
+				unavailable_reason: available ? undefined : 'Правила FIRC неактивны',
 				supports_tcp: true,
 				supports_udp: true,
 				generation: 1,
 			},
 		]).reason ?? '';
-		expect(router(false)).toContain('По правилам роутера');
-		expect(router(true)).not.toContain('По правилам роутера');
+		expect(router(false)).toBe('Правила FIRC неактивны');
+		expect(router(true)).not.toContain('FIRC неактивны');
 
 		// Switch to KeenDNS create mode and disable Telegram
 		draft.selectedKind = 'xray';

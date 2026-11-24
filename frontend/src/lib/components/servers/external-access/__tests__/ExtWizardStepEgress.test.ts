@@ -8,7 +8,7 @@ import { createInitialWizardDraft } from '../externalAccessModel';
 
 const REASON = 'Правила FIRC неактивны (выбран движок sing-box)';
 
-function mount(available: boolean) {
+function mount(available: boolean, reason?: string) {
 	const router: EgressOption = {
 		id: 'firc:router', name: 'По правилам роутера', iface: 'router', kind: 'router_outbound', owner: 'firc',
 		available, unavailable_reason: available ? undefined : REASON, supports_tcp: true, supports_udp: true, generation: 1,
@@ -19,7 +19,7 @@ function mount(available: boolean) {
 	const onselectxraycategory = vi.fn();
 	render(ExtWizardStepEgress, {
 		props: {
-			draft, wantXray: true, wantTg: false, egressValidation: { valid: available },
+			draft, wantXray: true, wantTg: false, egressValidation: { valid: available, reason },
 			currentXrayEgressOption: router, currentTgEgressOption: undefined, xrayRouterOption: router,
 			xrayEgressCategory: 'router', tgEgressCategory: 'direct', xrayTunnelOptions: [], tgTunnelOptions: [],
 			onselectxraycategory, onselecttgcategory: vi.fn(), onselectxrayegress: vi.fn(), onselecttgegress: vi.fn(),
@@ -38,6 +38,12 @@ describe('ExtWizardStepEgress: «По правилам роутера»', () => 
 		expect(card.textContent).toContain(REASON);
 		expect(screen.getAllByText(REASON).length).toBe(2); // карточка и баннер
 		expect(screen.queryByText(m.servers_ext_wiz_s4_current_unavailable({ name: 'По правилам роутера' }))).toBeNull();
+	});
+
+	it('причина из проверки черновика не дублируется вторым баннером', () => {
+		const { card } = mount(false, REASON);
+		expect(card.textContent).toContain(REASON);
+		expect(screen.getAllByText(REASON).length).toBe(2); // верхний баннер и карточка
 	});
 
 	it('доступный выход выбирается, причины нет', async () => {

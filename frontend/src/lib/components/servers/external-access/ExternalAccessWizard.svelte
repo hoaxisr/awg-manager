@@ -931,8 +931,18 @@
 	}
 
 	:where(.ext-wizard) :global(.choice-card:disabled) {
-		opacity: 0.6;
 		cursor: not-allowed;
+		/* Глобальное :disabled гасит карточку целиком вместе с причиной. */
+		opacity: 1;
+	}
+
+	/* Гасим только заголовок: текст карточки называет причину недоступности. */
+	:where(.ext-wizard) :global(.choice-card:disabled .choice-title) {
+		color: var(--color-text-muted);
+	}
+
+	:where(.ext-wizard) :global(.choice-card:disabled .choice-text) {
+		color: var(--color-text-secondary);
 	}
 
 	:where(.ext-wizard) :global(.choice-card.selected) {

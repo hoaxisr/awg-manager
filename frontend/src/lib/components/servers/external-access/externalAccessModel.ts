@@ -775,6 +775,8 @@ export function isDraftEgressValid(
 		}
 		const found = egressOptions.find((o) => o.id === id || o.iface === id);
 		if (found && !found.available) {
+			// У правил роутера туннеля нет: причину называет сервер.
+			if (id === 'firc:router' && found.unavailable_reason) return found.unavailable_reason;
 			return m.servers_ext_model_egress_unavailable({ service: serviceLabel, name: found.name });
 		}
 		return undefined;
