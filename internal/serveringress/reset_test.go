@@ -394,4 +394,114 @@ func TestCoordinator_Reset_KeenDNSOptionalAndSharedProtection(t *testing.T) {
 			t.Fatalf("expected SaveConfig called once after deletion, got %d", kdState.saveCount)
 		}
 	})
+
+	t.Run("DeleteKeenDNS_deletes_when_other_server_disabled_and_allows_vless_direct_port", func(t *testing.T) {
+		dataDir := t.TempDir()
+		kdState := newFakeKeenDNSState()
+		kdState.entries["vless"] = mkEntry("vless", "127.0.0.1", "9008", false) // direct VLESS port
+		kdOp := NewNDMSKeenDNSOperator(kdState, kdState, kdState)
+
+		xray := &resettableXray{
+			mockXray: &mockXray{
+				cfg: vlessserver.Config{
+					Enabled:      true,
+					ListenPort:   9008,
+					PublicDomain: "vless.example.keenetic.pro",
+				},
+			},
+		}
+		// Disabled Telegram server still has stale hostname matching VLESS label — must NOT protect it.
+		tg := &resettableTg{
+			mockTgWebProxy: &mockTgWebProxy{
+				cfg: tgwebproxy.Config{
+					Enabled:        false,
+					PublicHostname: "vless.example.keenetic.pro",
+				},
+			},
+		}
+		disp := &mockDispatcher{running: false, cfg: cdndispatcher.Config{ListenAddr: ":9009"}}
+		coord := New(dataDir, xray, disp, tg)
+		coord.SetKeenDNS(kdOp)
+
+		res, err := coord.ResetVless(context.Background(), ResetOptions{DeleteKeenDNS: true})
+		if err != nil {
+			t.Fatalf("ResetVless failed: %v", err)
+		}
+		if len(res.KeenDNSDeleted) != 1 || res.KeenDNSDeleted[0] != "vless" {
+			t.Fatalf("expected 'vless' on port 9008 deleted even with disabled Telegram holding stale domain, got res=%+v", res)
+		}
+		if _, stillThere := kdState.entries["vless"]; stillThere {
+			t.Fatal("expected 'vless' entry deleted from KeenDNS state")
+		}
+	})
+
+	t.Run("DeleteKeenDNS_never_allows_reserved_port_2222_on_vless_reset", func(t *testing.T) {
+		dataDir := t.TempDir()
+		kdState := newFakeKeenDNSState()
+		kdState.entries["sshpub"] = mkEntry("sshpub", "127.0.0.1", "2222", false)
+		kdOp := NewNDMSKeenDNSOperator(kdState, kdState, kdState)
+
+		xray := &resettableXray{
+			mockXray: &mockXray{
+				cfg: vlessserver.Config{
+					Enabled:      true,
+					ListenPort:   2222,
+					PublicDomain: "sshpub.example.keenetic.pro",
+				},
+			},
+		}
+		disp := &mockDispatcher{running: false, cfg: cdndispatcher.Config{ListenAddr: ":9009"}}
+		coord := New(dataDir, xray, disp, nil)
+		coord.SetKeenDNS(kdOp)
+
+		res, err := coord.ResetVless(context.Background(), ResetOptions{DeleteKeenDNS: true})
+		if err != nil {
+			t.Fatalf("ResetVless failed: %v", err)
+		}
+		if len(res.KeenDNSDeleted) != 0 {
+			t.Fatalf("expected port 2222 never deleted even if ListenPort==2222, got res=%+v", res)
+		}
+		if _, ok := kdState.entries["sshpub"]; !ok {
+			t.Fatal("expected KeenDNS publication on port 2222 preserved")
+		}
+	})
+
+	t.Run("DeleteKeenDNS_telegram_deletes_when_vless_disabled", func(t *testing.T) {
+		dataDir := t.TempDir()
+		kdState := newFakeKeenDNSState()
+		kdState.entries["tg"] = mkEntry("tg", "127.0.0.1", "8085", false)
+		kdOp := NewNDMSKeenDNSOperator(kdState, kdState, kdState)
+
+		xray := &resettableXray{
+			mockXray: &mockXray{
+				cfg: vlessserver.Config{
+					Enabled:      false,
+					PublicDomain: "tg.example.keenetic.pro",
+				},
+			},
+		}
+		tg := &resettableTg{
+			mockTgWebProxy: &mockTgWebProxy{
+				cfg: tgwebproxy.Config{
+					Enabled:        true,
+					ListenPort:     8085,
+					PublicHostname: "tg.example.keenetic.pro",
+				},
+			},
+		}
+		disp := &mockDispatcher{running: false, cfg: cdndispatcher.Config{ListenAddr: ":9009"}}
+		coord := New(dataDir, xray, disp, tg)
+		coord.SetKeenDNS(kdOp)
+
+		res, err := coord.ResetTelegram(context.Background(), ResetOptions{DeleteKeenDNS: true})
+		if err != nil {
+			t.Fatalf("ResetTelegram failed: %v", err)
+		}
+		if len(res.KeenDNSDeleted) != 1 || res.KeenDNSDeleted[0] != "tg" {
+			t.Fatalf("expected 'tg' deleted when VLESS is disabled, got res=%+v", res)
+		}
+		if _, stillThere := kdState.entries["tg"]; stillThere {
+			t.Fatal("expected 'tg' entry deleted from KeenDNS state")
+		}
+	})
 }

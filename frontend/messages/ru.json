@@ -8734,6 +8734,8 @@
 	"server_reset_tg_keendns_label": "Также удалить домены KeenDNS 4-го уровня Telegram с роутера",
 	"server_reset_tg_keendns_hint": "Общие домены, используемые VLESS, и сторонние правила KeenDNS останутся нетронутыми.",
 	"server_reset_tg_success": "Сервер Telegram сброшен к заводскому состоянию",
+	"server_reset_keendns_deleted": "Удалены домены KeenDNS: {domains}",
+	"server_reset_keendns_skipped": "Пропущены домены KeenDNS: {domains}",
 	"servers_dispatcher_status_running": "Активен · порт {port}",
 	"servers_dispatcher_status_stopped": "Остановлен · порт {port} закрыт",
 	"servers_dispatcher_running_hint": "Порт {port} сейчас слушается локально на роутере для активных сервисов (VLESS / Прокси Telegram). Доступ снаружи появляется только при настроенном KeenDNS или пробросе порта; чтобы закрыть порт, выключите оба сервиса.",

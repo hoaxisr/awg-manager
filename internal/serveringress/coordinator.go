@@ -2794,8 +2794,15 @@ func (c *Coordinator) ResetVless(ctx context.Context, opts ResetOptions) (ResetR
 
 		if opts.DeleteKeenDNS {
 			targetHosts := collectVlessHosts(prevXray, prevDisp.Routes)
-			protectedHosts := collectTelegramHosts(tgCfg, prevDisp.Routes)
-			del, sk, warn := c.cleanupKeenDNSForResetLocked(ctx, targetHosts, protectedHosts, dispPort, []int{dispPort}, "Telegram")
+			var protectedHosts []string
+			if tgCfg.Enabled {
+				protectedHosts = collectTelegramHosts(tgCfg, prevDisp.Routes)
+			}
+			allowedPorts := []int{dispPort}
+			if prevXray.ListenPort > 0 && prevXray.ListenPort != dispPort && prevXray.ListenPort != 2222 {
+				allowedPorts = append(allowedPorts, prevXray.ListenPort)
+			}
+			del, sk, warn := c.cleanupKeenDNSForResetLocked(ctx, targetHosts, protectedHosts, dispPort, allowedPorts, "Telegram")
 			res.KeenDNSDeleted = del
 			res.KeenDNSSkipped = sk
 			res.Warnings = append(res.Warnings, warn...)
@@ -2886,7 +2893,10 @@ func (c *Coordinator) ResetTelegram(ctx context.Context, opts ResetOptions) (Res
 
 		if opts.DeleteKeenDNS {
 			targetHosts := collectTelegramHosts(prevTg, prevDisp.Routes)
-			protectedHosts := collectVlessHosts(xrayCfg, prevDisp.Routes)
+			var protectedHosts []string
+			if xrayCfg.Enabled {
+				protectedHosts = collectVlessHosts(xrayCfg, prevDisp.Routes)
+			}
 			allowedPorts := []int{dispPort, tgwebproxy.DefaultListenPort}
 			if prevTg.ListenPort > 0 && prevTg.ListenPort != dispPort && prevTg.ListenPort != tgwebproxy.DefaultListenPort && prevTg.ListenPort != 2222 {
 				allowedPorts = append(allowedPorts, prevTg.ListenPort)

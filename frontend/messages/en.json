@@ -8334,6 +8334,8 @@
 	"server_reset_tg_keendns_label": "Also delete Telegram 4th-level KeenDNS domains from the router",
 	"server_reset_tg_keendns_hint": "Shared domains used by VLESS and unrelated KeenDNS rules will remain untouched.",
 	"server_reset_tg_success": "Telegram server reset to factory defaults",
+	"server_reset_keendns_deleted": "Deleted KeenDNS domains: {domains}",
+	"server_reset_keendns_skipped": "Skipped KeenDNS domains: {domains}",
 	"servers_dispatcher_status_running": "Listening · port {port}",
 	"servers_dispatcher_status_stopped": "Stopped · port {port} closed",
 	"servers_dispatcher_running_hint": "Port {port} is currently listening locally on the router for active services (VLESS / Telegram Proxy). External WAN access only exists if KeenDNS or port forwarding is configured; disable both services to close the port.",
