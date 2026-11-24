@@ -12,6 +12,7 @@
 	import { Badge } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
 	import { Search } from 'lucide-svelte';
+	import { DNS_ONLY_IFACE } from '$lib/utils/fircResolve';
 	import { formatTime } from './fircMonitorFormat';
 	import FircJournalToolbar from './FircJournalToolbar.svelte';
 
@@ -152,7 +153,7 @@
 		}
 		if (ev.kind === 'dns') {
 			const target = ev.fake ? ` → FakeIP ${ev.fake}` : ev.reals?.length ? ` → ${ev.reals.join(', ')}` : '';
-			return m.firc_journal_dns_requested({ client: ev.client, name: ev.name, qtype: ev.qtype, decision: ev.decision, target });
+			return m.firc_journal_dns_requested({ client: ev.client, name: ev.name, qtype: ev.qtype, decision: ev.decision === 'dns-only' ? m.firc_dns_only() : ev.decision, target });
 		}
 		return `${ev.client} → ${ev.name || ev.dst}${ev.port ? `:${ev.port}` : ''} (${ev.proto}, ${ev.how})`;
 	}
@@ -345,7 +346,7 @@
 										<span class="muted">{m.firc_journal_no_group()}</span>
 									{/if}
 								</td>
-								<td class="mono-cell">{row.owner?.interface || 'WAN'}</td>
+								<td class="mono-cell">{row.owner?.interface === DNS_ONLY_IFACE ? m.firc_dns_only() : row.owner?.interface || 'WAN'}</td>
 								<td class="mono-cell">{row.clientsTotal ?? row.clients?.length ?? 0}</td>
 								<td class="mono-cell">{row.queries}</td>
 								<td class="mono-cell">{formatTime(row.last)}</td>

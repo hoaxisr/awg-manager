@@ -13,7 +13,7 @@
 		outboundToneClass,
 		primaryIface,
 		resolveGroupActive,
-		resolverBadgeText,
+		resolverBadgeTitle,
 		type FircGroupsRuntime,
 		type FircProbeOptions,
 	} from '$lib/utils/fircGroups';
@@ -93,7 +93,7 @@
 							})
 						: ifaceList.length > 1
 							? m.firc_groups_chain_tip({ chain: ifaceList.join(' → ') })
-							: resolverBadgeText(rt, group),
+							: resolverBadgeTitle(rt, group),
 				primaryProbeFailed
 					? m.firc_fallback_probe_error_detail({
 							error: primaryProbe?.error || m.firc_fallback_timeout(),

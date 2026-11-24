@@ -5,6 +5,7 @@
 	import { FIRC_RULE_TYPES, type FircGroup, type FircListRule } from '$lib/types/firc';
 	import type { BulkRuleAction } from '$lib/utils/fircBulkRules';
 	import { PAGE_SIZE, type GroupListPageState } from '$lib/utils/fircGroups';
+	import { isDnsOnlyGroup, isSubnetRuleType } from '$lib/utils/fircResolve';
 	import FircBulkRulesBar from './FircBulkRulesBar.svelte';
 
 	interface Props {
@@ -49,6 +50,7 @@
 		ontoggleListRule,
 	}: Props = $props();
 
+	let dnsOnly = $derived(isDnsOnlyGroup(group));
 	let totalRulePages = $derived(Math.max(1, Math.ceil(group.rules.length / PAGE_SIZE)));
 	let pagedRules = $derived(
 		group.rules.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
@@ -112,6 +114,10 @@
 		/>
 	{/if}
 
+	{#if dnsOnly}
+		<p class="dns-only-hint">{m.firc_dns_only_no_subnets()}</p>
+	{/if}
+
 	{#if group.rules.length === 0}
 		<div class="rules-empty">
 			{m.firc_groups_rules_empty()}
@@ -137,7 +143,7 @@
 					<span class="rule-idx font-mono">#{absIdx + 1}</span>
 					<select class="inp rule-type-sel" bind:value={rule.type}>
 						{#each FIRC_RULE_TYPES as rt}
-							<option value={rt.value}>{rt.label}</option>
+							<option value={rt.value} disabled={dnsOnly && isSubnetRuleType(rt.value)}>{rt.label}</option>
 						{/each}
 					</select>
 					<input
@@ -303,6 +309,12 @@
 </div>
 
 <style>
+	.dns-only-hint {
+		margin: 0;
+		font-size: 11.5px;
+		color: var(--text-muted);
+	}
+
 	.bulk-check {
 		width: 15px;
 		height: 15px;

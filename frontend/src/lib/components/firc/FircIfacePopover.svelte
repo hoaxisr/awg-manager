@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { m } from '$lib/i18n';
 	import { Button } from '$lib/components/ui';
-	import { Ban, ChevronDown, RefreshCw, Zap } from 'lucide-svelte';
+	import { Ban, ChevronDown, Globe, RefreshCw, Zap } from 'lucide-svelte';
 	import { formatProbeLatency, probeLatencyTone, type FircProxyGroupRuntime } from '$lib/utils/fircFallback';
 	import {
 		MAX_GROUP_IFACES,
@@ -20,6 +20,7 @@
 		type FircProbeOptions,
 		type PickerItem,
 	} from '$lib/utils/fircGroups';
+	import { DNS_ONLY_IFACE, dnsOnlyBlocker } from '$lib/utils/fircResolve';
 	import type { FircGroup, FircProxyGroup } from '$lib/types/firc';
 
 	interface Props {
@@ -58,6 +59,8 @@
 	let canAddMoreIfaces = $derived(
 		ifaceList.length > 0 && !isSpecialIface(ifaceList[0]) && ifaceList.length < MAX_GROUP_IFACES,
 	);
+
+	let dnsBlocker = $derived(dnsOnlyBlocker(group, rt.interfaces));
 
 	function pickPrimary(id: string) {
 		if (setPrimaryIface(group, id)) onclose();
@@ -276,6 +279,23 @@
 			{/each}
 		</div>
 	{/if}
+
+	<div class="iface-pop-sec">
+		<div class="iface-pop-cap">{m.firc_dns_only_cap()}</div>
+		<button
+			type="button"
+			class="iface-special-row dns-only"
+			class:is-primary={ifaceList[0] === DNS_ONLY_IFACE}
+			disabled={Boolean(dnsBlocker)}
+			onclick={() => pickPrimary(DNS_ONLY_IFACE)}
+		>
+			<Globe size={13} class="special-ico" />
+			<div class="special-txt">
+				<span class="special-title">{m.firc_dns_only()}</span>
+				<span class="special-sub">{dnsBlocker || m.firc_dns_only_sub()}</span>
+			</div>
+		</button>
+	</div>
 
 	<div class="iface-pop-sec">
 		<div class="iface-pop-cap">{m.firc_groups_opt_block()}</div>
@@ -590,6 +610,20 @@
 	.iface-special-row :global(.special-ico) {
 		color: var(--color-error);
 		flex-shrink: 0;
+	}
+
+	.iface-special-row.dns-only.is-primary {
+		background: var(--color-accent-tint);
+		color: var(--color-accent);
+	}
+
+	.iface-special-row.dns-only :global(.special-ico) {
+		color: var(--color-accent);
+	}
+
+	.iface-special-row:disabled {
+		cursor: default;
+		opacity: 0.6;
 	}
 
 	.special-txt {

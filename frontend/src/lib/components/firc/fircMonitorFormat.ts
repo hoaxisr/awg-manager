@@ -1,4 +1,5 @@
 import { m, formatLocale, type UiText } from '$lib/i18n';
+import { DNS_ONLY_IFACE } from '$lib/utils/fircResolve';
 import type { FircDomainCheckResult } from '$lib/types/firc';
 
 // Форматтеры монитора и журнала FIRC: общие для панели и её дочерних
@@ -23,6 +24,7 @@ export function formatTime(ts?: number): string {
 }
 
 export function formatOutboundLabel(id?: string, label?: string): string {
+	if (id === DNS_ONLY_IFACE) return m.firc_dns_only();
 	if (label && id && label !== id) return `${label} (${id})`;
 	return label || id || m.firc_monitor_outbound_unknown();
 }

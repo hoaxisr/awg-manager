@@ -5,12 +5,17 @@
 	import { searchFircCatalog } from '$lib/utils/fircCatalogSearch';
 	import { intervalOptions, type GroupForm } from '$lib/utils/fircGroups';
 	import type { FircCatalog, FircListPreviewRes } from '$lib/types/firc';
+	import FircGroupDnsSection from './FircGroupDnsSection.svelte';
 
 	interface Props {
 		open: boolean;
 		mode: 'create' | 'edit';
 		form: GroupForm;
 		availableInterfaces: { value: string; label: string }[];
+		dohSupported: boolean;
+		allowDoh: boolean;
+		/** Почему форму не применить; пусто — применима. */
+		formError?: string;
 		/** Блок проверки доступности: только у цепочки Fallback из 2+ интерфейсов без привязанной прокси-группы. */
 		showCheck: boolean;
 		/** Имя прокси-группы, если проверка цепочки управляется через неё. */
@@ -31,6 +36,9 @@
 		mode,
 		form = $bindable(),
 		availableInterfaces,
+		dohSupported,
+		allowDoh,
+		formError = '',
 		showCheck,
 		managedProxyGroupName = '',
 		catalog,
@@ -80,34 +88,7 @@
 		</div>
 
 		<div class="sec-box">
-			<div class="field">
-				<label class="lbl" for="firc-gm-dns">{m.firc_groups_form_dns()}</label>
-				<select
-					id="firc-gm-dns"
-					class="inp"
-					bind:value={form.dnsMode}
-					disabled={form.iface === 'block'}
-				>
-					<option value="auto">{m.firc_groups_form_dns_auto()}</option>
-					<option value="own">{m.firc_groups_form_dns_own()}</option>
-					<option value="off">{m.firc_groups_form_dns_off()}</option>
-				</select>
-			</div>
-			{#if form.dnsMode === 'own' && form.iface !== 'block'}
-				<div class="field mt-2">
-					<label class="lbl" for="firc-gm-dns-srv">{m.firc_groups_form_dns_servers()}</label>
-					<input
-						id="firc-gm-dns-srv"
-						type="text"
-						class="inp font-mono"
-						placeholder="1.1.1.1, 8.8.8.8"
-						bind:value={form.dnsServer}
-					/>
-					<p class="hint">
-						{m.firc_groups_form_dns_servers_hint()}
-					</p>
-				</div>
-			{/if}
+			<FircGroupDnsSection bind:form {dohSupported} {allowDoh} />
 		</div>
 
 		{#if showCheck}
@@ -237,8 +218,9 @@
 
 	{#snippet actions()}
 		<div class="modal-footer-btns">
+			{#if formError}<span class="form-err" role="alert">{formError}</span>{/if}
 			<Button variant="ghost" size="sm" onclick={onclose}>{m.common_cancel()}</Button>
-			<Button variant="primary" size="sm" onclick={onsubmit}>
+			<Button variant="primary" size="sm" disabled={Boolean(formError)} onclick={onsubmit}>
 				{mode === 'create' ? m.firc_groups_modal_create_btn() : m.common_apply()}
 			</Button>
 		</div>
@@ -380,8 +362,17 @@
 		font-size: 11px;
 	}
 
+	.form-err {
+		flex: 1 1 100%;
+		font-size: 12px;
+		color: var(--color-error);
+		overflow-wrap: anywhere;
+	}
+
 	.modal-footer-btns {
 		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
 		justify-content: flex-end;
 		gap: 8px;
 		width: 100%;

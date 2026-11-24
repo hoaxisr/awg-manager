@@ -8,6 +8,7 @@ import type {
 	FircTunnelState,
 } from '$lib/types/firc';
 import { m } from '$lib/i18n';
+import { DNS_ONLY_IFACE } from '$lib/utils/fircResolve';
 
 export type FircIfaceHealthState = 'alive' | 'dead' | 'unknown';
 export type FircLatencyTone = 'good' | 'medium' | 'bad' | 'none';
@@ -43,7 +44,7 @@ export function normalizeFircIfaceList(raw: string | string[] | undefined): stri
 }
 
 export function isSpecialFircIface(id: string): boolean {
-	return id === 'blackhole' || id === 'block';
+	return id === 'blackhole' || id === 'block' || id === DNS_ONLY_IFACE;
 }
 
 export function isInternalServerFircInterface(

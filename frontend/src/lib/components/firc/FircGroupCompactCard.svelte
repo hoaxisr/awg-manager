@@ -51,8 +51,7 @@
 
 	let ifaceList = $derived(normalizeIfaceList(group.interface));
 	let ifaceVal = $derived(primaryIface(group.interface));
-	let isBlock = $derived(ifaceVal === 'block');
-	let isBlackhole = $derived(ifaceVal === 'blackhole');
+	let isSpecial = $derived(isSpecialIface(ifaceVal));
 	let hasCustomDevices = $derived(
 		(group.devices?.allow?.length ?? 0) > 0 || (group.devices?.deny?.length ?? 0) > 0,
 	);
@@ -62,10 +61,10 @@
 	let isFallbackGroup = $derived(ifaceList.length > 1 && !isSpecialIface(ifaceList[0]));
 	let matchedPg = $derived(matchingProxyGroup(rt.proxyGroups, group));
 	let primaryProbe = $derived(
-		!isBlock && !isBlackhole && (activeIface || ifaceVal) ? getIfaceProbe(rt, activeIface || ifaceVal) : null,
+		!isSpecial && (activeIface || ifaceVal) ? getIfaceProbe(rt, activeIface || ifaceVal) : null,
 	);
 	let primaryProbeFailed = $derived(
-		Boolean(!isBlock && !isBlackhole && primaryProbe && !primaryProbe.ok && !(isFallbackGroup && activeRes.allDead)),
+		Boolean(!isSpecial && primaryProbe && !primaryProbe.ok && !(isFallbackGroup && activeRes.allDead)),
 	);
 </script>
 
@@ -151,15 +150,15 @@
 			</div>
 		</div>
 	{:else}
-		{@const singleTarget = !isBlock && !isBlackhole ? (activeIface || ifaceVal) : ''}
+		{@const singleTarget = !isSpecial ? (activeIface || ifaceVal) : ''}
 		{@const isSingleChecking = Boolean(singleTarget && probingIfaces[singleTarget])}
 		<div class="compact-group-output">
 			<ArrowRight size={13} class="compact-out-arrow" />
-			{#if !isBlock && !isBlackhole && singleTarget}
+			{#if !isSpecial && singleTarget}
 				<span class="iface-dot {ifaceDotState(rt, group, singleTarget) ?? 'unknown'}"></span>
 			{/if}
 			<span class="compact-out-name">{formatIfaceButtonText(rt, group)}</span>
-			{#if !isBlock && !isBlackhole && primaryProbe && singleTarget}
+			{#if !isSpecial && primaryProbe && singleTarget}
 				<button
 					type="button"
 					class="compact-delay-btn {probeLatencyTone(primaryProbe)}"

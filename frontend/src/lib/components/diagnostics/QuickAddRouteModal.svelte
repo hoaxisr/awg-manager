@@ -8,6 +8,7 @@
 	import { notifications } from '$lib/stores/notifications';
 	import { fircSyncNonce } from '$lib/stores/firc';
 	import { dnsRoutesStore, staticRoutesStore } from '$lib/stores/routing';
+	import { isDnsOnlyGroup } from '$lib/utils/fircResolve';
 	import { detectFircRuleType } from '$lib/utils/fircBulkRules';
 	import { detectIpFamily, extractRootDomain, ipToHostCidr } from '$lib/utils/domainUtils';
 
@@ -97,7 +98,8 @@
 	);
 
 	let compatibleFirc = $derived<DestOption[]>(
-		fircGroups.map((g) => ({
+		// Подсети группе «только DNS» не положены: выхода у неё нет.
+		fircGroups.filter((g) => activeTarget?.kind === 'domain' || !isDnsOnlyGroup(g)).map((g) => ({
 			key: `firc:${g.id}`,
 			label: g.name || g.id,
 		})),

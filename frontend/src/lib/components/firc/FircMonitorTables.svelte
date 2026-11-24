@@ -4,6 +4,7 @@
 	import { Badge, StatusDot } from '$lib/components/ui';
 	import { ChevronDown, ChevronRight } from 'lucide-svelte';
 	import { formatBytes, formatTime, formatOutboundLabel } from './fircMonitorFormat';
+	import { DNS_ONLY_IFACE } from '$lib/utils/fircResolve';
 	import FircMonitorClientsList from './FircMonitorClientsList.svelte';
 
 	interface Props {
@@ -256,7 +257,7 @@
 										<div class="srv-name">{grp.activeOutboundLabel}</div>
 									{/if}
 									<Badge variant={grp.live ? 'info' : 'warning'} size="xs" mono>
-										{grp.activeOutbound || '—'}
+										{grp.activeOutbound === DNS_ONLY_IFACE ? m.firc_dns_only() : grp.activeOutbound || '—'}
 									</Badge>
 								</div>
 							</td>
