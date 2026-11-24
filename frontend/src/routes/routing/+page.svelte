@@ -331,18 +331,11 @@
 
     let tabItems = $derived(
         ([
-            // NDMS dns-proxy with object-group fqdn is OS5-only — gate the
-            // tab on isOS5 so OS4 routers don't see an unusable NDMS tab.
-            isOS5 ? { id: 'dns', label: 'NDMS', badge: dnsActiveCount } : null,
-            { id: 'ip', label: m.routing_page_tab_ip(), badge: ipActiveCount },
-            { id: 'clientvpn', label: m.routing_page_tab_clientvpn(), badge: clientActiveCount },
-            { id: 'policy', label: m.routing_page_tab_policy(), badge: policyCount },
             {
                 id: 'firc',
                 label: 'FIRC',
                 badge: $fircHasDraft ? '•' : undefined,
                 badgeTone: $fircHasDraft ? 'warning' : undefined,
-                separatorBefore: true,
             },
             // Sing-box modes as one dropdown chip (same pattern as tunnels page).
             singboxMenuChildren.length > 0
@@ -353,6 +346,9 @@
                         children: singboxMenuChildren,
                     }
                 : null,
+            { id: 'ip', label: m.routing_page_tab_ip(), badge: ipActiveCount, separatorBefore: true },
+            { id: 'clientvpn', label: m.routing_page_tab_clientvpn(), badge: clientActiveCount },
+            { id: 'policy', label: m.routing_page_tab_policy(), badge: policyCount },
             // Zapret — отдельный движок, и ставит его пользователь, а не
             // AWGM. Вкладка появляется только когда движок найден на роутере.
             zapretInstalled
@@ -371,6 +367,9 @@
             singboxInstalled || (geoFileCount ?? 0) > 0
                 ? { id: 'geodata', label: m.routing_page_tab_geodata(), badge: geoFileCount ?? 0, separatorBefore: true }
                 : null,
+            // NDMS dns-proxy with object-group fqdn is OS5-only — gate the
+            // tab on isOS5 so OS4 routers don't see an unusable NDMS tab.
+            isOS5 ? { id: 'dns', label: 'NDMS', badge: dnsActiveCount, separatorBefore: true } : null,
         ] as (TabItem | null)[])
             .filter((t): t is TabItem => t !== null)
             .filter((t) => (t.children ? true : tabVisible(t.id)))
