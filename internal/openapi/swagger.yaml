@@ -7633,7 +7633,7 @@ definitions:
         type: string
       policyHolds:
         example:
-        - HydraRoute
+        - Policy0
         items:
           type: string
         type: array
