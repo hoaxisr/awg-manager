@@ -499,11 +499,10 @@ func (h *SingboxHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 // Control handles POST /api/singbox/control.
 // Body: {"action": "start"|"stop"|"restart"}.
-// Returns the fresh status so the client can update its cache. Mirrors the
-// shape of /api/system/hydraroute-control.
+// Returns the fresh status so the client can update its cache.
 //
 //	@Summary		Control sing-box process
-//	@Description	Starts, stops, or restarts the sing-box engine. Returns the fresh status snapshot. Mirrors /system/hydraroute-control.
+//	@Description	Starts, stops, or restarts the sing-box engine. Returns the fresh status snapshot.
 //	@Tags			singbox
 //	@Accept			json
 //	@Produce		json

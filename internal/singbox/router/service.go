@@ -200,8 +200,8 @@ func (s *ServiceImpl) tunExternalConfig() (want, known bool) {
 }
 
 // GeoTagExpander is the narrow contract used by dat→SRS rule-set export.
-// *hydraroute.GeoDataStore satisfies it without making router depend on the
-// hydraroute package.
+// *geodata.GeoDataStore satisfies it without making router depend on the
+// geodata package.
 type GeoTagExpander interface {
 	ExpandGeoTag(kind, tag string) (lines []string, filePath string, err error)
 	// ExpandGeoTagTyped preserves the v2ray domain type per line

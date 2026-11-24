@@ -44,7 +44,6 @@ const (
 	ResourceRoutingPolicyDevices    Resource = "routing.policyDevices"
 	ResourceRoutingPolicyInterfaces Resource = "routing.policyInterfaces"
 	ResourceRoutingClientRoutes     Resource = "routing.clientRoutes"
-	ResourceRoutingHydrarouteStatus Resource = "routing.hydrarouteStatus"
 	ResourceRoutingZapretStatus     Resource = "routing.zapretStatus"
 
 	ResourceDeviceProxyConfig  Resource = "deviceproxy.config"
@@ -88,7 +87,6 @@ var AllResources = []Resource{
 	ResourceRoutingPolicyDevices,
 	ResourceRoutingPolicyInterfaces,
 	ResourceRoutingClientRoutes,
-	ResourceRoutingHydrarouteStatus,
 	ResourceRoutingZapretStatus,
 	ResourceDeviceProxyConfig,
 	ResourceDeviceProxyRuntime,

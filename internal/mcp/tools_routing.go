@@ -18,7 +18,7 @@ type routeIDIn struct {
 
 // removedDNSOut carries the deleted list back to the caller: the deletion
 // is permanent and add_dns_route cannot recreate it (it takes only
-// name/domains/tunnelId, so subnets, excludes, backend, subscriptions and
+// name/domains/tunnelId, so subnets, excludes, subscriptions and
 // multi-target routes are lost). The record is the only thing an agent can
 // show the user afterwards.
 type removedDNSOut struct {
@@ -267,9 +267,9 @@ func registerRoutingTools(s *mcp.Server, d Deps) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "update_dns_route",
 		Description: "Edit an existing domain routing list in place: rename it, replace its manual entries or excludes, add or remove domain list subscriptions, send it through a different tunnel or an ordered set of targets with failover, or switch its kill switch. " +
-			"Omitted fields are left untouched and the backend always survives, which is why this is the way to change a list, " +
+			"Omitted fields are left untouched, which is why this is the way to change a list, " +
 			"not remove_dns_route followed by add_dns_route. manualDomains and excludes each replace EVERY entry of their kind — read them from get_dns_route first. " +
-			"HydraRoute lists take one target and no excludes, subscriptions or kill switch. Check the returned warnings.",
+			"Check the returned warnings.",
 		// Not idempotent: addSubscriptionUrls fetches the lists again, and a
 		// retried removeSubscriptions is refused once the ref is gone.
 		Annotations: safeWrite("Update DNS route", false),
@@ -341,7 +341,7 @@ func registerRoutingTools(s *mcp.Server, d Deps) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "remove_dns_route",
 		Description: "Delete a domain routing list by id. DESTRUCTIVE: the list is deleted permanently and cannot be restored through MCP — " +
-			"add_dns_route cannot bring back the backend, the icon, subscriptions whose full address you do not have, or the list's id. " +
+			"add_dns_route cannot bring back the icon, subscriptions whose full address you do not have, or the list's id. " +
 			"Confirm with the user first; the deleted record is returned so you can show what was destroyed.",
 		Annotations: destructiveWrite("Remove DNS route", true),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in routeIDIn) (*mcp.CallToolResult, removedDNSOut, error) {

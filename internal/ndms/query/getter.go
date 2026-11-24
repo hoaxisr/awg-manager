@@ -40,8 +40,7 @@ func (nopLogger) Debugf(string, ...any) {}
 func NopLogger() Logger { return nopLogger{} }
 
 // ErrNotSupportedOnOS4 is returned by Stores that query endpoints absent
-// on OS 4.x firmware (e.g. dns-proxy). Callers decide whether to surface
-// or fall back to an alternative backend (e.g. HR Neo for DNS routing).
+// on OS 4.x firmware (e.g. dns-proxy). Callers decide whether to surface it.
 var ErrNotSupportedOnOS4 = errors.New("ndms query: feature not available on OS 4.x")
 
 // decodeRCMap unmarshals a JSON response that is either a map of named

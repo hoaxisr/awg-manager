@@ -26,7 +26,6 @@ export type ResourceKey =
 	| 'routing.policyInterfaces'    // ResourceRoutingPolicyInterfaces
 	| 'routing.clientRoutes'        // ResourceRoutingClientRoutes
 	| 'routing.tunnels'             // ResourceRoutingTunnels
-	| 'routing.hydrarouteStatus'    // ResourceRoutingHydrarouteStatus
 	| 'routing.zapretStatus'        // ResourceRoutingZapretStatus
 	| 'routing.autolistStatus'      // публикатора НЕТ: сателлит — внешний процесс, стор живёт на опросе
 	| 'deviceproxy.config'           // ResourceDeviceProxyConfig   — also clears missing-target banner

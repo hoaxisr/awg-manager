@@ -6,6 +6,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/accesspolicy"
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -36,8 +37,8 @@ const policyHoldTimeout = 15 * time.Second
 // интерфейс, политику с туннеля не уводит.
 func (s *Service) SetPolicies(p policyPermits) { s.policies = p }
 
-// releasePolicies снимает permit туннеля во всех политиках, где он разрешён,
-// и запоминает позиции для возврата. Политика NDMS сразу переходит на
+// releasePolicies снимает permit туннеля во всех стандартных политиках
+// (PolicyN), где он разрешён, и запоминает позиции для возврата. Политика NDMS сразу переходит на
 // следующий интерфейс, а сам туннель остаётся поднятым — проверки через него
 // продолжаются, и permit вернётся после restoreAfterSuccesses успешных подряд
 // (restorePolicies).
@@ -60,6 +61,11 @@ func (s *Service) releasePolicies(tunnelID string) {
 	// «снято» — возврат мог пройти частично, а deny прошлого порога упасть.
 	var live []storage.PolicyHold
 	for _, p := range policies {
+		// Нестандартную политику ведёт другая программа (HydraRoute Neo и
+		// подобные) — её выходы не наши.
+		if !accesspolicy.IsStandardPolicyName(p.Name) {
+			continue
+		}
 		for _, pi := range p.Interfaces {
 			if pi.Name == iface && !pi.Denied {
 				live = append(live, storage.PolicyHold{Policy: p.Name, Order: pi.Order})

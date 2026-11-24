@@ -19,7 +19,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/autolistdetect"
 	"github.com/hoaxisr/awg-manager/internal/dnscheck"
 	"github.com/hoaxisr/awg-manager/internal/events"
-	"github.com/hoaxisr/awg-manager/internal/hydraroute"
+	"github.com/hoaxisr/awg-manager/internal/geodata"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
@@ -266,7 +266,7 @@ func newGuardServer(t *testing.T) (*Server, *auth.SessionStore) {
 		// Ниже — зависимости, за nil-гейтами которых прячутся целые секции
 		// маршрутов. Без них пути не регистрируются вовсе, и гард на них
 		// проверить нечем.
-		hydraService:       &hydraroute.Service{},
+		geoData:            &geodata.GeoDataStore{},
 		zapretService:      &zapret.Service{},
 		autolistService:    &autolistdetect.Service{},
 		dnsCheckService:    &dnscheck.Service{},

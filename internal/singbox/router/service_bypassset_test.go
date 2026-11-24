@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hoaxisr/awg-manager/internal/hydraroute"
+	"github.com/hoaxisr/awg-manager/internal/geodata"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router/bypassset"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
@@ -86,7 +86,7 @@ func newStubAdapter(files []string, answers map[string]geoAnswer) geoSourceAdapt
 		extract: func(path, _ string) ([]string, error) {
 			a, ok := answers[path]
 			if !ok {
-				return nil, fmt.Errorf("тег: %w", hydraroute.ErrGeoTagNotFound)
+				return nil, fmt.Errorf("тег: %w", geodata.ErrGeoTagNotFound)
 			}
 			return a.lines, a.err
 		},

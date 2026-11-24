@@ -65,3 +65,15 @@ func newTestNDMS() (*query.Queries, *command.Commands, *fakePoster, *query.FakeG
 	})
 	return q, c, poster, fg
 }
+
+// stubResolver — имена интерфейсов по tunnel ID; незнакомый ID возвращается как есть.
+type stubResolver struct {
+	kernelByTunnel map[string]string
+}
+
+func (s *stubResolver) ResolveInterface(_ context.Context, tunnelID string) (string, error) {
+	if v, ok := s.kernelByTunnel[tunnelID]; ok {
+		return v, nil
+	}
+	return tunnelID, nil
+}
