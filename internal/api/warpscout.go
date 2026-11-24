@@ -72,7 +72,10 @@ func boolToInt(b bool) int {
 	return 0
 }
 
-var _ warpscout.TunnelOps = (*WarpTunnelOps)(nil)
+var (
+	_ warpscout.TunnelOps          = (*WarpTunnelOps)(nil)
+	_ warpscout.TunnelKeyInventory = (*WarpTunnelOps)(nil)
+)
 
 // NewWarpAutopilotProvider строит легковесный провайдер карты активных
 // профилей автопилота WARP для обогащения списков туннелей.
@@ -343,13 +346,10 @@ func (o *WarpTunnelOps) populateViaInfoSeeded(ctx context.Context, refs []warpsc
 	}
 }
 
-// List — managed-туннели и системные WG-интерфейсы (для защищённых сохраняются
-// флаги Protected и LocalPublicKey, чтобы проверки ключей видели все живые
-// интерфейсы включая External != ""; целевой UI отбирает список в Service.Targets).
-// Теневые NDMS-записи управляемых NativeWG-туннелей исключаются.
+// List — туннели для выбора цели (управляемые и незащищённые системные
+// WG-клиенты). При сбое RCI управляемые туннели из Store всё равно доступны.
 func (o *WarpTunnelOps) List(ctx context.Context) ([]warpscout.TunnelRef, error) {
 	out := []warpscout.TunnelRef{}
-	managedNative := map[string]bool{}
 	if o.Store != nil {
 		list, err := o.Store.List()
 		if err != nil {
@@ -358,9 +358,49 @@ func (o *WarpTunnelOps) List(ctx context.Context) ([]warpscout.TunnelRef, error)
 		for i := range list {
 			if ref, ok := o.managedRef(ctx, &list[i]); ok {
 				out = append(out, ref)
-				if ref.Mode == warpscout.TargetNative && list[i].NWGIndex >= 0 {
-					managedNative[fmt.Sprintf("Wireguard%d", list[i].NWGIndex)] = true
+			}
+		}
+	}
+	if o.System != nil {
+		if sys, err := o.System.List(ctx); err == nil {
+			for i := range sys {
+				ref := o.systemRef(&sys[i])
+				if ref.Protected {
+					continue
 				}
+				out = append(out, ref)
+			}
+		}
+	}
+	o.populateViaInfo(ctx, out)
+	return out, nil
+}
+
+// ListKeys возвращает облегчённый список всех туннелей (включая защищённые
+// системные вроде External != "") для проверки занятости ключей без опроса
+// Svc.Get и populateViaInfo. При сбое Store.List или System.List возвращает ошибку.
+func (o *WarpTunnelOps) ListKeys(ctx context.Context) ([]warpscout.TunnelKeyRef, error) {
+	out := []warpscout.TunnelKeyRef{}
+	managedNative := map[string]bool{}
+	if o.Store != nil {
+		list, err := o.Store.List()
+		if err != nil {
+			return nil, err
+		}
+		for i := range list {
+			mode, ok := modeOfBackend(list[i].Backend)
+			if !ok {
+				continue
+			}
+			pub, _ := warpscout.PublicKeyOf(list[i].Interface.PrivateKey)
+			out = append(out, warpscout.TunnelKeyRef{
+				Mode:           mode,
+				ID:             list[i].ID,
+				Name:           list[i].Name,
+				LocalPublicKey: pub,
+			})
+			if mode == warpscout.TargetNative && list[i].NWGIndex >= 0 {
+				managedNative[fmt.Sprintf("Wireguard%d", list[i].NWGIndex)] = true
 			}
 		}
 	}
@@ -373,10 +413,18 @@ func (o *WarpTunnelOps) List(ctx context.Context) ([]warpscout.TunnelRef, error)
 			if managedNative[sys[i].ID] {
 				continue
 			}
-			out = append(out, o.systemRef(&sys[i]))
+			name := strings.TrimSpace(sys[i].Description)
+			if name == "" {
+				name = sys[i].ID
+			}
+			out = append(out, warpscout.TunnelKeyRef{
+				Mode:           warpscout.TargetSystem,
+				ID:             sys[i].ID,
+				Name:           name,
+				LocalPublicKey: strings.TrimSpace(sys[i].PublicKey),
+			})
 		}
 	}
-	o.populateViaInfo(ctx, out)
 	return out, nil
 }
 
@@ -1296,11 +1344,14 @@ func defaultRotateKernelPort(ctx context.Context, iface string) error {
 	return nil
 }
 
-// warpLookupIPAddr переопределяется только в тестах для подмены DNS-резолвера.
-var warpLookupIPAddr warpscout.LookupIPAddrFunc
+// warpLookupIPAddr и warpNewTransport переопределяются только в тестах.
+var (
+	warpLookupIPAddr warpscout.LookupIPAddrFunc
+	warpNewTransport = httpclient.NewTransport
+)
 
-func wrapWarpDialContext(base warpscout.DialContextFunc, boundIface string, disallow warpscout.IPDisallowFunc) warpscout.DialContextFunc {
-	if strings.TrimSpace(boundIface) != "" && warpLookupIPAddr == nil {
+func wrapWarpDialContext(base warpscout.DialContextFunc, preserveBoundDNS bool, disallow warpscout.IPDisallowFunc) warpscout.DialContextFunc {
+	if preserveBoundDNS && warpLookupIPAddr == nil {
 		return warpscout.NewPostDialGuardedDialContext(base, disallow)
 	}
 	return warpscout.NewGuardedDialContextWithPolicy(base, warpLookupIPAddr, disallow)
@@ -1308,13 +1359,13 @@ func wrapWarpDialContext(base warpscout.DialContextFunc, boundIface string, disa
 
 // WarpHTTPClientFactory — клиент Cloudflare API с прямым выходом через WAN.
 // Короткий таймаут рукопожатия позволяет быстро перейти на резервный выход
-// (прокси/туннель), если провайдер блокирует домен регистрации на сыром WAN.
+// (прокси), если провайдер блокирует домен регистрации на сыром WAN.
 func WarpHTTPClientFactory(wanIface string) (*http.Client, error) {
-	tr, err := httpclient.NewTransport(httpclient.TransportConfig{Interface: wanIface, Proxy: httpclient.ProxyDirect})
+	tr, err := warpNewTransport(httpclient.TransportConfig{Interface: wanIface, Proxy: httpclient.ProxyDirect})
 	if err != nil {
 		return nil, err
 	}
-	tr.DialContext = wrapWarpDialContext(tr.DialContext, wanIface, warpscout.IsDisallowedRelayIP)
+	tr.DialContext = wrapWarpDialContext(tr.DialContext, strings.TrimSpace(wanIface) != "", warpscout.IsDisallowedRelayIP)
 	tr.TLSHandshakeTimeout = 5 * time.Second
 	tr.ResponseHeaderTimeout = 8 * time.Second
 	return &http.Client{Transport: tr, Timeout: 10 * time.Second}, nil
@@ -1323,7 +1374,7 @@ func WarpHTTPClientFactory(wanIface string) (*http.Client, error) {
 // WarpSplitTLSClientFactory — прямой WAN-клиент с фрагментацией TLS ClientHello
 // по SNI (обход ТСПУ без внешнего прокси).
 func WarpSplitTLSClientFactory(wanIface string) (*http.Client, error) {
-	tr, err := httpclient.NewTransport(httpclient.TransportConfig{Interface: wanIface, Proxy: httpclient.ProxyDirect})
+	tr, err := warpNewTransport(httpclient.TransportConfig{Interface: wanIface, Proxy: httpclient.ProxyDirect})
 	if err != nil {
 		return nil, err
 	}
@@ -1331,7 +1382,7 @@ func WarpSplitTLSClientFactory(wanIface string) (*http.Client, error) {
 	if baseDial == nil {
 		baseDial = (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext
 	}
-	tr.DialContext = warpscout.NewSplitTLSDialer(wrapWarpDialContext(baseDial, wanIface, warpscout.IsDisallowedRelayIP))
+	tr.DialContext = warpscout.NewSplitTLSDialer(wrapWarpDialContext(baseDial, strings.TrimSpace(wanIface) != "", warpscout.IsDisallowedRelayIP))
 	tr.TLSHandshakeTimeout = 5 * time.Second
 	tr.ResponseHeaderTimeout = 8 * time.Second
 	return &http.Client{Transport: tr, Timeout: 10 * time.Second}, nil
@@ -1353,22 +1404,21 @@ func WarpProxyHTTPClient(proxyURL string) (*http.Client, error) {
 	if warpscout.IsDisallowedLiteralIP(u.Hostname()) {
 		return nil, fmt.Errorf("%w: указанный IP-адрес прокси не допускается", warpscout.ErrInvalidInput)
 	}
-	tr, err := httpclient.NewTransport(httpclient.TransportConfig{ProxyURL: trimmed})
+	tr, err := warpNewTransport(httpclient.TransportConfig{ProxyURL: trimmed})
 	if err != nil {
 		return nil, warpscout.SanitizeProxyError(fmt.Errorf("%w: некорректный URL прокси: %v", warpscout.ErrInvalidInput, err), trimmed)
 	}
-	tr.DialContext = wrapWarpDialContext(tr.DialContext, "", warpscout.IsDisallowedIP)
+	tr.DialContext = wrapWarpDialContext(tr.DialContext, false, warpscout.IsDisallowedIP)
 	tr.TLSHandshakeTimeout = 8 * time.Second
 	tr.ResponseHeaderTimeout = 10 * time.Second
 	return &http.Client{Transport: tr, Timeout: 12 * time.Second}, nil
 }
 
-// WarpFallbackClients собирает резервные HTTP-клиенты для регистрации WARP и
-// привязки WARP+ на случай блокировки API Cloudflare на прямом WAN (не более 3 выходов):
+// WarpFallbackClients собирает явно выбранные пользователем резервные HTTP-клиенты
+// для регистрации WARP и привязки WARP+ на случай блокировки API Cloudflare на WAN:
 //  1. настроенный не-direct маршрут загрузок (downloader);
-//  2. первый активный не-direct локальный «Прокси для устройств» (deviceproxy);
-//  3. первый запущенный незащищённый не-WARP VPN-туннель.
-func WarpFallbackClients(ctx context.Context, dp *deviceproxy.Service, ops *WarpTunnelOps, dl *downloader.Service) []warpscout.FallbackClient {
+//  2. первый активный не-direct локальный «Прокси для устройств» (deviceproxy).
+func WarpFallbackClients(ctx context.Context, dp *deviceproxy.Service, dl *downloader.Service) []warpscout.FallbackClient {
 	var out []warpscout.FallbackClient
 	closeAll := func() {
 		for _, item := range out {
@@ -1396,9 +1446,9 @@ func WarpFallbackClients(ctx context.Context, dp *deviceproxy.Service, ops *Warp
 					trClone.TLSHandshakeTimeout = 5 * time.Second
 					trClone.ResponseHeaderTimeout = 8 * time.Second
 					if trClone.Proxy == nil {
-						trClone.DialContext = wrapWarpDialContext(trClone.DialContext, "bound", warpscout.IsDisallowedRelayIP)
+						trClone.DialContext = wrapWarpDialContext(trClone.DialContext, true, warpscout.IsDisallowedRelayIP)
 					} else {
-						trClone.DialContext = wrapWarpDialContext(trClone.DialContext, "", warpscout.IsDisallowedIP)
+						trClone.DialContext = wrapWarpDialContext(trClone.DialContext, false, warpscout.IsDisallowedIP)
 					}
 					cCopy.Transport = trClone
 				}
@@ -1433,36 +1483,9 @@ func WarpFallbackClients(ctx context.Context, dp *deviceproxy.Service, ops *Warp
 			if inst.Auth.Enabled && inst.Auth.Username != "" {
 				u.User = url.UserPassword(inst.Auth.Username, inst.Auth.Password)
 			}
-			if tr, err := httpclient.NewTransport(httpclient.TransportConfig{ProxyURL: u.String()}); err == nil {
-				tr.DialContext = wrapWarpDialContext(tr.DialContext, "", warpscout.IsDisallowedIP)
+			if tr, err := warpNewTransport(httpclient.TransportConfig{ProxyURL: u.String()}); err == nil {
+				tr.DialContext = wrapWarpDialContext(tr.DialContext, false, warpscout.IsDisallowedIP)
 				tr.TLSHandshakeTimeout = 6 * time.Second
-				tr.ResponseHeaderTimeout = 8 * time.Second
-				c := &http.Client{Transport: tr, Timeout: 10 * time.Second}
-				out = append(out, warpscout.FallbackClient{
-					Client: c,
-					Close:  c.CloseIdleConnections,
-				})
-				break
-			}
-		}
-	}
-
-	if ctx != nil && ctx.Err() != nil {
-		closeAll()
-		return nil
-	}
-	if ops != nil {
-		if list, err := ops.List(ctx); err == nil {
-			for _, ref := range list {
-				if !ref.Running || ref.Protected || ref.IsWarp || ref.Iface == "" {
-					continue
-				}
-				tr, err := httpclient.NewTransport(httpclient.TransportConfig{Interface: ref.Iface, Proxy: httpclient.ProxyDirect})
-				if err != nil {
-					continue
-				}
-				tr.DialContext = wrapWarpDialContext(tr.DialContext, ref.Iface, warpscout.IsDisallowedRelayIP)
-				tr.TLSHandshakeTimeout = 5 * time.Second
 				tr.ResponseHeaderTimeout = 8 * time.Second
 				c := &http.Client{Transport: tr, Timeout: 10 * time.Second}
 				out = append(out, warpscout.FallbackClient{
@@ -1766,7 +1789,7 @@ func (h *WarpScoutHandler) FindJunkStart(w http.ResponseWriter, r *http.Request)
 		h.fail(w, err)
 		return
 	}
-	response.Success(w, h.svc.State().FindJunk)
+	response.Success(w, h.svc.FindJunkSnapshot())
 }
 
 // FindJunkStop — остановка автоподбора маскировки (сохраняется лучший найденный набор).

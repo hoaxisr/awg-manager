@@ -433,6 +433,11 @@ func (s *Service) swap(ctx context.Context, p Profile, ref *TunnelRef, reason st
 	swapAcct := acct
 	var scanOverride string
 	var outerRef *TunnelRef
+	keys, hasInv, checkErr := s.listTunnelKeys(ctx)
+	if checkErr != nil {
+		s.finishSwap(ctx, p, ev, st, checkErr, nil, false, false)
+		return
+	}
 	if ref.ViaIface != "" {
 		// Каскадный WARP-in-WARP обязан сканировать только через свой внешний туннель.
 		scanOverride = ref.ViaIface
@@ -451,15 +456,11 @@ func (s *Service) swap(ctx context.Context, p Profile, ref *TunnelRef, reason st
 				Running:  ref.ViaRunning,
 			}
 		}
-		// Ключ скана обязан отличаться от ключа внешнего туннеля и чужих живых
-		// туннелей, иначе Cloudflare рвёт их сессию. Берём готовую запись:
+		// Ключ скана обязан отличаться от ключа внешнего, целевого и любых
+		// других туннелей, иначе Cloudflare рвёт их сессию. Берём готовую запись:
 		// регистрировать слот без пользователя автоподмена не должна.
-		var acctErr error
-		if swapAcct, acctErr = s.existingAccountFor(ctx, ref.Mode, ref.ID, outerRef.LocalPublicKey); acctErr != nil {
-			s.finishSwap(ctx, p, ev, st, acctErr, nil, false, false)
-			return
-		} else if swapAcct == nil {
-			s.finishSwap(ctx, p, ev, st, errors.New("нет свободной учётной записи WARP с ключом, отличным от внешнего туннеля, — запустите скан вручную"), nil, false, false)
+		if swapAcct = s.existingFreeAccountFrom(keys, hasInv, outerRef.LocalPublicKey, ref.LocalPublicKey); swapAcct == nil {
+			s.finishSwap(ctx, p, ev, st, errors.New("нет свободной учётной записи WARP с ключом, отличным от внешнего и целевого туннелей, — запустите скан вручную"), nil, false, false)
 			return
 		}
 	} else {
@@ -470,28 +471,19 @@ func (s *Service) swap(ctx context.Context, p Profile, ref *TunnelRef, reason st
 			scanOverride = wan
 		}
 		outerRef = s.resolveRouteTunnel(ctx, s.resolveScanIface(ctx, scanOverride))
-		// Если выбранный ключ занят целевым, внешним или любым другим живым туннелем
+		// Если выбранный ключ занят целевым, внешним или любым другим туннелем
 		// (включая настроенные вне WarpScout с проверкой LocalPublicKey), ищем свободную
-		// запись или пропускаем автоподмену, чтобы не рвать чужую сессию.
+		// запись по тому же снимку или пропускаем автоподмену, чтобы не рвать чужую сессию.
 		outerConflict := outerRef != nil && outerRef.IsWarp && outerRef.LocalPublicKey != "" &&
 			strings.TrimSpace(swapAcct.PublicKey) == strings.TrimSpace(outerRef.LocalPublicKey)
-		inUse, owner, checkErr := s.isAccountKeyInUse(ctx, swapAcct.PublicKey)
-		if checkErr != nil {
-			s.finishSwap(ctx, p, ev, st, checkErr, nil, false, false)
-			return
-		}
+		inUse, owner := s.findKeyOwnerInList(keys, hasInv, swapAcct.PublicKey)
 		sameTargetKey := ref.LocalPublicKey != "" && strings.TrimSpace(swapAcct.PublicKey) == strings.TrimSpace(ref.LocalPublicKey)
 		if inUse || outerConflict || sameTargetKey {
 			avoid := []string{swapAcct.PublicKey, ref.LocalPublicKey}
 			if outerRef != nil {
 				avoid = append(avoid, outerRef.LocalPublicKey)
 			}
-			other, otherErr := s.existingFreeAccount(ctx, avoid...)
-			if otherErr != nil {
-				s.finishSwap(ctx, p, ev, st, otherErr, nil, false, false)
-				return
-			}
-			if other != nil {
+			if other := s.existingFreeAccountFrom(keys, hasInv, avoid...); other != nil {
 				swapAcct = other
 			} else {
 				ownerName := owner
@@ -501,7 +493,7 @@ func (s *Service) swap(ctx context.Context, p Profile, ref *TunnelRef, reason st
 				if ownerName == "" {
 					ownerName = ref.Name
 				}
-				s.finishSwap(ctx, p, ev, st, fmt.Errorf("ключ аккаунта WARP занят живым туннелем %q — автоподмена пропущена, чтобы не разорвать соединение", ownerName), nil, false, false)
+				s.finishSwap(ctx, p, ev, st, fmt.Errorf("ключ аккаунта WARP занят туннелем %q — автоподмена пропущена, чтобы не разорвать соединение", ownerName), nil, false, false)
 				return
 			}
 		}

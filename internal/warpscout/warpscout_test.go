@@ -54,18 +54,20 @@ func (r *fakeRunner) Run(ctx context.Context, p ScanParams, on func(EngineEvent)
 }
 
 type fakeTunnels struct {
-	mu          sync.Mutex
-	refs        map[string]*TunnelRef
-	swaps       []string
-	swapOpts    []SwapOptions
-	renames     []string
-	created     []string
-	createdOpts []CreateOptions
-	getErr      error
-	listErr     error
-	createErr   error
-	onSwap      func(r *TunnelRef)
-	onCreate    func(r *TunnelRef)
+	mu            sync.Mutex
+	refs          map[string]*TunnelRef
+	swaps         []string
+	swapOpts      []SwapOptions
+	renames       []string
+	created       []string
+	createdOpts   []CreateOptions
+	getErr        error
+	listErr       error
+	listCalls     int
+	listKeysCalls int
+	createErr     error
+	onSwap        func(r *TunnelRef)
+	onCreate      func(r *TunnelRef)
 }
 
 func key(m TargetMode, id string) string { return string(m) + "/" + id }
@@ -73,6 +75,7 @@ func key(m TargetMode, id string) string { return string(m) + "/" + id }
 func (f *fakeTunnels) List(context.Context) ([]TunnelRef, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.listCalls++
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
@@ -81,6 +84,49 @@ func (f *fakeTunnels) List(context.Context) ([]TunnelRef, error) {
 		out = append(out, *r)
 	}
 	return out, nil
+}
+
+func (f *fakeTunnels) ListKeys(context.Context) ([]TunnelKeyRef, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.listKeysCalls++
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	var out []TunnelKeyRef
+	for _, r := range f.refs {
+		out = append(out, TunnelKeyRef{
+			Mode:           r.Mode,
+			ID:             r.ID,
+			Name:           r.Name,
+			LocalPublicKey: r.LocalPublicKey,
+		})
+	}
+	return out, nil
+}
+
+func (f *fakeTunnels) ListCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.listCalls
+}
+
+func (f *fakeTunnels) ResetListCount() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.listCalls = 0
+}
+
+func (f *fakeTunnels) ListKeysCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.listKeysCalls
+}
+
+func (f *fakeTunnels) ResetListKeysCount() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.listKeysCalls = 0
 }
 
 func (f *fakeTunnels) Get(_ context.Context, m TargetMode, id string) (*TunnelRef, error) {
@@ -1922,10 +1968,16 @@ func TestWatchdog_WarpInWarp_WaitsForOuterAndScansViaOuter(t *testing.T) {
 		t.Fatal(err)
 	}
 	tun.mu.Lock()
+	tun.refs[key(TargetNative, "awg50")] = &TunnelRef{
+		Mode: TargetNative, ID: "awg50", Name: "WARP HEL", Iface: "nwg3",
+		Endpoint: "162.159.192.255:880", AddressV4: "172.16.0.10",
+		LocalPublicKey: "pub", PeerPublicKey: WarpPeerPublicKey,
+		IsWarp: true, Running: true,
+	}
 	tun.refs[key(TargetNative, "awg60")] = &TunnelRef{
 		Mode: TargetNative, ID: "awg60", Name: "WARP-in-WARP FRA", Iface: "nwg4",
 		Endpoint: "162.159.193.1:2408", AddressV4: "172.16.0.3",
-		LocalPublicKey: "pub-inner", PeerPublicKey: WarpPeerPublicKey,
+		LocalPublicKey: "pub-awg60", PeerPublicKey: WarpPeerPublicKey,
 		IsWarp: true, Running: true,
 		ViaMode: TargetNative, ViaTunnelID: "awg50", ViaIface: "nwg3",
 		ViaLabel: "WARP HEL", ViaEndpoint: "162.159.192.255:880", ViaRunning: false,
@@ -1970,6 +2022,19 @@ func TestWatchdog_WarpInWarp_WaitsForOuterAndScansViaOuter(t *testing.T) {
 	}
 	if runner.calls[0].PrivateKey != "aW5uZXItcHJpdi1rZXk=" {
 		t.Fatalf("ожидался ключ InnerAccount, получили %q", runner.calls[0].PrivateKey)
+	}
+
+	// Каскадная ветка так же не должна сканировать собственным LocalPublicKey целевого
+	// туннеля, если другой свободной учётной записи нет (одинаково с прямой веткой).
+	tun.mu.Lock()
+	tun.refs[key(TargetNative, "awg60")].LocalPublicKey = "pub-inner"
+	tun.mu.Unlock()
+	prober.mu.Lock()
+	prober.queue = []TraceResult{{Colo: "DME", Loc: "RU", Warp: "on"}, {Colo: "DME", Loc: "RU", Warp: "on"}}
+	prober.mu.Unlock()
+	s.checkOnce(context.Background(), p, &watcherState{})
+	if len(runner.calls) != 1 {
+		t.Fatalf("каскад не должен сканировать ключом целевого туннеля без свободного слота, calls=%d", len(runner.calls))
 	}
 }
 
@@ -3404,32 +3469,58 @@ func TestAccountKeyInUse_BlocksScanReissueDeleteImportAndWatchdog(t *testing.T) 
 	tun.refs[key(TargetNative, res.Tunnel.ID)].Running = true
 	tun.mu.Unlock()
 
+	tun.ResetListCount()
+	tun.ResetListKeysCount()
 	if st := s.State(); st.AccountKeyInUseBy != "WARP Live" {
 		t.Fatalf("expected State().AccountKeyInUseBy == 'WARP Live', got %q", st.AccountKeyInUseBy)
 	}
+	if tun.ListKeysCount() != 1 || tun.ListCount() != 0 {
+		t.Fatalf("expected State() to use lightweight ListKeys once without full List, got ListKeys=%d List=%d", tun.ListKeysCount(), tun.ListCount())
+	}
+	tun.ResetListCount()
+	tun.ResetListKeysCount()
 	if _, err := s.RegisterWithOptions(ctx, RegisterOptions{}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("expected Register blocked with ErrInvalidInput while key in use, got %v", err)
 	}
+	if tun.ListKeysCount() != 1 || tun.ListCount() != 0 {
+		t.Fatalf("expected RegisterWithOptions to inspect keys once via ListKeys without full List, got ListKeys=%d List=%d", tun.ListKeysCount(), tun.ListCount())
+	}
+	tun.ResetListCount()
+	tun.ResetListKeysCount()
 	if err := s.DeleteAccountLocal(ctx); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("expected DeleteAccountLocal blocked with ErrInvalidInput while key in use, got %v", err)
+	}
+	if tun.ListKeysCount() != 1 || tun.ListCount() != 0 {
+		t.Fatalf("expected DeleteAccountLocal to inspect keys once via ListKeys without full List, got ListKeys=%d List=%d", tun.ListKeysCount(), tun.ListCount())
 	}
 	if s.d.Store.Account() == nil || len(api.deleted) != 0 {
 		t.Fatalf("account or Cloudflare registration must remain intact when delete is blocked: acct=%v deleted=%v", s.d.Store.Account(), api.deleted)
 	}
+
+	// Без доступного транспорта регистрации (или когда заняты оба слота) скан и find-junk
+	// блокируются синхронно, не запуская runner.
+	origHTTP := s.d.HTTP
+	s.d.HTTP = nil
 	if err := s.StartScan(ScanRequest{Filters: Filters{Protocol: ProtocolWG}}); !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("expected WAN StartScan blocked with ErrInvalidInput while key in use, got %v", err)
+		t.Fatalf("expected offline WAN StartScan blocked with ErrInvalidInput while key in use, got %v", err)
 	}
 	if err := s.StartFindJunk(FindJunkRequest{I1Profile: "quic"}); !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("expected WAN StartFindJunk blocked with ErrInvalidInput while key in use, got %v", err)
+		t.Fatalf("expected offline WAN StartFindJunk blocked with ErrInvalidInput while key in use, got %v", err)
 	}
+	s.d.HTTP = origHTTP
 
-	// Importing the exact same live tunnel key is rejected.
+	// Importing the exact same live tunnel key is rejected (1 ListKeys read total, 0 full List).
 	sameConf := fmt.Sprintf("[Interface]\nPrivateKey = %s\nAddress = 172.16.0.2/32\n[Peer]\nPublicKey = %s\n", priv1, WarpPeerPublicKey)
+	tun.ResetListCount()
+	tun.ResetListKeysCount()
 	if _, err := s.ImportAccount(ctx, sameConf); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("expected ImportAccount of live tunnel's own key rejected with ErrInvalidInput, got %v", err)
 	}
+	if tun.ListKeysCount() != 1 || tun.ListCount() != 0 {
+		t.Fatalf("expected ImportAccount to inspect keys once via ListKeys without full List, got ListKeys=%d List=%d", tun.ListKeysCount(), tun.ListCount())
+	}
 
-	// Watchdog swap skips when monitored tunnel uses primary key and no free alternate account exists.
+	// Watchdog swap skips when monitored tunnel uses primary key and no free alternate account exists (1 ListKeys read).
 	prober.queue = []TraceResult{{Colo: "DME", Loc: "RU", Warp: "on"}, {Colo: "DME", Loc: "RU", Warp: "on"}}
 	p := Profile{
 		ID: "p-live", Name: "WARP Live", Enabled: true, TargetMode: TargetNative, TargetID: res.Tunnel.ID,
@@ -3438,16 +3529,56 @@ func TestAccountKeyInUse_BlocksScanReissueDeleteImportAndWatchdog(t *testing.T) 
 	if _, err := s.SaveConfig(ctx, Config{ProfileMode: ProfileModeSingle, ActiveProfileID: p.ID, Profiles: []Profile{p}, AWG: s.d.Store.Config().AWG}); err != nil {
 		t.Fatal(err)
 	}
+	tun.ResetListCount()
+	tun.ResetListKeysCount()
 	s.checkOnce(ctx, p, &watcherState{})
+	if got := tun.ListKeysCount(); got != 1 {
+		t.Fatalf("expected watchdog swap to inspect key inventory once via ListKeys, got %d", got)
+	}
 	runner.mu.Lock()
 	scanCount := len(runner.calls)
 	runner.mu.Unlock()
 	if scanCount != 0 {
 		t.Fatalf("watchdog must not scan using live tunnel's own key, runner calls=%d", scanCount)
 	}
-	if ws := s.State().Watch; len(ws) != 1 || !strings.Contains(ws[0].Message, "занят живым туннелем") {
+	if ws := s.State().Watch; len(ws) != 1 || !strings.Contains(ws[0].Message, "занят туннелем") {
 		t.Fatalf("expected watch message explaining key in use, got %+v", ws)
 	}
+
+	// Когда HTTP доступен и второй слот свободен (ещё не создан), StartScan лениво
+	// регистрирует InnerAccount и сканирует его ключом, не трогая ключ живого туннеля.
+	if err := s.StartScan(ScanRequest{Filters: Filters{Protocol: ProtocolWG}}); err != nil {
+		t.Fatalf("expected WAN StartScan with HTTP available to lazily register secondary slot, got %v", err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if !s.ScanSnapshot().Running && s.ScanSnapshot().Done > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if inner := s.d.Store.InnerAccount(); inner == nil || inner.PublicKey == pub1 {
+		t.Fatalf("expected distinct InnerAccount created for scanner, got %+v", inner)
+	}
+	runner.mu.Lock()
+	if len(runner.calls) != 1 || runner.calls[0].PrivateKey == priv1 {
+		t.Fatalf("scanner must use lazy InnerAccount key rather than tunnel's priv1: %+v", runner.calls)
+	}
+	runner.mu.Unlock()
+
+	// Если второй слот уже есть и тоже занят, скан не перезаписывает InnerAccount и отказывает синхронно.
+	tun.mu.Lock()
+	tun.refs[key(TargetNative, "awg-inner-busy")] = &TunnelRef{
+		Mode: TargetNative, ID: "awg-inner-busy", Name: "WARP Inner Busy",
+		LocalPublicKey: s.d.Store.InnerAccount().PublicKey, IsWarp: true, Running: true,
+	}
+	tun.mu.Unlock()
+	if err := s.StartScan(ScanRequest{Filters: Filters{Protocol: ProtocolWG}}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected StartScan blocked when both primary and inner slots are in use, got %v", err)
+	}
+	tun.mu.Lock()
+	delete(tun.refs, key(TargetNative, "awg-inner-busy"))
+	tun.mu.Unlock()
 
 	// Importing a DIFFERENT spare key succeeds, keeps live tunnel's old registration intact at Cloudflare, and unblocks StartScan!
 	priv2, _, err := GenerateKeyPair()
@@ -3579,6 +3710,9 @@ func TestAccountKeyGuard_FailsClosedOnTunnelListError(t *testing.T) {
 	tun.listErr = listErr
 	tun.mu.Unlock()
 
+	if st := s.State(); !strings.Contains(st.AccountKeyCheckError, "rci unavailable") || st.AccountKeyInUseBy != "" {
+		t.Fatalf("expected State().AccountKeyCheckError containing 'rci unavailable', got %+v", st)
+	}
 	if _, err := s.RegisterWithOptions(ctx, RegisterOptions{}); err == nil || !strings.Contains(err.Error(), "rci unavailable") {
 		t.Fatalf("RegisterWithOptions must fail closed on Tunnels.List error, got %v", err)
 	}
@@ -3633,4 +3767,121 @@ func TestAccountKeyGuard_FailsClosedOnTunnelListError(t *testing.T) {
 	if err != nil || fresh == nil {
 		t.Fatalf("initial registration with nil account must succeed even when Tunnels.List errors: fresh=%+v err=%v", fresh, err)
 	}
+}
+
+func TestApply_ReuseAccount_SerializedWithReissueAndConcurrentApply(t *testing.T) {
+	ctx := context.Background()
+	priv, pub, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("concurrent_apply_reuse_allows_only_one", func(t *testing.T) {
+		s, _, tun, _ := newTestService(t)
+		if err := s.d.Store.SetAccount(&Account{
+			ID: "prim-race-1", Token: "tok-1", PrivateKey: priv, PublicKey: pub,
+			PeerPublicKey: WarpPeerPublicKey, AddressV4: "172.16.0.2", HasToken: true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		entered := make(chan struct{})
+		proceed := make(chan struct{})
+		var once sync.Once
+		tun.mu.Lock()
+		tun.onCreate = func(r *TunnelRef) {
+			r.LocalPublicKey = pub
+			r.Running = true
+			once.Do(func() {
+				close(entered)
+				<-proceed
+			})
+		}
+		tun.mu.Unlock()
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		var resA, resB *ApplyResult
+		var errA, errB error
+		go func() {
+			defer wg.Done()
+			resA, errA = s.Apply(ctx, ApplyRequest{
+				Action: "create", Mode: TargetNative, Name: "WARP A", Endpoint: "162.159.193.1:2408", ReuseAccount: true,
+			})
+		}()
+		<-entered
+		go func() {
+			defer wg.Done()
+			resB, errB = s.Apply(ctx, ApplyRequest{
+				Action: "create", Mode: TargetNative, Name: "WARP B", Endpoint: "162.159.193.2:2408", ReuseAccount: true,
+			})
+		}()
+		time.Sleep(25 * time.Millisecond)
+		close(proceed)
+		wg.Wait()
+
+		if (errA == nil) == (errB == nil) {
+			t.Fatalf("expected exactly 1 Apply(ReuseAccount) to succeed and 1 to fail: errA=%v resA=%+v errB=%v resB=%+v", errA, resA, errB, resB)
+		}
+		failErr := errA
+		if failErr == nil {
+			failErr = errB
+		}
+		if !errors.Is(failErr, ErrInvalidInput) {
+			t.Fatalf("expected losing concurrent Apply(ReuseAccount) to fail with ErrInvalidInput, got %v", failErr)
+		}
+	})
+
+	t.Run("reissue_waits_for_apply_reuse_and_fails", func(t *testing.T) {
+		s, _, tun, _ := newTestService(t)
+		api := apiOf(t)
+		if err := s.d.Store.SetAccount(&Account{
+			ID: "prim-race-2", Token: "tok-2", PrivateKey: priv, PublicKey: pub,
+			PeerPublicKey: WarpPeerPublicKey, AddressV4: "172.16.0.2", HasToken: true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		entered := make(chan struct{})
+		proceed := make(chan struct{})
+		tun.mu.Lock()
+		tun.onCreate = func(r *TunnelRef) {
+			r.LocalPublicKey = pub
+			r.Running = true
+			close(entered)
+			<-proceed
+		}
+		tun.mu.Unlock()
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		var applyErr, regErr error
+		go func() {
+			defer wg.Done()
+			_, applyErr = s.Apply(ctx, ApplyRequest{
+				Action: "create", Mode: TargetNative, Name: "WARP Race", Endpoint: "162.159.193.1:2408", ReuseAccount: true,
+			})
+		}()
+		<-entered
+		go func() {
+			defer wg.Done()
+			_, regErr = s.RegisterWithOptions(ctx, RegisterOptions{})
+		}()
+		time.Sleep(25 * time.Millisecond)
+		close(proceed)
+		wg.Wait()
+
+		if applyErr != nil {
+			t.Fatalf("expected Apply(ReuseAccount) to succeed, got %v", applyErr)
+		}
+		if !errors.Is(regErr, ErrInvalidInput) {
+			t.Fatalf("expected concurrent RegisterWithOptions to block/fail with ErrInvalidInput after Apply recorded tunnel, got %v", regErr)
+		}
+		if got := s.d.Store.Account(); got == nil || got.PublicKey != pub {
+			t.Fatalf("primary account key changed unexpectedly during serialized Apply+Reissue: %+v", got)
+		}
+		if reg, deleted := api.counts(); reg != 0 || len(deleted) != 0 {
+			t.Fatalf("Cloudflare API must not rotate or delete primary account while serialized Apply acquired it: reg=%d deleted=%v", reg, deleted)
+		}
+	})
 }

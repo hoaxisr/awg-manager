@@ -297,22 +297,9 @@ func (s *Service) StartFindJunk(req FindJunkRequest) error {
 		return ErrEngineMissing
 	}
 	scanIface := s.resolveScanIface(s.rootCtx, req.Ifname)
-	if outer := s.resolveRouteTunnel(s.rootCtx, scanIface); outer == nil || !outer.IsWarp {
-		inUse, owner, checkErr := s.accountKeyOwner(s.rootCtx, acct)
-		if checkErr != nil {
-			return checkErr
-		}
-		if inUse {
-			free, freeErr := s.existingFreeAccount(s.rootCtx, acct.PublicKey)
-			if freeErr != nil {
-				return freeErr
-			}
-			if free != nil {
-				acct = free
-			} else {
-				return fmt.Errorf("%w: ключ аккаунта WARP используется живым туннелем %q — подбор тем же ключом разорвёт его соединение; удалите туннель или импортируйте отдельный аккаунт для сканера", ErrInvalidInput, owner)
-			}
-		}
+	chosenAcct, outer, needDistinctSlot, occupiedOwner, err := s.prepareScanAccount(s.rootCtx, acct, scanIface)
+	if err != nil {
+		return err
 	}
 
 	cfgAWG := s.d.Store.Config().AWG
@@ -351,7 +338,6 @@ func (s *Service) StartFindJunk(req FindJunkRequest) error {
 	}
 
 	ctx, cancel := context.WithCancel(s.rootCtx)
-	scanIface = s.resolveScanIface(ctx, req.Ifname)
 	s.mu.Lock()
 	s.findJunkSeq++
 	runID := s.findJunkSeq
@@ -381,14 +367,15 @@ func (s *Service) StartFindJunk(req FindJunkRequest) error {
 		var best *JunkAttempt
 		func() {
 			defer s.engineMu.Unlock()
-			outer := s.resolveRouteTunnel(ctx, scanIface)
-			scanAcct := acct
+			scanAcct := chosenAcct
 			if outer != nil && outer.IsWarp {
 				if !outer.Running {
 					runErr = errors.New("внешний туннель WARP выключен — сначала запустите его")
 				} else {
 					scanAcct, runErr = s.ensureDistinctAccount(ctx, outer.Iface, outer.LocalPublicKey)
 				}
+			} else if needDistinctSlot {
+				scanAcct, runErr = s.registerDistinctScanSlot(ctx, acct.PublicKey, occupiedOwner)
 			}
 
 			r := newFindJunkRand()
@@ -581,6 +568,13 @@ func (s *Service) StartFindJunk(req FindJunkRequest) error {
 		}
 	}()
 	return nil
+}
+
+// FindJunkSnapshot возвращает копию статуса автоподбора маскировки без чтения инвентаризации туннелей.
+func (s *Service) FindJunkSnapshot() FindJunkStatus {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return cloneFindJunkStatus(s.findJunk)
 }
 
 // StopFindJunk прерывает текущий подбор маскировки, сохраняя лучший найденный набор.

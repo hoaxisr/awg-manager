@@ -13,6 +13,7 @@
 		initialTab?: 'import' | 'proxy';
 		hasExistingAccount: boolean;
 		accountKeyInUseBy?: string;
+		accountKeyCheckError?: string;
 		onclose: () => void;
 		onchanged: () => void | Promise<void>;
 	}
@@ -22,6 +23,7 @@
 		initialTab = 'import',
 		hasExistingAccount,
 		accountKeyInUseBy = '',
+		accountKeyCheckError = '',
 		onclose,
 		onchanged,
 	}: Props = $props();
@@ -34,6 +36,7 @@
 	let confirmImport = $state(false);
 	let confirmProxyRegister = $state(false);
 	let wasOpen = false;
+	const proxyKeyLocked = $derived(!!accountKeyInUseBy.trim() || !!accountKeyCheckError.trim());
 
 	const altTabOptions: SegmentedOption<'import' | 'proxy'>[] = $derived([
 		{ value: 'import', label: m.warpscout_alt_tab_import() },
@@ -112,7 +115,7 @@
 	}
 
 	function requestProxyRegister(): void {
-		if ((!proxyUrl.trim() && !relayUrl.trim()) || !!accountKeyInUseBy || busy) return;
+		if ((!proxyUrl.trim() && !relayUrl.trim()) || proxyKeyLocked || busy) return;
 		if (hasExistingAccount) {
 			confirmProxyRegister = true;
 			return;
@@ -133,7 +136,7 @@
 		{#if altTab === 'import'}
 			<WarpAccountImportForm bind:raw={importRaw} {busy} />
 		{:else}
-			<WarpAccountProxyForm bind:proxyUrl bind:relayUrl {accountKeyInUseBy} />
+			<WarpAccountProxyForm bind:proxyUrl bind:relayUrl {accountKeyInUseBy} {accountKeyCheckError} />
 		{/if}
 	</div>
 
@@ -149,7 +152,7 @@
 			<Button
 				variant="primary"
 				loading={busy}
-				disabled={(!proxyUrl.trim() && !relayUrl.trim()) || !!accountKeyInUseBy}
+				disabled={(!proxyUrl.trim() && !relayUrl.trim()) || proxyKeyLocked}
 				onclick={requestProxyRegister}
 			>
 				{m.warpscout_proxy_register_btn()}
@@ -161,7 +164,9 @@
 <ConfirmModal
 	open={confirmImport}
 	title={m.warpscout_confirm_import_title()}
-	message={m.warpscout_confirm_import_msg()}
+	message={accountKeyInUseBy.trim()
+		? m.warpscout_confirm_import_in_use_msg({ name: accountKeyInUseBy })
+		: m.warpscout_confirm_import_msg()}
 	secondary={m.warpscout_confirm_import_sec()}
 	confirmLabel={m.warpscout_import_btn()}
 	variant="danger"

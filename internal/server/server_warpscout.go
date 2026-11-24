@@ -92,7 +92,7 @@ func (s *Server) buildWarpScout(h *routeHandlers) *api.WarpScoutHandler {
 		HTTPDirectBypass: api.WarpSplitTLSClientFactory,
 		HTTPProxyClient:  api.WarpProxyHTTPClient,
 		HTTPFallbacks: func(ctx context.Context) []warpscout.FallbackClient {
-			return api.WarpFallbackClients(ctx, s.deviceProxySvc, ops, s.downloadSvc)
+			return api.WarpFallbackClients(ctx, s.deviceProxySvc, s.downloadSvc)
 		},
 		Log: log,
 		WAN: func(context.Context) (string, bool) {

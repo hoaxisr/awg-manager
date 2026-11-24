@@ -50,11 +50,24 @@ type SwapOptions struct {
 	AWG      AWGParams
 }
 
+// TunnelKeyRef — облегчённая запись туннеля для проверки занятости ключей.
+type TunnelKeyRef struct {
+	Mode           TargetMode
+	ID             string
+	Name           string
+	LocalPublicKey string
+}
+
+// TunnelKeyInventory — необязательный быстрый интерфейс инвентаризации ключей
+// живых и защищённых интерфейсов без опроса статистики/состояний каждого туннеля.
+type TunnelKeyInventory interface {
+	ListKeys(ctx context.Context) ([]TunnelKeyRef, error)
+}
+
 // TunnelOps — операции над туннелями, которые автопилоту нужны от
 // остального приложения. Реализация живёт в internal/api.
 type TunnelOps interface {
-	// List — полная инвентаризация туннелей (включая защищённые системные с флагом
-	// Protected для проверок занятости ключей).
+	// List — туннели, пригодные для выбора цели.
 	List(ctx context.Context) ([]TunnelRef, error)
 	// Get — один туннель; ошибка, если его нет.
 	Get(ctx context.Context, mode TargetMode, id string) (*TunnelRef, error)
@@ -177,23 +190,24 @@ type EngineInfo struct {
 
 // State — полный снимок для UI.
 type State struct {
-	Engine              EngineInfo          `json:"engine"`
-	Account             *Account            `json:"account"`
-	AccountKeyInUseBy   string              `json:"accountKeyInUseBy,omitempty"`
-	HasInnerAccount     bool                `json:"hasInnerAccount"`
-	AccountUnreadable   bool                `json:"accountUnreadable"`
-	DefaultWAN          string              `json:"defaultWan,omitempty"`
-	Routes              []RouteRef          `json:"routes"`
-	ObfuscationSources  []ObfuscationSource `json:"obfuscationSources,omitempty"`
-	UsedIPv4            []string            `json:"usedIpv4,omitempty"`
-	Config              Config              `json:"config"`
-	Scan                ScanStatus          `json:"scan"`
-	FindJunk            FindJunkStatus      `json:"findJunk"`
-	Watch               []WatchStatus       `json:"watch"`
-	Stats               []ProfileStats      `json:"stats"`
-	History             []SwapEvent         `json:"history"`
-	SupportsASC3        bool                `json:"supportsAsc3"`
-	SupportsKernelAWG31 bool                `json:"supportsKernelAwg31"`
+	Engine               EngineInfo          `json:"engine"`
+	Account              *Account            `json:"account"`
+	AccountKeyInUseBy    string              `json:"accountKeyInUseBy,omitempty"`
+	AccountKeyCheckError string              `json:"accountKeyCheckError,omitempty"`
+	HasInnerAccount      bool                `json:"hasInnerAccount"`
+	AccountUnreadable    bool                `json:"accountUnreadable"`
+	DefaultWAN           string              `json:"defaultWan,omitempty"`
+	Routes               []RouteRef          `json:"routes"`
+	ObfuscationSources   []ObfuscationSource `json:"obfuscationSources,omitempty"`
+	UsedIPv4             []string            `json:"usedIpv4,omitempty"`
+	Config               Config              `json:"config"`
+	Scan                 ScanStatus          `json:"scan"`
+	FindJunk             FindJunkStatus      `json:"findJunk"`
+	Watch                []WatchStatus       `json:"watch"`
+	Stats                []ProfileStats      `json:"stats"`
+	History              []SwapEvent         `json:"history"`
+	SupportsASC3         bool                `json:"supportsAsc3"`
+	SupportsKernelAWG31  bool                `json:"supportsKernelAwg31"`
 }
 
 // ApplyRequest — применить найденный эндпоинт.
@@ -399,29 +413,34 @@ func (s *Service) State() State {
 	}
 	acct := s.d.Store.Account()
 	accountKeyInUseBy := ""
+	accountKeyCheckError := ""
 	if acct != nil {
-		if inUse, owner, err := s.accountKeyOwner(s.rootCtx, acct); err == nil && inUse {
+		inUse, owner, checkErr := s.accountKeyOwner(s.rootCtx, acct)
+		if checkErr != nil {
+			accountKeyCheckError = checkErr.Error()
+		} else if inUse {
 			accountKeyInUseBy = owner
 		}
 	}
 	return State{
-		Engine:              s.Engine(),
-		Account:             acct,
-		AccountKeyInUseBy:   accountKeyInUseBy,
-		HasInnerAccount:     s.d.Store.InnerAccount() != nil,
-		AccountUnreadable:   s.d.Store.AccountUnreadable(),
-		DefaultWAN:          defaultWAN,
-		Routes:              routes,
-		ObfuscationSources:  obfSources,
-		UsedIPv4:            usedIPv4,
-		Config:              cfg,
-		Scan:                scan,
-		FindJunk:            findJunk,
-		Watch:               watch,
-		Stats:               stats,
-		History:             s.d.Store.History(),
-		SupportsASC3:        s.supportsASC3(),
-		SupportsKernelAWG31: s.supportsKernelAWG31(),
+		Engine:               s.Engine(),
+		Account:              acct,
+		AccountKeyInUseBy:    accountKeyInUseBy,
+		AccountKeyCheckError: accountKeyCheckError,
+		HasInnerAccount:      s.d.Store.InnerAccount() != nil,
+		AccountUnreadable:    s.d.Store.AccountUnreadable(),
+		DefaultWAN:           defaultWAN,
+		Routes:               routes,
+		ObfuscationSources:   obfSources,
+		UsedIPv4:             usedIPv4,
+		Config:               cfg,
+		Scan:                 scan,
+		FindJunk:             findJunk,
+		Watch:                watch,
+		Stats:                stats,
+		History:              s.d.Store.History(),
+		SupportsASC3:         s.supportsASC3(),
+		SupportsKernelAWG31:  s.supportsKernelAWG31(),
 	}
 }
 
@@ -753,7 +772,7 @@ func (s *Service) RegisterWithOptions(ctx context.Context, opts RegisterOptions)
 	if inUse, owner, checkErr := s.accountKeyOwner(ctx, old); checkErr != nil {
 		return nil, checkErr
 	} else if inUse {
-		return nil, fmt.Errorf("%w: ключ текущего аккаунта используется живым туннелем %q — перевыпуск разорвёт его соединение; сначала удалите туннель или импортируйте отдельный аккаунт", ErrInvalidInput, owner)
+		return nil, fmt.Errorf("%w: ключ текущего аккаунта используется туннелем %q — перевыпуск разорвёт его соединение; сначала удалите туннель или импортируйте отдельный аккаунт", ErrInvalidInput, owner)
 	}
 	var acct *Account
 	var oldNotFound bool
@@ -804,15 +823,17 @@ func (s *Service) ImportAccount(ctx context.Context, raw string) (*Account, erro
 	}
 	s.acctMu.Lock()
 	defer s.acctMu.Unlock()
-	if inUse, owner, checkErr := s.accountKeyOwner(ctx, acct); checkErr != nil {
-		return nil, checkErr
-	} else if inUse {
-		return nil, fmt.Errorf("%w: ключ из импортируемых данных уже используется живым туннелем %q — скан и действия с аккаунтом разорвут это соединение; используйте отдельный конфиг или аккаунт", ErrInvalidInput, owner)
-	}
-	old := s.d.Store.Account()
-	oldInUse, _, checkErr := s.accountKeyOwner(ctx, old)
+	keys, hasInv, checkErr := s.listTunnelKeys(ctx)
 	if checkErr != nil {
 		return nil, checkErr
+	}
+	if inUse, owner := s.findKeyOwnerInList(keys, hasInv, acct.PublicKey); inUse {
+		return nil, fmt.Errorf("%w: ключ из импортируемых данных уже используется туннелем %q — скан и действия с аккаунтом разорвут это соединение; используйте отдельный конфиг или аккаунт", ErrInvalidInput, owner)
+	}
+	old := s.d.Store.Account()
+	oldInUse := false
+	if old != nil {
+		oldInUse, _ = s.findKeyOwnerInList(keys, hasInv, old.PublicKey)
 	}
 	if err := s.d.Store.SetAccount(acct); err != nil {
 		return nil, err
@@ -891,34 +912,50 @@ func (s *Service) isStoredSlotAccount(a *Account) bool {
 	return false
 }
 
-func (s *Service) isAccountKeyInUse(ctx context.Context, pubKey string) (bool, string, error) {
-	return s.isAccountKeyInUseExcluding(ctx, pubKey, "", "")
+func (s *Service) listTunnelKeys(ctx context.Context) ([]TunnelKeyRef, bool, error) {
+	if s.d.Tunnels == nil {
+		return nil, false, nil
+	}
+	if inv, ok := s.d.Tunnels.(TunnelKeyInventory); ok {
+		keys, err := inv.ListKeys(ctx)
+		if err != nil {
+			return nil, false, fmt.Errorf("не удалось проверить занятость ключа по списку туннелей: %w", err)
+		}
+		return keys, true, nil
+	}
+	list, err := s.d.Tunnels.List(ctx)
+	if err != nil {
+		return nil, false, fmt.Errorf("не удалось проверить занятость ключа по списку туннелей: %w", err)
+	}
+	keys := make([]TunnelKeyRef, 0, len(list))
+	for i := range list {
+		keys = append(keys, TunnelKeyRef{
+			Mode:           list[i].Mode,
+			ID:             list[i].ID,
+			Name:           list[i].Name,
+			LocalPublicKey: list[i].LocalPublicKey,
+		})
+	}
+	return keys, true, nil
 }
 
-func (s *Service) isAccountKeyInUseExcluding(ctx context.Context, pubKey string, excludeMode TargetMode, excludeID string) (bool, string, error) {
+func (s *Service) findKeyOwnerInList(keys []TunnelKeyRef, hasInventory bool, pubKey string) (bool, string) {
 	pubKey = strings.TrimSpace(pubKey)
 	if pubKey == "" {
-		return false, "", nil
+		return false, ""
 	}
 	var aliveNames map[string]string
-	if s.d.Tunnels != nil {
-		list, err := s.d.Tunnels.List(ctx)
-		if err != nil {
-			return false, "", fmt.Errorf("не удалось проверить занятость ключа по списку туннелей: %w", err)
-		}
-		aliveNames = make(map[string]string, len(list))
-		for _, t := range list {
-			if excludeID != "" && t.Mode == excludeMode && t.ID == excludeID {
-				continue
-			}
-			key := string(t.Mode) + ":" + t.ID
+	if hasInventory {
+		aliveNames = make(map[string]string, len(keys))
+		for _, t := range keys {
+			k := string(t.Mode) + ":" + t.ID
 			name := strings.TrimSpace(t.Name)
 			if name == "" {
 				name = t.ID
 			}
-			aliveNames[key] = name
+			aliveNames[k] = name
 			if strings.TrimSpace(t.LocalPublicKey) == pubKey {
-				return true, name, nil
+				return true, name
 			}
 		}
 	}
@@ -926,18 +963,27 @@ func (s *Service) isAccountKeyInUseExcluding(ctx context.Context, pubKey string,
 		if strings.TrimSpace(ta.PublicKey) != pubKey {
 			continue
 		}
-		if excludeID != "" && ta.TunnelMode == excludeMode && ta.TunnelID == excludeID {
-			continue
-		}
-		key := string(ta.TunnelMode) + ":" + ta.TunnelID
+		k := string(ta.TunnelMode) + ":" + ta.TunnelID
 		if aliveNames == nil {
-			return true, ta.TunnelID, nil
+			return true, ta.TunnelID
 		}
-		if owner, ok := aliveNames[key]; ok {
-			return true, owner, nil
+		if owner, ok := aliveNames[k]; ok {
+			return true, owner
 		}
 	}
-	return false, "", nil
+	return false, ""
+}
+
+func (s *Service) isAccountKeyInUse(ctx context.Context, pubKey string) (bool, string, error) {
+	if strings.TrimSpace(pubKey) == "" {
+		return false, "", nil
+	}
+	keys, hasInv, err := s.listTunnelKeys(ctx)
+	if err != nil {
+		return false, "", err
+	}
+	inUse, owner := s.findKeyOwnerInList(keys, hasInv, pubKey)
+	return inUse, owner, nil
 }
 
 func (s *Service) accountKeyOwner(ctx context.Context, acct *Account) (bool, string, error) {
@@ -947,11 +993,7 @@ func (s *Service) accountKeyOwner(ctx context.Context, acct *Account) (bool, str
 	return s.isAccountKeyInUse(ctx, acct.PublicKey)
 }
 
-func (s *Service) existingFreeAccount(ctx context.Context, avoidPubKeys ...string) (*Account, error) {
-	return s.existingAccountFor(ctx, "", "", avoidPubKeys...)
-}
-
-func (s *Service) existingAccountFor(ctx context.Context, excludeMode TargetMode, excludeID string, avoidPubKeys ...string) (*Account, error) {
+func (s *Service) existingFreeAccountFrom(keys []TunnelKeyRef, hasInventory bool, avoidPubKeys ...string) *Account {
 	avoid := make(map[string]bool, len(avoidPubKeys))
 	for _, k := range avoidPubKeys {
 		if k = strings.TrimSpace(k); k != "" {
@@ -966,16 +1008,12 @@ func (s *Service) existingAccountFor(ctx context.Context, excludeMode TargetMode
 		if pub != "" && avoid[pub] {
 			continue
 		}
-		inUse, _, err := s.isAccountKeyInUseExcluding(ctx, pub, excludeMode, excludeID)
-		if err != nil {
-			return nil, err
-		}
-		if inUse {
+		if inUse, _ := s.findKeyOwnerInList(keys, hasInventory, pub); inUse {
 			continue
 		}
-		return a, nil
+		return a
 	}
-	return nil, nil
+	return nil
 }
 
 // collectTunnelAccounts снимает учётные записи удалённых туннелей. Судит по
@@ -1062,15 +1100,21 @@ func (s *Service) DeleteAccountLocal(ctx context.Context) error {
 	defer s.acctMu.Unlock()
 	acct := s.d.Store.Account()
 	inner := s.d.Store.InnerAccount()
-	if inUse, owner, checkErr := s.accountKeyOwner(ctx, acct); checkErr != nil {
-		return checkErr
-	} else if inUse {
-		return fmt.Errorf("%w: ключ текущего аккаунта используется живым туннелем %q — удаление снимет его регистрацию у Cloudflare; сначала удалите туннель", ErrInvalidInput, owner)
-	}
-	if inUse, owner, checkErr := s.accountKeyOwner(ctx, inner); checkErr != nil {
-		return checkErr
-	} else if inUse {
-		return fmt.Errorf("%w: ключ дополнительного слота используется живым туннелем %q — сначала удалите туннель", ErrInvalidInput, owner)
+	if acct != nil || inner != nil {
+		keys, hasInv, checkErr := s.listTunnelKeys(ctx)
+		if checkErr != nil {
+			return checkErr
+		}
+		if acct != nil {
+			if inUse, owner := s.findKeyOwnerInList(keys, hasInv, acct.PublicKey); inUse {
+				return fmt.Errorf("%w: ключ текущего аккаунта используется туннелем %q — удаление снимет его регистрацию у Cloudflare; сначала удалите туннель", ErrInvalidInput, owner)
+			}
+		}
+		if inner != nil {
+			if inUse, owner := s.findKeyOwnerInList(keys, hasInv, inner.PublicKey); inUse {
+				return fmt.Errorf("%w: ключ дополнительного слота используется туннелем %q — сначала удалите туннель", ErrInvalidInput, owner)
+			}
+		}
 	}
 	if err := s.d.Store.SetAccount(nil); err != nil {
 		return err
@@ -1179,13 +1223,13 @@ func (s *Service) ensureDistinctAccount(ctx context.Context, routeIface string, 
 			avoid[k] = true
 		}
 	}
+	keys, hasInv, err := s.listTunnelKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
 	primary := s.d.Store.Account()
 	if len(avoid) > 0 && primary != nil && primary.PrivateKey != "" && primary.PublicKey != "" && !avoid[primary.PublicKey] {
-		inUse, _, err := s.isAccountKeyInUse(ctx, primary.PublicKey)
-		if err != nil {
-			return nil, err
-		}
-		if !inUse {
+		if inUse, _ := s.findKeyOwnerInList(keys, hasInv, primary.PublicKey); !inUse {
 			return primary, nil
 		}
 	}
@@ -1205,12 +1249,8 @@ func (s *Service) ensureDistinctAccount(ctx context.Context, routeIface string, 
 			// каскады, а прежняя регистрация осталась бы висеть у Cloudflare.
 			return nil, fmt.Errorf("%w: обе учётные записи WARP совпадают с ключом внешнего туннеля", ErrInvalidInput)
 		}
-		inUse, owner, err := s.isAccountKeyInUse(ctx, inner.PublicKey)
-		if err != nil {
-			return nil, err
-		}
-		if inUse {
-			return nil, fmt.Errorf("%w: ключ дополнительного слота уже используется живым туннелем %q", ErrInvalidInput, owner)
+		if inUse, owner := s.findKeyOwnerInList(keys, hasInv, inner.PublicKey); inUse {
+			return nil, fmt.Errorf("%w: ключ дополнительного слота уже используется туннелем %q", ErrInvalidInput, owner)
 		}
 		return inner, nil
 	}
@@ -1376,6 +1416,44 @@ func (s *Service) awgForUse() AWGParams {
 
 // ── Ручной скан ──────────────────────────────────────────────────
 
+func (s *Service) hasAccountHTTP() bool {
+	return s.d.HTTP != nil || s.d.HTTPDirectBypass != nil || s.d.HTTPFallbacks != nil
+}
+
+func (s *Service) prepareScanAccount(ctx context.Context, acct *Account, scanIface string) (chosen *Account, outer *TunnelRef, needDistinctSlot bool, occupiedOwner string, err error) {
+	chosen = acct
+	outer = s.resolveRouteTunnel(ctx, scanIface)
+	if outer != nil && outer.IsWarp {
+		return chosen, outer, false, "", nil
+	}
+	keys, hasInv, err := s.listTunnelKeys(ctx)
+	if err != nil {
+		return nil, nil, false, "", err
+	}
+	inUse, owner := s.findKeyOwnerInList(keys, hasInv, acct.PublicKey)
+	if !inUse {
+		return chosen, outer, false, "", nil
+	}
+	if free := s.existingFreeAccountFrom(keys, hasInv, acct.PublicKey); free != nil {
+		return free, outer, false, "", nil
+	}
+	if s.d.Store.InnerAccount() != nil {
+		return nil, nil, false, "", fmt.Errorf("%w: ключ аккаунта WARP используется туннелем %q, а дополнительный слот тоже занят — удалите туннель или импортируйте отдельный аккаунт для сканера", ErrInvalidInput, owner)
+	}
+	if !s.hasAccountHTTP() {
+		return nil, nil, false, "", fmt.Errorf("%w: ключ аккаунта WARP используется туннелем %q — скан тем же ключом разорвёт его соединение; удалите туннель или импортируйте отдельный аккаунт для сканера", ErrInvalidInput, owner)
+	}
+	return chosen, outer, true, owner, nil
+}
+
+func (s *Service) registerDistinctScanSlot(ctx context.Context, primaryPubKey, occupiedOwner string) (*Account, error) {
+	scanAcct, err := s.ensureDistinctAccount(ctx, "", primaryPubKey)
+	if err != nil {
+		return nil, fmt.Errorf("ключ аккаунта WARP используется туннелем %q, а зарегистрировать отдельный слот для сканера не удалось: %w", occupiedOwner, err)
+	}
+	return scanAcct, nil
+}
+
 // StartScan запускает ручной скан в фоне.
 func (s *Service) StartScan(req ScanRequest) error {
 	if len(req.Endpoints) > maxScanCandidates {
@@ -1394,22 +1472,9 @@ func (s *Service) StartScan(req ScanRequest) error {
 		return ErrEngineMissing
 	}
 	scanIface := s.resolveScanIface(s.rootCtx, req.Ifname)
-	if outer := s.resolveRouteTunnel(s.rootCtx, scanIface); outer == nil || !outer.IsWarp {
-		inUse, owner, checkErr := s.accountKeyOwner(s.rootCtx, acct)
-		if checkErr != nil {
-			return checkErr
-		}
-		if inUse {
-			free, freeErr := s.existingFreeAccount(s.rootCtx, acct.PublicKey)
-			if freeErr != nil {
-				return freeErr
-			}
-			if free != nil {
-				acct = free
-			} else {
-				return fmt.Errorf("%w: ключ аккаунта WARP используется живым туннелем %q — скан тем же ключом разорвёт его соединение; удалите туннель или импортируйте отдельный аккаунт для сканера", ErrInvalidInput, owner)
-			}
-		}
+	chosenAcct, outer, needDistinctSlot, occupiedOwner, err := s.prepareScanAccount(s.rootCtx, acct, scanIface)
+	if err != nil {
+		return err
 	}
 	s.mu.Lock()
 	if s.scan.Running || s.findJunk.Running {
@@ -1425,7 +1490,7 @@ func (s *Service) StartScan(req ScanRequest) error {
 		maxHits = 20
 	}
 	awg := s.awgForUse()
-	params, err := s.buildParams(s.rootCtx, acct, awg, req.Filters, maxHits, req.MaxCandidates, req.Endpoints, nil, req.Ifname, nil)
+	params, err := s.buildParams(s.rootCtx, chosenAcct, awg, req.Filters, maxHits, req.MaxCandidates, req.Endpoints, nil, req.Ifname, nil)
 	if err != nil {
 		s.engineMu.Unlock()
 		return err
@@ -1446,8 +1511,6 @@ func (s *Service) StartScan(req ScanRequest) error {
 		defer s.engineMu.Unlock()
 		defer cancel()
 		var runErr error
-		scanIface := params.Ifname
-		outer := s.resolveRouteTunnel(ctx, scanIface)
 		if outer != nil && outer.IsWarp {
 			if !outer.Running {
 				runErr = errors.New("внешний туннель WARP выключен — сначала запустите его")
@@ -1457,6 +1520,12 @@ func (s *Service) StartScan(req ScanRequest) error {
 				if runErr == nil {
 					params, runErr = s.buildParams(ctx, scanAcct, awg, req.Filters, maxHits, req.MaxCandidates, req.Endpoints, nil, outer.Iface, outer)
 				}
+			}
+		} else if needDistinctSlot {
+			var scanAcct *Account
+			scanAcct, runErr = s.registerDistinctScanSlot(ctx, acct.PublicKey, occupiedOwner)
+			if runErr == nil {
+				params, runErr = s.buildParams(ctx, scanAcct, awg, req.Filters, maxHits, req.MaxCandidates, req.Endpoints, nil, req.Ifname, nil)
 			}
 		}
 		lastPub := time.Time{}
@@ -1888,52 +1957,72 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplyResult, er
 		} else if outer != nil {
 			addrV4 = s.pickNonCollidingIPv4(ctx, addrV4, outer.AddressV4)
 		}
-		s.collectTunnelAccounts(ctx)
-		var (
-			tunAcct       *Account
-			reusedPrimary bool
-		)
+		buildTunConf := func(tunAcct *Account, tunAddrV4 string) string {
+			cfgAcct := *tunAcct
+			cfgAcct.AddressV4 = tunAddrV4
+			includeAWG3 := req.Mode == TargetKernel || s.supportsASC3()
+			includeAWG31 := (req.Mode == TargetKernel && s.supportsKernelAWG31()) || (req.Mode != TargetKernel && s.supportsASC3())
+			return BuildConfWithOptions(&cfgAcct, awg, protocol, req.Endpoint, ConfOptions{
+				MTU:            mtu,
+				IncludeAWG3:    includeAWG3,
+				IncludeAWG31:   includeAWG31,
+				RangeKeepalive: req.Mode == TargetKernel,
+			})
+		}
 		if req.ReuseAccount {
-			if acct.PrivateKey == "" {
-				return nil, ErrNoAccount
+			var err error
+			ref, err = func() (*TunnelRef, error) {
+				s.acctMu.Lock()
+				defer s.acctMu.Unlock()
+				curAcct := s.d.Store.Account()
+				if curAcct == nil || curAcct.PrivateKey == "" {
+					return nil, ErrNoAccount
+				}
+				tunAddr := addrV4
+				if strings.TrimSpace(req.AddressV4) == "" {
+					tunAddr = curAcct.AddressV4
+					if outer != nil {
+						tunAddr = s.pickNonCollidingIPv4(ctx, tunAddr, outer.AddressV4)
+					}
+				}
+				s.collectTunnelAccounts(ctx)
+				if inUse, owner, checkErr := s.isAccountKeyInUse(ctx, curAcct.PublicKey); checkErr != nil {
+					return nil, checkErr
+				} else if inUse {
+					return nil, fmt.Errorf("%w: ключ текущего аккаунта уже используется туннелем %q — для второго туннеля нужна отдельная регистрация или другой импорт", ErrInvalidInput, owner)
+				}
+				created, err := s.d.Tunnels.Create(ctx, req.Mode, name, buildTunConf(curAcct, tunAddr), createOpts)
+				if err != nil {
+					return nil, err
+				}
+				if err := s.d.Store.AddTunnelAccount(TunnelAccount{Account: *curAcct, TunnelMode: created.Mode, TunnelID: created.ID}); err != nil {
+					// Туннель работает; не сохранена лишь запись, по которой
+					// регистрацию сняли бы после его удаления.
+					s.logWarn("apply", name, "Учётная запись туннеля не сохранена: "+err.Error())
+				}
+				return created, nil
+			}()
+			if err != nil {
+				return nil, err
 			}
-			if inUse, owner, checkErr := s.isAccountKeyInUse(ctx, acct.PublicKey); checkErr != nil {
-				return nil, checkErr
-			} else if inUse {
-				return nil, fmt.Errorf("%w: ключ текущего аккаунта уже используется туннелем %q — для второго туннеля нужна отдельная регистрация или другой импорт", ErrInvalidInput, owner)
-			}
-			tunAcct = acct
-			reusedPrimary = true
+			accountReused = true
 		} else {
+			s.collectTunnelAccounts(ctx)
 			regAcct, regErr := s.registerTunnelAccount(ctx, acct)
 			if regErr != nil {
 				return nil, fmt.Errorf("учётная запись WARP для туннеля (если Cloudflare API недоступен, включите опцию «Использовать текущий аккаунт» в окне создания): %w", regErr)
 			}
-			tunAcct = regAcct
-		}
-		cfgAcct := *tunAcct
-		cfgAcct.AddressV4 = addrV4
-		includeAWG3 := req.Mode == TargetKernel || s.supportsASC3()
-		includeAWG31 := (req.Mode == TargetKernel && s.supportsKernelAWG31()) || (req.Mode != TargetKernel && s.supportsASC3())
-		conf := BuildConfWithOptions(&cfgAcct, awg, protocol, req.Endpoint, ConfOptions{
-			MTU:            mtu,
-			IncludeAWG3:    includeAWG3,
-			IncludeAWG31:   includeAWG31,
-			RangeKeepalive: req.Mode == TargetKernel,
-		})
-		created, err := s.d.Tunnels.Create(ctx, req.Mode, name, conf, createOpts)
-		if err != nil {
-			if !reusedPrimary {
-				s.dropRegistration(tunAcct)
+			created, err := s.d.Tunnels.Create(ctx, req.Mode, name, buildTunConf(regAcct, addrV4), createOpts)
+			if err != nil {
+				s.dropRegistration(regAcct)
+				return nil, err
 			}
-			return nil, err
-		}
-		ref = created
-		accountReused = reusedPrimary
-		if err := s.d.Store.AddTunnelAccount(TunnelAccount{Account: *tunAcct, TunnelMode: created.Mode, TunnelID: created.ID}); err != nil {
-			// Туннель работает; не сохранена лишь запись, по которой
-			// регистрацию сняли бы после его удаления.
-			s.logWarn("apply", name, "Учётная запись туннеля не сохранена: "+err.Error())
+			ref = created
+			if err := s.d.Store.AddTunnelAccount(TunnelAccount{Account: *regAcct, TunnelMode: created.Mode, TunnelID: created.ID}); err != nil {
+				// Туннель работает; не сохранена лишь запись, по которой
+				// регистрацию сняли бы после его удаления.
+				s.logWarn("apply", name, "Учётная запись туннеля не сохранена: "+err.Error())
+			}
 		}
 		if viaID != "" {
 			s.logInfo("apply", name, fmt.Sprintf("Создан WARP-in-WARP (%s) через %s с узлом %s", req.Mode, outer.Name, req.Endpoint))

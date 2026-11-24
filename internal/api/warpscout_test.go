@@ -21,6 +21,7 @@ import (
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/sys/httpclient"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/systemtunnel"
@@ -104,14 +105,14 @@ func TestWarpFallbackClients_DeviceProxy(t *testing.T) {
 	}
 	dp := deviceproxy.NewService(deviceproxy.Deps{Store: store})
 
-	clients := WarpFallbackClients(context.Background(), dp, nil, nil)
+	clients := WarpFallbackClients(context.Background(), dp, nil)
 	if len(clients) != 1 || clients[0].Client == nil || clients[0].Close == nil {
 		t.Fatalf("ожидался 1 резервный HTTP-клиент через Прокси для устройств, получили %+v", clients)
 	}
 	clients[0].Close()
 
 	_ = ln.Close()
-	if none := WarpFallbackClients(context.Background(), dp, nil, nil); len(none) != 0 {
+	if none := WarpFallbackClients(context.Background(), dp, nil); len(none) != 0 {
 		t.Fatalf("закрытый порт прокси не должен попадать в fallback, получили %d", len(none))
 	}
 }
@@ -565,9 +566,13 @@ type apiJunkRunner struct {
 
 func (r *apiJunkRunner) Available() (string, bool) { return "/fake", true }
 
-func (r *apiJunkRunner) Run(_ context.Context, p warpscout.ScanParams, on func(warpscout.EngineEvent)) error {
+func (r *apiJunkRunner) Run(ctx context.Context, p warpscout.ScanParams, on func(warpscout.EngineEvent)) error {
 	if r.gate != nil {
-		<-r.gate
+		select {
+		case <-r.gate:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 	total := len(p.Endpoints)
 	on(warpscout.EngineEvent{Type: "start", Total: total})
@@ -587,6 +592,58 @@ func (apiPlainCipher) Decrypt(s string) (string, error) {
 	return s[4:], nil
 }
 
+type countingKeyOps struct {
+	mu            sync.Mutex
+	listCalls     int
+	listKeysCalls int
+}
+
+func (c *countingKeyOps) List(context.Context) ([]warpscout.TunnelRef, error) {
+	c.mu.Lock()
+	c.listCalls++
+	c.mu.Unlock()
+	return nil, nil
+}
+
+func (c *countingKeyOps) ListKeys(context.Context) ([]warpscout.TunnelKeyRef, error) {
+	c.mu.Lock()
+	c.listKeysCalls++
+	c.mu.Unlock()
+	return nil, nil
+}
+
+func (c *countingKeyOps) ListCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.listCalls
+}
+
+func (c *countingKeyOps) ListKeysCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.listKeysCalls
+}
+
+func (c *countingKeyOps) ResetCounts() {
+	c.mu.Lock()
+	c.listCalls = 0
+	c.listKeysCalls = 0
+	c.mu.Unlock()
+}
+
+func (c *countingKeyOps) Get(context.Context, warpscout.TargetMode, string) (*warpscout.TunnelRef, error) {
+	return nil, errors.New("не найден")
+}
+func (c *countingKeyOps) Create(context.Context, warpscout.TargetMode, string, string, warpscout.CreateOptions) (*warpscout.TunnelRef, error) {
+	return nil, errors.New("unsupported")
+}
+func (c *countingKeyOps) SwapEndpoint(context.Context, warpscout.TargetMode, string, string, warpscout.SwapOptions) error {
+	return errors.New("unsupported")
+}
+func (c *countingKeyOps) Rename(context.Context, warpscout.TargetMode, string, string) error {
+	return errors.New("unsupported")
+}
+
 func TestWarpScoutHandler_FindJunkEndpoints(t *testing.T) {
 	store, err := warpscout.NewStore(t.TempDir(), apiPlainCipher{})
 	if err != nil {
@@ -601,22 +658,36 @@ func TestWarpScoutHandler_FindJunkEndpoints(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	tunOps := &countingKeyOps{}
 	runner := &apiJunkRunner{gate: make(chan struct{}), hits: 0}
 	svc := warpscout.New(warpscout.Deps{
-		Store:  store,
-		Runner: runner,
-		WAN:    func(context.Context) (string, bool) { return "eth3", true },
+		Store:   store,
+		Runner:  runner,
+		Tunnels: tunOps,
+		WAN:     func(context.Context) (string, bool) { return "eth3", true },
 	})
 	t.Cleanup(svc.Stop)
 	h := NewWarpScoutHandler(svc, nil)
 
-	// 1. Запуск find-junk -> 200 OK
+	// 1. Запуск find-junk -> 200 OK (без повторного перечисления при чтении FindJunkSnapshot после старта)
 	req := httptest.NewRequest(http.MethodPost, "/api/warpscout/find-junk/start",
 		bytes.NewBufferString(`{"i1Profile":"quic","maxAttempts":1,"perSubnet":1}`))
 	rec := httptest.NewRecorder()
+	tunOps.ResetCounts()
 	h.FindJunkStart(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("FindJunkStart code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if listCalls := tunOps.ListCount(); listCalls != 1 {
+		t.Fatalf("FindJunkStart expected 1 Tunnels.List call (resolveRouteTunnel), got %d", listCalls)
+	}
+	if keyCalls := tunOps.ListKeysCount(); keyCalls != 1 {
+		t.Fatalf("FindJunkStart expected 1 Tunnels.ListKeys call, got %d", keyCalls)
+	}
+	beforeList, beforeKeys := tunOps.ListCount(), tunOps.ListKeysCount()
+	_ = svc.FindJunkSnapshot()
+	if gotList, gotKeys := tunOps.ListCount(), tunOps.ListKeysCount(); gotList != beforeList || gotKeys != beforeKeys {
+		t.Fatalf("FindJunkSnapshot must not enumerate tunnels: List %d->%d, ListKeys %d->%d", beforeList, gotList, beforeKeys, gotKeys)
 	}
 
 	// 2. Попытка применить во время выполнения -> 409 WARP_BUSY
@@ -1461,7 +1532,7 @@ func TestWarpFallbackClients_DownloaderLeasesAndCancel(t *testing.T) {
 		TransportResolver: fakeWarpDownloaderTransport{port: 1099},
 	})
 
-	clients := WarpFallbackClients(context.Background(), nil, nil, dl)
+	clients := WarpFallbackClients(context.Background(), nil, dl)
 	if len(clients) != 1 {
 		t.Fatalf("expected strictly 1 configured downloader fallback client (no extra unconfigured outbounds), got %d", len(clients))
 	}
@@ -1479,7 +1550,7 @@ func TestWarpFallbackClients_DownloaderLeasesAndCancel(t *testing.T) {
 		}},
 		TransportResolver: fakeWarpDownloaderTransport{port: 1099},
 	})
-	if got := WarpFallbackClients(context.Background(), nil, nil, dlDirect); len(got) != 0 {
+	if got := WarpFallbackClients(context.Background(), nil, dlDirect); len(got) != 0 {
 		for _, c := range got {
 			if c.Close != nil {
 				c.Close()
@@ -1490,62 +1561,132 @@ func TestWarpFallbackClients_DownloaderLeasesAndCancel(t *testing.T) {
 
 	canceledCtx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if got := WarpFallbackClients(canceledCtx, nil, nil, dl); len(got) != 0 {
+	if got := WarpFallbackClients(canceledCtx, nil, dl); len(got) != 0 {
 		t.Fatalf("expected no fallback clients for canceled context, got %d", len(got))
 	}
 }
 
-func TestWarpFallbackClients_OnlyOneUnprotectedNonWarpTunnel_PreservesBoundDNS(t *testing.T) {
-	ops, _, store, _ := newWarpOpsHarness(t, map[string]tunnel.State{
-		"prot1": tunnel.StateRunning,
-		"warp1": tunnel.StateRunning,
-		"stop1": tunnel.StateStopped,
-		"tunA":  tunnel.StateRunning,
-		"tunB":  tunnel.StateRunning,
+func TestWarpClientFactories_PostDialProdBranch(t *testing.T) {
+	origLookup := warpLookupIPAddr
+	origNewTransport := warpNewTransport
+	warpLookupIPAddr = nil
+	t.Cleanup(func() {
+		warpLookupIPAddr = origLookup
+		warpNewTransport = origNewTransport
 	})
-	for _, id := range []string{"prot1", "warp1", "stop1", "tunA", "tunB"} {
-		seedWarpTunnel(t, store, id, "kernel")
-		if err := store.Update(id, func(tun *storage.AWGTunnel) error {
-			tun.Enabled = id != "stop1"
-			if id == "prot1" {
-				tun.Locked = true
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	var (
+		mu       sync.Mutex
+		sawBytes int
+		seenAddr string
+	)
+	accepted := make(chan struct{}, 4)
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
 			}
-			if id != "warp1" {
-				tun.Peer.PublicKey = "non-warp-peer"
-			}
-			return nil
-		}); err != nil {
+			accepted <- struct{}{}
+			go func(c net.Conn) {
+				defer c.Close()
+				_ = c.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+				buf := make([]byte, 32)
+				n, _ := c.Read(buf)
+				mu.Lock()
+				sawBytes += n
+				mu.Unlock()
+			}(conn)
+		}
+	}()
+
+	warpNewTransport = func(cfg httpclient.TransportConfig) (*http.Transport, error) {
+		return &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				mu.Lock()
+				seenAddr = addr
+				mu.Unlock()
+				return (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "tcp", ln.Addr().String())
+			},
+		}, nil
+	}
+
+	assertPostDialRejected := func(name string, client *http.Client) {
+		t.Helper()
+		mu.Lock()
+		seenAddr = ""
+		sawBytes = 0
+		mu.Unlock()
+		req, err := http.NewRequest(http.MethodGet, "https://api.devices.cloudflare.com/v0a4005/reg", nil)
+		if err != nil {
 			t.Fatal(err)
 		}
-	}
-
-	clients := WarpFallbackClients(context.Background(), nil, ops, nil)
-	for _, c := range clients {
-		if c.Close != nil {
-			c.Close()
+		_, doErr := client.Do(req)
+		if !errors.Is(doErr, warpscout.ErrDisallowedAddress) {
+			t.Fatalf("%s: expected ErrDisallowedAddress from prod post-dial guard, got %v", name, doErr)
+		}
+		select {
+		case <-accepted:
+		case <-time.After(time.Second):
+			t.Fatalf("%s: expected base DialContext to be invoked", name)
+		}
+		time.Sleep(30 * time.Millisecond)
+		mu.Lock()
+		gotAddr, gotBytes := seenAddr, sawBytes
+		mu.Unlock()
+		if gotAddr != "api.devices.cloudflare.com:443" {
+			t.Fatalf("%s: prod bound path must preserve hostname for bound DNS, got %q", name, gotAddr)
+		}
+		if gotBytes != 0 {
+			t.Fatalf("%s: post-dial guard must close disallowed connection before writing bytes, read %d bytes", name, gotBytes)
 		}
 	}
+
+	cHTTP, err := WarpHTTPClientFactory("eth3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPostDialRejected("WarpHTTPClientFactory", cHTTP)
+
+	cSplit, err := WarpSplitTLSClientFactory("eth3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPostDialRejected("WarpSplitTLSClientFactory", cSplit)
+
+	dl := downloader.NewService(downloader.Deps{
+		RouteProvider:     fakeWarpDownloaderRoute{route: &downloader.Route{Tag: "bind-awg0", Kind: "awg"}},
+		Outbounds:         fakeWarpDownloaderOutbounds{items: []downloader.Outbound{{Tag: "bind-awg0", Kind: "awg", Detail: "awg0", Available: true}}},
+		TransportResolver: fakeBoundDownloaderTransport{},
+	})
+	clients := WarpFallbackClients(context.Background(), nil, dl)
 	if len(clients) != 1 || clients[0].Client == nil {
-		t.Fatalf("expected strictly 1 eligible unprotected non-WARP tunnel fallback client, got %+v", clients)
+		t.Fatalf("expected 1 bound downloader fallback client, got %+v", clients)
 	}
+	defer clients[0].Close()
+	tr, ok := clients[0].Client.Transport.(*http.Transport)
+	if !ok || tr.DialContext == nil {
+		t.Fatalf("expected wrapped *http.Transport on bound downloader fallback, got %T", clients[0].Client.Transport)
+	}
+	if _, err := tr.DialContext(context.Background(), "tcp", "127.0.0.1:443"); !errors.Is(err, warpscout.ErrDisallowedAddress) {
+		t.Fatalf("expected bound downloader fallback to reject disallowed loopback literal IP under relay policy, got %v", err)
+	}
+}
 
-	// Bound dial wrapper with warpLookupIPAddr == nil preserves hostnames for bound DNS
-	// while still enforcing RemoteAddr policy post-dial.
-	origLookup := warpLookupIPAddr
-	warpLookupIPAddr = nil
-	t.Cleanup(func() { warpLookupIPAddr = origLookup })
+type fakeBoundDownloaderTransport struct{}
 
-	var dialedHost string
-	dial := wrapWarpDialContext(func(_ context.Context, _ string, addr string) (net.Conn, error) {
-		dialedHost = addr
-		return nil, errors.New("dial probed")
-	}, "tunA", warpscout.IsDisallowedRelayIP)
-	if _, err := dial(context.Background(), "tcp", "api.devices.cloudflare.com:443"); err == nil {
-		t.Fatal("expected dial probed error")
-	}
-	if dialedHost != "api.devices.cloudflare.com:443" {
-		t.Fatalf("bound dialer must preserve hostname for bound interface DNS, got %q", dialedHost)
-	}
+func (fakeBoundDownloaderTransport) Resolve(context.Context, downloader.Outbound) (downloader.TransportSpec, error) {
+	return downloader.TransportSpec{Mode: downloader.TransportModeBind, Interface: "awg0"}, nil
+}
+
+func (fakeBoundDownloaderTransport) IsAvailable(context.Context, downloader.Outbound) bool {
+	return true
 }
 
 type staticRoundTripper func(*http.Request) (*http.Response, error)
@@ -1758,6 +1899,7 @@ func TestWarpClients_DialGuardBlocksResolvedDisallowedIPs(t *testing.T) {
 }
 
 func TestWarpTunnelOps_ListReturnsErrorOnSystemListFailure(t *testing.T) {
+	ctx := context.Background()
 	ops, _, store, _ := newWarpOpsHarness(t, map[string]tunnel.State{
 		"awg50": tunnel.StateRunning,
 	})
@@ -1765,12 +1907,54 @@ func TestWarpTunnelOps_ListReturnsErrorOnSystemListFailure(t *testing.T) {
 	ops.System = &stubSystemTunnelSvc{
 		listErr: errors.New("rci list failure"),
 	}
-	refs, err := ops.List(context.Background())
+
+	// Быстрая инвентаризация ListKeys для опасных операций с ключами обязана падать (fail-closed).
+	keys, err := ops.ListKeys(ctx)
 	if err == nil || !strings.Contains(err.Error(), "rci list failure") {
-		t.Fatalf("expected WarpTunnelOps.List to fail closed on System.List error, got refs=%+v err=%v", refs, err)
+		t.Fatalf("expected WarpTunnelOps.ListKeys to fail closed on System.List error, got keys=%+v err=%v", keys, err)
 	}
-	if refs != nil {
-		t.Fatalf("expected nil partial slice on System.List error, got %+v", refs)
+	if keys != nil {
+		t.Fatalf("expected nil partial key slice on System.List error, got %+v", keys)
+	}
+
+	// UI Targets / List при сбое System.List по-прежнему сохраняет управляемые туннели из Store.
+	refs, err := ops.List(ctx)
+	if err != nil {
+		t.Fatalf("expected WarpTunnelOps.List to keep managed tunnels on System.List error, got err=%v", err)
+	}
+	if len(refs) != 1 || refs[0].ID != "awg50" {
+		t.Fatalf("expected managed awg50 in WarpTunnelOps.List, got %+v", refs)
+	}
+
+	priv1, pub1, err := warpscout.GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wsStore, err := warpscout.NewStore(t.TempDir(), apiPlainCipher{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := wsStore.SetAccount(&warpscout.Account{
+		ID: "prim-err", Token: "tok-err", PrivateKey: priv1, PublicKey: pub1,
+		PeerPublicKey: warpscout.WarpPeerPublicKey, AddressV4: "172.16.0.2", HasToken: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	svc := warpscout.New(warpscout.Deps{
+		Store:   wsStore,
+		Tunnels: ops,
+		WAN:     func(context.Context) (string, bool) { return "eth3", true },
+	})
+	t.Cleanup(svc.Stop)
+
+	if st := svc.State(); !strings.Contains(st.AccountKeyCheckError, "rci list failure") {
+		t.Fatalf("expected State().AccountKeyCheckError containing 'rci list failure', got %+v", st)
+	}
+	if _, err := svc.RegisterWithOptions(ctx, warpscout.RegisterOptions{}); err == nil || !strings.Contains(err.Error(), "rci list failure") {
+		t.Fatalf("expected RegisterWithOptions to fail closed on System.List failure, got %v", err)
+	}
+	if err := svc.DeleteAccountLocal(ctx); err == nil || !strings.Contains(err.Error(), "rci list failure") {
+		t.Fatalf("expected DeleteAccountLocal to fail closed on System.List failure, got %v", err)
 	}
 }
 
@@ -1804,9 +1988,15 @@ func TestWarpTunnelOps_ProtectedExternalTunnelBlocksScanAndReissue(t *testing.T)
 		t.Fatal(err)
 	}
 
-	ops, _, store, _ := newWarpOpsHarness(t, map[string]tunnel.State{
+	ops, tunnelSvc, store, _ := newWarpOpsHarness(t, map[string]tunnel.State{
 		"awg50": tunnel.StateRunning,
 	})
+	getCalls := 0
+	origGet := tunnelSvc.getFn
+	tunnelSvc.getFn = func(ctx context.Context, id string) (*service.TunnelWithStatus, error) {
+		getCalls++
+		return origGet(ctx, id)
+	}
 	seedTunnel(t, store, &storage.AWGTunnel{
 		ID:       "awg50",
 		Name:     "WARP awg50",
@@ -1875,24 +2065,38 @@ func TestWarpTunnelOps_ProtectedExternalTunnelBlocksScanAndReissue(t *testing.T)
 	})
 	t.Cleanup(svc.Stop)
 
+	getCalls = 0
+	keyRefs, err := ops.ListKeys(ctx)
+	if err != nil {
+		t.Fatalf("ops.ListKeys: %v", err)
+	}
+	if getCalls != 0 {
+		t.Fatalf("expected ops.ListKeys to avoid per-tunnel Svc.Get calls, got %d", getCalls)
+	}
+	var sawExtKey bool
+	for _, r := range keyRefs {
+		if r.Mode == warpscout.TargetSystem && r.ID == "Wireguard3" {
+			t.Fatalf("managed NativeWG shadow Wireguard3 must not duplicate under TargetSystem in ListKeys: %+v", r)
+		}
+		if r.Mode == warpscout.TargetSystem && r.ID == "Wireguard7" {
+			sawExtKey = true
+			if r.LocalPublicKey != pub1 || r.Name != "Phobos WARP" {
+				t.Fatalf("expected Wireguard7 key ref with pub1 and Phobos WARP, got %+v", r)
+			}
+		}
+	}
+	if !sawExtKey {
+		t.Fatalf("expected ops.ListKeys to include protected external tunnel Wireguard7, got %+v", keyRefs)
+	}
+
 	refs, err := ops.List(ctx)
 	if err != nil {
 		t.Fatalf("ops.List: %v", err)
 	}
-	var sawExt bool
 	for _, r := range refs {
-		if r.Mode == warpscout.TargetSystem && r.ID == "Wireguard3" {
-			t.Fatalf("managed NativeWG shadow Wireguard3 must not duplicate under TargetSystem: %+v", r)
-		}
 		if r.Mode == warpscout.TargetSystem && r.ID == "Wireguard7" {
-			sawExt = true
-			if !r.Protected || r.LocalPublicKey != pub1 {
-				t.Fatalf("expected Wireguard7 to be protected and preserve LocalPublicKey=%q, got %+v", pub1, r)
-			}
+			t.Fatalf("protected external tunnel Wireguard7 must not appear in UI ops.List: %+v", r)
 		}
-	}
-	if !sawExt {
-		t.Fatalf("expected ops.List to include protected external tunnel Wireguard7, got %+v", refs)
 	}
 
 	targets, err := svc.Targets(ctx)

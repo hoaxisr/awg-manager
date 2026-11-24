@@ -6,14 +6,22 @@
 		proxyUrl: string;
 		relayUrl: string;
 		accountKeyInUseBy?: string;
+		accountKeyCheckError?: string;
 	}
 
-	let { proxyUrl = $bindable(), relayUrl = $bindable(), accountKeyInUseBy = '' }: Props = $props();
+	let {
+		proxyUrl = $bindable(),
+		relayUrl = $bindable(),
+		accountKeyInUseBy = '',
+		accountKeyCheckError = '',
+	}: Props = $props();
 </script>
 
-<p class="alt-hint">{m.warpscout_proxy_hint()}</p>
-{#if accountKeyInUseBy}
-	<p class="alt-warn">{m.warpscout_acct_key_in_use_warn({ name: accountKeyInUseBy })}</p>
+<div class="field-hint">{m.warpscout_proxy_hint()}</div>
+{#if accountKeyInUseBy.trim()}
+	<p class="field-callout-warn">{m.warpscout_acct_key_in_use_warn({ name: accountKeyInUseBy })}</p>
+{:else if accountKeyCheckError.trim()}
+	<p class="field-callout-warn">{m.warpscout_acct_key_check_err({ err: accountKeyCheckError })}</p>
 {/if}
 <div class="alt-field">
 	<label class="field-label" for="warp-proxy-url">{m.warpscout_proxy_url_label()}</label>
@@ -37,33 +45,12 @@
 		bind:value={relayUrl}
 	/>
 </div>
-<p class="alt-warn">{m.warpscout_relay_trust_warn()}</p>
+<p class="field-callout-warn">{m.warpscout_relay_trust_warn()}</p>
 
 <style>
-	.alt-hint {
-		margin: 0;
-		font-size: 0.75rem;
-		line-height: 1.4;
-		color: var(--color-text-muted);
-	}
 	.alt-field {
 		display: flex;
 		flex-direction: column;
 		gap: 0.3rem;
-	}
-	.field-label {
-		font-size: 0.72rem;
-		font-weight: 500;
-		color: var(--color-text-secondary);
-	}
-	.alt-warn {
-		margin: 0;
-		padding: 0.45rem 0.6rem;
-		border-radius: var(--radius-sm);
-		font-size: 0.74rem;
-		line-height: 1.4;
-		color: var(--color-warning);
-		background: var(--color-warning-tint);
-		border: 1px solid var(--color-warning-border);
 	}
 </style>

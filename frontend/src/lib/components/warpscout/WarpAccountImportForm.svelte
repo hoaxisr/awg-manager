@@ -22,7 +22,7 @@
 	}
 </script>
 
-<p class="alt-hint">{m.warpscout_import_hint()}</p>
+<div class="field-hint">{m.warpscout_import_hint()}</div>
 <input
 	bind:this={fileInputEl}
 	type="file"
@@ -45,22 +45,11 @@
 ></textarea>
 
 <style>
-	.alt-hint {
-		margin: 0;
-		font-size: 0.75rem;
-		line-height: 1.4;
-		color: var(--color-text-muted);
-	}
 	.alt-head-row {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
 		gap: 0.5rem;
-	}
-	.field-label {
-		font-size: 0.72rem;
-		font-weight: 500;
-		color: var(--color-text-secondary);
 	}
 	.file-input-hidden {
 		display: none;

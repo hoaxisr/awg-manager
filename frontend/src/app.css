@@ -1682,6 +1682,17 @@ input.api-key-input {
 	color: var(--color-text-secondary);
 }
 
+.field-callout-warn {
+	margin: 0;
+	padding: 0.45rem 0.6rem;
+	border-radius: var(--radius-sm);
+	font-size: 0.74rem;
+	line-height: 1.4;
+	color: var(--color-warning);
+	background: var(--color-warning-tint);
+	border: 1px solid var(--color-warning-border);
+}
+
 /* ─── Chip primitive (filter pills, action pills, level toggles) ─── */
 .chip {
 	display: inline-flex;

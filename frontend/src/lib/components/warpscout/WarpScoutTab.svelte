@@ -306,6 +306,7 @@
 					{targets}
 					{usedIpv4}
 					accountKeyInUseBy={ws.accountKeyInUseBy ?? ''}
+					accountKeyCheckError={ws.accountKeyCheckError ?? ''}
 					onchanged={refreshNow}
 				/>
 				<WarpAwgPopover

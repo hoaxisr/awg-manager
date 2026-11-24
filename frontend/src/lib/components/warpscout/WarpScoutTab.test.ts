@@ -768,7 +768,7 @@ describe('WarpScoutTab', () => {
 		await waitFor(() => expect(api.warpscoutImportAccount).toHaveBeenCalledTimes(1));
 	});
 
-	it('locks reissue and delete controls when primary account key is in use by a live tunnel', async () => {
+	it('locks reissue and delete controls when primary account key is in use by a tunnel', async () => {
 		const initial: WarpScoutState = {
 			...acctState(),
 			accountKeyInUseBy: 'WARP Live',
@@ -776,12 +776,45 @@ describe('WarpScoutTab', () => {
 		const { container } = await mount(initial);
 
 		await fireEvent.click(chip(container, 0));
-		await screen.findByText(/Ключ этого аккаунта используется живым туннелем «WARP Live»/);
+		await screen.findByText(/Ключ этого аккаунта используется туннелем «WARP Live»/);
 
 		const reissueBtn = await screen.findByRole('button', { name: 'Перевыпустить' });
 		const deleteBtn = await screen.findByRole('button', { name: 'Удалить' });
 		expect(reissueBtn.hasAttribute('disabled')).toBe(true);
 		expect(deleteBtn.hasAttribute('disabled')).toBe(true);
+
+		// Confirmation message on import explains that the old Cloudflare registration stays active.
+		await fireEvent.click(await screen.findByRole('button', { name: 'Импорт / прокси' }));
+		const textarea = await waitFor(() => container.ownerDocument.querySelector<HTMLTextAreaElement>('#warp-import-raw')!);
+		await fireEvent.input(textarea, {
+			target: { value: '[Interface]\nPrivateKey = privnew\nAddress = 172.16.0.9/32\n' },
+		});
+		await fireEvent.click(await screen.findByRole('button', { name: 'Импортировать' }));
+		await screen.findByText(/Регистрация старого ключа в Cloudflare сохранится, так как его использует туннель «WARP Live»/);
+	});
+
+	it('locks reissue, delete, and proxy registration when accountKeyCheckError is reported', async () => {
+		const initial: WarpScoutState = {
+			...acctState(),
+			accountKeyCheckError: 'rci unavailable',
+		};
+		const { container } = await mount(initial);
+
+		await fireEvent.click(chip(container, 0));
+		await screen.findByText(/Не удалось проверить занятость ключа \(rci unavailable\)/);
+
+		const reissueBtn = await screen.findByRole('button', { name: 'Перевыпустить' });
+		const deleteBtn = await screen.findByRole('button', { name: 'Удалить' });
+		expect(reissueBtn.hasAttribute('disabled')).toBe(true);
+		expect(deleteBtn.hasAttribute('disabled')).toBe(true);
+
+		await fireEvent.click(await screen.findByRole('button', { name: 'Импорт / прокси' }));
+		await fireEvent.click(await screen.findByRole('button', { name: 'Прокси / Relay' }));
+		await screen.findByText(/Не удалось проверить занятость ключа \(rci unavailable\)/);
+		const proxyInput = await waitFor(() => container.ownerDocument.querySelector<HTMLInputElement>('#warp-proxy-url')!);
+		await fireEvent.input(proxyInput, { target: { value: 'socks5://127.0.0.1:1080' } });
+		const regBtns = await screen.findAllByRole('button', { name: 'Зарегистрировать' });
+		expect(regBtns.at(-1)!.hasAttribute('disabled')).toBe(true);
 	});
 
 	it('hides WARP+ license binding and shows no-token hint for imported tokenless account', async () => {

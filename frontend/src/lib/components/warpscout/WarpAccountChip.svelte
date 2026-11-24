@@ -15,10 +15,18 @@
 		targets?: WarpTunnelRef[];
 		usedIpv4?: string[];
 		accountKeyInUseBy?: string;
+		accountKeyCheckError?: string;
 		onchanged: () => void | Promise<void>;
 	}
 
-	let { account, targets = [], usedIpv4 = [], accountKeyInUseBy = '', onchanged }: Props = $props();
+	let {
+		account,
+		targets = [],
+		usedIpv4 = [],
+		accountKeyInUseBy = '',
+		accountKeyCheckError = '',
+		onchanged,
+	}: Props = $props();
 
 	let accountBusy = $state(false);
 	let license = $state('');
@@ -30,7 +38,7 @@
 	let altTab = $state<'import' | 'proxy'>('import');
 
 	const hasToken = $derived(account?.hasToken !== false);
-	const keyLocked = $derived(!!accountKeyInUseBy.trim());
+	const keyLocked = $derived(!!accountKeyInUseBy.trim() || !!accountKeyCheckError.trim());
 
 	function openAltModal(tab: 'import' | 'proxy' = 'import'): void {
 		altTab = tab;
@@ -169,9 +177,13 @@
 				</div>
 			</div>
 
-			{#if keyLocked}
-				<p class="key-in-use-warn">
+			{#if accountKeyInUseBy.trim()}
+				<p class="field-callout-warn">
 					{m.warpscout_acct_key_in_use_warn({ name: accountKeyInUseBy })}
+				</p>
+			{:else if accountKeyCheckError.trim()}
+				<p class="field-callout-warn">
+					{m.warpscout_acct_key_check_err({ err: accountKeyCheckError })}
 				</p>
 			{/if}
 
@@ -289,6 +301,7 @@
 	initialTab={altTab}
 	hasExistingAccount={!!account}
 	{accountKeyInUseBy}
+	{accountKeyCheckError}
 	onclose={() => (showAltModal = false)}
 	{onchanged}
 />
@@ -384,16 +397,6 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-	}
-	.key-in-use-warn {
-		margin: 0;
-		padding: 0.45rem 0.6rem;
-		border-radius: var(--radius-sm);
-		font-size: 0.74rem;
-		line-height: 1.4;
-		color: var(--color-warning);
-		background: var(--color-warning-tint);
-		border: 1px solid var(--color-warning-border);
 	}
 	.lic-box {
 		display: flex;
