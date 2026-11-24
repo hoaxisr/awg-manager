@@ -1,10 +1,14 @@
 <script lang="ts">
 	import type { WizardKind, RevealCredentials } from '$lib/types/serverWizard';
-	import { Button, Modal } from '$lib/components/ui';
+	import { m } from '$lib/i18n';
+	import { Button } from '$lib/components/ui';
 	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { notifications } from '$lib/stores/notifications';
 	import { renderCrispQrDataUrl } from '$lib/utils/qrSvg';
-	import { Copy, ExternalLink, Lock, Eye, Download, Check } from 'lucide-svelte';
+	import { Copy, ExternalLink, Check } from 'lucide-svelte';
+	import RevealGate from './RevealGate.svelte';
+	import QrZoomModal from './QrZoomModal.svelte';
+	import CodeExportBlock from './CodeExportBlock.svelte';
 
 	interface Props {
 		kind: WizardKind;
@@ -44,47 +48,20 @@
 		}
 	}
 
-	async function copy(text: string, key: string, label = 'Скопировано') {
+	async function copy(text: string, key: string) {
 		await copyToClipboard(text);
 		copiedKey = key;
-		notifications.success(label);
+		notifications.success(m.common_copied());
 		setTimeout(() => {
 			if (copiedKey === key) copiedKey = null;
 		}, 2000);
 	}
 
-	function downloadJson(filename: string, content: string) {
-		const blob = new Blob([content], { type: 'application/json' });
-		const url = URL.createObjectURL(blob);
-		const a = document.createElement('a');
-		a.href = url;
-		a.download = filename;
-		document.body.appendChild(a);
-		a.click();
-		document.body.removeChild(a);
-		URL.revokeObjectURL(url);
-		notifications.success('Файл скачан');
-	}
 </script>
 
 <div class="result-container">
 	{#if !creds}
-		<!-- Secret Isolation Gate: Reveal CTA -->
-		<div class="gate-card">
-			<div class="gate-icon">
-				<Lock size={28} />
-			</div>
-			<div class="gate-text">
-				<h3 class="gate-title">Данные подключения защищены</h3>
-				<p class="gate-desc">
-					В целях безопасности секретные ключи и персональные ссылки не передаются при опросе статуса и открываются только по запросу.
-				</p>
-			</div>
-			<Button variant="primary" onclick={onreveal} disabled={loading}>
-				<Eye size={16} class="mr-2" />
-				{loading ? 'Получение ключей...' : 'Показать ключи и ссылки'}
-			</Button>
-		</div>
+		<RevealGate {loading} {onreveal} />
 	{:else}
 		{#if kind === 'both'}
 			<div class="format-tabs" style="margin-bottom: 12px;">
@@ -94,7 +71,7 @@
 					class:active={activeServiceTab === 'xray'}
 					onclick={() => (activeServiceTab = 'xray')}
 				>
-					Сервер VLESS (XHTTP)
+					{m.servers_wizard_result_tab_vless()}
 				</button>
 				<button
 					type="button"
@@ -102,7 +79,7 @@
 					class:active={activeServiceTab === 'tgwebproxy'}
 					onclick={() => (activeServiceTab = 'tgwebproxy')}
 				>
-					Прокси Telegram
+					{m.servers_wizard_result_tab_telegram()}
 				</button>
 			</div>
 		{/if}
@@ -116,23 +93,25 @@
 							type="button"
 							class="qr-wrapper qr-zoom-trigger"
 							onclick={() => (qrZoomOpen = true)}
-							title="Нажмите, чтобы увеличить QR-код"
+							title={m.servers_wizard_result_qr_zoom_hint()}
 						>
 							<img src={qrDataUrl} alt="Telegram Proxy QR" class="qr-img" />
 						</button>
-						<span class="qr-hint">Сканируйте камерой смартфона (нажмите на QR для увеличения)</span>
+						<span class="qr-hint">{m.servers_wizard_result_qr_hint_tg()}</span>
 					{/if}
 
 					{#if creds.direct_link}
-						<a
+						<Button
 							href={creds.direct_link}
 							target="_blank"
 							rel="noopener noreferrer"
-							class="btn-telegram"
+							variant="primary"
+							size="md"
+							fullWidth
 						>
-							<ExternalLink size={16} />
-							Открыть в Telegram
-						</a>
+							{#snippet iconBefore()}<ExternalLink size={16} />{/snippet}
+							{m.servers_wizard_result_open_telegram()}
+						</Button>
 					{/if}
 				</div>
 
@@ -140,7 +119,7 @@
 				<div class="details-panel">
 					{#if creds.direct_link}
 						<div class="form-group">
-							<span class="field-label">Прямая ссылка MTProxy:</span>
+							<span class="field-label">{m.servers_wizard_result_mtproxy_link()}</span>
 							<div class="copy-input-row">
 								<input
 									readonly
@@ -160,7 +139,7 @@
 
 					{#if creds.web_link}
 						<div class="form-group">
-							<span class="field-label">Ссылка веб-прокси Telegram:</span>
+							<span class="field-label">{m.servers_wizard_result_web_link()}</span>
 							<div class="copy-input-row">
 								<input
 									readonly
@@ -179,16 +158,16 @@
 					{/if}
 
 					<div class="params-box">
-						<div class="params-header">Параметры вручную:</div>
+						<div class="params-header">{m.servers_wizard_result_manual_params()}</div>
 						<div class="params-grid">
-							<span class="param-name">Сервер:</span>
+							<span class="param-name">{m.servers_wizard_result_param_server()}</span>
 							<span class="param-val">{creds.direct_host || 'router.local'}</span>
-							<span class="param-name">Порт:</span>
+							<span class="param-name">{m.servers_wizard_result_param_port()}</span>
 							<span class="param-val">{creds.direct_port || 8443}</span>
-							<span class="param-name">Секрет:</span>
+							<span class="param-name">{m.servers_wizard_result_param_secret()}</span>
 							<span class="param-val">{creds.tg_secret || '••••'}</span>
 							{#if creds.tg_egress}
-								<span class="param-name">Выход трафика:</span>
+								<span class="param-name">{m.servers_wizard_result_param_egress()}</span>
 								<span class="param-val">{creds.tg_egress}</span>
 							{/if}
 						</div>
@@ -207,7 +186,7 @@
 						class:active={activeFormat === 'vless'}
 						onclick={() => (activeFormat = 'vless')}
 					>
-						VLESS Ссылка & QR
+						{m.servers_wizard_result_fmt_vless()}
 					</button>
 					{#if creds.happ_json}
 						<button
@@ -216,7 +195,7 @@
 							class:active={activeFormat === 'happ'}
 							onclick={() => (activeFormat = 'happ')}
 						>
-							Happ (Телефон)
+							{m.servers_wizard_result_fmt_happ()}
 						</button>
 					{/if}
 					{#if creds.singbox_json}
@@ -249,15 +228,15 @@
 									type="button"
 									class="qr-wrapper qr-zoom-trigger"
 									onclick={() => (qrZoomOpen = true)}
-									title="Нажмите, чтобы увеличить QR-код"
+									title={m.servers_wizard_result_qr_zoom_hint()}
 								>
 									<img src={qrDataUrl} alt="VLESS QR" class="qr-img" />
 								</button>
-								<span class="qr-hint">Сканируйте в приложении Happ / v2rayNG / Streisand (нажмите на QR для увеличения)</span>
+								<span class="qr-hint">{m.servers_wizard_result_qr_hint_vless()}</span>
 							{/if}
 						</div>
 						<div class="details-panel">
-							<span class="field-label">Универсальная ссылка VLESS:</span>
+							<span class="field-label">{m.servers_wizard_result_vless_link()}</span>
 							<div class="copy-input-row">
 								<input
 									readonly
@@ -275,8 +254,8 @@
 
 							<div class="params-box">
 								<div class="client-meta-row">
-									<span class="meta-label">Клиент:</span>
-									<span class="meta-val">{creds.remark || 'Основное устройство'}</span>
+									<span class="meta-label">{m.servers_wizard_result_meta_client()}</span>
+									<span class="meta-val">{creds.remark || m.servers_ext_default_device()}</span>
 								</div>
 								<div class="client-meta-row">
 									<span class="meta-label">UUID:</span>
@@ -284,19 +263,19 @@
 								</div>
 								{#if creds.xray_egress}
 									<div class="client-meta-row">
-										<span class="meta-label">Выход трафика (VLESS):</span>
+										<span class="meta-label">{m.servers_wizard_result_meta_egress_vless()}</span>
 										<span class="meta-val mono">{creds.xray_egress}</span>
 									</div>
 								{/if}
 								{#if creds.tg_egress}
 									<div class="client-meta-row">
-										<span class="meta-label">Выход трафика (Telegram):</span>
+										<span class="meta-label">{m.servers_wizard_result_meta_egress_tg()}</span>
 										<span class="meta-val mono">{creds.tg_egress}</span>
 									</div>
 								{/if}
 								{#if creds.origin_host}
 									<div class="client-meta-row">
-										<span class="meta-label">Сервер-источник:</span>
+										<span class="meta-label">{m.servers_wizard_result_meta_origin()}</span>
 										<span class="meta-val mono">{creds.origin_scheme || 'http'}://{creds.origin_host}:{creds.origin_port || 9009}</span>
 									</div>
 								{/if}
@@ -304,74 +283,33 @@
 						</div>
 					</div>
 				{:else if activeFormat === 'happ' && creds.happ_json}
-					<div class="code-export-flow">
-						<div class="code-export-header">
-							<span class="field-label">Happ Proxy JSON snippet:</span>
-							<div class="export-actions">
-								<Button size="sm" variant="secondary" onclick={() => copy(creds.happ_json!, 'happ')}>
-									Копировать
-								</Button>
-								<Button size="sm" variant="secondary" onclick={() => downloadJson('happ-singbox.json', creds.happ_json!)}>
-									<Download size={14} class="mr-1" /> Скачать
-								</Button>
-							</div>
-						</div>
-						<pre class="code-preview">{creds.happ_json}</pre>
-					</div>
+					<CodeExportBlock
+						label="Happ Proxy JSON snippet:"
+						content={creds.happ_json}
+						filename="happ-singbox.json"
+						oncopy={() => copy(creds.happ_json!, 'happ')}
+					/>
 				{:else if activeFormat === 'singbox' && creds.singbox_json}
-					<div class="code-export-flow">
-						<div class="code-export-header">
-							<span class="field-label">Sing-box Outbound JSON:</span>
-							<div class="export-actions">
-								<Button size="sm" variant="secondary" onclick={() => copy(creds.singbox_json!, 'singbox')}>
-									Копировать
-								</Button>
-								<Button size="sm" variant="secondary" onclick={() => downloadJson('singbox-outbound.json', creds.singbox_json!)}>
-									<Download size={14} class="mr-1" /> Скачать
-								</Button>
-							</div>
-						</div>
-						<pre class="code-preview">{creds.singbox_json}</pre>
-					</div>
+					<CodeExportBlock
+						label="Sing-box Outbound JSON:"
+						content={creds.singbox_json}
+						filename="singbox-outbound.json"
+						oncopy={() => copy(creds.singbox_json!, 'singbox')}
+					/>
 				{:else if activeFormat === 'mihomo' && creds.mihomo_yaml}
-					<div class="code-export-flow">
-						<div class="code-export-header">
-							<span class="field-label">Mihomo Proxy YAML:</span>
-							<div class="export-actions">
-								<Button size="sm" variant="secondary" onclick={() => copy(creds.mihomo_yaml!, 'mihomo')}>
-									Копировать
-								</Button>
-								<Button size="sm" variant="secondary" onclick={() => downloadJson('mihomo-proxy.yaml', creds.mihomo_yaml!)}>
-									<Download size={14} class="mr-1" /> Скачать
-								</Button>
-							</div>
-						</div>
-						<pre class="code-preview">{creds.mihomo_yaml}</pre>
-					</div>
+					<CodeExportBlock
+						label="Mihomo Proxy YAML:"
+						content={creds.mihomo_yaml}
+						filename="mihomo-proxy.yaml"
+						oncopy={() => copy(creds.mihomo_yaml!, 'mihomo')}
+					/>
 				{/if}
 			</div>
 		{/if}
 	{/if}
 </div>
 
-<Modal
-	bind:open={qrZoomOpen}
-	title="QR-код для сканирования"
-	onclose={() => (qrZoomOpen = false)}
-	size="sm"
->
-	{#if qrDataUrl}
-		<div class="qr-zoom-body">
-			<div class="qr-zoom-frame">
-				<img src={qrDataUrl} alt="QR-код крупным планом" class="qr-zoom-img" />
-			</div>
-			<p class="qr-zoom-note">Наведите камеру или сканер в приложении на экран</p>
-		</div>
-	{/if}
-	{#snippet actions()}
-		<Button variant="secondary" onclick={() => (qrZoomOpen = false)}>Закрыть</Button>
-	{/snippet}
-</Modal>
+<QrZoomModal bind:open={qrZoomOpen} dataUrl={qrDataUrl} />
 
 <style>
 	.result-container {
@@ -379,52 +317,6 @@
 		flex-direction: column;
 		gap: 1.25rem;
 		padding: 0.5rem 0;
-	}
-
-	.gate-card {
-		padding: 2rem;
-		border-radius: var(--radius);
-		background: var(--color-bg-primary);
-		border: 1px solid var(--color-border);
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		text-align: center;
-		gap: 1rem;
-	}
-
-	.gate-icon {
-		width: 56px;
-		height: 56px;
-		border-radius: 50%;
-		background: var(--color-accent-tint);
-		border: 1px solid var(--color-accent-border);
-		color: var(--color-accent);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-	}
-
-	.gate-text {
-		display: flex;
-		flex-direction: column;
-		gap: 0.25rem;
-		max-width: 24rem;
-	}
-
-	.gate-title {
-		font-size: 1rem;
-		font-weight: 600;
-		color: var(--color-text-primary);
-		margin: 0;
-	}
-
-	.gate-desc {
-		font-size: 0.75rem;
-		color: var(--color-text-muted);
-		margin: 0;
-		line-height: 1.4;
 	}
 
 	.result-grid {
@@ -476,59 +368,10 @@
 		display: block;
 	}
 
-	.qr-zoom-body {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 0.75rem;
-	}
-
-	.qr-zoom-frame {
-		padding: 16px;
-		background: #ffffff;
-		border-radius: var(--radius);
-		border: 1px solid var(--color-border);
-	}
-
-	.qr-zoom-img {
-		width: min(360px, 78vw);
-		height: auto;
-		aspect-ratio: 1 / 1;
-		image-rendering: crisp-edges;
-		display: block;
-	}
-
-	.qr-zoom-note {
-		font-size: 0.75rem;
-		color: var(--color-text-muted);
-		text-align: center;
-		margin: 0;
-	}
-
 	.qr-hint {
 		font-size: 0.6875rem;
 		color: var(--color-text-muted);
 		text-align: center;
-	}
-
-	.btn-telegram {
-		width: 100%;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		gap: 0.5rem;
-		padding: 0.625rem 1rem;
-		border-radius: var(--radius-sm);
-		background: #229ed9;
-		color: #ffffff;
-		font-weight: 600;
-		font-size: 0.75rem;
-		text-decoration: none;
-		transition: opacity var(--t-fast) ease;
-	}
-
-	.btn-telegram:hover {
-		opacity: 0.9;
 	}
 
 	.details-panel {
@@ -670,36 +513,6 @@
 		color: var(--color-text-primary);
 		font-weight: 600;
 		box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-	}
-
-	.code-export-flow {
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-	}
-
-	.code-export-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-	}
-
-	.export-actions {
-		display: flex;
-		gap: 0.5rem;
-	}
-
-	.code-preview {
-		margin: 0;
-		padding: 0.875rem;
-		background: var(--color-bg-primary);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-sm);
-		font-family: var(--font-mono);
-		font-size: 0.6875rem;
-		color: var(--color-text-primary);
-		overflow-x: auto;
-		max-height: 14rem;
 	}
 
 	:global(.text-success) {

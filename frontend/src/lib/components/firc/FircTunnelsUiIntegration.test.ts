@@ -383,16 +383,18 @@ describe('FIRC tunnels UI integration', () => {
 		expect(screen.getByText(m.tunnels_awg_stat_leader())).toBeInTheDocument();
 
 		const testBtn = screen.getByRole('button', {
-			name: /Тест скорости и диагностика «FIN \(Финляндия\) \(Premium\)»/i,
+			name: m.firc_resource_test_title({ name: 'FIN (Финляндия) (Premium)' }),
 		});
 		await fireEvent.click(testBtn);
 		expect(
 			await screen.findByText(m.tunnel_test_title({ prefix: 'FIRC', name: 'FIN (Финляндия) (Premium)' })),
 		).toBeInTheDocument();
 
-		const editBtns = screen.getAllByText('Изменить');
+		const editBtns = screen.getAllByText(m.common_edit());
 		await fireEvent.click(editBtns[0]);
-		expect(await screen.findByText(/Настройки туннеля FIN \(Финляндия\) \(Premium\) \(tunvless2\)/)).toBeInTheDocument();
+		expect(
+			await screen.findByText(m.firc_tunnel_edit_title({ name: 'FIN (Финляндия) (Premium)', device: 'tunvless2' })),
+		).toBeInTheDocument();
 	});
 
 	it('probes running tunnels in parallel via fircProbeInterfaces and updates latency & StatStrip', async () => {
@@ -610,12 +612,12 @@ describe('FIRC tunnels UI integration', () => {
 		fircEditTunnelSubTab.set('nodes');
 		render(FircTunnelEditModal);
 
-		const probeAllBtn = await screen.findByRole('button', { name: /Проверить задержку/ });
+		const probeAllBtn = await screen.findByRole('button', { name: m.firc_tunnel_edit_probe_all() });
 		await fireEvent.click(probeAllBtn);
 
 		await waitFor(() => {
-			expect(screen.getByRole('button', { name: /Проверить задержку \(1\/2\)/ })).toBeInTheDocument();
-			expect(screen.getByText('210 мс')).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: `${m.firc_tunnel_edit_probe_all()} (1/2)` })).toBeInTheDocument();
+			expect(screen.getByText(m.firc_tunnel_edit_ms({ ms: 210 }))).toBeInTheDocument();
 		});
 
 		releaseProbe([
@@ -623,11 +625,11 @@ describe('FIRC tunnels UI integration', () => {
 			{ key: 'src1:Beta', ok: true, why: '', handshakeMs: 20, firstByteMs: 40 },
 		]);
 
-		expect(await screen.findByText('60 мс')).toBeInTheDocument();
-		expect(screen.getByText('подкл. 20 · ответ 40')).toBeInTheDocument();
-		expect(screen.getByText('подкл. 200 · ответ 10')).toBeInTheDocument();
+		expect(await screen.findByText(m.firc_tunnel_edit_ms({ ms: 60 }))).toBeInTheDocument();
+		expect(screen.getByText(m.firc_probe_breakdown({ connect: '20', reply: '40' }))).toBeInTheDocument();
+		expect(screen.getByText(m.firc_probe_breakdown({ connect: '200', reply: '10' }))).toBeInTheDocument();
 
-		await fireEvent.click(screen.getByRole('button', { name: /Сортировать по пингу/ }));
+		await fireEvent.click(screen.getByRole('button', { name: m.firc_tunnel_edit_sort_by_ping() }));
 
 		await waitFor(() => {
 			const rows = Array.from(document.querySelectorAll('.nodes-table tbody tr'));
@@ -636,7 +638,7 @@ describe('FIRC tunnels UI integration', () => {
 			expect(rows[1].textContent).toContain('Alpha');
 		});
 
-		const singleBtn = screen.getByRole('button', { name: 'Проверить узел Alpha' });
+		const singleBtn = screen.getByRole('button', { name: m.firc_probe_single_aria({ name: 'Alpha' }) });
 		await fireEvent.click(singleBtn);
 
 		await waitFor(() => {
@@ -649,8 +651,8 @@ describe('FIRC tunnels UI integration', () => {
 					keys: ['src1:Alpha'],
 				}),
 			);
-			expect(screen.getByText('30 мс')).toBeInTheDocument();
-			expect(screen.getByText('подкл. 12 · ответ 18')).toBeInTheDocument();
+			expect(screen.getByText(m.firc_tunnel_edit_ms({ ms: 30 }))).toBeInTheDocument();
+			expect(screen.getByText(m.firc_probe_breakdown({ connect: '12', reply: '18' }))).toBeInTheDocument();
 		});
 	});
 
@@ -695,7 +697,7 @@ describe('FIRC tunnels UI integration', () => {
 
 		const diag = await screen.findByTestId('firc-card-diagnostic');
 		expect(diag).toHaveTextContent(m.firc_reason_engine_not_selected());
-		expect(screen.queryByText(/· активен/i)).not.toBeInTheDocument();
+		expect(screen.queryByText(new RegExp(`· ${m.firc_resource_active_node()}`, 'i'))).not.toBeInTheDocument();
 	});
 
 	it('surfaces subscription placeholder error on card, in edit modal banner, and in Sources tab', async () => {
@@ -756,10 +758,10 @@ describe('FIRC tunnels UI integration', () => {
 		const cardDiag = await screen.findByTestId('firc-card-diagnostic');
 		expect(cardDiag).toHaveTextContent(expectedMsg);
 
-		await fireEvent.click(screen.getByText('Изменить'));
+		await fireEvent.click(screen.getByText(m.common_edit()));
 		expect(await screen.findByTestId('firc-modal-diagnostic')).toHaveTextContent(expectedMsg);
 
-		await fireEvent.click(screen.getByRole('button', { name: /Подписки и ссылки/ }));
+		await fireEvent.click(screen.getByRole('button', { name: m.firc_tunnel_edit_tab_sources({ count: 1 }) }));
 		expect(await screen.findByTestId('firc-source-error')).toHaveTextContent(expectedMsg);
 	});
 
@@ -822,13 +824,13 @@ describe('FIRC tunnels UI integration', () => {
 			m.firc_reason_all_nodes_skipped({ count: 1, reason: m.firc_skip_allow_insecure() }),
 		);
 
-		await fireEvent.click(screen.getByText('Изменить'));
+		await fireEvent.click(screen.getByText(m.common_edit()));
 		expect(await screen.findByText(m.firc_node_state_skipped())).toBeInTheDocument();
 		expect(screen.getByText(m.firc_skip_allow_insecure())).toBeInTheDocument();
 
-		await fireEvent.click(screen.getByRole('button', { name: /Входящие порты/ }));
-		await fireEvent.click(screen.getByRole('button', { name: /Добавить порт/ }));
-		const listenInput = await screen.findByLabelText('Адрес');
+		await fireEvent.click(screen.getByRole('button', { name: m.firc_tunnel_edit_tab_inbounds({ count: 0 }) }));
+		await fireEvent.click(screen.getByRole('button', { name: m.firc_tunnel_edit_add_inbound() }));
+		const listenInput = await screen.findByLabelText(m.firc_tunnel_edit_inbound_listen());
 		expect(listenInput).toHaveValue('br0');
 	});
 
@@ -889,28 +891,28 @@ describe('FIRC tunnels UI integration', () => {
 		render(FircTunnelsTabSection, { props: { dashboardMode: false, showTrustTunnels: false } });
 		expect(await screen.findByText('VOX')).toBeInTheDocument();
 
-		await fireEvent.click(screen.getByText('Изменить'));
-		expect(await screen.findByText(/Настройки туннеля VOX \(tunvless0\)/)).toBeInTheDocument();
-		expect(screen.getByPlaceholderText('Поиск узлов…')).toBeInTheDocument();
+		await fireEvent.click(screen.getByText(m.common_edit()));
+		expect(await screen.findByText(m.firc_tunnel_edit_title({ name: 'VOX', device: 'tunvless0' }))).toBeInTheDocument();
+		expect(screen.getByPlaceholderText(m.firc_tunnel_edit_search_placeholder())).toBeInTheDocument();
 
 		// Nodes tab shows collapsible «Скрыто фильтром (1)»
-		const hiddenToggle = await screen.findByRole('button', { name: /Скрыто фильтром \(1\)/i });
+		const hiddenToggle = await screen.findByRole('button', { name: m.firc_filter_hidden_toggle({ count: 1 }) });
 		expect(hiddenToggle).toHaveAttribute('aria-expanded', 'false');
 		await fireEvent.click(hiddenToggle);
 		expect(hiddenToggle).toHaveAttribute('aria-expanded', 'true');
 		expect(screen.getByText('RU-1')).toBeInTheDocument();
 
 		// Switch to Подписки и ссылки tab -> Filter section appears
-		await fireEvent.click(screen.getByRole('button', { name: /Подписки и ссылки/i }));
-		expect(await screen.findByText('Фильтр серверов')).toBeInTheDocument();
-		const includeInp = screen.getByLabelText('Включать только (regex)');
-		const excludeInp = screen.getByLabelText('Исключать (regex)');
+		await fireEvent.click(screen.getByRole('button', { name: m.firc_tunnel_edit_tab_sources({ count: 1 }) }));
+		expect(await screen.findByText(m.firc_filter_section_title())).toBeInTheDocument();
+		const includeInp = screen.getByLabelText(m.firc_filter_include_label());
+		const excludeInp = screen.getByLabelText(m.firc_filter_exclude_label());
 		expect(includeInp).toHaveAttribute('placeholder', 'DE|NL|🇩🇪');
-		expect(excludeInp).toHaveAttribute('placeholder', '🇷🇺|Россия|RU|BRIDGE|LTE');
+		expect(excludeInp).toHaveAttribute('placeholder', m.firc_filter_exclude_example());
 
 		// Lookaround triggers lookaround hint warning and skips preview API call
 		await fireEvent.input(includeInp, { target: { value: '^(?!RU).*$' } });
-		expect(await screen.findByText(/lookahead\/lookbehind не поддерживается/i)).toBeInTheDocument();
+		expect(await screen.findByText(m.firc_filter_warn_lookaround())).toBeInTheDocument();
 		await new Promise((r) => setTimeout(r, 380));
 		expect(fircPreviewTunnel).not.toHaveBeenCalled();
 
@@ -924,11 +926,11 @@ describe('FIRC tunnels UI integration', () => {
 			{ timeout: 1500 },
 		);
 
-		await fireEvent.click(screen.getByRole('button', { name: /^Узлы \(/i }));
-		expect(await screen.findByRole('button', { name: /Скрыто фильтром \(2\)/i })).toBeInTheDocument();
+		await fireEvent.click(screen.getByRole('button', { name: m.firc_tunnel_edit_tab_nodes({ count: 1 }) }));
+		expect(await screen.findByRole('button', { name: m.firc_filter_hidden_toggle({ count: 2 }) })).toBeInTheDocument();
 		expect(screen.getByText('NL-LTE')).toBeInTheDocument();
 
-		await fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }));
+		await fireEvent.click(screen.getByRole('button', { name: m.common_save() }));
 		await waitFor(() => {
 			expect(fircSaveTunnels).toHaveBeenCalled();
 		});

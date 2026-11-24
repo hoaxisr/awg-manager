@@ -1,3 +1,4 @@
+import { m } from '$lib/i18n';
 import { WarpScoutClient } from './clientWarpScout';
 import {
 	stripFircEmojis,
@@ -58,12 +59,12 @@ export class FircClient extends WarpScoutClient {
 			});
 		} catch (e) {
 			if (e instanceof DOMException && e.name === 'AbortError') throw e;
-			throw new Error('Ошибка сети при обращении к fircd');
+			throw new Error(m.firc_api_network_error());
 		}
 
 		if (response.status === 401) {
 			this.onUnauthorized?.();
-			throw new Error('Сессия истекла');
+			throw new Error(m.api_session_expired());
 		}
 
 		if (response.status === 204) {
@@ -88,7 +89,7 @@ export class FircClient extends WarpScoutClient {
 				group?: string;
 				tunnel?: string;
 			};
-			const msg = obj.error || obj.message || text || `Ошибка fircd (${response.status})`;
+			const msg = obj.error || obj.message || text || m.firc_api_error({ status: response.status });
 			const err: Error & {
 				status?: number;
 				field?: string;

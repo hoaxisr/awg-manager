@@ -3,6 +3,7 @@
 	import { api } from '$lib/api/client';
 	import { onResourceInvalidated } from '$lib/stores/storeRegistry';
 	import { Button } from '$lib/components/ui';
+	import { m, formatLocale, uiText, type UiText } from '$lib/i18n';
 	import {
 		lastServerVerification,
 		recordServerVerification,
@@ -37,7 +38,7 @@
 	}: Props = $props();
 
 	let loading = $state(false);
-	let errorMsg = $state('');
+	let errorMsg = $state<UiText>('');
 	let report = $state<VerificationReport | null>(null);
 	let checkedUIStateFingerprint = $state('');
 	let liveBackendFingerprint = $state('');
@@ -82,18 +83,18 @@
 		return false;
 	});
 
-	const CATEGORY_LABELS: Record<VerificationErrorCategory, string> = {
-		dns: 'DNS',
-		tls: 'TLS / SNI',
-		http_origin: 'Маршрут :9009 / служба',
-		auth: 'Учётные записи',
-		egress: 'Маршрут выхода',
-		timeout: 'Таймаут',
+	const CATEGORY_LABELS: Record<VerificationErrorCategory, () => string> = {
+		dns: () => 'DNS',
+		tls: () => 'TLS / SNI',
+		http_origin: m.servers_wizard_checks_cat_http_origin,
+		auth: m.servers_wizard_checks_cat_auth,
+		egress: m.servers_wizard_checks_cat_egress,
+		timeout: m.servers_wizard_checks_cat_timeout,
 	};
 
 	function formatTime(iso: string): string {
 		try {
-			return new Date(iso).toLocaleTimeString('ru-RU', {
+			return new Date(iso).toLocaleTimeString(formatLocale(), {
 				hour: '2-digit',
 				minute: '2-digit',
 				second: '2-digit',
@@ -125,7 +126,7 @@
 			checkedUIStateFingerprint = currentFingerprint;
 			liveBackendFingerprint = res.state_fingerprint || '';
 		} catch (e) {
-			errorMsg = e instanceof Error ? e.message : 'Не удалось выполнить проверку подключения';
+			errorMsg = e instanceof Error ? e.message : () => m.servers_wizard_checks_failed();
 		} finally {
 			loading = false;
 		}
@@ -161,12 +162,12 @@
 	<div class="checks-header">
 		<div class="checks-title-wrap">
 			<ShieldCheck size={16} class="icon-accent" />
-			<span class="checks-title">Проверка готовности и маршрутов</span>
+			<span class="checks-title">{m.servers_wizard_checks_title()}</span>
 			{#if report}
-				<span class="checked-time">Проверено в {formatTime(report.checked_at)}</span>
+				<span class="checked-time">{m.servers_wizard_checks_checked_at({ time: formatTime(report.checked_at) })}</span>
 			{/if}
 			{#if isStale}
-				<span class="stale-badge">Конфигурация изменилась — проверьте повторно</span>
+				<span class="stale-badge">{m.servers_wizard_checks_stale()}</span>
 			{/if}
 		</div>
 
@@ -177,14 +178,14 @@
 			disabled={loading}
 		>
 			<RefreshCw size={13} class={loading ? 'spin mr-1' : 'mr-1'} />
-			{loading ? 'Проверка...' : report ? 'Проверить снова' : 'Проверить подключение'}
+			{loading ? m.servers_wizard_checks_running() : report ? m.servers_wizard_checks_again() : m.servers_wizard_checks_run()}
 		</Button>
 	</div>
 
 	{#if errorMsg}
 		<div class="checks-error">
 			<XCircle size={15} />
-			<span>{errorMsg}</span>
+			<span>{uiText(errorMsg)}</span>
 		</div>
 	{/if}
 
@@ -210,7 +211,7 @@
 						<div class="check-top">
 							<span class="check-name">{chk.title}</span>
 							{#if chk.category}
-								<span class="cat-badge">{CATEGORY_LABELS[chk.category] ?? chk.category}</span>
+								<span class="cat-badge">{CATEGORY_LABELS[chk.category]?.() ?? chk.category}</span>
 							{/if}
 							{#if chk.target_address}
 								<code class="target-code">{chk.target_address}</code>
@@ -218,7 +219,7 @@
 						</div>
 						<div class="check-msg">{chk.message}</div>
 						{#if chk.remediation && chk.status !== 'ok'}
-							<div class="check-remediation">Что проверить: {chk.remediation}</div>
+							<div class="check-remediation">{m.servers_wizard_checks_remediation({ text: chk.remediation })}</div>
 						{/if}
 					</div>
 				</div>
@@ -381,12 +382,5 @@
 		color: var(--color-text-muted);
 		overflow-wrap: anywhere;
 		word-break: break-word;
-	}
-	.spin {
-		animation: spin 1s linear infinite;
-	}
-	@keyframes spin {
-		from { transform: rotate(0deg); }
-		to { transform: rotate(360deg); }
 	}
 </style>

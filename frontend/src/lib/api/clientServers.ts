@@ -723,7 +723,7 @@ export class ServersClient extends SystemClient {
 			domain,
 			mode,
 			cert_ok: certOk,
-			cert_info: str(kd.cert_info) || (certOk ? 'HTTPS-сертификат активен' : ''),
+			cert_info: str(kd.cert_info),
 			error_detail: str(kd.error_detail) || str(kd.status_message),
 			publications,
 			wan_ip: str(kd.wan_ip) || str(kd.wan_address),

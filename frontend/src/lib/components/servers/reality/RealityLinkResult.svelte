@@ -4,6 +4,7 @@
 	import { notifications } from '$lib/stores/notifications';
 	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { Copy, AlertTriangle } from 'lucide-svelte';
+	import { m } from '$lib/i18n';
 
 	interface Props {
 		link?: string;
@@ -11,7 +12,7 @@
 		title?: string;
 	}
 
-	let { link = '', error = null, title = 'Подключение через Reality (прямой вход)' }: Props = $props();
+	let { link = '', error = null, title }: Props = $props();
 
 	let qr = $state('');
 
@@ -28,32 +29,32 @@
 
 	async function copy() {
 		if (link && (await copyToClipboard(link))) {
-			notifications.success('Reality-ссылка скопирована');
+			notifications.success(m.servers_xray_reality_link_copied());
 		}
 	}
 </script>
 
 <div class="rr">
-	<div class="rr-title">{title}</div>
+	<div class="rr-title">{title ?? m.servers_xray_reality_link_title()}</div>
 	{#if link}
 		<div class="rr-body">
 			{#if qr}
-				<div class="rr-qr"><img src={qr} alt="QR-код Reality" /></div>
+				<div class="rr-qr"><img src={qr} alt={m.servers_xray_reality_qr_alt()} /></div>
 			{/if}
 			<div class="rr-col">
 				<div class="rr-link mono">{link}</div>
 				<div class="rr-actions">
-					<Button variant="primary" size="sm" onclick={copy}><Copy size={14} class="rr-btn-icon" /> Скопировать ссылку</Button>
+					<Button variant="primary" size="sm" onclick={copy}><Copy size={14} class="rr-btn-icon" /> {m.servers_xray_copy_link()}</Button>
 				</div>
 				<span class="rr-hint">
-					Импортируйте в Happ / v2rayNG / Hiddify / Streisand / Mihomo. JSON и YAML — в окне «QR / Ссылка» устройства, маршрут «Reality».
+					{m.servers_xray_reality_link_hint()}
 				</span>
 			</div>
 		</div>
 	{:else if error}
 		<div class="rr-warn"><AlertTriangle size={15} class="rr-warn-icon" /><span>{error}</span></div>
 	{:else}
-		<span class="rr-hint">Получение ссылки Reality…</span>
+		<span class="rr-hint">{m.servers_xray_reality_link_loading()}</span>
 	{/if}
 </div>
 

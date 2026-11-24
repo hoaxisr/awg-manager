@@ -1,10 +1,11 @@
 <script lang="ts">
-	// Шаговая обвязка мастеров «Прокси»: номера с подписями, содержимое шага и
+	// Шаговая обвязка мастеров: номера с подписями, содержимое шага и
 	// навигация «Назад»/«Дальше» (WE-27/28). Вперёд ведёт только «Дальше» —
-	// иначе шаг можно перешагнуть незаполненным.
+	// иначе шаг можно перешагнуть незаполненным. Единственный примитив
+	// пошаговых мастеров (F855): «Прокси», «Внешний доступ», Telegram-мастер.
 	import { m } from '$lib/i18n';
 	import type { Snippet } from 'svelte';
-	import { Button } from '$lib/components/ui';
+	import Button from './Button.svelte';
 	import { Check } from 'lucide-svelte';
 
 	interface Props {
@@ -13,21 +14,47 @@
 		current: number;
 		/** Условие перехода вперёд — готовность текущего шага. */
 		canNext?: boolean;
+		/**
+		 * Можно ли вернуться к пройденным шагам (кнопка «Назад» и клик по
+		 * номеру). Мастер с необратимым применением гасит её на время и после него.
+		 */
+		canBack?: boolean;
+		/** Подпись «Дальше», когда шаг ведёт не просто вперёд (например, «Применить»). */
+		nextLabel?: string;
+		/** Идёт асинхронный переход: «Дальше» крутит спиннер, навигация заблокирована. */
+		busy?: boolean;
+		/** Вызывается с индексом шага; переход вперёд — всегда current + 1. */
 		ongo: (i: number) => void;
 		children: Snippet;
 		/** Действия последнего шага вместо «Дальше». */
 		finish?: Snippet;
 	}
 
-	let { steps, current, canNext = true, ongo, children, finish }: Props = $props();
+	let {
+		steps,
+		current,
+		canNext = true,
+		canBack = true,
+		nextLabel,
+		busy = false,
+		ongo,
+		children,
+		finish,
+	}: Props = $props();
 
 	const last = $derived(current >= steps.length - 1);
+	const showBack = $derived(current > 0 && canBack);
 </script>
 
 <ol class="steps">
 	{#each steps as label, i (label)}
 		<li class="step" class:active={i === current} class:done={i < current}>
-			<button type="button" class="step-btn" disabled={i > current} onclick={() => ongo(i)}>
+			<button
+				type="button"
+				class="step-btn"
+				disabled={i > current || (i < current && (!canBack || busy))}
+				onclick={() => ongo(i)}
+			>
 				<span class="num">
 					{#if i < current}
 						<Check size={13} strokeWidth={3} />
@@ -43,16 +70,20 @@
 
 <div class="body">{@render children()}</div>
 
-<div class="foot">
-	{#if current > 0}
-		<Button variant="ghost" onclick={() => ongo(current - 1)}>{m.common_back()}</Button>
-	{/if}
-	{#if last}
-		{#if finish}{@render finish()}{/if}
-	{:else}
-		<Button variant="primary" disabled={!canNext} onclick={() => ongo(current + 1)}>{m.proxy_wizard_next()}</Button>
-	{/if}
-</div>
+{#if showBack || !last || finish}
+	<div class="foot">
+		{#if showBack}
+			<Button variant="ghost" disabled={busy} onclick={() => ongo(current - 1)}>{m.common_back()}</Button>
+		{/if}
+		{#if last}
+			{#if finish}{@render finish()}{/if}
+		{:else}
+			<Button variant="primary" disabled={!canNext} loading={busy} onclick={() => ongo(current + 1)}>
+				{nextLabel ?? m.proxy_wizard_next()}
+			</Button>
+		{/if}
+	</div>
+{/if}
 
 <style>
 	.steps {

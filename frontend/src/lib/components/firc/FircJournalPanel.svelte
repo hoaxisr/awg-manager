@@ -8,9 +8,12 @@
 		FircCaptureLast,
 		FircGroup,
 	} from '$lib/types/firc';
-	import { Button, Badge, StatusDot } from '$lib/components/ui';
+	import { m } from '$lib/i18n';
+	import { Badge } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
-	import { Search, Play, Pause, Trash2, RefreshCw, Radio } from 'lucide-svelte';
+	import { Search } from 'lucide-svelte';
+	import { formatTime } from './fircMonitorFormat';
+	import FircJournalToolbar from './FircJournalToolbar.svelte';
 
 	type JournalSubTab = 'events' | 'dns' | 'capture';
 
@@ -81,7 +84,7 @@
 			dnsBlocked = res?.blocked ?? 0;
 			dnsDomains = res?.domains ?? dnsRows.length;
 		} catch (e: unknown) {
-			notifications.error((e instanceof Error ? e.message : undefined) ?? 'Ошибка загрузки DNS-статистики');
+			notifications.error((e instanceof Error ? e.message : undefined) ?? m.firc_journal_load_dns_failed());
 		} finally {
 			dnsLoading = false;
 		}
@@ -104,15 +107,15 @@
 		try {
 			if (captureRunning) {
 				await api.fircStopCapture(captureToken);
-				notifications.info('Захват трафика остановлен');
+				notifications.info(m.firc_journal_capture_stopped());
 			} else {
 				const res = await api.fircStartCapture();
 				if (res?.token) captureToken = res.token;
-				notifications.success('Захват трафика запущен на 60 секунд');
+				notifications.success(m.firc_journal_capture_started());
 			}
 			await pollCapture();
 		} catch (e: unknown) {
-			notifications.error((e instanceof Error ? e.message : undefined) ?? 'Ошибка управления захватом трафика');
+			notifications.error((e instanceof Error ? e.message : undefined) ?? m.firc_journal_capture_failed());
 		} finally {
 			captureBusy = false;
 		}
@@ -149,7 +152,7 @@
 		}
 		if (ev.kind === 'dns') {
 			const target = ev.fake ? ` → FakeIP ${ev.fake}` : ev.reals?.length ? ` → ${ev.reals.join(', ')}` : '';
-			return `${ev.client} запросил ${ev.name} (${ev.qtype}) [${ev.decision}]${target}`;
+			return m.firc_journal_dns_requested({ client: ev.client, name: ev.name, qtype: ev.qtype, decision: ev.decision, target });
 		}
 		return `${ev.client} → ${ev.name || ev.dst}${ev.port ? `:${ev.port}` : ''} (${ev.proto}, ${ev.how})`;
 	}
@@ -197,11 +200,10 @@
 		return dnsRows.filter((r) => r.owner?.id === dnsGroupFilter);
 	});
 
-	function formatTime(ts?: number): string {
-		if (!ts) return '—';
-		const ms = ts > 1e12 ? ts : ts * 1000;
-		const d = new Date(ms);
-		return d.toLocaleTimeString('ru-RU', { hour12: false });
+	function selectTab(tab: JournalSubTab) {
+		subTab = tab;
+		if (tab === 'dns') loadDnsStats();
+		else if (tab === 'capture') pollCapture();
 	}
 
 	function levelBadgeVariant(level: string): 'error' | 'warning' | 'info' | 'muted' {
@@ -213,102 +215,22 @@
 </script>
 
 <div class="journal-panel">
-	<!-- Subtabs Header -->
-	<div class="journal-top-bar">
-		<div class="journal-subtabs">
-			<button
-				type="button"
-				class="subtab-btn"
-				class:active={subTab === 'events'}
-				onclick={() => (subTab = 'events')}
-			>
-				События ({events.length})
-			</button>
-			<button
-				type="button"
-				class="subtab-btn"
-				class:active={subTab === 'dns'}
-				onclick={() => {
-					subTab = 'dns';
-					loadDnsStats();
-				}}
-			>
-				Статистика DNS ({dnsDomains})
-			</button>
-			<button
-				type="button"
-				class="subtab-btn"
-				class:active={subTab === 'capture'}
-				onclick={() => {
-					subTab = 'capture';
-					pollCapture();
-				}}
-			>
-				Захват пакетов
-				{#if captureRunning}
-					<StatusDot variant="success" size="sm" pulse />
-				{/if}
-			</button>
-		</div>
-
-		{#if subTab === 'events'}
-			<div class="journal-actions">
-				<Button
-					variant="secondary"
-					size="sm"
-					onclick={() => (paused = !paused)}
-				>
-					{#snippet iconBefore()}
-						{#if paused}
-							<Play size={13} />
-						{:else}
-							<Pause size={13} />
-						{/if}
-					{/snippet}
-					{paused ? 'Продолжить' : 'Пауза'}
-				</Button>
-				<Button
-					variant="ghost"
-					size="sm"
-					onclick={() => (events = [])}
-				>
-					{#snippet iconBefore()}<Trash2 size={13} />{/snippet}
-					Очистить
-				</Button>
-			</div>
-		{:else if subTab === 'dns'}
-			<div class="journal-actions">
-				<Badge variant="default" size="sm" mono>Запросов: {dnsQueries}</Badge>
-				{#if dnsBlocked > 0}
-					<Badge variant="warning" size="sm" mono>Блок: {dnsBlocked}</Badge>
-				{/if}
-				<Button
-					variant="secondary"
-					size="sm"
-					loading={dnsLoading}
-					onclick={loadDnsStats}
-				>
-					{#snippet iconBefore()}<RefreshCw size={13} />{/snippet}
-					Обновить
-				</Button>
-			</div>
-		{:else if subTab === 'capture'}
-			<div class="journal-actions">
-				{#if captureRunning}
-					<Badge variant="warning" size="sm" mono>Осталось: {captureRemaining} с</Badge>
-				{/if}
-				<Button
-					variant={captureRunning ? 'danger' : 'primary'}
-					size="sm"
-					loading={captureBusy}
-					onclick={toggleCapture}
-				>
-					{#snippet iconBefore()}<Radio size={13} />{/snippet}
-					{captureRunning ? 'Остановить захват' : 'Начать захват (60 с)'}
-				</Button>
-			</div>
-		{/if}
-	</div>
+	<FircJournalToolbar
+		{subTab}
+		eventsCount={events.length}
+		bind:paused
+		{dnsDomains}
+		{dnsQueries}
+		{dnsBlocked}
+		{dnsLoading}
+		{captureRunning}
+		{captureRemaining}
+		{captureBusy}
+		onSelectTab={selectTab}
+		onClearEvents={() => (events = [])}
+		onRefreshDns={loadDnsStats}
+		onToggleCapture={toggleCapture}
+	/>
 
 	<!-- TAB 1: EVENTS -->
 	{#if subTab === 'events'}
@@ -317,28 +239,28 @@
 				<Search size={14} />
 				<input
 					type="text"
-					placeholder="Фильтр по сообщениям, доменам, клиентам…"
+					placeholder={m.firc_journal_events_search()}
 					bind:value={eventSearch}
 				/>
 			</div>
 
 			<select class="filter-select" bind:value={kindFilter}>
-				<option value="all">Все типы событий</option>
-				<option value="log">Системные логи (log)</option>
-				<option value="dns">Запросы DNS (dns)</option>
-				<option value="bypass">Обход / Утечки (bypass)</option>
+				<option value="all">{m.firc_journal_kind_all()}</option>
+				<option value="log">{m.firc_journal_kind_log()}</option>
+				<option value="dns">{m.firc_journal_kind_dns()}</option>
+				<option value="bypass">{m.firc_journal_kind_bypass()}</option>
 			</select>
 
 			<select class="filter-select" bind:value={levelFilter}>
-				<option value="all">Все уровни</option>
-				<option value="error">Ошибки (error)</option>
-				<option value="warn">Предупреждения (warn)</option>
-				<option value="info">Инфо (info)</option>
-				<option value="debug">Отладка (debug)</option>
+				<option value="all">{m.firc_journal_level_all()}</option>
+				<option value="error">{m.firc_journal_level_error()}</option>
+				<option value="warn">{m.firc_journal_level_warn()}</option>
+				<option value="info">{m.firc_journal_level_info()}</option>
+				<option value="debug">{m.firc_journal_level_debug()}</option>
 			</select>
 
 			<select class="filter-select" bind:value={groupFilter}>
-				<option value="all">Все группы</option>
+				<option value="all">{m.firc_journal_all_groups()}</option>
 				{#each groups as g (g.id)}
 					<option value={g.id}>{g.name || g.id}</option>
 				{/each}
@@ -347,7 +269,7 @@
 
 		<div class="terminal-card">
 			{#if filteredEvents.length === 0}
-				<div class="empty-box">Событий по выбранным фильтрам пока нет.</div>
+				<div class="empty-box">{m.firc_journal_events_empty()}</div>
 			{:else}
 				<div class="events-list">
 					{#each filteredEvents as ev (ev.seq)}
@@ -381,14 +303,14 @@
 				<Search size={14} />
 				<input
 					type="text"
-					placeholder="Поиск по домену…"
+					placeholder={m.firc_journal_dns_search()}
 					bind:value={dnsSearch}
 					oninput={() => loadDnsStats()}
 				/>
 			</div>
 
 			<select class="filter-select" bind:value={dnsGroupFilter}>
-				<option value="">Все группы</option>
+				<option value="">{m.firc_journal_all_groups()}</option>
 				{#each groups as g (g.id)}
 					<option value={g.id}>{g.name || g.id}</option>
 				{/each}
@@ -397,17 +319,17 @@
 
 		<div class="table-card">
 			{#if filteredDnsRows.length === 0}
-				<div class="empty-box">Записи статистики DNS отсутствуют.</div>
+				<div class="empty-box">{m.firc_journal_dns_empty()}</div>
 			{:else}
 				<table class="data-table">
 					<thead>
 						<tr>
-							<th>Домен</th>
-							<th>Группа</th>
-							<th>Интерфейс</th>
-							<th>Клиентов</th>
-							<th>Запросов</th>
-							<th>Последний</th>
+							<th>{m.firc_journal_th_domain()}</th>
+							<th>{m.firc_journal_th_group()}</th>
+							<th>{m.firc_journal_th_interface()}</th>
+							<th>{m.firc_journal_th_clients()}</th>
+							<th>{m.firc_journal_th_queries()}</th>
+							<th>{m.firc_journal_th_last()}</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -420,7 +342,7 @@
 											{row.owner.name || row.owner.id}
 										</Badge>
 									{:else}
-										<span class="muted">Вне групп</span>
+										<span class="muted">{m.firc_journal_no_group()}</span>
 									{/if}
 								</td>
 								<td class="mono-cell">{row.owner?.interface || 'WAN'}</td>
@@ -440,23 +362,23 @@
 		<div class="table-card">
 			{#if !captureLast && !captureRunning}
 				<div class="empty-box">
-					Нажмите «Начать захват (60 с)», чтобы собрать диагностику DNS и сетевых соединений клиентов в реальном времени.
+					{m.firc_journal_capture_idle()}
 				</div>
 			{:else if captureRunning && (!captureLast || (captureLast.summary?.length ?? 0) === 0)}
 				<div class="empty-box">
-					Идёт захват пакетов (осталось {captureRemaining} с)… Ожидание сетевой активности устройств.
+					{m.firc_journal_capture_running({ n: captureRemaining })}
 				</div>
 			{:else if captureLast}
 				<div class="capture-summary-header">
 					<Badge variant={captureLast.leaks > 0 ? 'warning' : 'success'} size="sm">
-						Утечек / прямых обращений: {captureLast.leaks}
+						{m.firc_journal_capture_leaks({ n: captureLast.leaks })}
 					</Badge>
 					<span class="mono-cell">
-						Завершён: {formatTime(captureLast.endedAt)} ({captureLast.ended})
+						{m.firc_journal_capture_ended({ time: formatTime(captureLast.endedAt), reason: captureLast.ended })}
 					</span>
 				</div>
 				{#if (captureLast.summary?.length ?? 0) === 0}
-					<div class="empty-box">В ходе захвата аномалий или утечек не зафиксировано.</div>
+					<div class="empty-box">{m.firc_journal_capture_clean()}</div>
 				{:else}
 					<div class="events-list">
 						{#each captureLast.summary as line, idx (idx)}
@@ -479,54 +401,6 @@
 		gap: 10px;
 	}
 
-	.journal-top-bar {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 10px;
-		flex-wrap: wrap;
-	}
-
-	.journal-subtabs {
-		display: inline-flex;
-		align-items: center;
-		gap: 4px;
-		background: var(--bg-secondary);
-		border: 1px solid var(--border);
-		border-radius: 8px;
-		padding: 3px;
-	}
-
-	.subtab-btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		padding: 5px 12px;
-		border: none;
-		border-radius: 6px;
-		background: transparent;
-		color: var(--text-secondary);
-		font-size: 12px;
-		font-weight: 500;
-		cursor: pointer;
-		transition: all 0.15s;
-	}
-
-	.subtab-btn:hover {
-		color: var(--text-primary);
-	}
-
-	.subtab-btn.active {
-		background: var(--bg-tertiary);
-		color: var(--accent);
-		font-weight: 600;
-	}
-
-	.journal-actions {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-	}
 
 	.filters-bar {
 		display: flex;
