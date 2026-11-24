@@ -37,6 +37,9 @@ var ErrRecoveryPersistFailed = errors.New("firc: recovery_state_persistence_fail
 // ErrCandidateDomainRequired is returned when an autolist candidate mutation is invoked without a domain.
 var ErrCandidateDomainRequired = errors.New("firc: candidate domain is required")
 
+// ErrCandidateGroupDNSOnly is returned when the target group of a candidate answers DNS only: there is no outbound to route into.
+var ErrCandidateGroupDNSOnly = errors.New("firc: the group only answers DNS: nothing to route its names into")
+
 // ErrCandidateGroupRequired is returned when adding a confirmed autolist candidate without an explicit target group.
 var ErrCandidateGroupRequired = errors.New("firc: target groupId is required for confirmed candidate add")
 
@@ -1960,6 +1963,7 @@ func (o *Operator) applyGroupsWithPrevLocked(ctx context.Context, groups []Group
 	o.migrateGroupLinks()
 	ext := o.LoadExtConfig()
 	ext = withNextGroupLinks(ext, groups, prevGroups, links)
+	groups = keepOmittedFallback(groups, prevGroups)
 	groups, _ = o.syncGroupsWithExt(ctx, groups, ext)
 
 	snap, err := captureFileSnapshot(o.GroupsPath(), 0644)
@@ -2057,6 +2061,7 @@ func (o *Operator) StageGroupsOfflineWithLinks(groups []Group, links map[string]
 	prev, _ := o.LoadGroupsFile() // нечитаемый файл сохранению не помеха: без прежних групп связи снимутся
 	o.migrateGroupLinks()
 	ext := withNextGroupLinks(o.LoadExtConfig(), groups, prev, links)
+	groups = keepOmittedFallback(groups, prev)
 	groups, _ = o.syncGroupsWithExt(context.Background(), groups, ext)
 	if groups == nil {
 		groups = []Group{}
@@ -2120,6 +2125,10 @@ func (o *Operator) AddConfirmedCandidate(ctx context.Context, domain, groupID st
 	}
 	if targetIdx < 0 {
 		return nil, "", fmt.Errorf("%w: %s", ErrCandidateGroupNotFound, groupID)
+	}
+
+	if groups[targetIdx].IsDNSOnly() {
+		return nil, "", fmt.Errorf("%w: %s", ErrCandidateGroupDNSOnly, groupID)
 	}
 
 	resolvedGroupID := groups[targetIdx].ID
@@ -3020,7 +3029,10 @@ func (o *Operator) SaveGroupsFile(groups []Group) error {
 	if o.configDir == "" {
 		return errors.New("firc config directory is not configured")
 	}
-	data, err := yaml.Marshal(groupsYAMLFile{ConfigVersion: "0.7.0", Groups: groups})
+	if err := ValidateGroups(groups, o.addressPool()); err != nil {
+		return err
+	}
+	data, err := yaml.Marshal(groupsYAMLFile{ConfigVersion: "0.7.0", Groups: normalizeGroupResolve(groups)})
 	if err != nil {
 		return err
 	}
@@ -3051,13 +3063,13 @@ func (o *Operator) LoadGroupsFile() ([]Group, error) {
 		if err := root.Content[0].Decode(&doc); err != nil {
 			return nil, err
 		}
-		return doc.Groups, nil
+		return normalizeGroupResolve(doc.Groups), nil
 	}
 	var list []Group
 	if err := root.Content[0].Decode(&list); err != nil {
 		return nil, err
 	}
-	return list, nil
+	return normalizeGroupResolve(list), nil
 }
 
 // VerifyLiveSyncedTunnels inspects GET /api/v1/tunnels/state after SyncTunnels to verify

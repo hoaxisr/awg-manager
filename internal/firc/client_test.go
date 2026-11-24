@@ -279,7 +279,7 @@ func TestClientAndOperatorSync(t *testing.T) {
 			Name:      "YouTube & AI",
 			Interface: GroupInterface{"tunvless0", "nwg0"},
 			Enable:    true,
-			Resolve:   GroupResolve{Tunnel: true},
+			Resolve:   GroupResolve{Tunnel: boolPtr(true)},
 			Rules: []Rule{
 				{Type: "DotWild", Rule: "youtube.com", Enable: true},
 				{Type: "DotWild", Rule: "openai.com", Enable: true},

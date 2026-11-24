@@ -992,6 +992,9 @@ func validateFircGroupsYAML(data []byte) ([]Group, error) {
 			}
 		}
 	}
+	if err := ValidateGroups(doc.Groups, nil); err != nil {
+		return nil, fmt.Errorf("groups.yaml: %w", err)
+	}
 	return doc.Groups, nil
 }
 
@@ -3013,6 +3016,10 @@ func buildReverseSingboxPayloadsWithWG(
 			continue
 		}
 
+		if grp.IsDNSOnly() { // выхода у группы нет, в sing-box её правилам направлять некуда
+			res.Skipped = append(res.Skipped, fmt.Sprintf("group %q (%s) only answers DNS and has no Sing-box counterpart", grp.Name, grp.ID))
+			continue
+		}
 		targetTag := resolveGroupTargetOutboundTag(grp, devToTag)
 		if !validOutboundTags[targetTag] {
 			msg := fmt.Sprintf("group %q (%s) references outbound/interface %q which is not included or not present in target Sing-box config", grp.Name, grp.ID, targetTag)

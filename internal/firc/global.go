@@ -21,6 +21,9 @@ func globalGroup(ext ExtConfig) (Group, bool) {
 	var matchedPG *ProxyGroup
 	switch kind {
 	case "iface":
+		if target == DNSOnlyInterface { // Global направляет подсети: без выхода ей нечего делать
+			return Group{}, false
+		}
 		interfaces = []string{target}
 	case "pg":
 		for i := range ext.ProxyGroups {

@@ -204,7 +204,7 @@ func normalizeExtConfig(ext ExtConfig) ExtConfig {
 		var cleaned []string
 		for _, iface := range pg.Interfaces {
 			iface = strings.TrimSpace(iface)
-			if iface != "" && !seen[iface] && len(cleaned) < 4 {
+			if iface != "" && iface != DNSOnlyInterface && !seen[iface] && len(cleaned) < 4 {
 				seen[iface] = true
 				cleaned = append(cleaned, iface)
 			}
@@ -219,7 +219,7 @@ func normalizeExtConfig(ext ExtConfig) ExtConfig {
 	seenKD := make(map[string]bool)
 	for _, iface := range ext.KeenDNSCloud.Interfaces {
 		iface = strings.TrimSpace(iface)
-		if iface != "" && !seenKD[iface] && len(kdIfaces) < 4 {
+		if iface != "" && iface != DNSOnlyInterface && !seenKD[iface] && len(kdIfaces) < 4 {
 			seenKD[iface] = true
 			kdIfaces = append(kdIfaces, iface)
 		}
@@ -887,6 +887,7 @@ func buildKeenDNSGroup(ifaces []string, cloudHealthCheck bool) Group {
 		})
 		idx++
 	}
+	resolveTunnel := true
 	// Always populate Check explicitly (mode "none" when disabled) so PUT /api/v1/groups
 	// actively clears any previously persisted check in fircd (omitting "check" tells fircd
 	// to preserve existing->check).
@@ -905,7 +906,7 @@ func buildKeenDNSGroup(ifaces []string, cloudHealthCheck bool) Group {
 			Deny:  []string{},
 		},
 		Resolve: GroupResolve{
-			Tunnel: true,
+			Tunnel: &resolveTunnel,
 		},
 		Check: check,
 		Rules: rules,
