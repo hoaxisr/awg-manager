@@ -1,4 +1,4 @@
-import type { FircDeviceSelector, FircGroup, FircRule, FircRuleType } from '$lib/types/firc';
+import type { FircDeviceSelector, FircGroup, FircGroupCheck, FircRule, FircRuleType } from '$lib/types/firc';
 import { extractRootDomain } from './domainUtils';
 
 const TYPE_PREFIX_MAP: Record<string, FircRuleType> = {
@@ -38,7 +38,7 @@ export type BulkRuleAction =
 
 export type BulkGroupAction =
 	| { kind: 'enable'; enable: boolean }
-	| { kind: 'setInterface'; iface: string | string[] }
+	| { kind: 'setInterface'; iface: string | string[]; check?: FircGroupCheck }
 	| { kind: 'setDevices'; devices: FircDeviceSelector }
 	| { kind: 'delete' };
 
@@ -418,6 +418,13 @@ export function applyBulkGroupAction(
 		}
 		if (action.kind === 'setInterface') {
 			const nextIface = Array.isArray(action.iface) ? [...action.iface] : action.iface;
+			if (action.check) {
+				return {
+					...g,
+					interface: nextIface,
+					check: { ...action.check },
+				};
+			}
 			const needsDefaultCheck =
 				Array.isArray(action.iface) && action.iface.length > 1 && !g.check;
 			return needsDefaultCheck

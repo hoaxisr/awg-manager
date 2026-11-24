@@ -128,7 +128,7 @@ func (o *OperatorOS5Impl) SetupEndpointRoute(ctx context.Context, tunnelID, endp
 			o.endpointRoutes[tunnelID] = endpointIP
 		}
 		o.endpointRoutesMu.Unlock()
-		if shared || (o.routeHeldByOther != nil && o.routeHeldByOther(tunnelID, endpointIP)) {
+		if shared || o.holdersOf(tunnelID, endpointIP).Any {
 			o.appLog.Warn("start", tunnelID, "Endpoint "+endpointIP+" совпадает с сервером другого туннеля — маршрут через туннель не поставлен")
 			return "", fmt.Errorf("endpoint %s shared with another tunnel: route through tunnel would loop", endpointIP)
 		}
@@ -226,16 +226,12 @@ func (o *OperatorOS5Impl) removeHostRouteIfUnused(ctx context.Context, action, t
 	if endpointIP == "" {
 		return
 	}
-	// Карта знает только kernel-туннели этого процесса. Тот же host-route
-	// ставит обфусцированный nativewg-туннель — до target'а релея, тем же
-	// объектом NDMS (`nwg.addObfHostRoute`), и его собственный ref-count
-	// (`SetObfuscatorRouteSharing`) о нас тоже не знает. Общий предикат по
-	// стору закрывает обе стороны: без него Stop kernel-туннеля сносил бы
-	// маршрут работающего обфусцированного соседа на тот же сервер.
-	if !stillInUse && o.routeHeldByOther != nil && o.routeHeldByOther(tunnelID, endpointIP) {
-		stillInUse = true
-	}
-	if stillInUse {
+	// Карта знает только kernel-туннели этого процесса, поэтому спрашиваем и
+	// стор. Ядерную строку держит ТОЛЬКО kernel-сосед: обычный nativewg
+	// host-route не ставит и не снимает, а у обфусцированного — своя запись
+	// NDMS, которая стоит рядом и нашего снятия не замечает (стенд 5.02, F889).
+	holders := o.holdersOf(tunnelID, endpointIP)
+	if stillInUse || holders.Kernel {
 		o.logInfo(action, tunnelID, "IP "+endpointIP+" still in use by another tunnel")
 		return
 	}
@@ -248,7 +244,7 @@ func (o *OperatorOS5Impl) removeHostRouteIfUnused(ctx context.Context, action, t
 
 	// NDMS кэширует маршруты ядра, но их снятие не отслеживает — снимаем в обоих.
 	kernelRemoved := true
-	if err := o.delKernelHostRoute(ctx, endpointIP); err != nil {
+	if err := o.delKernelHostRoute(ctx, endpointIP, holders.Obfuscated); err != nil {
 		kernelRemoved = false
 		if noSuchRoute(err) {
 			// Снимать нечего. Путь проходной: уборка зовётся и на старте
@@ -260,8 +256,12 @@ func (o *OperatorOS5Impl) removeHostRouteIfUnused(ctx context.Context, action, t
 		}
 		o.logWarn(action, tunnelID, "ip route del "+endpointIP+": "+err.Error())
 	}
-	if err := o.commands.Routes.RemoveHostRoute(ctx, endpointIP); err != nil {
-		o.logWarn(action, tunnelID, "RemoveHostRoute: "+err.Error())
+	// Снятие в NDMS слепое — по адресу: запись работающего обфусцированного
+	// соседа (`nwg.addObfHostRoute`) оно унесло бы вместе с нашей.
+	if !holders.Obfuscated {
+		if err := o.commands.Routes.RemoveHostRoute(ctx, endpointIP); err != nil {
+			o.logWarn(action, tunnelID, "RemoveHostRoute: "+err.Error())
+		}
 	}
 	if kernelRemoved {
 		o.appLog.Info(action, tunnelID, "Маршрут до endpoint "+endpointIP+" удалён")
@@ -368,7 +368,6 @@ func isIPv6LinkLocal(ip string) bool {
 	return parsed != nil && parsed.IsLinkLocalUnicast() && parsed.To4() == nil
 }
 
-// delKernelHostRoute removes a host route.
 // noSuchRoute — «такого маршрута нет»: ip(8) отвечает так и на снятие
 // отсутствующего маршрута, и на снятие из отсутствующей таблицы.
 func noSuchRoute(err error) bool {
@@ -393,7 +392,11 @@ func (o *OperatorOS5Impl) chainFallbackRoute(ctx context.Context, verb, endpoint
 	return exec.FormatError(result, err)
 }
 
-func (o *OperatorOS5Impl) delKernelHostRoute(ctx context.Context, endpointIP string) error {
+// delKernelHostRoute снимает host-route из ядра. ownOnly — только нашу строку:
+// её `ip route replace` ставит с `proto boot`, а запись NDMS обфусцированного
+// соседа идёт с `proto static` (стенд 5.02). Без ownOnly снимается любая: под
+// ней бывает и наследство прежних версий, которое NDMS переиграл в ядро (F227).
+func (o *OperatorOS5Impl) delKernelHostRoute(ctx context.Context, endpointIP string, ownOnly bool) error {
 	prefix := "/32"
 	family := []string{}
 	if isIPv6(endpointIP) {
@@ -402,8 +405,11 @@ func (o *OperatorOS5Impl) delKernelHostRoute(ctx context.Context, endpointIP str
 	}
 	args := append([]string{}, family...)
 	args = append(args, "route", "del", endpointIP+prefix)
-	_, err := o.ipRun(ctx, "/opt/sbin/ip", args...)
-	return err
+	if ownOnly {
+		args = append(args, "proto", "boot")
+	}
+	result, err := o.ipRun(ctx, "/opt/sbin/ip", args...)
+	return exec.FormatError(result, err)
 }
 
 // deviceAddr — первый глобальный адрес устройства нужного семейства, "" если

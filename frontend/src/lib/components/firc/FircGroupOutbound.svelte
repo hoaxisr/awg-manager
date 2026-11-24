@@ -52,14 +52,17 @@
 	let ifaceVal = $derived(primaryIface(group.interface));
 	let isBlock = $derived(ifaceVal === 'block');
 	let isBlackhole = $derived(ifaceVal === 'blackhole');
-	let toneCls = $derived(outboundToneClass(ifaceVal));
 	let activeRes = $derived(resolveGroupActive(rt, group));
 	let activeIface = $derived(activeRes.active);
 	let activeBackup = $derived(activeRes.isBackup ? activeIface : null);
 	let isFallbackGroup = $derived(ifaceList.length > 1 && !isSpecialIface(ifaceList[0]));
+	let toneCls = $derived(outboundToneClass(activeIface || ifaceVal));
 	let matchedPg = $derived(matchingProxyGroup(rt.proxyGroups, group));
 	let primaryProbe = $derived(
 		!isBlock && !isBlackhole && (activeIface || ifaceVal) ? getIfaceProbe(rt, activeIface || ifaceVal) : null,
+	);
+	let primaryProbeFailed = $derived(
+		Boolean(!isBlock && !isBlackhole && primaryProbe && !primaryProbe.ok && !(isFallbackGroup && activeRes.allDead)),
 	);
 	let chainLabel = $derived(ifaceList.map((id) => ifaceLabel(rt, id)).join(' → '));
 </script>
@@ -71,28 +74,45 @@
 			type="button"
 			class="tone-select-pill iface-picker-btn {toneCls}"
 			class:on-backup={Boolean(activeBackup)}
+			class:probe-warn={primaryProbeFailed}
 			class:all-dead={isFallbackGroup && activeRes.allDead}
 			onclick={(e) => {
 				e.stopPropagation();
 				ontogglePicker();
 			}}
-			title={activeBackup
-				? m.firc_groups_backup_active_tip({ backup: activeBackup, primary: ifaceList[0] })
-				: isFallbackGroup && activeIface
-					? m.firc_fallback_active_chain_title({
-							iface: ifaceLabel(rt, activeIface),
-							chain: matchedPg ? `${matchedPg.name}: ${chainLabel}` : chainLabel,
+			title={[
+				activeBackup
+					? m.firc_groups_backup_active_tip({
+							backup: ifaceLabel(rt, activeBackup),
+							primary: ifaceLabel(rt, ifaceList[0]),
 						})
-					: ifaceList.length > 1
-						? m.firc_groups_chain_tip({ chain: ifaceList.join(' → ') })
-						: resolverBadgeText(rt, group)}
+					: isFallbackGroup && activeIface
+						? m.firc_fallback_active_chain_title({
+								iface: ifaceLabel(rt, activeIface),
+								chain: matchedPg ? `${matchedPg.name}: ${chainLabel}` : chainLabel,
+							})
+						: ifaceList.length > 1
+							? m.firc_groups_chain_tip({ chain: ifaceList.join(' → ') })
+							: resolverBadgeText(rt, group),
+				primaryProbeFailed
+					? m.firc_fallback_probe_error_detail({
+							error: primaryProbe?.error || m.firc_fallback_timeout(),
+						})
+					: '',
+				primaryProbeFailed && isFallbackGroup && (!group.check || group.check.mode === 'none')
+					? m.firc_fallback_check_disabled_hint()
+					: '',
+			]
+				.filter(Boolean)
+				.join(' · ')}
 		>
 			{#if isBlock || isBlackhole}
 				<Ban size={13} />
 			{:else}
-				{@const dotState = activeRes.allDead && isFallbackGroup ? 'dead' : ifaceDotState(rt, group, activeIface || ifaceVal)}
+				{@const rawDotState = activeRes.allDead && isFallbackGroup ? 'dead' : ifaceDotState(rt, group, activeIface || ifaceVal)}
+				{@const dotState = primaryProbeFailed && rawDotState && rawDotState !== 'dead' ? 'warn' : rawDotState}
 				{#if dotState}
-					<span class="iface-dot {dotState}" class:backup={Boolean(activeBackup)}></span>
+					<span class="iface-dot {dotState}" class:backup={Boolean(activeBackup) && !primaryProbeFailed}></span>
 				{:else if toneCls === 'tone-awg'}
 					<Shield size={13} />
 				{:else}
@@ -196,7 +216,8 @@
 		filter: brightness(1.08);
 	}
 
-	.tone-select-pill.on-backup {
+	.tone-select-pill.on-backup,
+	.tone-select-pill.probe-warn {
 		border-color: var(--color-warning-border) !important;
 	}
 
@@ -278,7 +299,8 @@
 		box-shadow: 0 0 4px var(--color-success-border);
 	}
 
-	.iface-dot.backup {
+	.iface-dot.backup,
+	.iface-dot.warn {
 		background: var(--color-warning);
 		box-shadow: 0 0 4px var(--color-warning-border);
 	}

@@ -89,6 +89,7 @@
 	// теряет запись (WS-22).
 	const withIngressLock = createIngressMutationLock();
 	let mutating = $state(false);
+	let rotatingDiagKey = $state(false);
 
 	// .conf пира, выбранного виджетом «Сеть»: он уезжает в ссылку абоненту
 	// FreeTurn (ia.md §3.3 часть Б — конфиг пира попадает в ссылку).
@@ -275,6 +276,21 @@
 		});
 	}
 
+	function rotateDiagKey() {
+		if (!wdttServer) return;
+		void locked(async () => {
+			rotatingDiagKey = true;
+			try {
+				await api.rotateWdttServerDiagKey(row.id);
+				notifications.success(m.proxy_adv_diag_key_rotated());
+				// Отказ перезапуска показывает сам onrestart.
+				if (running) await onrestart();
+			} finally {
+				rotatingDiagKey = false;
+			}
+		});
+	}
+
 	/** «Отменить» — возврат к тому, что лежит на сервере. */
 	function revert() {
 		if (wdttServer) wdttDraft = cloneConfig(wdttServer);
@@ -408,6 +424,9 @@
 		bind:ftServer={ftDraft}
 		ports={killPorts}
 		{wanOptions}
+		busy={mutating}
+		onrotatediagkey={rotateDiagKey}
+		{rotatingDiagKey}
 	/>
 </SideDrawer>
 

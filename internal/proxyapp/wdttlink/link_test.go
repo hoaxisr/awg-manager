@@ -1,10 +1,16 @@
 package wdttlink
 
 import (
+	"encoding/base64"
+	"encoding/hex"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -279,5 +285,121 @@ func TestSubscriptionClientKeepsNoIdleConnections(t *testing.T) {
 
 	if n := conns.Load(); n != 2 {
 		t.Fatalf("сервер увидел %d новых соединений, ожидалось 2: транспорт держит простаивающее соединение, а закрыть его некому", n)
+	}
+}
+
+func TestReadDiagToken_Formats(t *testing.T) {
+	if got := ReadDiagToken(""); got != "" {
+		t.Fatalf("empty dir -> %q, want empty", got)
+	}
+	dir := t.TempDir()
+	if got := ReadDiagToken(dir); got != "" {
+		t.Fatalf("missing diag.key -> %q, want empty", got)
+	}
+	// Невалидный hex или неверная длина (16 байт вместо 32).
+	if err := os.WriteFile(filepath.Join(dir, "diag.key"), []byte("not-hex"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := ReadDiagToken(dir); got != "" {
+		t.Fatalf("invalid hex -> %q, want empty", got)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "diag.key"), []byte(strings.Repeat("ab", 16)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := ReadDiagToken(dir); got != "" {
+		t.Fatalf("short key -> %q, want empty", got)
+	}
+	// 32 байта в 64-символьном hex -> base64.RawURLEncoding.
+	secret := make([]byte, 32)
+	for i := range secret {
+		secret[i] = byte(i + 1)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "diag.key"), []byte(hex.EncodeToString(secret)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	want := base64.RawURLEncoding.EncodeToString(secret)
+	if got := ReadDiagToken(dir); got != want {
+		t.Fatalf("ReadDiagToken = %q, want %q", got, want)
+	}
+}
+
+func TestRotateDiagKey_CreatesAndRotatesFile(t *testing.T) {
+	if err := RotateDiagKey("   "); err == nil {
+		t.Fatal("empty dir must fail")
+	}
+	if err := RotateDiagKey("relative/dir"); err == nil {
+		t.Fatal("relative dir must fail")
+	}
+	traversalDir := filepath.ToSlash(t.TempDir()) + "/../escape"
+	if err := RotateDiagKey(traversalDir); err == nil {
+		t.Fatal("traversal dir must fail")
+	}
+	if got := ReadDiagToken("relative/dir"); got != "" {
+		t.Fatalf("relative dir ReadDiagToken = %q, want empty", got)
+	}
+	if got := ReadDiagToken(traversalDir); got != "" {
+		t.Fatalf("traversal dir ReadDiagToken = %q, want empty", got)
+	}
+
+	dir := t.TempDir()
+	if err := RotateDiagKey(dir); err != nil {
+		t.Fatalf("first RotateDiagKey: %v", err)
+	}
+	path := filepath.Join(dir, "diag.key")
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+		t.Fatalf("diag.key perm = %v, want 0600", info.Mode().Perm())
+	}
+	firstTok := ReadDiagToken(dir)
+	if len(firstTok) == 0 {
+		t.Fatal("ReadDiagToken returned empty after RotateDiagKey")
+	}
+
+	if err := RotateDiagKey(dir); err != nil {
+		t.Fatalf("second RotateDiagKey: %v", err)
+	}
+	secondTok := ReadDiagToken(dir)
+	if len(secondTok) == 0 || secondTok == firstTok {
+		t.Fatalf("expected distinct non-empty rotated token, first=%q second=%q", firstTok, secondTok)
+	}
+}
+
+func TestQwdttLink_DiagKeyRoundtrip(t *testing.T) {
+	dk := "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY"
+	link, err := EncodeQwdttLinkWithOptions("203.0.113.10:56002", "secret", []string{"h1"}, "Srv", 0, 18, "wg", QwdttLinkOptions{
+		DiagKey: dk,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	if q.Get("dk") != dk {
+		t.Fatalf("query dk=%q, want %q (%v)", q.Get("dk"), dk, q)
+	}
+	if q.Has("raw") || q.Has("direct") {
+		t.Fatalf("unexpected raw/direct query params in %v", q)
+	}
+	got, err := DecodeImport(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DiagKey != dk {
+		t.Fatalf("DecodeImport qwdtt DiagKey = %q, want %q", got.DiagKey, dk)
+	}
+
+	jsonBody := `{"peer":"203.0.113.10:56002","pass":"secret","hashes":"h1","diag_key":"` + dk + `"}`
+	gotJSON, err := DecodeImport(jsonBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotJSON.DiagKey != dk {
+		t.Fatalf("DecodeImport JSON DiagKey = %q, want %q", gotJSON.DiagKey, dk)
 	}
 }

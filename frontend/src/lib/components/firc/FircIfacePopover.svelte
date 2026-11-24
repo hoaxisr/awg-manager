@@ -210,7 +210,9 @@
 						onclick={() => applyProxyGroup(pg)}
 						title={pgRt.activeIface ? m.firc_fallback_active_primary_title({ iface: `${ifaceLabel(rt, pgRt.activeIface)} (${pgRt.activeIface})` }) : m.firc_fallback_all_dead_title()}
 					>
-						<span class="iface-dot {pgRt.activeIface ? 'alive' : pgRt.allDead ? 'dead' : 'unknown'}"></span>
+						<span
+							class="iface-dot {pgRt.activeIface ? (pgRt.isOnBackup ? 'backup' : 'alive') : pgRt.allDead ? 'dead' : 'unknown'}"
+						></span>
 						<span class="iface-row-text">
 							<strong>{pg.name}</strong> — {pg.interfaces.map((id) => shortIfaceTag(rt.interfaces, id)).join(' → ')}
 						</span>
@@ -360,6 +362,11 @@
 	.iface-dot.alive {
 		background: var(--color-success);
 		box-shadow: 0 0 4px var(--color-success-border);
+	}
+
+	.iface-dot.backup {
+		background: var(--color-warning);
+		box-shadow: 0 0 4px var(--color-warning-border);
 	}
 
 	.iface-dot.active-pulse {

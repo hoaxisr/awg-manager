@@ -2,11 +2,16 @@ package wdttlink
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -1170,5 +1175,201 @@ func TestLink_IPv6PeerGetsModePort(t *testing.T) {
 	}
 	if data["peer"] != "[2001:db8::1]:56004" {
 		t.Fatalf("peer=%v want [2001:db8::1]:56004", data["peer"])
+	}
+}
+
+func TestLink_DiagKeyOptInAndNoPorts(t *testing.T) {
+	cfgDir := t.TempDir()
+	secret := make([]byte, 32)
+	for i := range secret {
+		secret[i] = byte(0xa0 + i)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, "diag.key"), []byte(hex.EncodeToString(secret)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wantDK := base64.RawURLEncoding.EncodeToString(secret)
+
+	rec := serverRecord(roles.WdttServerConfig{
+		Listen:       "0.0.0.0:56002",
+		RawListen:    "0.0.0.0:56013",
+		DirectListen: "0.0.0.0:56014",
+		WgPort:       56001,
+		RelayMode:    ConnModeWG,
+		ConfigDir:    cfgDir,
+	}, instancestore.ServerUser{Password: "abonent"})
+
+	recMissing := serverRecord(roles.WdttServerConfig{
+		Listen:    "0.0.0.0:56022",
+		WgPort:    56021,
+		RelayMode: ConnModeWG,
+		ConfigDir: t.TempDir(),
+	}, instancestore.ServerUser{Password: "abonent"})
+	recMissing.ID = "nokey"
+
+	h, _, _, _ := newTestHandler(t, rec, recMissing)
+
+	for _, body := range []string{
+		`{"peer":"1.2.3.4","password":"abonent"}`,
+		`{"peer":"1.2.3.4","password":"abonent","includeDiagKey":false}`,
+	} {
+		rr := httptest.NewRecorder()
+		h.Link(rr, post(t, body), rec.Key())
+		data, msg, code := decodeEnvelope(t, rr)
+		if code != "" {
+			t.Fatalf("отказ %s: %s", code, msg)
+		}
+		qLink, _ := data["linkQwdtt"].(string)
+		u, err := url.Parse(qLink)
+		if err != nil {
+			t.Fatal(err)
+		}
+		q := u.Query()
+		if q.Has("dk") || q.Has("raw") || q.Has("direct") {
+			t.Fatalf("expected dk, raw, direct omitted by default in %v", q)
+		}
+	}
+
+	// Без includeDiagKey отсутствие diag.key не мешает выдаче ссылки.
+	rrNoKey := httptest.NewRecorder()
+	h.Link(rrNoKey, post(t, `{"peer":"1.2.3.4","password":"abonent"}`), recMissing.Key())
+	if _, msg, code := decodeEnvelope(t, rrNoKey); code != "" {
+		t.Fatalf("default Link without diag.key refused %s: %s", code, msg)
+	}
+
+	// С includeDiagKey=true и отсутствующим diag.key возвращается явная ошибка.
+	rrMissingErr := httptest.NewRecorder()
+	h.Link(rrMissingErr, post(t, `{"peer":"1.2.3.4","password":"abonent","includeDiagKey":true}`), recMissing.Key())
+	_, _, missingCode := decodeEnvelope(t, rrMissingErr)
+	if rrMissingErr.Code != http.StatusBadRequest || missingCode != "WDTT_DIAG_KEY_MISSING" {
+		t.Fatalf("status=%d code=%q, want 400 WDTT_DIAG_KEY_MISSING", rrMissingErr.Code, missingCode)
+	}
+
+	rr := httptest.NewRecorder()
+	h.Link(rr, post(t, `{"peer":"1.2.3.4","password":"abonent","includeDiagKey":true}`), rec.Key())
+	data, msg, code := decodeEnvelope(t, rr)
+	if code != "" {
+		t.Fatalf("отказ %s: %s", code, msg)
+	}
+	qLink, _ := data["linkQwdtt"].(string)
+	u, err := url.Parse(qLink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	if q.Get("dk") != wantDK {
+		t.Fatalf("dk = %q, want %q", q.Get("dk"), wantDK)
+	}
+	if q.Has("raw") || q.Has("direct") {
+		t.Fatalf("unexpected raw/direct in qwdtt link: %v", q)
+	}
+}
+
+func TestRotateDiagKey_Handler(t *testing.T) {
+	cfgDir := t.TempDir()
+	srvWithDir := serverRecord(roles.WdttServerConfig{
+		Listen:    "0.0.0.0:56002",
+		WgPort:    56001,
+		RelayMode: ConnModeWG,
+		ConfigDir: cfgDir,
+	}, instancestore.ServerUser{Password: "abonent"})
+
+	srvNoDir := serverRecord(roles.WdttServerConfig{
+		Listen:    "0.0.0.0:56012",
+		WgPort:    56011,
+		RelayMode: ConnModeWG,
+	})
+	srvNoDir.ID = "nodir"
+
+	srvBadDir := serverRecord(roles.WdttServerConfig{
+		Listen:    "0.0.0.0:56032",
+		WgPort:    56031,
+		RelayMode: ConnModeWG,
+		ConfigDir: filepath.ToSlash(t.TempDir()) + "/../escape",
+	})
+	srvBadDir.ID = "baddir"
+
+	clientRec := instancestore.Record{
+		ID:         "cl1",
+		Kind:       instancestore.KindWdttClient,
+		WdttClient: &roles.WdttClientConfig{Peer: "1.2.3.4:56002", Password: "x"},
+	}
+
+	h, _, _, _ := newTestHandler(t, srvWithDir, srvNoDir, srvBadDir, clientRec)
+
+	t.Run("rotates diag.key on disk and generates new token", func(t *testing.T) {
+		rr1 := httptest.NewRecorder()
+		h.RotateDiagKey(rr1, post(t, `{}`), srvWithDir.Key())
+		if rr1.Code != http.StatusOK {
+			t.Fatalf("status=%d body=%s", rr1.Code, rr1.Body.String())
+		}
+		tok1 := ReadDiagToken(cfgDir)
+		if tok1 == "" {
+			t.Fatal("expected valid diag.key after first rotation")
+		}
+
+		rr2 := httptest.NewRecorder()
+		h.RotateDiagKey(rr2, post(t, `{}`), srvWithDir.Key())
+		if rr2.Code != http.StatusOK {
+			t.Fatalf("status=%d body=%s", rr2.Code, rr2.Body.String())
+		}
+		tok2 := ReadDiagToken(cfgDir)
+		if tok2 == "" || tok2 == tok1 {
+			t.Fatalf("expected distinct token after second rotation: tok1=%q tok2=%q", tok1, tok2)
+		}
+	})
+
+	t.Run("non-POST rejected", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		h.RotateDiagKey(rr, req, srvWithDir.Key())
+		if rr.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("status=%d, want 405", rr.Code)
+		}
+	})
+
+	t.Run("missing record returns 404", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		h.RotateDiagKey(rr, post(t, `{}`), "wdtt-server:missing")
+		if rr.Code != http.StatusNotFound {
+			t.Fatalf("status=%d, want 404", rr.Code)
+		}
+	})
+
+	t.Run("non-server rejected", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		h.RotateDiagKey(rr, post(t, `{}`), clientRec.Key())
+		if rr.Code != http.StatusBadRequest {
+			t.Fatalf("status=%d, want 400", rr.Code)
+		}
+	})
+
+	t.Run("empty configDir returns WDTT_DIAG_KEY_NO_DIR", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		h.RotateDiagKey(rr, post(t, `{}`), srvNoDir.Key())
+		_, _, code := decodeEnvelope(t, rr)
+		if rr.Code != http.StatusBadRequest || code != "WDTT_DIAG_KEY_NO_DIR" {
+			t.Fatalf("status=%d code=%q, want 400 WDTT_DIAG_KEY_NO_DIR", rr.Code, code)
+		}
+	})
+
+	t.Run("traversal configDir returns BAD_REQUEST", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		h.RotateDiagKey(rr, post(t, `{}`), srvBadDir.Key())
+		_, _, code := decodeEnvelope(t, rr)
+		if rr.Code != http.StatusBadRequest || code != "BAD_REQUEST" {
+			t.Fatalf("status=%d code=%q, want 400 BAD_REQUEST", rr.Code, code)
+		}
+	})
+}
+
+func TestImport_StoresDiagKey(t *testing.T) {
+	h, _, mut, _ := newTestHandler(t)
+	rr := httptest.NewRecorder()
+	h.Import(rr, post(t, `{"link":"qwdtt://config?peer=10.0.0.1&pass=x&hashes=h&dk=diagTok123"}`))
+	if _, msg, code := decodeEnvelope(t, rr); code != "" {
+		t.Fatalf("отказ %s: %s", code, msg)
+	}
+	if len(mut.created) != 1 || mut.created[0].WdttClient.DiagKey != "diagTok123" {
+		t.Fatalf("DiagKey не сохранился при импорте: %+v", mut.created)
 	}
 }

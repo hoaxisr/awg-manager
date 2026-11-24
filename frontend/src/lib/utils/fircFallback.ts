@@ -28,6 +28,8 @@ export interface FircProxyGroupRuntime {
 	allDead: boolean;
 	usedByCount: number;
 	members: FircFallbackMemberRuntime[];
+	hasDivergentActive?: boolean;
+	divergentSummary?: string;
 }
 
 export function normalizeFircIfaceList(raw: string | string[] | undefined): string[] {
@@ -229,6 +231,15 @@ export function resolveGroupActiveInterface(
 	}
 
 	if (groupLive) {
+		if (groupLive.live === false) {
+			const ifEntries = groupLive.interfaces ?? [];
+			const allConfiguredDead =
+				ifEntries.length > 0 &&
+				list.every((id) => ifEntries.find((x) => x.name === id)?.state === 'dead');
+			if (allConfiguredDead || !groupLive.active || !list.includes(groupLive.active)) {
+				return { active: null, isBackup: false, allDead: true };
+			}
+		}
 		if (groupLive.active && list.includes(groupLive.active)) {
 			return {
 				active: groupLive.active,
@@ -288,9 +299,12 @@ export function resolveProxyGroupRuntime(
 	});
 	const usedByCount = matchingGroups.length;
 
+	// Группа с проверкой знает о живости больше: без неё демон видит только сам интерфейс.
+	const withLive = matchingGroups.filter((g) => liveMap[g.id]);
 	const authoritativeGroup =
-		matchingGroups.find((g) => g.enable && liveMap[g.id]) ??
-		matchingGroups.find((g) => liveMap[g.id]);
+		withLive.find((g) => g.enable && (g.check?.mode ?? 'none') !== 'none') ??
+		withLive.find((g) => g.enable) ??
+		withLive[0];
 	const authoritativeLive = authoritativeGroup ? liveMap[authoritativeGroup.id] : undefined;
 
 	const probesById: Record<string, FircInterfaceProbeResult> = {};
@@ -307,6 +321,35 @@ export function resolveProxyGroupRuntime(
 		interfaces,
 		probesById,
 	);
+
+	const activeByGroup: Array<{ name: string; active: string }> = [];
+	const distinctActive = new Set<string>();
+	for (const g of matchingGroups) {
+		if (!g.enable) continue;
+		const gl = liveMap[g.id];
+		if (!gl) continue;
+		const gRes = resolveGroupActiveInterface(
+			g,
+			gl,
+			liveMap,
+			tunnelsState,
+			interfaces,
+			probesById,
+		);
+		const eff = gRes.allDead ? '__dead__' : (gRes.active ?? '');
+		if (!eff) continue;
+		distinctActive.add(eff);
+		activeByGroup.push({
+			name: g.name || g.id,
+			active: gRes.allDead
+				? m.firc_fallback_no_active()
+				: friendlyIfaceLabel(eff, interfaces, tunnelsState),
+		});
+	}
+	const hasDivergentActive = distinctActive.size > 1;
+	const divergentSummary = hasDivergentActive
+		? activeByGroup.map((x) => `${x.name} -> ${x.active}`).join('; ')
+		: undefined;
 
 	const members: FircFallbackMemberRuntime[] = chain.map((id, idx) => {
 		const probe = probesById[id] ?? null;
@@ -335,6 +378,8 @@ export function resolveProxyGroupRuntime(
 		allDead: resolution.allDead,
 		usedByCount,
 		members,
+		hasDivergentActive,
+		divergentSummary,
 	};
 }
 

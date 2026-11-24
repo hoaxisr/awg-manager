@@ -1,7 +1,13 @@
 package warpscout
 
 import (
+	"bytes"
+	"context"
+	"encoding/base64"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -189,5 +195,43 @@ func TestParseAccountImport_RejectsHostileFields(t *testing.T) {
 				t.Fatalf("ожидалась ErrInvalidInput, получили %v", err)
 			}
 		})
+	}
+}
+
+// Отвечать на регистрацию может сторонний relay: поля уходят в .conf и в путь запроса.
+func TestRegisterAccount_RejectsMalformedResponse(t *testing.T) {
+	key := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
+	const tmpl = `{"id":%q,"token":"t","warp_enabled":true,"config":{"client_id":%q,"peers":[{"public_key":%q}],"interface":{"addresses":{"v4":%q,"v6":%q}}}}`
+	for name, tc := range map[string]struct {
+		id, clientID, peer, v4, v6 string
+		ok                         bool
+	}{
+		"корректный":      {"abc-1", "AQID", key, "172.16.0.2", "2606:4700::1", true},
+		"путь в id":       {"a/../x", "AQID", key, "172.16.0.2", "2606:4700::1", false},
+		"битый пир":       {"abc-1", "AQID", "AAAA\nEndpoint = 1", "172.16.0.2", "2606:4700::1", false},
+		"битый client_id": {"abc-1", "AQ", key, "172.16.0.2", "2606:4700::1", false},
+		"битый v4":        {"abc-1", "AQID", key, "172.16.0.2\nDNS = 1", "2606:4700::1", false},
+		"битый v6":        {"abc-1", "AQID", key, "172.16.0.2", "x", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				fmt.Fprintf(w, tmpl, tc.id, tc.clientID, tc.peer, tc.v4, tc.v6)
+			}))
+			defer srv.Close()
+			_, err := registerAccountWithBase(context.Background(), srv.Client(), srv.URL)
+			if (err == nil) != tc.ok {
+				t.Fatalf("err = %v, ok = %v", err, tc.ok)
+			}
+		})
+	}
+
+	// Перевод строки внутри base64 декодер пропускает — сохраняем каноническое значение.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprintf(w, tmpl, "abc-1", "AQID", key[:10]+"\n"+key[10:], "", "")
+	}))
+	defer srv.Close()
+	a, err := registerAccountWithBase(context.Background(), srv.Client(), srv.URL)
+	if err != nil || a.PeerPublicKey != key {
+		t.Fatalf("peer = %q, err = %v", a.PeerPublicKey, err)
 	}
 }

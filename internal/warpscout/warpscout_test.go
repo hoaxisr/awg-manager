@@ -2824,12 +2824,14 @@ func TestServiceSaveConfig_SignatureDomainAndPresetRegenerates(t *testing.T) {
 		t.Fatalf("expected ErrInvalidInput for invalid domain, got %v", err)
 	}
 
-	cfg.AWG.SignatureDomain = "https://Gosuslugi.RU/test"
+	// Домен вне пула ru_whitelist: иначе случайный выбор пресета мог дать его же
+	// и для профиля dns тот же I1 (F887).
+	cfg.AWG.SignatureDomain = "https://Example.ORG/test"
 	saved, err := s.SaveConfig(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("SaveConfig valid domain: %v", err)
 	}
-	if saved.AWG.SignatureDomain != "gosuslugi.ru" || saved.AWG.GeneratedDomain != "gosuslugi.ru" || saved.AWG.I1 == "" {
+	if saved.AWG.SignatureDomain != "example.org" || saved.AWG.GeneratedDomain != "example.org" || saved.AWG.I1 == "" {
 		t.Fatalf("unexpected saved signature fields: %+v", saved.AWG)
 	}
 

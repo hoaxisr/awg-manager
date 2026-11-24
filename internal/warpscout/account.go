@@ -381,6 +381,38 @@ func accountFromRegResp(r regResponse, priv, pub string) *Account {
 	}
 }
 
+// canonicalizeRegResp проверяет ответ регистрации: отвечать может сторонний relay,
+// а поля уходят в .conf и в путь запроса. Только для регистрации: при ротации
+// ключ у Cloudflare уже сменён, и отказ потерял бы учётку (через relay её нет).
+func canonicalizeRegResp(r *regResponse) error {
+	if len(r.Config.Peers) > 0 && r.Config.Peers[0].PublicKey != "" {
+		peer, ok := canonicalBase64(r.Config.Peers[0].PublicKey, 32)
+		if !ok {
+			return errors.New("Cloudflare API: некорректный ключ пира")
+		}
+		r.Config.Peers[0].PublicKey = peer
+	}
+	if r.Config.ClientID != "" {
+		id, ok := canonicalBase64(r.Config.ClientID, 3)
+		if !ok {
+			return errors.New("Cloudflare API: некорректный client_id")
+		}
+		r.Config.ClientID = id
+	}
+	addrs := &r.Config.Interface.Addresses
+	if addrs.V4 != "" {
+		if a, err := netip.ParseAddr(addrs.V4); err != nil || !a.Is4() {
+			return errors.New("Cloudflare API: некорректный IPv4-адрес")
+		}
+	}
+	v6, err := normalizeImportedIPv6(addrs.V6)
+	if err != nil {
+		return errors.New("Cloudflare API: некорректный IPv6-адрес")
+	}
+	addrs.V6 = v6
+	return nil
+}
+
 func resolveAPIBase(baseURL string) string {
 	b := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if b == "" {
@@ -408,6 +440,9 @@ func registerAccountWithBase(ctx context.Context, c *http.Client, baseURL string
 	if r.ID == "" || r.Token == "" {
 		return nil, errors.New("Cloudflare API: в ответе нет id/token")
 	}
+	if !importedIDRe.MatchString(r.ID) {
+		return nil, errors.New("Cloudflare API: некорректный id регистрации")
+	}
 	if !r.WarpEnabled {
 		var patched regResponse
 		if err := apiDo(ctx, c, http.MethodPatch, base+"/reg/"+r.ID, r.Token, map[string]bool{"warp_enabled": true}, &patched); err != nil {
@@ -417,6 +452,9 @@ func registerAccountWithBase(ctx context.Context, c *http.Client, baseURL string
 			patched.ID, patched.Token = r.ID, r.Token
 			r = patched
 		}
+	}
+	if err := canonicalizeRegResp(&r); err != nil {
+		return nil, err
 	}
 	return accountFromRegResp(r, priv, pub), nil
 }

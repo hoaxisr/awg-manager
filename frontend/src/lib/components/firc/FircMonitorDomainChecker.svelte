@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { m, uiText } from '$lib/i18n';
-	import type { PageScanFetchMode, PageScanResult } from '$lib/types/diagnostics';
-	import { Button, Badge } from '$lib/components/ui';
+	import type { PageScanFetchMode, PageScanOptions, PageScanResult } from '$lib/types/diagnostics';
+	import { Button, Badge, Input } from '$lib/components/ui';
 	import { IpInspectSection, PageScanSection } from '$lib/components/diagnostics';
 	import { ArrowRight, CheckCircle2, Globe } from 'lucide-svelte';
+	import FircPageScanExit from './FircPageScanExit.svelte';
 	import { formatOutboundLabel, type FircDomainCheckView } from './fircMonitorFormat';
 
 	interface Props {
@@ -13,8 +14,16 @@
 		scanningPage: boolean;
 		pageScanResult: PageScanResult | null;
 		pageScanError: string;
+		pageScanExit: string;
+		customProxyUrl: string;
+		pageScanMissingCustomProxy: boolean;
+		pageScanOptions: PageScanOptions | null;
+		loadingPageScanOptions: boolean;
+		onLoadOptions: (force?: boolean) => void;
+		onClose: () => void;
 		onCheck: (domain?: string) => void;
 		onScan: (mode?: PageScanFetchMode) => void;
+		onRetryScan: () => void;
 		onOpenQuickAdd: (target: { ip?: string; domain?: string; prefix?: string }) => void;
 		onRoutesChanged: () => void;
 	}
@@ -26,8 +35,16 @@
 		scanningPage,
 		pageScanResult,
 		pageScanError,
+		pageScanExit = $bindable(),
+		customProxyUrl = $bindable(),
+		pageScanMissingCustomProxy = $bindable(),
+		pageScanOptions,
+		loadingPageScanOptions,
+		onLoadOptions,
+		onClose,
 		onCheck,
 		onScan,
+		onRetryScan,
 		onOpenQuickAdd,
 		onRoutesChanged,
 	}: Props = $props();
@@ -43,7 +60,16 @@
 </script>
 
 <!-- Instant Domain Routing Checker -->
-<details class="domain-checker">
+<details
+	class="domain-checker"
+	ontoggle={(e) => {
+		if (!e.currentTarget.open) {
+			onClose();
+		} else if (!pageScanOptions && !loadingPageScanOptions) {
+			onLoadOptions();
+		}
+	}}
+>
 	<summary>{m.firc_monitor_checker_summary()}</summary>
 <div class="checker-box">
 	<div class="checker-top">
@@ -53,15 +79,13 @@
 		</div>
 		<div class="checker-quick-chips">
 			{#each quickDomains as qd (qd)}
-				<button
-					type="button"
-					class="quick-chip"
-					class:active={testDomain === qd}
+				<Button
+					variant={testDomain === qd ? 'outline-primary' : 'secondary'}
 					disabled={checkingDomain}
 					onclick={() => onCheck(qd)}
 				>
 					{qd}
-				</button>
+				</Button>
 			{/each}
 		</div>
 	</div>
@@ -73,13 +97,14 @@
 			onCheck();
 		}}
 	>
-		<input
-			type="text"
-			class="checker-input"
-			aria-label={m.firc_monitor_checker_input_aria()}
-			placeholder={m.firc_monitor_checker_placeholder()}
-			bind:value={testDomain}
-		/>
+		<div class="checker-input">
+			<Input
+				ariaLabel={m.firc_monitor_checker_input_aria()}
+				placeholder={m.firc_monitor_checker_placeholder()}
+				bind:value={testDomain}
+				fullWidth
+			/>
+		</div>
 		<Button variant="primary" size="sm" type="submit" loading={checkingDomain} disabled={scanningPage}>
 			{m.common_check()}
 		</Button>
@@ -94,6 +119,16 @@
 			{m.page_scan_btn()}
 		</Button>
 	</form>
+
+	<FircPageScanExit
+		bind:pageScanExit
+		bind:customProxyUrl
+		{pageScanOptions}
+		loadingOptions={loadingPageScanOptions}
+		disabled={scanningPage}
+		onRefresh={() => onLoadOptions(true)}
+		onEdited={() => (pageScanMissingCustomProxy = false)}
+	/>
 
 	{#if checkResult}
 		<div class="checker-res" class:is-routed={checkResult.routed} class:is-error={Boolean(checkResult.error)}>
@@ -134,13 +169,14 @@
 		{/if}
 	{/if}
 
-	{#if scanningPage || pageScanResult || pageScanError}
+	{#if scanningPage || pageScanResult || pageScanError || pageScanMissingCustomProxy}
 		<PageScanSection
 			loading={scanningPage}
-			error={pageScanError}
+			error={pageScanMissingCustomProxy ? m.page_scan_custom_proxy_required() : pageScanError}
 			result={pageScanResult}
 			{onOpenQuickAdd}
 			onRescan={(mode) => onScan(mode)}
+			onRetry={onRetryScan}
 			{onRoutesChanged}
 		/>
 	{/if}
@@ -185,29 +221,6 @@
 		flex-wrap: wrap;
 	}
 
-	.quick-chip {
-		padding: 2px 8px;
-		border-radius: 999px;
-		font-family: var(--font-mono);
-		font-size: 0.72rem;
-		background: var(--bg-secondary);
-		border: 1px solid var(--border);
-		color: var(--text-secondary);
-		cursor: pointer;
-		transition: all 0.15s ease;
-		max-width: 100%;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.quick-chip:hover,
-	.quick-chip.active {
-		border-color: var(--accent);
-		color: var(--text-primary);
-		background: color-mix(in srgb, var(--accent) 14%, var(--bg-secondary));
-	}
-
 	.checker-form {
 		display: flex;
 		gap: 0.5rem;
@@ -218,14 +231,6 @@
 	.checker-input {
 		flex: 1 1 180px;
 		min-width: 0;
-		height: 32px;
-		padding: 0 0.65rem;
-		border-radius: 6px;
-		border: 1px solid var(--border);
-		background: var(--bg-primary, var(--bg-secondary));
-		color: var(--text-primary);
-		font-family: var(--font-mono);
-		font-size: 0.8rem;
 	}
 
 	.checker-res {

@@ -149,11 +149,19 @@ describe('TelegramWebProxyCard', () => {
 	it('triggers factory reset with unchecked KeenDNS checkbox by default and supports opting in', async () => {
 		vi.mocked(api.getTgWebProxyConfig).mockResolvedValue(baseConfig({ enabled: true }));
 		vi.mocked(api.getTgWebProxyStatus).mockResolvedValue(baseStatus({ running: true }));
-		vi.mocked(api.resetTgWebProxy).mockResolvedValue({
-			server: 'tgwebproxy',
-			reset: true,
-			dispatcher_reset: false,
-		});
+		vi.mocked(api.resetTgWebProxy)
+			.mockResolvedValueOnce({
+				server: 'tgwebproxy',
+				reset: true,
+				dispatcher_reset: false,
+			})
+			.mockResolvedValueOnce({
+				server: 'tgwebproxy',
+				reset: true,
+				dispatcher_reset: false,
+				keendns_deleted: ['tg'],
+				keendns_skipped: ['shared (используется VLESS)'],
+			});
 
 		render(TelegramWebProxyCard, {});
 
@@ -187,6 +195,14 @@ describe('TelegramWebProxyCard', () => {
 		await fireEvent.click(screen.getByRole('button', { name: m.server_reset_confirm_button() }));
 		await waitFor(() => {
 			expect(api.resetTgWebProxy).toHaveBeenCalledWith({ delete_keendns: true });
+		});
+		await waitFor(() => {
+			expect(notifications.info).toHaveBeenCalledWith(
+				m.server_reset_keendns_deleted({ domains: 'tg' }),
+			);
+			expect(notifications.warning).toHaveBeenCalledWith(
+				m.server_reset_keendns_skipped({ domains: 'shared (используется VLESS)' }),
+			);
 		});
 	});
 

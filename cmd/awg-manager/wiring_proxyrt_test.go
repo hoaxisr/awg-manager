@@ -761,9 +761,11 @@ func TestProxyInstancesDispatcherRoutesSubpaths(t *testing.T) {
 		allowlist: func(w http.ResponseWriter, r *http.Request, key string, sub []string) {
 			seen = append(seen, "allowlist:"+key)
 		},
-		link:     func(w http.ResponseWriter, r *http.Request, key string) { seen = append(seen, "link:"+key) },
-		ensureWG: func(w http.ResponseWriter, r *http.Request, key string) { seen = append(seen, "ensure:"+key) },
-		refresh:  func(w http.ResponseWriter, r *http.Request, key string) { seen = append(seen, "refresh:"+key) },
+		link:          func(w http.ResponseWriter, r *http.Request, key string) { seen = append(seen, "link:"+key) },
+		rotateDiagKey: func(w http.ResponseWriter, r *http.Request, key string) { seen = append(seen, "rotate:"+key) },
+		ensureWG:      func(w http.ResponseWriter, r *http.Request, key string) { seen = append(seen, "ensure:"+key) },
+		diag:          func(w http.ResponseWriter, r *http.Request, key string) { seen = append(seen, "diag:"+key) },
+		refresh:       func(w http.ResponseWriter, r *http.Request, key string) { seen = append(seen, "refresh:"+key) },
 	}.handler()
 
 	tests := []struct{ path, want string }{
@@ -777,7 +779,11 @@ func TestProxyInstancesDispatcherRoutesSubpaths(t *testing.T) {
 		{"/api/proxyrt/instances/freeturn-server:d/allowlist", "allowlist:freeturn-server:d"},
 		{"/api/proxyrt/instances/freeturn-server:d/allowlist/abc", "allowlist:freeturn-server:d"},
 		{"/api/proxyrt/instances/wdtt-server:d/link", "link:wdtt-server:d"},
+		{"/api/proxyrt/instances/wdtt-server:d/diag-key/rotate", "rotate:wdtt-server:d"},
+		{"/api/proxyrt/instances/wdtt-server:d/diag-key/other", "instances"},
 		{"/api/proxyrt/instances/wdtt-client:de/ensure-wg-tunnel", "ensure:wdtt-client:de"},
+		{"/api/proxyrt/instances/wdtt-client:de/diag", "diag:wdtt-client:de"},
+		{"/api/proxyrt/instances/wdtt-client:de/diag/extra", "instances"},
 		// Своей ручки у связей нет (PF24): путь ведёт в общий обработчик
 		// инстансов, то есть в честный отказ, а не в тихое «сделали что-то».
 		{"/api/proxyrt/instances/wdtt-client:de/linked-tunnels/clear", "instances"},

@@ -1380,9 +1380,9 @@ func TestSeedCarriesEveryFieldOfEveryRole(t *testing.T) {
 	// Name — единственное поле конфига с json:"-": его впрыскивает геттер из
 	// Record.Name, в самой записи оно пустое (Р3, один писатель имени).
 	// Союз двух клиентов: NdmsIface/RawIface/Policies есть только у raw.
-	// AutoReconnect/AutoReconnectInterval/DefaultRoute — новые поля, которых не было в старом wdtt.json.
+	// AutoReconnect/AutoReconnectInterval/DefaultRoute/DiagKey — новые поля, которых не было в старом wdtt.json.
 	assertEveryFieldCarried(t, "WdttClientConfig",
-		[]any{*rawCli.WdttClient, *wgCli.WdttClient}, "Name", "AutoReconnect", "AutoReconnectInterval", "DefaultRoute")
+		[]any{*rawCli.WdttClient, *wgCli.WdttClient}, "Name", "DiagKey", "AutoReconnect", "AutoReconnectInterval", "DefaultRoute")
 	if c, _ := rawCli.WdttClientConfig(); c.Name != "Клиент раз" {
 		t.Errorf("геттер не впрыснул имя: %q", c.Name)
 	}

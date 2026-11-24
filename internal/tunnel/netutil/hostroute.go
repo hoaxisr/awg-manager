@@ -30,3 +30,13 @@ func SkipHostRoute(ip string) bool {
 	return parsed.IsLoopback() || parsed.IsLinkLocalUnicast() ||
 		parsed.IsLinkLocalMulticast() || parsed.IsUnspecified()
 }
+
+// RouteHolders — кто, кроме спрашивающего туннеля, смотрит на тот же IP сервера.
+// Host-route ставят двое, и строки у них разные: kernel-туннель — в ядро,
+// обфусцированный nativewg — запись NDMS. Обычный nativewg не ставит ничего:
+// в Any он есть, а снятию чужих маршрутов не мешает (F889).
+type RouteHolders struct {
+	Kernel     bool
+	Obfuscated bool
+	Any        bool
+}

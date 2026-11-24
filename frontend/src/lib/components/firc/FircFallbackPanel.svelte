@@ -63,16 +63,22 @@
 		{#each rt.proxyGroups as pg (pg.id)}
 			{@const pgRt = proxyGroupRuntime(rt, pg)}
 			{@const isPgTesting = Boolean(probingGroups[`pg:${pg.id}`])}
+			{@const activeMem = pgRt.activeIface ? pgRt.members.find((x) => x.id === pgRt.activeIface) : undefined}
+			{@const activeProbeFailed = Boolean(activeMem?.probe && !activeMem.probe.ok)}
 			<div class="pg-row" class:is-backup={pgRt.isOnBackup} class:all-dead={pgRt.allDead}>
-				<div class="pg-row-ident">
+				<div
+					class="pg-row-ident"
+					title={pgRt.hasDivergentActive && pgRt.divergentSummary ? `${pg.name} (${pgRt.divergentSummary})` : pg.name}
+				>
 					<span
 						class="iface-dot"
-						class:alive={Boolean(pgRt.activeIface) && !pgRt.isOnBackup}
-						class:backup={pgRt.isOnBackup}
+						class:alive={Boolean(pgRt.activeIface) && !pgRt.isOnBackup && !activeProbeFailed}
+						class:backup={pgRt.isOnBackup && !activeProbeFailed}
+						class:warn={Boolean(pgRt.activeIface) && activeProbeFailed && !pgRt.allDead}
 						class:dead={pgRt.allDead}
 						class:unknown={!pgRt.activeIface && !pgRt.allDead}
 					></span>
-					<strong class="pg-row-name" title={pg.name}>{pg.name}</strong>
+					<strong class="pg-row-name">{pg.name}</strong>
 					{#if pgRt.isOnBackup && pgRt.activeIface}
 						<span
 							class="backup-badge"
@@ -91,26 +97,42 @@
 					{#each pgRt.members as mem, mIdx (mem.id)}
 						{@const tone = probeLatencyTone(mem.probe)}
 						{@const checking = Boolean(probingIfaces[mem.id])}
+						{@const probeFailed = Boolean(mem.probe && !mem.probe.ok)}
+						{@const isWarnActive = mem.state !== 'dead' && mem.isActive && probeFailed}
 						{#if mIdx > 0}
 							<span class="pg-chain-sep" aria-hidden="true">›</span>
 						{/if}
 						<button
 							type="button"
 							class="pg-node-pill"
-							class:is-active={mem.isActive && !pgRt.isOnBackup}
-							class:is-backup={mem.isActive && pgRt.isOnBackup}
+							class:is-active={mem.isActive && !pgRt.isOnBackup && !isWarnActive}
+							class:is-backup={mem.isActive && pgRt.isOnBackup && !isWarnActive}
+							class:is-probe-warn={isWarnActive}
 							class:is-dead={mem.state === 'dead'}
 							disabled={checking}
 							onclick={() => onprobe([mem.id])}
-							title={`${mem.id}${mem.isActive ? ` · ${m.firc_fallback_active_marker()}` : ''}${mem.error ? ` · ${mem.error}` : ''} · ${m.firc_fallback_test_iface_title({ name: mem.label })}`}
+							title={[
+								mem.id,
+								mem.isActive ? m.firc_fallback_active_marker() : '',
+								mem.error,
+								probeFailed
+									? m.firc_fallback_probe_error_detail({
+											error: mem.probe?.error || m.firc_fallback_timeout(),
+										})
+									: '',
+								m.firc_fallback_test_iface_title({ name: mem.label }),
+							]
+								.filter(Boolean)
+								.join(' · ')}
 						>
 							<span
 								class="pg-mem-dot"
-								class:active={mem.isActive && !pgRt.isOnBackup}
-								class:backup={mem.isActive && pgRt.isOnBackup}
-								class:alive={!mem.isActive && mem.state === 'alive'}
+								class:active={mem.isActive && !pgRt.isOnBackup && !probeFailed}
+								class:backup={mem.isActive && pgRt.isOnBackup && !probeFailed}
+								class:warn={mem.state !== 'dead' && probeFailed}
+								class:alive={!mem.isActive && mem.state === 'alive' && !probeFailed}
 								class:dead={mem.state === 'dead'}
-								class:unknown={!mem.isActive && mem.state === 'unknown'}
+								class:unknown={!mem.isActive && mem.state === 'unknown' && !probeFailed}
 							></span>
 							<span class="pg-node-name">{mem.label}</span>
 							<span class="pg-node-delay {tone}">
@@ -127,7 +149,11 @@
 				{#if !singlePg}
 					<IconButton
 						disabled={isPgTesting || pg.interfaces.length === 0}
-						onclick={() => onprobe(pg.interfaces, { groupKey: `pg:${pg.id}` })}
+						onclick={() =>
+							onprobe(pg.interfaces, {
+								groupKey: `pg:${pg.id}`,
+								url: pg.check?.mode === 'url' && pg.check.url ? pg.check.url : undefined,
+							})}
 						title={m.firc_fallback_test_group_title({ name: pg.name })}
 						ariaLabel={m.firc_fallback_test_group_title({ name: pg.name })}
 					>
@@ -176,7 +202,8 @@
 		box-shadow: 0 0 4px var(--color-success-border);
 	}
 
-	.iface-dot.backup {
+	.iface-dot.backup,
+	.iface-dot.warn {
 		background: var(--color-warning);
 		box-shadow: 0 0 4px var(--color-warning-border);
 	}
@@ -322,7 +349,8 @@
 		font-weight: 600;
 	}
 
-	.pg-node-pill.is-backup {
+	.pg-node-pill.is-backup,
+	.pg-node-pill.is-probe-warn {
 		background: color-mix(in srgb, var(--color-warning) 10%, var(--bg-secondary));
 		border-color: var(--color-warning-border);
 		color: var(--text-primary);
@@ -381,7 +409,8 @@
 		animation: firc-active-pulse 1.5s ease-in-out infinite;
 	}
 
-	.pg-mem-dot.backup {
+	.pg-mem-dot.backup,
+	.pg-mem-dot.warn {
 		background: var(--color-warning);
 		box-shadow: 0 0 6px var(--color-warning-border);
 	}

@@ -20,6 +20,7 @@ type ImportPayload struct {
 	DeviceID string   `json:"deviceId,omitempty"`
 	WG       string   `json:"wg,omitempty"` // optional bundled WireGuard client config
 	ConnMode string   `json:"connMode,omitempty"`
+	DiagKey  string   `json:"diagKey,omitempty"`
 }
 
 // SubscriptionPreview — многопрофильный документ подписки (_wdtt.json).

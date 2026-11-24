@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/ipinspect"
 	"github.com/hoaxisr/awg-manager/internal/sys/httpclient"
+	"golang.org/x/net/proxy"
 )
 
 const (
@@ -41,6 +43,10 @@ var (
 	ErrInvalidFetchMode = errors.New("invalid fetch mode")
 	// ErrProxyUnavailable indicates proxy fetch mode was requested while no local proxy is listening.
 	ErrProxyUnavailable = errors.New("local proxy is unavailable")
+	// ErrInvalidInterface indicates the supplied interface is not among the offered tunnel interfaces.
+	ErrInvalidInterface = errors.New("invalid network interface")
+	// ErrInvalidProxy indicates the supplied manual proxy URL is malformed or unsupported.
+	ErrInvalidProxy = errors.New("invalid proxy URL")
 
 	errFakeIPAddress = fmt.Errorf("%w: resolved to local FakeIP range", ErrBlockedAddress)
 )
@@ -49,10 +55,39 @@ var (
 type FetchMode string
 
 const (
-	FetchModeAuto   FetchMode = "auto"
-	FetchModeDirect FetchMode = "direct"
-	FetchModeProxy  FetchMode = "proxy"
+	FetchModeAuto      FetchMode = "auto"
+	FetchModeDirect    FetchMode = "direct"
+	FetchModeProxy     FetchMode = "proxy"
+	FetchModeInterface FetchMode = "interface"
 )
+
+// ScanRequest parameterizes a page resource scan including optional explicit egress selection.
+type ScanRequest struct {
+	URL       string
+	Mode      FetchMode
+	Interface string
+	ProxyURL  string
+}
+
+// InterfaceOption describes an active network/tunnel interface available for bound scanning.
+type InterfaceOption struct {
+	Name  string `json:"name"`
+	Label string `json:"label"`
+}
+
+// ProxyOption describes a detected local proxy listener available for proxied scanning.
+type ProxyOption struct {
+	URL   string `json:"url"`
+	Label string `json:"label"`
+}
+
+// ScanOptionsResult lists available exit interfaces and local proxies for page scanning.
+type ScanOptionsResult struct {
+	DefaultProxy      string            `json:"defaultProxy,omitempty"`
+	DefaultProxyLabel string            `json:"defaultProxyLabel,omitempty"`
+	Proxies           []ProxyOption     `json:"proxies"`
+	Interfaces        []InterfaceOption `json:"interfaces"`
+}
 
 // HostResolver resolves hostnames to IP addresses.
 type HostResolver interface {
@@ -79,13 +114,16 @@ type ProxyURLProvider func(ctx context.Context) string
 
 // Options configures a page scanner Service.
 type Options struct {
-	IPInspect        *ipinspect.Service
-	RouteChecker     RouteChecker
-	ProxyURLProvider ProxyURLProvider
-	Resolver         HostResolver
+	IPInspect          *ipinspect.Service
+	RouteChecker       RouteChecker
+	ProxyURLProvider   ProxyURLProvider
+	InterfaceLister    func(ctx context.Context) []InterfaceOption
+	ProxyLister        func(ctx context.Context) []ProxyOption
+	RouterProxyMatcher func(ctx context.Context, host, port string) bool
+	Resolver           HostResolver
 	// ProxyResolver resolves target hostnames on behalf of proxy mode for verification and IP pinning.
-	// When nil, proxy mode probes local DNS and falls back to DNS-over-HTTPS through the local proxy
-	// (never forwarding an unverified hostname to the proxy).
+	// When nil, proxy mode probes local DNS and falls back to DNS-over-HTTPS through the same proxy
+	// (never forwarding an unverified hostname to the proxy); socks5h skips the local probe.
 	ProxyResolver HostResolver
 	MaxBodyBytes  int64
 	MaxHosts      int
@@ -107,44 +145,55 @@ type Resource struct {
 	OutboundLabel string            `json:"outboundLabel,omitempty"`
 	Inspect       *ipinspect.Result `json:"inspect,omitempty"`
 	ResolveError  string            `json:"resolveError,omitempty"`
+	// RouteUnknown: маршрут не проверялся — имя нельзя отдавать DNS роутера (socks5h).
+	RouteUnknown bool `json:"routeUnknown,omitempty"`
 }
 
-// Result is returned by Service.Scan.
+// Result is returned by Service.ScanWithOptions.
 type Result struct {
-	RequestedURL   string     `json:"requestedUrl"`
-	FinalURL       string     `json:"finalUrl"`
-	StatusCode     int        `json:"statusCode"`
-	ContentType    string     `json:"contentType,omitempty"`
-	FetchVia       string     `json:"fetchVia"`
-	ProxyAvailable bool       `json:"proxyAvailable"`
-	BodyBytes      int        `json:"bodyBytes"`
-	BodyTruncated  bool       `json:"bodyTruncated,omitempty"`
-	TotalHosts     int        `json:"totalHosts"`
-	HostsTruncated bool       `json:"hostsTruncated,omitempty"`
-	DurationMs     int64      `json:"durationMs"`
-	Resources      []Resource `json:"resources"`
+	RequestedURL     string     `json:"requestedUrl"`
+	FinalURL         string     `json:"finalUrl"`
+	StatusCode       int        `json:"statusCode"`
+	ContentType      string     `json:"contentType,omitempty"`
+	FetchVia         string     `json:"fetchVia"`
+	FetchTarget      string     `json:"fetchTarget,omitempty"`
+	FetchTargetLabel string     `json:"fetchTargetLabel,omitempty"`
+	DefaultProxy     string     `json:"defaultProxy,omitempty"`
+	ProxyAvailable   bool       `json:"proxyAvailable"`
+	BodyBytes        int        `json:"bodyBytes"`
+	BodyTruncated    bool       `json:"bodyTruncated,omitempty"`
+	TotalHosts       int        `json:"totalHosts"`
+	HostsTruncated   bool       `json:"hostsTruncated,omitempty"`
+	DurationMs       int64      `json:"durationMs"`
+	Resources        []Resource `json:"resources"`
 }
 
 // Service performs SSRF-safe, bounded on-demand page resource scanning and IP/ASN/route enrichment.
 type Service struct {
-	ipInspect        *ipinspect.Service
-	routeChecker     RouteChecker
-	proxyURLProvider ProxyURLProvider
-	resolver         HostResolver
-	proxyResolver    HostResolver
-	dohEndpoints     []string
-	dohRootCAs       *x509.CertPool
-	maxBodyBytes     int64
-	maxHosts         int
-	fetchTimeout     time.Duration
-	totalTimeout     time.Duration
-	concurrency      int
+	ipInspect          *ipinspect.Service
+	routeChecker       RouteChecker
+	proxyURLProvider   ProxyURLProvider
+	interfaceLister    func(ctx context.Context) []InterfaceOption
+	proxyLister        func(ctx context.Context) []ProxyOption
+	routerProxyMatcher func(ctx context.Context, host, port string) bool
+	resolver           HostResolver
+	proxyResolver      HostResolver
+	dohEndpoints       []string
+	dohRootCAs         *x509.CertPool
+	maxBodyBytes       int64
+	maxHosts           int
+	fetchTimeout       time.Duration
+	totalTimeout       time.Duration
+	concurrency        int
 
 	dohTxSeq atomic.Uint32
 
 	// Test-only seams.
-	dialRaw   func(ctx context.Context, network, addr string) (net.Conn, error)
-	dialProxy func(ctx context.Context, network, addr string) (net.Conn, error)
+	dialRaw             func(ctx context.Context, network, addr string) (net.Conn, error)
+	dialProxy           func(ctx context.Context, network, addr string) (net.Conn, error)
+	dialInterface       func(ctx context.Context, iface, network, addr string) (net.Conn, error)
+	interfaceLookupIPv4 func(ctx context.Context, host, iface string) ([]string, error)
+	isRouterAddr        func(addr netip.Addr) bool
 }
 
 // NewService constructs a page resource scanner Service.
@@ -175,32 +224,127 @@ func NewService(opts Options) *Service {
 	}
 	defaultDial := (&net.Dialer{Timeout: fetchTimeout}).DialContext
 	return &Service{
-		ipInspect:        opts.IPInspect,
-		routeChecker:     opts.RouteChecker,
-		proxyURLProvider: opts.ProxyURLProvider,
-		resolver:         res,
-		proxyResolver:    opts.ProxyResolver,
-		dohEndpoints:     []string{"1.1.1.1", "8.8.8.8"},
-		maxBodyBytes:     maxBody,
-		maxHosts:         maxHosts,
-		fetchTimeout:     fetchTimeout,
-		totalTimeout:     totalTimeout,
-		concurrency:      concurrency,
-		dialRaw:          defaultDial,
-		dialProxy:        defaultDial,
+		ipInspect:          opts.IPInspect,
+		routeChecker:       opts.RouteChecker,
+		proxyURLProvider:   opts.ProxyURLProvider,
+		interfaceLister:    opts.InterfaceLister,
+		proxyLister:        opts.ProxyLister,
+		routerProxyMatcher: opts.RouterProxyMatcher,
+		resolver:           res,
+		proxyResolver:      opts.ProxyResolver,
+		dohEndpoints:       []string{"1.1.1.1", "8.8.8.8"},
+		maxBodyBytes:       maxBody,
+		maxHosts:           maxHosts,
+		fetchTimeout:       fetchTimeout,
+		totalTimeout:       totalTimeout,
+		concurrency:        concurrency,
+		dialRaw:            defaultDial,
+		dialProxy:          defaultDial,
+		dialInterface: func(ctx context.Context, iface, _ string, addr string) (net.Conn, error) {
+			return httpclient.DialTCP(ctx, iface, addr, fetchTimeout)
+		},
+		interfaceLookupIPv4: func(ctx context.Context, host, iface string) ([]string, error) {
+			return httpclient.LookupAllIPv4ForBind(ctx, host, []string{"1.1.1.1", "8.8.8.8"}, iface)
+		},
+		isRouterAddr: isRouterAddr,
 	}
 }
 
-// Scan fetches the requested URL, extracts referenced hosts, checks routing, and inspects IPs.
-func (s *Service) Scan(ctx context.Context, rawURL string, mode FetchMode) (*Result, error) {
-	if mode == "" {
-		mode = FetchModeAuto
+// Options discovers available router tunnel interfaces and local proxies for page scanning.
+func (s *Service) Options(ctx context.Context) ScanOptionsResult {
+	res := ScanOptionsResult{
+		Proxies:    []ProxyOption{},
+		Interfaces: []InterfaceOption{},
 	}
-	if mode != FetchModeAuto && mode != FetchModeDirect && mode != FetchModeProxy {
-		return nil, fmt.Errorf("%w: %q", ErrInvalidFetchMode, mode)
+	if s == nil {
+		return res
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	if s.proxyURLProvider != nil {
+		if raw := strings.TrimSpace(s.proxyURLProvider(probeCtx)); raw != "" {
+			if redacted := redactProxyURL(raw); redacted != "" {
+				res.DefaultProxy = redacted
+			}
+		}
+	}
+	if s.proxyLister != nil {
+		for _, item := range s.proxyLister(probeCtx) {
+			redacted := redactProxyURL(item.URL)
+			if redacted == "" {
+				continue
+			}
+			item.URL = redacted
+			if item.Label == "" {
+				item.Label = redacted
+			}
+			res.Proxies = append(res.Proxies, item)
+			if res.DefaultProxy != "" && strings.EqualFold(redacted, res.DefaultProxy) && res.DefaultProxyLabel == "" {
+				res.DefaultProxyLabel = item.Label
+			}
+		}
+	}
+	if res.DefaultProxy != "" {
+		found := false
+		for _, p := range res.Proxies {
+			if strings.EqualFold(p.URL, res.DefaultProxy) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			label := res.DefaultProxy
+			res.DefaultProxyLabel = label
+			res.Proxies = append([]ProxyOption{{URL: res.DefaultProxy, Label: label}}, res.Proxies...)
+		} else if res.DefaultProxyLabel == "" {
+			res.DefaultProxyLabel = res.DefaultProxy
+		}
+	}
+	if s.interfaceLister != nil {
+		for _, item := range s.interfaceLister(probeCtx) {
+			name := strings.TrimSpace(item.Name)
+			if name == "" {
+				continue
+			}
+			if item.Label == "" {
+				item.Label = name
+			}
+			item.Name = name
+			res.Interfaces = append(res.Interfaces, item)
+		}
+	}
+	return res
+}
+
+// ScanWithOptions fetches the requested URL using explicit fetch mode, interface binding, or manual proxy URL.
+func (s *Service) ScanWithOptions(ctx context.Context, req ScanRequest) (*Result, error) {
+	mode := FetchMode(strings.ToLower(strings.TrimSpace(string(req.Mode))))
+	iface := strings.TrimSpace(req.Interface)
+	manualProxyRaw := strings.TrimSpace(req.ProxyURL)
+
+	if mode == "" {
+		switch {
+		case iface != "":
+			mode = FetchModeInterface
+		case manualProxyRaw != "":
+			mode = FetchModeProxy
+		default:
+			mode = FetchModeAuto
+		}
+	}
+	if mode != FetchModeAuto && mode != FetchModeDirect && mode != FetchModeProxy && mode != FetchModeInterface {
+		return nil, fmt.Errorf("%w: %q", ErrInvalidFetchMode, req.Mode)
+	}
+	// Лишний параметр — отказ: молча выйти не через тот выход, который указан, нельзя.
+	if iface != "" && mode != FetchModeInterface {
+		return nil, fmt.Errorf("%w: interface is not allowed with mode %q", ErrInvalidFetchMode, mode)
+	}
+	if manualProxyRaw != "" && mode != FetchModeProxy {
+		return nil, fmt.Errorf("%w: proxyUrl is not allowed with mode %q", ErrInvalidFetchMode, mode)
 	}
 
-	parsedURL, err := normalizeTargetURL(rawURL)
+	parsedURL, err := normalizeTargetURL(req.URL)
 	if err != nil {
 		return nil, err
 	}
@@ -212,22 +356,47 @@ func (s *Service) Scan(ctx context.Context, rawURL string, mode FetchMode) (*Res
 	defer cancel()
 	started := time.Now()
 
-	proxyURL := ""
+	rawDefaultProxy := ""
 	if s.proxyURLProvider != nil {
-		proxyURL = strings.TrimSpace(s.proxyURLProvider(scanCtx))
+		rawDefaultProxy = strings.TrimSpace(s.proxyURLProvider(scanCtx))
 	}
-	proxyAvailable := proxyURL != ""
+	defaultProxyDisplay := redactProxyURL(rawDefaultProxy)
+	proxyAvailable := rawDefaultProxy != ""
 
 	var fetchOut *fetchResult
 	fetchVia := "direct"
+	fetchTarget := ""
+	fetchTargetLabel := ""
+	var pinned *sync.Map
 
 	switch mode {
+	case FetchModeInterface:
+		opt, optErr := s.findInterface(scanCtx, iface)
+		if optErr != nil {
+			return nil, optErr
+		}
+		fetchVia = "interface"
+		fetchTarget = opt.Name
+		fetchTargetLabel = opt.Label
+		fetchOut, err = s.fetchViaInterface(scanCtx, parsedURL, opt.Name)
 	case FetchModeProxy:
-		if !proxyAvailable {
-			return nil, ErrProxyUnavailable
+		var spec proxySpec
+		if manualProxyRaw != "" {
+			spec, err = s.parseManualProxySpec(scanCtx, manualProxyRaw)
+		} else {
+			if rawDefaultProxy == "" {
+				return nil, ErrProxyUnavailable
+			}
+			spec, err = parseTrustedLoopbackProxySpec(rawDefaultProxy)
+		}
+		if err != nil {
+			return nil, err
 		}
 		fetchVia = "proxy"
-		fetchOut, err = s.fetchViaProxy(scanCtx, parsedURL, proxyURL)
+		fetchTarget = spec.DisplayURL
+		fetchTargetLabel = spec.label()
+		pinned = spec.Pinned
+		fetchOut, err = s.fetchViaProxySpec(scanCtx, parsedURL, spec)
 	case FetchModeDirect:
 		fetchVia = "direct"
 		fetchOut, err = s.fetchDirect(scanCtx, parsedURL)
@@ -239,15 +408,21 @@ func (s *Service) Scan(ctx context.Context, rawURL string, mode FetchMode) (*Res
 				return nil, err
 			}
 			if proxyAvailable {
-				proxyOut, proxyErr := s.fetchViaProxy(scanCtx, parsedURL, proxyURL)
+				spec, pErr := parseTrustedLoopbackProxySpec(rawDefaultProxy)
+				if pErr != nil {
+					return nil, pErr
+				}
+				proxyOut, proxyErr := s.fetchViaProxySpec(scanCtx, parsedURL, spec)
 				if proxyErr == nil {
 					fetchOut = proxyOut
 					fetchVia = "proxy"
+					fetchTarget = spec.DisplayURL
+					fetchTargetLabel = spec.label()
 					err = nil
 				} else if errors.Is(proxyErr, ErrInvalidURL) || errors.Is(proxyErr, ErrBlockedAddress) {
 					return nil, proxyErr
 				} else {
-					err = fmt.Errorf("direct fetch failed (%v); proxy fetch failed (%v)", err, proxyErr)
+					err = fmt.Errorf("direct fetch failed (%v); proxy (%s) fetch failed (%v)", err, spec.DisplayURL, proxyErr)
 				}
 			}
 		}
@@ -267,7 +442,7 @@ func (s *Service) Scan(ctx context.Context, rawURL string, mode FetchMode) (*Res
 		false,
 	)
 
-	resources := s.enrichResources(scanCtx, extracted)
+	resources := s.enrichResources(scanCtx, extracted, pinned)
 
 	finalStr := parsedURL.String()
 	if fetchOut.finalURL != nil {
@@ -275,18 +450,21 @@ func (s *Service) Scan(ctx context.Context, rawURL string, mode FetchMode) (*Res
 	}
 
 	return &Result{
-		RequestedURL:   parsedURL.String(),
-		FinalURL:       finalStr,
-		StatusCode:     fetchOut.statusCode,
-		ContentType:    fetchOut.contentType,
-		FetchVia:       fetchVia,
-		ProxyAvailable: proxyAvailable,
-		BodyBytes:      len(fetchOut.body),
-		BodyTruncated:  fetchOut.bodyTruncated,
-		TotalHosts:     totalHosts,
-		HostsTruncated: hostsTruncated,
-		DurationMs:     time.Since(started).Milliseconds(),
-		Resources:      resources,
+		RequestedURL:     parsedURL.String(),
+		FinalURL:         finalStr,
+		StatusCode:       fetchOut.statusCode,
+		ContentType:      fetchOut.contentType,
+		FetchVia:         fetchVia,
+		FetchTarget:      fetchTarget,
+		FetchTargetLabel: fetchTargetLabel,
+		DefaultProxy:     defaultProxyDisplay,
+		ProxyAvailable:   proxyAvailable,
+		BodyBytes:        len(fetchOut.body),
+		BodyTruncated:    fetchOut.bodyTruncated,
+		TotalHosts:       totalHosts,
+		HostsTruncated:   hostsTruncated,
+		DurationMs:       time.Since(started).Milliseconds(),
+		Resources:        resources,
 	}, nil
 }
 
@@ -298,6 +476,74 @@ type fetchResult struct {
 	headers       http.Header
 	body          []byte
 	bodyTruncated bool
+}
+
+type proxySpec struct {
+	Scheme     string
+	DialAddrs  []string
+	DisplayURL string
+	Label      string
+	Username   string
+	Password   string
+	// Pinned непуст только у socks5h: имена целей не отдаём DNS роутера, а
+	// резолвим через сам прокси; здесь «имя → закреплённый адрес».
+	Pinned *sync.Map
+}
+
+func (p proxySpec) label() string {
+	if p.Label != "" {
+		return p.Label
+	}
+	return p.DisplayURL
+}
+
+// findInterface пускает только интерфейсы из предложенного списка: он уже
+// отфильтрован до поднятых туннелей.
+func (s *Service) findInterface(ctx context.Context, iface string) (InterfaceOption, error) {
+	if s.interfaceLister != nil {
+		for _, item := range s.interfaceLister(ctx) {
+			item.Name = strings.TrimSpace(item.Name)
+			if item.Name == "" || item.Name != iface {
+				continue
+			}
+			if item.Label = strings.TrimSpace(item.Label); item.Label == "" {
+				item.Label = item.Name
+			}
+			return item, nil
+		}
+	}
+	return InterfaceOption{}, fmt.Errorf("%w: %q is not an active router tunnel", ErrInvalidInterface, iface)
+}
+
+func redactProxyURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+	scheme := strings.ToLower(strings.TrimSpace(parsed.Scheme))
+	host := strings.TrimSpace(parsed.Hostname())
+	if host == "" {
+		return ""
+	}
+	if strings.EqualFold(host, "localhost") {
+		host = "127.0.0.1"
+	} else if addr, parseErr := netip.ParseAddr(host); parseErr == nil {
+		host = addr.Unmap().String()
+	} else {
+		host = strings.ToLower(host)
+	}
+	portStr := strings.TrimSpace(parsed.Port())
+	authority := host
+	if portStr != "" {
+		authority = net.JoinHostPort(host, portStr)
+	} else if strings.Contains(host, ":") {
+		authority = "[" + host + "]"
+	}
+	return scheme + "://" + authority
 }
 
 func (s *Service) newDirectTransport() *http.Transport {
@@ -312,54 +558,191 @@ func (s *Service) newDirectTransport() *http.Transport {
 	}
 }
 
-func parseTrustedLoopbackProxyURL(rawProxyURL string) (string, error) {
-	trimmed := strings.TrimSpace(rawProxyURL)
-	if trimmed == "" {
-		return "", ErrProxyUnavailable
-	}
-	parsed, err := url.Parse(trimmed)
-	if err != nil || parsed.Host == "" || parsed.User != nil {
-		return "", fmt.Errorf("%w: invalid proxy URL", ErrBlockedAddress)
-	}
-	if !strings.EqualFold(parsed.Scheme, "http") {
-		return "", fmt.Errorf("%w: unsupported proxy scheme %q", ErrBlockedAddress, parsed.Scheme)
-	}
-	if (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return "", fmt.Errorf("%w: proxy URL must not include path, query, or fragment", ErrBlockedAddress)
-	}
-	portStr := parsed.Port()
-	if portStr == "" {
-		return "", fmt.Errorf("%w: proxy URL must include an explicit port", ErrBlockedAddress)
-	}
-	portNum, err := strconv.Atoi(portStr)
-	if err != nil || portNum < 1 || portNum > 65535 {
-		return "", fmt.Errorf("%w: invalid proxy port %q", ErrBlockedAddress, portStr)
-	}
-	host := parsed.Hostname()
-	if strings.EqualFold(host, "localhost") {
-		return net.JoinHostPort("127.0.0.1", portStr), nil
-	}
-	addr, addrErr := netip.ParseAddr(host)
-	if addrErr != nil || !addr.Unmap().IsLoopback() {
-		return "", fmt.Errorf("%w: proxy host %q is not loopback", ErrBlockedAddress, host)
-	}
-	return net.JoinHostPort(addr.Unmap().String(), portStr), nil
-}
-
-func (s *Service) newProxyTransport(rawProxyURL string) (*http.Transport, error) {
-	proxyAddr, err := parseTrustedLoopbackProxyURL(rawProxyURL)
-	if err != nil {
-		return nil, err
-	}
+func (s *Service) newInterfaceTransport(iface string) *http.Transport {
 	return &http.Transport{
-		Proxy:                 nil, // we dial CONNECT explicitly with verified literal public IPs only
-		DialContext:           s.safeProxyDialContext(proxyAddr),
+		Proxy:                 nil,
+		DialContext:           s.safeInterfaceDialContext(iface),
 		ForceAttemptHTTP2:     true,
 		DisableKeepAlives:     true,
 		MaxIdleConns:          4,
 		TLSHandshakeTimeout:   s.fetchTimeout,
 		ExpectContinueTimeout: 1 * time.Second,
+	}
+}
+
+// proxyURLHint не включает сам URL: в нём пароль.
+const proxyURLHint = "expected scheme://[user:password@]host:port; special characters in user and password must be percent-encoded (@ is %40, / is %2F, # is %23, % is %25)"
+
+func parseProxySpecCommon(rawProxyURL string, invalidErr error) (scheme, host, portStr, username, password string, err error) {
+	trimmed := strings.TrimSpace(rawProxyURL)
+	if trimmed == "" {
+		return "", "", "", "", "", ErrProxyUnavailable
+	}
+	parsed, parseErr := url.Parse(trimmed)
+	if parseErr != nil || parsed.Host == "" {
+		return "", "", "", "", "", fmt.Errorf("%w: %s", invalidErr, proxyURLHint)
+	}
+	scheme = strings.ToLower(strings.TrimSpace(parsed.Scheme))
+	if (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", "", "", "", "", fmt.Errorf("%w: proxy URL must not include path, query, or fragment; %s", invalidErr, proxyURLHint)
+	}
+	portStr = strings.TrimSpace(parsed.Port())
+	if portStr == "" {
+		return "", "", "", "", "", fmt.Errorf("%w: proxy URL must include an explicit port", invalidErr)
+	}
+	portNum, convErr := strconv.Atoi(portStr)
+	if convErr != nil || portNum < 1 || portNum > 65535 {
+		return "", "", "", "", "", fmt.Errorf("%w: invalid proxy port %q", invalidErr, portStr)
+	}
+	host = strings.TrimSpace(parsed.Hostname())
+	if host == "" {
+		return "", "", "", "", "", fmt.Errorf("%w: missing proxy host", invalidErr)
+	}
+	if parsed.User != nil {
+		username = parsed.User.Username()
+		password, _ = parsed.User.Password()
+	}
+	return scheme, host, portStr, username, password, nil
+}
+
+func parseTrustedLoopbackProxySpec(rawProxyURL string) (proxySpec, error) {
+	scheme, host, portStr, username, password, err := parseProxySpecCommon(rawProxyURL, ErrBlockedAddress)
+	if err != nil {
+		return proxySpec{}, err
+	}
+	if username != "" || password != "" || strings.Contains(rawProxyURL, "@") {
+		return proxySpec{}, fmt.Errorf("%w: proxy credentials not allowed for default proxy", ErrBlockedAddress)
+	}
+	if scheme != "http" {
+		return proxySpec{}, fmt.Errorf("%w: unsupported proxy scheme %q", ErrBlockedAddress, scheme)
+	}
+	if strings.EqualFold(host, "localhost") {
+		addr := net.JoinHostPort("127.0.0.1", portStr)
+		return proxySpec{
+			Scheme:     "http",
+			DialAddrs:  []string{addr},
+			DisplayURL: "http://" + addr,
+		}, nil
+	}
+	addr, addrErr := netip.ParseAddr(host)
+	if addrErr != nil || !addr.Unmap().IsLoopback() {
+		return proxySpec{}, fmt.Errorf("%w: proxy host %q is not loopback", ErrBlockedAddress, host)
+	}
+	dialAddr := net.JoinHostPort(addr.Unmap().String(), portStr)
+	return proxySpec{
+		Scheme:     "http",
+		DialAddrs:  []string{dialAddr},
+		DisplayURL: "http://" + dialAddr,
 	}, nil
+}
+
+// isRouterAddr сообщает, что адрес принадлежит самому роутеру. Нет списка
+// адресов — считаем своим: лучше потребовать известный порт, чем пропустить.
+func isRouterAddr(addr netip.Addr) bool {
+	if addr.IsLoopback() || addr.IsUnspecified() {
+		return true
+	}
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return true
+	}
+	ip := net.IP(addr.AsSlice())
+	for _, item := range addrs {
+		if ipNet, ok := item.(*net.IPNet); ok && ipNet.IP.Equal(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// knownRouterProxy ищет host:port среди известных прокси роутера.
+func (s *Service) knownRouterProxy(ctx context.Context, host, port string) (label string, ok bool) {
+	if s.proxyLister != nil {
+		want := net.JoinHostPort(host, port)
+		for _, item := range s.proxyLister(ctx) {
+			if _, hostPort, _ := strings.Cut(redactProxyURL(item.URL), "://"); hostPort == want {
+				return strings.TrimSpace(item.Label), true
+			}
+		}
+	}
+	return "", s.routerProxyMatcher != nil && s.routerProxyMatcher(ctx, host, port)
+}
+
+func (s *Service) parseManualProxySpec(ctx context.Context, rawProxyURL string) (proxySpec, error) {
+	scheme, host, portStr, username, password, err := parseProxySpecCommon(rawProxyURL, ErrInvalidProxy)
+	if err != nil {
+		return proxySpec{}, err
+	}
+	spec := proxySpec{Scheme: scheme, Username: username, Password: password}
+	switch scheme {
+	case "http", "socks5":
+	case "socks5h":
+		spec.Scheme = "socks5"
+		spec.Pinned = &sync.Map{}
+	default:
+		return proxySpec{}, fmt.Errorf("%w: unsupported proxy scheme %q", ErrInvalidProxy, scheme)
+	}
+
+	if strings.EqualFold(host, "localhost") {
+		host = "127.0.0.1"
+	}
+	if addr, parseErr := netip.ParseAddr(host); parseErr == nil {
+		addr = addr.Unmap()
+		dialAddr := net.JoinHostPort(addr.String(), portStr)
+		spec.DialAddrs = []string{dialAddr}
+		spec.DisplayURL = scheme + "://" + dialAddr
+
+		routerAddr := s.isRouterAddr(addr)
+		scopeErr := s.checkDialAddr(addr)
+		if scopeErr == nil && !routerAddr {
+			return spec, nil
+		}
+		// На адресах роутера слушают его же службы (RCI, SSH, веб-морда):
+		// туда пускаем только на порты известных прокси.
+		label, known := s.knownRouterProxy(ctx, addr.String(), portStr)
+		switch {
+		case known:
+			spec.Label = label
+			return spec, nil
+		case routerAddr:
+			return proxySpec{}, fmt.Errorf("%w: %s belongs to the router, only ports of known router proxies are allowed", ErrInvalidProxy, dialAddr)
+		default:
+			return proxySpec{}, fmt.Errorf("%w: proxy host %s is blocked", ErrBlockedAddress, addr)
+		}
+	}
+
+	if err := s.validateTargetHostname(host); err != nil {
+		return proxySpec{}, err
+	}
+	ips, err := s.resolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return proxySpec{}, fmt.Errorf("%w: proxy DNS lookup failed for %s: %v", ErrInvalidProxy, host, err)
+	}
+	validIPs, err := s.validatePublicIPList(host, ips)
+	if err != nil {
+		return proxySpec{}, err
+	}
+	for _, ip := range orderIPsIPv4First(validIPs) {
+		// Имя, ведущее на сам роутер, — обход проверки порта выше.
+		if s.isRouterAddr(ip) {
+			return proxySpec{}, fmt.Errorf("%w: %s resolves to the router itself", ErrInvalidProxy, host)
+		}
+		spec.DialAddrs = append(spec.DialAddrs, net.JoinHostPort(ip.String(), portStr))
+	}
+	spec.DisplayURL = scheme + "://" + net.JoinHostPort(strings.ToLower(host), portStr)
+	return spec, nil
+}
+
+func (s *Service) newProxyTransportForSpec(spec proxySpec) *http.Transport {
+	return &http.Transport{
+		Proxy:                 nil, // we dial proxy explicitly with verified literal IPs only
+		DialContext:           s.safeProxyDialContext(spec),
+		ForceAttemptHTTP2:     true,
+		DisableKeepAlives:     true,
+		MaxIdleConns:          4,
+		TLSHandshakeTimeout:   s.fetchTimeout,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
 }
 
 func (s *Service) buildCheckRedirect(validateHost func(req *http.Request) error, redirectURLs *[]*url.URL) func(*http.Request, []*http.Request) error {
@@ -386,8 +769,7 @@ func (s *Service) buildCheckRedirect(validateHost func(req *http.Request) error,
 	}
 }
 
-func (s *Service) fetchDirect(ctx context.Context, target *url.URL) (*fetchResult, error) {
-	tr := s.newDirectTransport()
+func (s *Service) fetchWithTransport(ctx context.Context, target *url.URL, tr *http.Transport) (*fetchResult, error) {
 	defer tr.CloseIdleConnections()
 
 	var redirectURLs []*url.URL
@@ -407,32 +789,22 @@ func (s *Service) fetchDirect(ctx context.Context, target *url.URL) (*fetchResul
 	return res, nil
 }
 
-func (s *Service) fetchViaProxy(ctx context.Context, target *url.URL, proxyURL string) (*fetchResult, error) {
+func (s *Service) fetchDirect(ctx context.Context, target *url.URL) (*fetchResult, error) {
+	return s.fetchWithTransport(ctx, target, s.newDirectTransport())
+}
+
+func (s *Service) fetchViaInterface(ctx context.Context, target *url.URL, iface string) (*fetchResult, error) {
 	if err := s.validateTargetHostname(target.Hostname()); err != nil {
 		return nil, err
 	}
+	return s.fetchWithTransport(ctx, target, s.newInterfaceTransport(iface))
+}
 
-	tr, err := s.newProxyTransport(proxyURL)
-	if err != nil {
+func (s *Service) fetchViaProxySpec(ctx context.Context, target *url.URL, spec proxySpec) (*fetchResult, error) {
+	if err := s.validateTargetHostname(target.Hostname()); err != nil {
 		return nil, err
 	}
-	defer tr.CloseIdleConnections()
-
-	var redirectURLs []*url.URL
-	client := &http.Client{
-		Transport: tr,
-		Timeout:   s.fetchTimeout,
-		CheckRedirect: s.buildCheckRedirect(func(req *http.Request) error {
-			return s.validateTargetHostname(req.URL.Hostname())
-		}, &redirectURLs),
-	}
-
-	res, err := s.executeFetch(ctx, client, target)
-	if err != nil {
-		return nil, err
-	}
-	res.redirectURLs = redirectURLs
-	return res, nil
+	return s.fetchWithTransport(ctx, target, s.newProxyTransportForSpec(spec))
 }
 
 func (s *Service) executeFetch(ctx context.Context, client *http.Client, target *url.URL) (*fetchResult, error) {
@@ -571,7 +943,7 @@ func (s *Service) validateTargetHostname(host string) error {
 	return nil
 }
 
-func (s *Service) safeProxyDialContext(proxyAddr string) func(ctx context.Context, network, addr string) (net.Conn, error) {
+func (s *Service) safeInterfaceDialContext(iface string) func(ctx context.Context, network, addr string) (net.Conn, error) {
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		host, port, err := net.SplitHostPort(addr)
 		if err != nil {
@@ -586,21 +958,97 @@ func (s *Service) safeProxyDialContext(proxyAddr string) func(ctx context.Contex
 			if scopeErr := s.checkDialAddr(parsedIP); scopeErr != nil {
 				return nil, scopeErr
 			}
-			return s.dialViaHTTPConnect(ctx, proxyAddr, net.JoinHostPort(parsedIP.Unmap().String(), port))
+			return s.dialInterface(ctx, iface, network, net.JoinHostPort(parsedIP.Unmap().String(), port))
 		}
 
 		if err := s.validateTargetHostname(host); err != nil {
 			return nil, err
 		}
 
-		ips, err := s.resolveProxyTargetIPs(ctx, proxyAddr, host)
+		ips, err := s.resolveInterfaceTargetIPs(ctx, iface, host)
 		if err != nil {
 			return nil, err
 		}
 		ordered := orderIPsIPv4First(ips)
 		var lastErr error
 		for _, ip := range ordered {
-			conn, dialErr := s.dialViaHTTPConnect(ctx, proxyAddr, net.JoinHostPort(ip.String(), port))
+			conn, dialErr := s.dialInterface(ctx, iface, network, net.JoinHostPort(ip.String(), port))
+			if dialErr == nil {
+				return conn, nil
+			}
+			lastErr = dialErr
+		}
+		if lastErr == nil {
+			return nil, fmt.Errorf("%w: no usable public IP for %s", ErrBlockedAddress, host)
+		}
+		return nil, lastErr
+	}
+}
+
+func (s *Service) resolveInterfaceTargetIPs(ctx context.Context, iface, host string) ([]netip.Addr, error) {
+	if s.interfaceLookupIPv4 != nil {
+		dnsCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		ipStrs, err := s.interfaceLookupIPv4(dnsCtx, host, iface)
+		cancel()
+		if err == nil && len(ipStrs) > 0 {
+			sawBenchmark := false
+			publicAddrs := make([]netip.Addr, 0, len(ipStrs))
+			for _, rawIP := range ipStrs {
+				parsed, parseErr := netip.ParseAddr(strings.TrimSpace(rawIP))
+				if parseErr != nil {
+					continue
+				}
+				parsed = parsed.Unmap()
+				_, scope := ipinspect.ClassifyAddr(parsed)
+				switch scope {
+				case "public":
+					publicAddrs = append(publicAddrs, parsed)
+				case "benchmark":
+					sawBenchmark = true
+				default:
+					return nil, fmt.Errorf("%w: host %s resolves to non-public address %s (%s)", ErrBlockedAddress, host, parsed.String(), scope)
+				}
+			}
+			if !sawBenchmark && len(publicAddrs) > 0 {
+				return publicAddrs, nil
+			}
+		}
+	}
+	return s.lookupPublicDoHWithDialer(ctx, func(dCtx context.Context, addr string) (net.Conn, error) {
+		return s.dialInterface(dCtx, iface, "tcp", addr)
+	}, host)
+}
+
+func (s *Service) safeProxyDialContext(spec proxySpec) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+		host = strings.Trim(strings.TrimSpace(host), "[]")
+		if host == "" {
+			return nil, fmt.Errorf("%w: empty dial host", ErrInvalidURL)
+		}
+
+		if parsedIP, parseErr := netip.ParseAddr(host); parseErr == nil {
+			if scopeErr := s.checkDialAddr(parsedIP); scopeErr != nil {
+				return nil, scopeErr
+			}
+			return s.dialViaProxySpec(ctx, spec, net.JoinHostPort(parsedIP.Unmap().String(), port))
+		}
+
+		if err := s.validateTargetHostname(host); err != nil {
+			return nil, err
+		}
+
+		ips, err := s.resolveProxyTargetIPs(ctx, spec, host)
+		if err != nil {
+			return nil, err
+		}
+		ordered := orderIPsIPv4First(ips)
+		var lastErr error
+		for _, ip := range ordered {
+			conn, dialErr := s.dialViaProxySpec(ctx, spec, net.JoinHostPort(ip.String(), port))
 			if dialErr == nil {
 				return conn, nil
 			}
@@ -635,13 +1083,23 @@ func orderIPsIPv4First(addrs []netip.Addr) []netip.Addr {
 	return append(v4, v6...)
 }
 
-func (s *Service) resolveProxyTargetIPs(ctx context.Context, proxyAddr, host string) ([]netip.Addr, error) {
+func (s *Service) resolveProxyTargetIPs(ctx context.Context, spec proxySpec, host string) ([]netip.Addr, error) {
 	if s.proxyResolver != nil {
 		ips, err := s.proxyResolver.LookupIPAddr(ctx, host)
 		if err != nil {
 			return nil, fmt.Errorf("proxy DNS lookup failed for %s: %w", host, err)
 		}
 		return s.validatePublicIPList(host, ips)
+	}
+
+	if spec.Pinned != nil {
+		addrs, err := s.lookupPublicDoHWithDialer(ctx, func(dCtx context.Context, addr string) (net.Conn, error) {
+			return s.dialViaProxySpec(dCtx, spec, addr)
+		}, host)
+		if err == nil {
+			spec.Pinned.Store(normalizeExtractedHost(host), addrs[0].String())
+		}
+		return addrs, err
 	}
 
 	// Probe local DNS first to catch LAN/split-horizon names and FakeIP redirects immediately.
@@ -673,8 +1131,10 @@ func (s *Service) resolveProxyTargetIPs(ctx context.Context, proxyAddr, host str
 	}
 
 	// Local lookup failed or returned FakeIP: resolve on the proxy exit side via DoH over the same
-	// loopback proxy so we never pass an unverified hostname in proxy CONNECT/GET requests.
-	return s.lookupPublicDoH(ctx, proxyAddr, host)
+	// proxy so we never pass an unverified hostname in proxy CONNECT/SOCKS5/GET requests.
+	return s.lookupPublicDoHWithDialer(ctx, func(dCtx context.Context, addr string) (net.Conn, error) {
+		return s.dialViaProxySpec(dCtx, spec, addr)
+	}, host)
 }
 
 func (s *Service) validatePublicIPList(host string, ips []net.IPAddr) ([]netip.Addr, error) {
@@ -713,8 +1173,30 @@ func (c *prefixedConn) Read(p []byte) (int, error) {
 	return c.Conn.Read(p)
 }
 
-func (s *Service) dialViaHTTPConnect(ctx context.Context, proxyAddr, targetAddr string) (net.Conn, error) {
-	conn, err := s.dialProxy(ctx, "tcp", proxyAddr)
+func (s *Service) openProxyBaseConn(ctx context.Context, spec proxySpec) (net.Conn, error) {
+	var lastErr error
+	for _, proxyAddr := range spec.DialAddrs {
+		conn, err := s.dialProxy(ctx, "tcp", proxyAddr)
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		return nil, ErrProxyUnavailable
+	}
+	return nil, lastErr
+}
+
+func (s *Service) dialViaProxySpec(ctx context.Context, spec proxySpec, targetAddr string) (net.Conn, error) {
+	if spec.Scheme == "socks5" {
+		return s.dialViaSOCKS5(ctx, spec, targetAddr)
+	}
+	return s.dialViaHTTPConnect(ctx, spec, targetAddr)
+}
+
+func (s *Service) dialViaHTTPConnect(ctx context.Context, spec proxySpec, targetAddr string) (net.Conn, error) {
+	conn, err := s.openProxyBaseConn(ctx, spec)
 	if err != nil {
 		return nil, err
 	}
@@ -733,8 +1215,15 @@ func (s *Service) dialViaHTTPConnect(ctx context.Context, proxyAddr, targetAddr 
 		_ = conn.SetDeadline(time.Now().Add(s.fetchTimeout))
 	}
 
-	reqLine := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", targetAddr, targetAddr)
-	if _, err := io.WriteString(conn, reqLine); err != nil {
+	var reqBuf strings.Builder
+	fmt.Fprintf(&reqBuf, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n", targetAddr, targetAddr)
+	if spec.Username != "" || spec.Password != "" {
+		creds := base64.StdEncoding.EncodeToString([]byte(spec.Username + ":" + spec.Password))
+		fmt.Fprintf(&reqBuf, "Proxy-Authorization: Basic %s\r\n", creds)
+	}
+	reqBuf.WriteString("\r\n")
+
+	if _, err := io.WriteString(conn, reqBuf.String()); err != nil {
 		cleanupOnErr()
 		return nil, err
 	}
@@ -766,22 +1255,59 @@ func (s *Service) dialViaHTTPConnect(ctx context.Context, proxyAddr, targetAddr 
 	return conn, nil
 }
 
-func (s *Service) lookupPublicDoH(ctx context.Context, proxyAddr, domain string) ([]netip.Addr, error) {
-	return s.lookupPublicDoHDepth(ctx, proxyAddr, domain, 0)
+// pinnedProxyDialer отдаёт SOCKS-клиенту соединение с уже проверенными
+// адресами прокси, игнорируя адрес, который назовёт библиотека.
+type pinnedProxyDialer struct {
+	s    *Service
+	spec proxySpec
 }
 
-func (s *Service) lookupPublicDoHDepth(ctx context.Context, proxyAddr, domain string, depth int) ([]netip.Addr, error) {
+func (d pinnedProxyDialer) Dial(network, addr string) (net.Conn, error) {
+	return d.DialContext(context.Background(), network, addr)
+}
+
+func (d pinnedProxyDialer) DialContext(ctx context.Context, _, _ string) (net.Conn, error) {
+	return d.s.openProxyBaseConn(ctx, d.spec)
+}
+
+func (s *Service) dialViaSOCKS5(ctx context.Context, spec proxySpec, targetAddr string) (net.Conn, error) {
+	// Библиотека отправила бы имя прокси как есть — мимо проверки адреса.
+	if _, err := netip.ParseAddrPort(targetAddr); err != nil {
+		return nil, fmt.Errorf("%w: SOCKS5 requires literal IP target %q", ErrBlockedAddress, targetAddr)
+	}
+	var auth *proxy.Auth
+	if spec.Username != "" || spec.Password != "" {
+		auth = &proxy.Auth{User: spec.Username, Password: spec.Password}
+	}
+	dialer, err := proxy.SOCKS5("tcp", spec.DialAddrs[0], auth, pinnedProxyDialer{s: s, spec: spec})
+	if err != nil {
+		return nil, err
+	}
+	cd, ok := dialer.(proxy.ContextDialer)
+	if !ok {
+		return nil, errors.New("SOCKS dialer has no cancellation support")
+	}
+	dialCtx, cancel := context.WithTimeout(ctx, s.fetchTimeout)
+	defer cancel()
+	return cd.DialContext(dialCtx, "tcp", targetAddr)
+}
+
+func (s *Service) lookupPublicDoHWithDialer(ctx context.Context, dialTarget func(context.Context, string) (net.Conn, error), domain string) ([]netip.Addr, error) {
+	return s.lookupPublicDoHDepthWithDialer(ctx, dialTarget, domain, 0)
+}
+
+func (s *Service) lookupPublicDoHDepthWithDialer(ctx context.Context, dialTarget func(context.Context, string) (net.Conn, error), domain string, depth int) ([]netip.Addr, error) {
 	domain = normalizeExtractedHost(domain)
 	if err := s.validateTargetHostname(domain); err != nil {
 		return nil, err
 	}
 	if depth > 4 {
-		return nil, fmt.Errorf("proxy DoH CNAME chain too deep for %s", domain)
+		return nil, fmt.Errorf("exit DoH CNAME chain too deep for %s", domain)
 	}
 
 	var lastErr error
 	for _, endpoint := range s.dohEndpoints {
-		addrs, cname, err := s.queryDoHServer(ctx, proxyAddr, endpoint, domain)
+		addrs, cname, err := s.queryDoHServerWithDialer(ctx, dialTarget, endpoint, domain)
 		if err != nil {
 			if errors.Is(err, ErrBlockedAddress) {
 				return nil, err
@@ -801,16 +1327,16 @@ func (s *Service) lookupPublicDoHDepth(ctx context.Context, proxyAddr, domain st
 			return valid, nil
 		}
 		if cname != "" {
-			return s.lookupPublicDoHDepth(ctx, proxyAddr, cname, depth+1)
+			return s.lookupPublicDoHDepthWithDialer(ctx, dialTarget, cname, depth+1)
 		}
 	}
 	if lastErr != nil {
-		return nil, fmt.Errorf("proxy exit DoH resolution failed for %s: %w", domain, lastErr)
+		return nil, fmt.Errorf("exit DoH resolution failed for %s: %w", domain, lastErr)
 	}
-	return nil, fmt.Errorf("%w: proxy exit DoH returned no public A records for %s", ErrBlockedAddress, domain)
+	return nil, fmt.Errorf("%w: exit DoH returned no public A records for %s", ErrBlockedAddress, domain)
 }
 
-func (s *Service) queryDoHServer(ctx context.Context, proxyAddr, dohHost, domain string) ([]netip.Addr, string, error) {
+func (s *Service) queryDoHServerWithDialer(ctx context.Context, dialTarget func(context.Context, string) (net.Conn, error), dohHost, domain string) ([]netip.Addr, string, error) {
 	dohTarget := dohHost
 	if _, _, err := net.SplitHostPort(dohTarget); err != nil {
 		dohTarget = net.JoinHostPort(dohHost, "443")
@@ -832,7 +1358,7 @@ func (s *Service) queryDoHServer(ctx context.Context, proxyAddr, dohHost, domain
 	tr := &http.Transport{
 		Proxy: nil,
 		DialTLSContext: func(dialCtx context.Context, _, _ string) (net.Conn, error) {
-			rawConn, err := s.dialViaHTTPConnect(dialCtx, proxyAddr, dohTarget)
+			rawConn, err := dialTarget(dialCtx, dohTarget)
 			if err != nil {
 				return nil, err
 			}
@@ -1052,19 +1578,31 @@ func readDNSName(pkt []byte, off int) (string, int, error) {
 	return "", 0, fmt.Errorf("DNS name loop")
 }
 
-func (s *Service) enrichResources(ctx context.Context, extracted []extractedHost) []Resource {
+// enrichResources: имена из pinned (может быть nil) локально не резолвятся.
+func (s *Service) enrichResources(ctx context.Context, extracted []extractedHost, pinned *sync.Map) []Resource {
 	resources := make([]Resource, len(extracted))
 	if len(extracted) == 0 {
 		return resources
 	}
 
-	domains := make([]string, len(extracted))
-	for i, item := range extracted {
-		domains[i] = item.Host
+	pinnedIP := func(host string) string {
+		if pinned == nil {
+			return ""
+		}
+		ip, _ := pinned.Load(host)
+		str, _ := ip.(string)
+		return str
+	}
+
+	domains := make([]string, 0, len(extracted))
+	for _, item := range extracted {
+		if pinnedIP(item.Host) == "" {
+			domains = append(domains, item.Host)
+		}
 	}
 
 	var routeMap map[string]RouteInfo
-	if s.routeChecker != nil {
+	if s.routeChecker != nil && len(domains) > 0 {
 		routeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		rm, err := s.routeChecker(routeCtx, domains)
 		cancel()
@@ -1084,7 +1622,9 @@ func (s *Service) enrichResources(ctx context.Context, extracted []extractedHost
 			res := Resource{
 				Host:    item.Host,
 				Sources: item.Sources,
+				IP:      pinnedIP(item.Host),
 			}
+			res.RouteUnknown = res.IP != ""
 
 			if routeMap != nil {
 				if info, ok := routeMap[strings.ToLower(item.Host)]; ok && info.Error == "" {

@@ -1913,3 +1913,51 @@ func TestProxyInstancesPatch_RenameFollowsLinkedTunnels(t *testing.T) {
 		t.Fatalf("переименование без смены имени: %v", cleaner.renames)
 	}
 }
+
+func TestProxyInstances_DiagKeySecretMaskingAndPreservation(t *testing.T) {
+	rec := fullClientRecord()
+	rec.WdttClient.DiagKey = "diag-secret-token"
+	mgr := &fakeProxyManager{
+		records: []instancestore.Record{rec},
+		seed:    manager.SeedInfo{Booted: true, Certified: true},
+	}
+	h := newProxyHandler(t, mgr, fakeProxyStates{})
+
+	// GET отдает diagKeySet: true и скрывает сам diagKey.
+	rr := doProxy(t, h, http.MethodGet, "/api/proxyrt/instances/"+rec.Key(), "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET code = %d: %s", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), "diag-secret-token") {
+		t.Fatalf("diagKey уехал в GET-ответе: %s", rr.Body.String())
+	}
+	var got ProxyRtInstanceView
+	decodeProxyData(t, rr, &got)
+	if _, ok := got.Config["diagKey"]; ok {
+		t.Fatalf("diagKey присутствует в config GET-ответа")
+	}
+	if got.Config["diagKeySet"] != true {
+		t.Fatalf("diagKeySet = %v, ждали true", got.Config["diagKeySet"])
+	}
+
+	// Пустой/пропущенный diagKey в PATCH не затирает сохранённый.
+	rr = doProxy(t, h, http.MethodPatch, "/api/proxyrt/instances/"+rec.Key(), `{"config":{"diagKey":"   "}}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PATCH empty code = %d: %s", rr.Code, rr.Body.String())
+	}
+	if mgr.mutated[len(mgr.mutated)-1].WdttClient.DiagKey != "diag-secret-token" {
+		t.Fatalf("пустой diagKey затёр старый: %+v", mgr.mutated[len(mgr.mutated)-1].WdttClient)
+	}
+
+	// Новый непустой diagKey сохраняется и маскируется в ответе.
+	rr = doProxy(t, h, http.MethodPatch, "/api/proxyrt/instances/"+rec.Key(), `{"config":{"diagKey":"diag-secret-next"}}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PATCH new code = %d: %s", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), "diag-secret-next") {
+		t.Fatalf("новый diagKey уехал в ответе PATCH: %s", rr.Body.String())
+	}
+	if mgr.mutated[len(mgr.mutated)-1].WdttClient.DiagKey != "diag-secret-next" {
+		t.Fatalf("новый diagKey не сохранился: %+v", mgr.mutated[len(mgr.mutated)-1].WdttClient)
+	}
+}
