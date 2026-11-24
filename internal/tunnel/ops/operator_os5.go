@@ -254,9 +254,9 @@ type OperatorOS5Impl struct {
 
 	// Endpoint route tracking (tunnelID -> endpointIP)
 	endpointRoutes map[string]string
-	// routeHeldByOther — «host-route до ip держит ещё кто-то, кроме excludeID»,
-	// по стору и через бэкенды. См. removeHostRouteIfUnused.
-	routeHeldByOther func(excludeID, ip string) bool
+	// routeHolders — кто из других туннелей смотрит на ip, по стору и через
+	// бэкенды; nil = стор не подключён. См. removeHostRouteIfUnused.
+	routeHolders     func(excludeID, ip string) netutil.RouteHolders
 	endpointRoutesMu sync.RWMutex
 
 	// DNS tracking (tunnelID -> DNS servers applied via NDMS)
@@ -1353,12 +1353,17 @@ func (o *OperatorOS5Impl) GetSystemName(ctx context.Context, ndmsID string) stri
 }
 
 // SetAppLogger sets the web UI logger.
-// SetEndpointRouteSharing подключает проверку «host-route до этого IP держит
-// другой туннель» поверх карты endpointRoutes. Нужна, потому что тот же
-// host-route ставит обфусцированный nativewg-туннель (nwg.addObfHostRoute), а
-// карта про чужой бэкенд ничего не знает.
-func (o *OperatorOS5Impl) SetEndpointRouteSharing(fn func(excludeID, ip string) bool) {
-	o.routeHeldByOther = fn
+// SetEndpointRouteSharing подключает сведения о соседях с тем же IP сервера
+// поверх карты endpointRoutes: она знает только kernel-туннели этого процесса.
+func (o *OperatorOS5Impl) SetEndpointRouteSharing(fn func(excludeID, ip string) netutil.RouteHolders) {
+	o.routeHolders = fn
+}
+
+func (o *OperatorOS5Impl) holdersOf(excludeID, ip string) netutil.RouteHolders {
+	if o.routeHolders == nil {
+		return netutil.RouteHolders{}
+	}
+	return o.routeHolders(excludeID, ip)
 }
 
 func (o *OperatorOS5Impl) SetAppLogger(logger logging.AppLogger) {

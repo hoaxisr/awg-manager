@@ -19,6 +19,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/backend"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
 )
 
 // newOS5Lifecycle — OS5-оператор над записывающим RCI-постером и записывающим
@@ -1060,30 +1061,50 @@ func TestStop_NeighbourWithOtherAddressDoesNotHold(t *testing.T) {
 	}
 }
 
-// Тот же host-route ставит обфусцированный nativewg-туннель (до target'а
-// релея, тем же объектом NDMS). Карта про чужой бэкенд не знает, поэтому
-// снятие спрашивает ещё и общий предикат по стору.
-func TestStop_KeepsRouteHeldByOtherBackend(t *testing.T) {
-	o, poster, rec := newOS5Lifecycle(t)
-	o.SetEndpointRouteSharing(func(excludeID, ip string) bool {
-		return excludeID == "awg10" && ip == "203.0.113.5" // маршрут держит обфусцированный сосед
-	})
-	if _, err := o.RestoreEndpointTracking(context.Background(), "awg10", "203.0.113.5:51820"); err != nil {
-		t.Fatalf("RestoreEndpointTracking: %v", err)
-	}
+// Ядерную строку держит только kernel-сосед (карта про него может не знать —
+// тогда стор). Обычный nativewg host-route не ставит и не снимает: «держа» его,
+// он оставлял маршрут на роутере навсегда (F889). У обфусцированного своя
+// запись NDMS: снимаем только свою строку, слепое снятие в NDMS не шлём.
+func TestStop_HostRouteHolders(t *testing.T) {
+	const plainDel, ownDel = "/opt/sbin/ip route del 203.0.113.5/32", "/opt/sbin/ip route del 203.0.113.5/32 proto boot"
+	for _, tc := range []struct {
+		name    string
+		holders netutil.RouteHolders
+		del     string
+		ndms    bool
+	}{
+		{"kernel-сосед", netutil.RouteHolders{Kernel: true, Any: true}, "", false},
+		{"обычный nativewg", netutil.RouteHolders{Any: true}, plainDel, true},
+		{"обфусцированный nativewg", netutil.RouteHolders{Obfuscated: true, Any: true}, ownDel, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o, poster, rec := newOS5Lifecycle(t)
+			o.SetEndpointRouteSharing(func(excludeID, ip string) netutil.RouteHolders {
+				if excludeID != "awg10" || ip != "203.0.113.5" {
+					return netutil.RouteHolders{}
+				}
+				return tc.holders
+			})
+			if _, err := o.RestoreEndpointTracking(context.Background(), "awg10", "203.0.113.5:51820"); err != nil {
+				t.Fatalf("RestoreEndpointTracking: %v", err)
+			}
 
-	if err := o.Stop(context.Background(), "awg10", "Germany"); err != nil {
-		t.Fatalf("Stop: %v", err)
-	}
+			if err := o.Stop(context.Background(), "awg10", "Germany"); err != nil {
+				t.Fatalf("Stop: %v", err)
+			}
 
-	if hasCall(rec.Calls, "/opt/sbin/ip route del 203.0.113.5/32") {
-		t.Errorf("снят маршрут, который держит туннель другого бэкенда: %v", rec.Calls)
-	}
-	if hasPayload(poster.payloads, `{"ip":{"route":{"host":"203.0.113.5","no":true}}}`) {
-		t.Errorf("запись снята в NDMS, хотя маршрут держит другой бэкенд: %v", poster.payloads)
-	}
-	if got := o.GetTrackedEndpointIP("awg10"); got != "" {
-		t.Errorf("остановленный туннель остался в карте: %q", got)
+			for _, del := range []string{plainDel, ownDel} {
+				if got := slices.Contains(rec.Calls, del); got != (del == tc.del) {
+					t.Errorf("%q: вызван = %v, ждали %v: %v", del, got, del == tc.del, rec.Calls)
+				}
+			}
+			if got := hasPayload(poster.payloads, `{"ip":{"route":{"host":"203.0.113.5","no":true}}}`); got != tc.ndms {
+				t.Errorf("снятие в NDMS = %v, ждали %v: %v", got, tc.ndms, poster.payloads)
+			}
+			if got := o.GetTrackedEndpointIP("awg10"); got != "" {
+				t.Errorf("остановленный туннель остался в карте: %q", got)
+			}
+		})
 	}
 }
 
