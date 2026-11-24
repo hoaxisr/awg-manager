@@ -49,19 +49,24 @@
 #define FP_MAX_GLOBAL_BUF    (16 * 1024 * 1024)
 #define FP_MAX_SESSIONS      512
 #define FP_POLL_WAIT_MS      100
-/* Not raised on purpose (F870). Resident cost of one busy worker, measured with
- * gcc -O2 -fstack-usage on x86_64 (frames are dominated by fixed arrays; MIPS32 itself
- * not measured, no cross toolchain at hand) and sizeof():
- *   stack touched ~57 KiB of the 512 KiB reserve (client_conn_thread 19.2 KiB +
- *   run_vless_stream 13.1 KiB + sniff_tls_sni 16.1 KiB + DNS/getaddrinfo path),
- *   per-request config snapshot 112-116 KiB (sizeof(xhttpd_config_t), malloc'd and copied),
- *   relay buffer 32 KiB (TCP) / 64 KiB (UDP) / 128 KiB (mux, plus 14 KiB sub-session table,
- *   one 64 KiB-stack downlink thread and its 8 KiB buffer), stream-one feed thread
- *   ~17 KiB more, plus kernel pipe and socket buffers.
- * That is ~230 KiB user memory per worker, ~29 MiB at 128 before socket buffers: already
- * a large share of a 128 MiB router. The per-IP cap in vless_xhttp.c keeps one client
- * from taking the whole pool instead. */
-#define MAX_HTTP_WORKERS     128
+/* Worker pool (F870). Measured 24.11 on x86_64 and -m32 (glibc), daemon VmRSS with N idle
+ * stream-one connections (each relayed one TLS ClientHello to an echo target, then idle):
+ *   user memory ~60 KiB per idle stream (both ABIs); before the shared config snapshot it
+ *   was ~180 KiB (115 KiB of it the per-request config copy). Of the 60 KiB about 39 KiB
+ *   are touched pages of two thread stacks (worker + stream-one feed thread) and ~13 KiB
+ *   heap (32 KiB TCP relay buffer, touched as far as data went).
+ *   Kernel per stream, not in VmRSS: two kernel stacks (2 x 8 KiB on MIPS32, 2 x 16 KiB on
+ *   x86_64) plus socket/pipe slab.
+ *   N=512: VmRSS 34 MiB (x86_64) / 33 MiB (-m32); add ~8 MiB kernel stacks on MIPS32.
+ *   64 streams pumping data: VmRSS ~10 MiB.
+ * The per-IP cap in vless_xhttp.c (half the pool) keeps one client from taking it all. */
+#define MAX_HTTP_WORKERS     512
+/* Thread stack reserves (address space; RSS is only what a thread touches). Deepest worker
+ * chain by gcc -fstack-usage (x86_64 -O2) is ~45 KiB (client_conn_thread 26.6 +
+ * run_vless_stream 13 + dial/DNS ~3) plus getaddrinfo; helper threads (stream-one feed,
+ * FP target reader, mux downlink) stay under ~20 KiB (pump_remaining_http_chunks 16.2 KiB). */
+#define XHTTPD_WORKER_STACK  (256 * 1024)
+#define XHTTPD_HELPER_STACK  (64 * 1024)
 
 #define DEFAULT_STAGE2_ID    "stage2probe"
 
@@ -128,8 +133,11 @@ typedef struct {
     int            num_trusted_proxies;
 } xhttpd_config_t;
 
-extern xhttpd_config_t g_cfg;
-extern pthread_rwlock_t g_cfg_lock;
+/* Live configuration snapshot (main.c): acquire a reference, use it read-only, release. */
+const xhttpd_config_t *xhttpd_cfg_acquire(void);
+void xhttpd_cfg_release(const xhttpd_config_t *cfg);
+int  xhttpd_test_publish_config(const xhttpd_config_t *cfg);
+int  xhttpd_test_live_cfg_snapshots(void);
 extern bool g_diag_enabled;
 
 /* Utility & logging */
@@ -185,9 +193,9 @@ void    udp_egress_close_ctrl(udp_egress_t *e);
 /* Buffered HTTP/1.1 reader for keep-alive connections */
 typedef struct {
     int     fd;
-    uint8_t buf[16384];
-    size_t  pos;
+    size_t  pos; /* header fields first: they share a page instead of bracketing buf */
     size_t  len;
+    uint8_t buf[16384];
 } conn_reader_t;
 
 /* HTTP request representation */
@@ -218,7 +226,7 @@ int  xhttpd_get_active_http_workers(void);
 int  xhttpd_spawn_client_worker_for_test(int fd);
 void xhttpd_test_set_reload_token(const char *token);
 void xhttpd_test_set_config_path(const char *path);
-int load_config_file(const char *path, xhttpd_config_t *cfg);
+int load_config_file(const char *path, xhttpd_config_t *out);
 int write_all(int fd, const void *buf, size_t len);
 int send_http_error(int fd, int status, const char *status_text, const char *msg, bool keep_alive);
 

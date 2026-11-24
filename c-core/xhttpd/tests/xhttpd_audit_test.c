@@ -14,6 +14,7 @@
 #include <signal.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <sys/resource.h>
 #endif
 
 static int g_pass = 0;
@@ -2380,7 +2381,7 @@ typedef struct {
 
 static void *small_stack_reload_worker(void *arg) {
     small_stack_reload_arg_t *a = (small_stack_reload_arg_t *)arg;
-    a->rc = load_config_file(a->path, &g_cfg);
+    a->rc = load_config_file(a->path, NULL);
     return NULL;
 }
 
@@ -2736,21 +2737,26 @@ static void test_fp_up_stalled_target_write_cancels_bounded(void) {
           has_target_reset);
 }
 
+/* Live config for tests that go through real HTTP workers */
+static void publish_worker_test_config(void) {
+    xhttpd_config_t *c = (xhttpd_config_t *)calloc(1, sizeof(*c));
+    c->egress_mode = EGRESS_MODE_DIRECT;
+    c->allow_private = true;
+    c->num_prefixes = 1;
+    snprintf(c->prefixes[0], sizeof(c->prefixes[0]), "/cdn-bridge");
+    c->num_clients = 1;
+    c->max_sessions_per_ip = 64;
+    c->max_pre_auth_sessions = 64;
+    c->max_pre_auth_per_ip = 32;
+    parse_uuid_str("b831381d-6324-4d53-ad4f-8cda48b30811", c->clients[0].uuid);
+    format_uuid_canonical(c->clients[0].uuid, c->clients[0].uuid_str);
+    bytes_to_hex(c->clients[0].uuid, 16, c->clients[0].hex_no_dash);
+    xhttpd_test_publish_config(c);
+    free(c);
+}
+
 static void test_http_413_oversized_post_no_tcp_rst(void) {
-    pthread_rwlock_wrlock(&g_cfg_lock);
-    memset(&g_cfg, 0, sizeof(g_cfg));
-    g_cfg.egress_mode = EGRESS_MODE_DIRECT;
-    g_cfg.allow_private = true;
-    g_cfg.num_prefixes = 1;
-    snprintf(g_cfg.prefixes[0], sizeof(g_cfg.prefixes[0]), "/cdn-bridge");
-    g_cfg.num_clients = 1;
-    g_cfg.max_sessions_per_ip = 64;
-    g_cfg.max_pre_auth_sessions = 64;
-    g_cfg.max_pre_auth_per_ip = 32;
-    parse_uuid_str("b831381d-6324-4d53-ad4f-8cda48b30811", g_cfg.clients[0].uuid);
-    format_uuid_canonical(g_cfg.clients[0].uuid, g_cfg.clients[0].uuid_str);
-    bytes_to_hex(g_cfg.clients[0].uuid, 16, g_cfg.clients[0].hex_no_dash);
-    pthread_rwlock_unlock(&g_cfg_lock);
+    publish_worker_test_config();
 
     uint16_t port = 0;
     int lfd = create_loopback_listener(&port);
@@ -2970,20 +2976,7 @@ static void *vless_oneshot_reply_close_thread(void *arg) {
 }
 
 static void test_stream_up_post_returns_200_when_get_closes_first(void) {
-    pthread_rwlock_wrlock(&g_cfg_lock);
-    memset(&g_cfg, 0, sizeof(g_cfg));
-    g_cfg.egress_mode = EGRESS_MODE_DIRECT;
-    g_cfg.allow_private = true;
-    g_cfg.num_prefixes = 1;
-    snprintf(g_cfg.prefixes[0], sizeof(g_cfg.prefixes[0]), "/cdn-bridge");
-    g_cfg.num_clients = 1;
-    g_cfg.max_sessions_per_ip = 64;
-    g_cfg.max_pre_auth_sessions = 64;
-    g_cfg.max_pre_auth_per_ip = 32;
-    parse_uuid_str("b831381d-6324-4d53-ad4f-8cda48b30811", g_cfg.clients[0].uuid);
-    format_uuid_canonical(g_cfg.clients[0].uuid, g_cfg.clients[0].uuid_str);
-    bytes_to_hex(g_cfg.clients[0].uuid, 16, g_cfg.clients[0].hex_no_dash);
-    pthread_rwlock_unlock(&g_cfg_lock);
+    publish_worker_test_config();
 
     fp_engine_init();
     vless_engine_init();
@@ -3030,7 +3023,9 @@ static void test_stream_up_post_returns_200_when_get_closes_first(void) {
     uint8_t vless_init[26 + 5];
     memset(vless_init, 0, sizeof(vless_init));
     vless_init[0] = 0x00;
-    memcpy(vless_init + 1, g_cfg.clients[0].uuid, 16);
+    uint8_t test_uuid[16];
+    parse_uuid_str("b831381d-6324-4d53-ad4f-8cda48b30811", test_uuid);
+    memcpy(vless_init + 1, test_uuid, 16);
     vless_init[17] = 0x00;
     vless_init[18] = VLESS_CMD_TCP;
     vless_init[19] = (uint8_t)((target_port >> 8) & 0xFF);
@@ -3601,7 +3596,7 @@ static void test_f869_ipv6_egress(void) {
 /* ---- F870/F863: stream-one slots, per-IP cap, mux revocation ---- */
 typedef struct {
     int lfd;
-    int fds[256];
+    int fds[1024];
     int n;
     volatile int stop;
 } tcp_holder_t;
@@ -3613,7 +3608,7 @@ static void *tcp_holder_thread(void *arg) {
         struct pollfd p = { .fd = h->lfd, .events = POLLIN };
         if (poll(&p, 1, 25) <= 0) continue;
         int c = accept(h->lfd, NULL, NULL);
-        if (c >= 0 && h->n < 256) h->fds[h->n++] = c;
+        if (c >= 0 && h->n < 1024) h->fds[h->n++] = c;
         else if (c >= 0) close(c);
     }
     return NULL;
@@ -3715,7 +3710,7 @@ static void test_f870_stream_one_limits_and_revocation(void) {
 
     /* 1. 64 streams from one REALITY client (loopback peer + XFF) and 8 from another:
      *    more than the old 64-slot table; the 65th from the first IP is refused. */
-    enum { NA = 64, NB = 8, NT = NA + NB };
+    enum { NA = MAX_HTTP_WORKERS / 2, NB = 8, NT = NA + NB };
     so_worker_t *ws = (so_worker_t *)calloc(NT + 1, sizeof(*ws));
     pthread_t *ths = (pthread_t *)calloc(NT + 1, sizeof(*ths));
     int ok200 = 0;
@@ -3725,12 +3720,12 @@ static void test_f870_stream_one_limits_and_revocation(void) {
         snprintf(ws[i].xff, sizeof(ws[i].xff), "%s", i < NA ? "198.51.100.10" : "198.51.100.20");
         if (start_so_worker(&ws[i], &ths[i]) == 200) ok200++;
     }
-    check("F870: 72 concurrent stream-one (64 + 8 from two IPs) all start", ok200 == NT);
+    check("F870: workers/2 + 8 concurrent stream-one from two IPs all start", ok200 == NT);
     ws[NT].cfg = cfg;
     ws[NT].body_len = build_vless_body(ws[NT].body, cfg->clients[0].uuid, VLESS_CMD_TCP, hport);
     snprintf(ws[NT].xff, sizeof(ws[NT].xff), "198.51.100.10");
     int code = start_so_worker(&ws[NT], &ths[NT]);
-    check("F870: 65th stream-one from one client IP gets 429 (cap = workers/2)", code == 429);
+    check("F870: (workers/2 + 1)-th stream-one from one client IP gets 429", code == 429);
     pthread_join(ths[NT], NULL);
     close(ws[NT].sv[1]);
     close(ws[NT].sv[0]);
@@ -3739,7 +3734,7 @@ static void test_f870_stream_one_limits_and_revocation(void) {
     uint64_t t0 = now_ms();
     vless_engine_revoke_unauthorised(empty);
     bool all_done = wait_all_done(ws, NT, 3000);
-    check("F870: client removal ends all 72 stream-one streams", all_done);
+    check("F870: client removal ends all of them", all_done);
     printf("INFO: F870 revocation of %d streams took %llu ms\n", NT, (unsigned long long)(now_ms() - t0));
     if (all_done) {
         for (int i = 0; i < NT; i++) {
@@ -4426,6 +4421,41 @@ static void test_f871_mux_xudp(void) {
 }
 #endif
 
+/* ---- Shared config snapshot: one refcounted copy instead of one per request ---- */
+static int write_conf(const char *path, const char *body) {
+    FILE *f = fopen(path, "w");
+    if (!f) return -1;
+    fputs(body, f);
+    fclose(f);
+    return 0;
+}
+
+static void test_cfg_snapshot_refcount(void) {
+    char path[] = "/tmp/xhttpd-snap-XXXXXX";
+    int fd = mkstemp(path);
+    close(fd);
+    write_conf(path, "client=b831381d-6324-4d53-ad4f-8cda48b30811\nidle_timeout_sec=77\n");
+    check("SNAP: load A", load_config_file(path, NULL) == 0);
+    int live_a = xhttpd_test_live_cfg_snapshots();
+    check("SNAP: only the published snapshot is alive", live_a == 1);
+    const xhttpd_config_t *held = xhttpd_cfg_acquire();
+    const xhttpd_config_t *again = xhttpd_cfg_acquire();
+    check("SNAP: requests share one snapshot (no copy)", held && held == again && held->idle_timeout_sec == 77);
+    xhttpd_cfg_release(again);
+
+    write_conf(path, "client=b831381d-6324-4d53-ad4f-8cda48b30811\nclient=22222222-3333-4444-5555-666666666666\nidle_timeout_sec=88\n");
+    check("SNAP: reload B", load_config_file(path, NULL) == 0);
+    const xhttpd_config_t *cur = xhttpd_cfg_acquire();
+    check("SNAP: new requests see B", cur && cur != held && cur->num_clients == 2 && cur->idle_timeout_sec == 88);
+    check("SNAP: in-flight request keeps A intact", held->num_clients == 1 && held->idle_timeout_sec == 77);
+    check("SNAP: A stays allocated while referenced", xhttpd_test_live_cfg_snapshots() == 2);
+    xhttpd_cfg_release(held);
+    check("SNAP: A freed on its last release", xhttpd_test_live_cfg_snapshots() == 1);
+    xhttpd_cfg_release(cur);
+    check("SNAP: published B survives its readers", xhttpd_test_live_cfg_snapshots() == 1);
+    unlink(path);
+}
+
 static void *suite_watchdog_thread(void *arg) {
     (void)arg;
     for (int i = 0; i < 450; i++) { /* 45 seconds total watchdog */
@@ -4443,11 +4473,19 @@ int main(void) {
     init_winsock();
 #else
     signal(SIGPIPE, SIG_IGN);
+    /* ~6 fds per concurrent stream-one in the F870 test (MAX_HTTP_WORKERS / 2 + 8 of them) */
+    struct rlimit rl;
+    if (getrlimit(RLIMIT_NOFILE, &rl) == 0 && rl.rlim_cur < rl.rlim_max) {
+        rl.rlim_cur = rl.rlim_max;
+        (void)setrlimit(RLIMIT_NOFILE, &rl);
+    }
 #endif
     pthread_t wd_th;
     if (pthread_create(&wd_th, NULL, suite_watchdog_thread, NULL) == 0) {
         pthread_detach(wd_th);
     }
+    printf(">>> Starting test_cfg_snapshot_refcount...\n");
+    test_cfg_snapshot_refcount();
     printf(">>> Starting test_a1_a9_credentials...\n");
     test_a1_a9_credentials();
     printf(">>> Starting test_a2_http_parser...\n");

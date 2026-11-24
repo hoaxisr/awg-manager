@@ -198,16 +198,17 @@ static bool is_downlink_peer_closed(int down_fd) {
     return false;
 }
 
+#define VLESS_TCP_RELAY_BUF 32768
+
 /* Relay VLESS TCP stream: up_fd (pipe/socket) <-> target_fd <-> down_fd (chunked HTTP response) */
 static void handle_vless_tcp_stream(const vless_req_t *vreq, const uint8_t *initial_buf, size_t initial_len,
                                     int up_fd, int down_fd, const xhttpd_config_t *cfg,
                                     const bool *abort_flag, bool watch_down_eof) {
+    /* initial_buf already holds the first data: sniff it in place (a copy would only add
+     * resident stack pages to every stream) */
     uint8_t sniff_buf[4096];
     size_t sniff_len = 0;
-    if (initial_len > 0) {
-        sniff_len = initial_len < sizeof(sniff_buf) ? initial_len : sizeof(sniff_buf);
-        memcpy(sniff_buf, initial_buf, sniff_len);
-    } else if (should_defer_dial_for_sniff(vreq->host, vreq->port, cfg->egress_mode)) {
+    if (initial_len == 0 && should_defer_dial_for_sniff(vreq->host, vreq->port, cfg->egress_mode)) {
         struct pollfd pfd = { .fd = up_fd, .events = POLLIN };
         if (poll(&pfd, 1, 2500) > 0) {
             ssize_t r = read(up_fd, sniff_buf, sizeof(sniff_buf));
@@ -253,7 +254,7 @@ static void handle_vless_tcp_stream(const vless_req_t *vreq, const uint8_t *init
 
     bool up_eof = false;
     bool down_closed = false;
-    uint8_t *io_buf = (uint8_t *)malloc(32768);
+    uint8_t *io_buf = (uint8_t *)malloc(VLESS_TCP_RELAY_BUF);
     if (!io_buf) {
         close(tfd);
         write_http_chunk(down_fd, vresp_hdr, 2);
@@ -298,7 +299,7 @@ static void handle_vless_tcp_stream(const vless_req_t *vreq, const uint8_t *init
         }
 
         if (!up_eof && (pfds[0].revents & (POLLIN | POLLHUP | POLLERR))) {
-            ssize_t n = read(up_fd, io_buf, 32768);
+            ssize_t n = read(up_fd, io_buf, VLESS_TCP_RELAY_BUF);
             if (n > 0) {
                 last_io_ms = now_ms();
                 if (write_all(tfd, io_buf, (size_t)n) < 0) break;
@@ -309,7 +310,7 @@ static void handle_vless_tcp_stream(const vless_req_t *vreq, const uint8_t *init
             }
         }
         if (pfds[1].revents & (POLLIN | POLLHUP | POLLERR)) {
-            ssize_t n = recv(tfd, io_buf + 2, 32768 - 2, 0);
+            ssize_t n = recv(tfd, io_buf + 2, VLESS_TCP_RELAY_BUF - 2, 0);
             if (n > 0) {
                 last_io_ms = now_ms();
                 if (!vresp_sent) {
@@ -477,7 +478,7 @@ static void handle_vless_udp_stream(const vless_req_t *vreq, const uint8_t *init
  * Threads: the worker thread reads the uplink and dials (a dial stalls only the uplink, as
  * in the old Go handler); ONE downlink thread per mux stream polls every sub-session fd and
  * writes Keep/End frames. Chosen over a reader thread per sub-session: on MIPS each extra
- * thread costs a stack (64 KiB reserved here, a few KiB touched) and an 8 KiB buffer, so a
+ * thread costs a stack (XHTTPD_HELPER_STACK reserved, a few KiB touched) and an 8 KiB buffer, so a
  * full mux would cost MUX_MAX_SUBS of them instead of one. Only the downlink thread closes
  * sub-session fds (or the worker after joining it), and never while the worker writes to
  * one (busy), so an fd can not be closed and reused under a pending poll/recv/write. */
@@ -495,9 +496,9 @@ static void handle_vless_udp_stream(const vless_req_t *vreq, const uint8_t *init
 /* Xray buf.Size: its mux PacketReader refuses UDP frames above 8 KiB; TCP uses the same chunk. */
 #define MUX_DOWN_BUF         8192
 #define MUX_HDR_MAX          272 /* 2 + 4 + net/port/atyp + 1 + 255 domain + 2 data len */
-/* mux_down_thread frame is ~1.1 KiB (gcc -fstack-usage, x86_64) plus write_http_chunk and
- * recv/sendmsg; 64 KiB keeps room for sanitizer builds and libc. */
-#define MUX_DOWN_STACK       65536
+/* Largest real metadata is New with a 255-byte domain + XUDP GlobalID (~272 B); the Go
+ * handler refused anything above 1024 too. */
+#define MUX_META_MAX         1024
 
 typedef struct {
     bool         used;
@@ -761,7 +762,7 @@ static void handle_vless_mux_stream(const uint8_t *initial_buf, size_t initial_l
         _rc; \
     })
 
-    uint8_t *meta = (uint8_t *)malloc(65536);
+    uint8_t *meta = (uint8_t *)malloc(MUX_META_MAX);
     uint8_t *payload = (uint8_t *)malloc(65536);
     mux_ctx_t *m = (mux_ctx_t *)calloc(1, sizeof(*m));
     if (!meta || !payload || !m || pipe2(m->wake, O_NONBLOCK | O_CLOEXEC) < 0) {
@@ -781,7 +782,7 @@ static void handle_vless_mux_stream(const uint8_t *initial_buf, size_t initial_l
     pthread_t down_tid;
     pthread_attr_t attr;
     pthread_attr_init(&attr);
-    pthread_attr_setstacksize(&attr, MUX_DOWN_STACK);
+    pthread_attr_setstacksize(&attr, XHTTPD_HELPER_STACK);
     bool down_started = (pthread_create(&down_tid, &attr, mux_down_thread, m) == 0);
     pthread_attr_destroy(&attr);
 
@@ -797,7 +798,7 @@ static void handle_vless_mux_stream(const uint8_t *initial_buf, size_t initial_l
         uint8_t mlen_buf[2];
         if (MUX_READ_EXACT(mlen_buf, 2) < 0) { clean_eof = !mux_aborted(m); break; }
         uint16_t mlen = ((uint16_t)mlen_buf[0] << 8) | mlen_buf[1];
-        if (mlen < 4) break;
+        if (mlen < 4 || mlen > MUX_META_MAX) break;
         if (MUX_READ_EXACT(meta, mlen) < 0) break;
 
         uint16_t sub_id = ((uint16_t)meta[0] << 8) | meta[1];
@@ -2104,7 +2105,7 @@ int handle_vless_http_request(int client_fd, conn_reader_t *cr, const http_req_t
         if (req->chunked_incomplete || req->body_len > 32768) {
             pthread_attr_t attr;
             pthread_attr_init(&attr);
-            pthread_attr_setstacksize(&attr, 262144);
+            pthread_attr_setstacksize(&attr, XHTTPD_HELPER_STACK);
             if (pthread_create(&feed_tid, &attr, stream_feed_worker, &feed_arg) == 0) {
                 spawned_feed = true;
             } else {
@@ -2207,10 +2208,10 @@ void vless_engine_get_stats(int *active_sessions, int *pre_auth_sessions, size_t
 
 void vless_engine_reap_stale(void) {
     uint64_t now = now_ms();
-    pthread_rwlock_rdlock(&g_cfg_lock);
-    uint64_t pa_ttl = g_cfg.pre_auth_ttl_ms > 0 ? g_cfg.pre_auth_ttl_ms : 10000ULL;
-    uint64_t est_ttl = (uint64_t)(g_cfg.idle_timeout_sec > 5 ? g_cfg.idle_timeout_sec : 120) * 1000ULL;
-    pthread_rwlock_unlock(&g_cfg_lock);
+    const xhttpd_config_t *cfg = xhttpd_cfg_acquire();
+    uint64_t pa_ttl = (cfg && cfg->pre_auth_ttl_ms > 0) ? cfg->pre_auth_ttl_ms : 10000ULL;
+    uint64_t est_ttl = (uint64_t)((cfg && cfg->idle_timeout_sec > 5) ? cfg->idle_timeout_sec : 120) * 1000ULL;
+    xhttpd_cfg_release(cfg);
 
     pthread_mutex_lock(&g_vless_table_mu);
     for (int i = 0; i < MAX_VLESS_SESSIONS; i++) {

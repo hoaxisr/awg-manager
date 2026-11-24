@@ -900,7 +900,7 @@ static int spawn_fp_reader_locked(fp_session_t *sess) {
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-    pthread_attr_setstacksize(&attr, 262144);
+    pthread_attr_setstacksize(&attr, XHTTPD_HELPER_STACK);
     int rc = pthread_create(&tid, &attr, fp_target_reader_thread, sess);
     pthread_attr_destroy(&attr);
     if (rc != 0) {

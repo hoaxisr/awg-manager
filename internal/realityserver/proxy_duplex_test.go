@@ -371,7 +371,7 @@ func (e *duplexEnv) assertForwardedReplaced(t *testing.T) {
 // Замер: 50 одновременных stream-one сессий через прокси.
 func TestDuplexProxy_Measure50StreamOne(t *testing.T) {
 	// 50 stream-one с одного IP: лимит «на IP» как у vlessserver (512, в C режется
-	// до половины воркеров = 64); дефолт 16 отказал бы 17-му с 429.
+	// до половины воркеров = 256); дефолт 16 отказал бы 17-му с 429.
 	e := startDuplexEnv(t, func(c *xhttpserver.Config) { c.MaxSessionsPerIP = 512 })
 	const n = 50
 	// прогрев одного соединения, чтобы базовая линия включала h2-conn

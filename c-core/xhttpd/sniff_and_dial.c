@@ -197,36 +197,40 @@ static bool is_valid_sniffed_domain(const char *h) {
     return true;
 }
 
+static int parse_client_hello_sni(const uint8_t *p, size_t plen, char *out_host, size_t out_sz);
+
+#define TLS_REASSEMBLY_MAX 16384
+
 int sniff_tls_sni(const uint8_t *b, size_t len, char *out_host, size_t out_sz) {
     if (!b || len < 5 || b[0] != 0x16 || b[1] != 0x03) return -1;
     uint16_t rec_len = ((uint16_t)b[3] << 8) | b[4];
 
-    uint8_t reassembled[16384];
-    const uint8_t *p = NULL;
+    if (5 + (size_t)rec_len >= len) return parse_client_hello_sni(b + 5, len - 5, out_host, out_sz);
+    if (b[5 + rec_len] != 0x16) return parse_client_hello_sni(b + 5, rec_len, out_host, out_sz);
+
+    /* ClientHello split over several records (rare): reassemble on the heap, a 16 KiB stack
+     * array would push every stream's stack deeper for the common single-record case */
+    uint8_t *reassembled = (uint8_t *)malloc(TLS_REASSEMBLY_MAX);
+    if (!reassembled) return -1;
     size_t plen = 0;
-
-    if (5 + (size_t)rec_len >= len) {
-        p = b + 5;
-        plen = len - 5;
-    } else if (b[5 + rec_len] != 0x16) {
-        p = b + 5;
-        plen = rec_len;
-    } else {
-        size_t off = 0;
-        while (off + 5 <= len && b[off] == 0x16 && b[off + 1] == 0x03) {
-            uint16_t rlen = ((uint16_t)b[off + 3] << 8) | b[off + 4];
-            size_t end = off + 5 + rlen;
-            if (end > len) end = len;
-            size_t chunk = end - (off + 5);
-            if (plen + chunk > sizeof(reassembled)) chunk = sizeof(reassembled) - plen;
-            memcpy(reassembled + plen, b + off + 5, chunk);
-            plen += chunk;
-            off = end;
-            if (plen == sizeof(reassembled)) break;
-        }
-        p = reassembled;
+    size_t off = 0;
+    while (off + 5 <= len && b[off] == 0x16 && b[off + 1] == 0x03) {
+        uint16_t rlen = ((uint16_t)b[off + 3] << 8) | b[off + 4];
+        size_t end = off + 5 + rlen;
+        if (end > len) end = len;
+        size_t chunk = end - (off + 5);
+        if (plen + chunk > TLS_REASSEMBLY_MAX) chunk = TLS_REASSEMBLY_MAX - plen;
+        memcpy(reassembled + plen, b + off + 5, chunk);
+        plen += chunk;
+        off = end;
+        if (plen == TLS_REASSEMBLY_MAX) break;
     }
+    int rc = parse_client_hello_sni(reassembled, plen, out_host, out_sz);
+    free(reassembled);
+    return rc;
+}
 
+static int parse_client_hello_sni(const uint8_t *p, size_t plen, char *out_host, size_t out_sz) {
     if (plen < 38 || p[0] != 0x01) return -1;
     p += 38;
     plen -= 38;
