@@ -70,7 +70,7 @@ func TestFeatures_Tokens(t *testing.T) {
 	}{
 		{Features{}, "sb-off"},
 		{Features{SingboxRouter: true}, "sb-tproxy"},
-		{Features{SingboxRouter: true, SingboxMode: "fakeip-tun", HydraRoute: true, ClientRoute: true}, "sb-fakeip-tun,hydraroute,clientroute"},
+		{Features{SingboxRouter: true, SingboxMode: "fakeip-tun", ClientRoute: true}, "sb-fakeip-tun,clientroute"},
 		{Features{SingboxRouter: true, SingboxMode: "1.2.3.4 secret"}, "sb-other"},
 		{Features{SingboxMode: "policy-tun"}, "sb-off"},
 	}

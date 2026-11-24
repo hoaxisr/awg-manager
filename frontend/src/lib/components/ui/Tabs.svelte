@@ -103,7 +103,7 @@
     // Gates the outbound URL writer until the inbound effect has had a chance
     // to apply (or rule out) the value from the URL. Conditional tabs whose
     // visibility depends on async stores ($systemInfo.isOS5,
-    // $systemInfo.singbox.installed, hydrarouteInstalled) arrive AFTER mount,
+    // $systemInfo.singbox.installed) arrive AFTER mount,
     // so a deep-linked `?tab=policy` may not yet match any known tab on the
     // first inbound run. Without this flag, the outbound effect would
     // overwrite `?tab=policy` with the default tab's empty URL before the

@@ -25,7 +25,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/diagnostics"
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
 	"github.com/hoaxisr/awg-manager/internal/events"
-	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
 	"github.com/hoaxisr/awg-manager/internal/managed/peerip"
@@ -238,10 +237,8 @@ type Config struct {
 	// Managed serves the peer tools. Servers this service does not know
 	// about cannot have peers managed through MCP, and the tools say so.
 	Managed ManagedServers
-	// Hydra, HydraGeo and Downloads serve the HydraRoute Neo tools; nil
-	// when it is not installed on this build.
-	Hydra     HydraRoute
-	HydraGeo  HydraGeo
+	// Geo and Downloads serve the geo file tools.
+	Geo       GeoData
 	Downloads Downloads
 	// Connections and Diagnostics back the observability tools; nil makes
 	// the matching tool report that it is unavailable on this build.
@@ -989,27 +986,12 @@ func dnsRoute(dl *dnsroute.DomainList) mcpsrv.DNSRoute {
 	return dnsRouteDetail(dl).Summary()
 }
 
-// findDNSList resolves an id the way List does, not the way Get does:
-// dnsroute.Get scans only the JSON store and never sees a HydraRoute
-// list ("hr:…"), while List merges them in. Every MCP read goes through
-// here so an id the agent got from list_dns_routes is always readable.
+// findDNSList reads one list by id.
 func (l *Local) findDNSList(ctx context.Context, id string) (*dnsroute.DomainList, error) {
 	if l.c.DNSRoutes == nil {
 		return nil, errUnavailable("dns routes")
 	}
-	if existing, err := l.c.DNSRoutes.Get(ctx, id); err == nil && existing != nil {
-		return existing, nil
-	}
-	lists, err := l.c.DNSRoutes.List(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for i := range lists {
-		if lists[i].ID == id {
-			return &lists[i], nil
-		}
-	}
-	return nil, fmt.Errorf("dns route %q not found", id)
+	return l.c.DNSRoutes.Get(ctx, id)
 }
 
 // ListDNSRouteDetails reads every list in full with one List call.
@@ -1094,24 +1076,6 @@ func (l *Local) UpdateDNSRoute(ctx context.Context, in mcpsrv.DNSRouteUpdate) (m
 	if err != nil {
 		return mcpsrv.DNSRoute{}, nil, err
 	}
-	hr := existing.Backend == "hydraroute"
-	if hr {
-		// HydraRoute takes one target and none of the NDMS-only features
-		// (hr_delegate.go); refusing here beats a write that drops them.
-		switch {
-		case len(in.Targets) > 1:
-			return mcpsrv.DNSRoute{}, nil, fmt.Errorf("dns route %q is a HydraRoute list, which routes through one target only", in.RouteID)
-		case in.KillSwitch != nil || in.Excludes != nil || len(in.AddSubscriptionURLs) > 0 || len(in.RemoveSubscriptions) > 0:
-			return mcpsrv.DNSRoute{}, nil, fmt.Errorf("dns route %q is a HydraRoute list, which has no kill switch, excludes or subscriptions", in.RouteID)
-		}
-		if len(in.Targets) == 1 {
-			in.TunnelID, in.Targets = in.Targets[0], nil
-		}
-		if in.TunnelID != "" && existing.HRRouteMode == "policy" {
-			return mcpsrv.DNSRoute{}, nil, fmt.Errorf(
-				"dns route %q routes through policy %q, not a tunnel — change its target in the web UI", in.RouteID, existing.HRPolicyName)
-		}
-	}
 	if in.TunnelID != "" {
 		in.Targets = []string{in.TunnelID}
 	}
@@ -1121,26 +1085,12 @@ func (l *Local) UpdateDNSRoute(ctx context.Context, in mcpsrv.DNSRouteUpdate) (m
 		}
 	}
 
-	var (
-		updated  *dnsroute.DomainList
-		warnings []string
-	)
-	if hr {
-		// The HR files are the source of truth for these lists and
-		// UpdateWith does not take them; the HR path rewrites the group as
-		// dnsRoutePatch builds it from the list just read.
-		var patch dnsroute.DomainList
-		patch, warnings, err = dnsRoutePatch(*existing, in)
-		if err == nil {
-			updated, err = l.c.DNSRoutes.Update(ctx, patch)
-		}
-	} else {
-		updated, err = l.c.DNSRoutes.UpdateWith(ctx, in.RouteID, func(stored dnsroute.DomainList) (dnsroute.DomainList, error) {
-			patch, w, err := dnsRoutePatch(stored, in)
-			warnings = w
-			return patch, err
-		})
-	}
+	var warnings []string
+	updated, err := l.c.DNSRoutes.UpdateWith(ctx, in.RouteID, func(stored dnsroute.DomainList) (dnsroute.DomainList, error) {
+		patch, w, err := dnsRoutePatch(stored, in)
+		warnings = w
+		return patch, err
+	})
 	if err != nil {
 		l.dnsLog.Warn("update", existing.Name, "Failed to update DNS route list (MCP): "+err.Error())
 		return mcpsrv.DNSRoute{}, nil, err
@@ -1158,23 +1108,6 @@ func (l *Local) UpdateDNSRoute(ctx context.Context, in mcpsrv.DNSRouteUpdate) (m
 // cache. in.Targets is already normalised (tunnelId folded in) and checked.
 func dnsRoutePatch(existing dnsroute.DomainList, in mcpsrv.DNSRouteUpdate) (dnsroute.DomainList, []string, error) {
 	patch := dnsroute.DomainList{ID: in.RouteID, Name: in.Name}
-	if in.Name == "" {
-		// The HR path of dnsroute.Update takes the name as the group
-		// description verbatim, so an empty one would erase it.
-		patch.Name = existing.Name
-	}
-	if existing.Backend == "hydraroute" {
-		// The HR path rewrites the whole group and restores nothing from
-		// the stored one: a sparse patch read as an interface group with
-		// no tunnel, no domains and no icon (F632). Start from what is
-		// stored and overlay only what the caller sent.
-		patch.Backend = existing.Backend
-		patch.HRRouteMode = existing.HRRouteMode
-		patch.HRPolicyName = existing.HRPolicyName
-		patch.Routes = existing.Routes
-		patch.IconURL = existing.IconURL
-		patch.ManualDomains = existing.ManualDomains
-	}
 	var warnings []string
 	if in.ManualDomains != nil {
 		// ManualDomains only: the service recomputes Domains (and Subnets)
@@ -1329,12 +1262,7 @@ func (l *Local) SetDNSRouteEnabled(ctx context.Context, id string, enabled bool)
 	}
 	l.dnsLog.Info(action, existing.Name, "DNS route list switched "+onOff(enabled)+" (MCP)")
 	l.publish(events.ResourceRoutingDnsRoutes, "mcp-"+action)
-	var updated *dnsroute.DomainList
-	if strings.HasPrefix(id, "hr:") {
-		updated, err = l.findHRGroupAt(ctx, id)
-	} else {
-		updated, err = l.findDNSList(ctx, id)
-	}
+	updated, err := l.findDNSList(ctx, id)
 	if err != nil {
 		// The switch itself succeeded; fall back to the pre-change record
 		// with the flag we know was applied rather than failing the call.
@@ -1342,30 +1270,6 @@ func (l *Local) SetDNSRouteEnabled(ctx context.Context, id string, enabled bool)
 		return dnsRoute(existing), nil
 	}
 	return dnsRoute(updated), nil
-}
-
-// findHRGroupAt re-reads an HR group after a write. The write changes the
-// file revision and with it every "hr:" id, so the group is found by its
-// position (target + index) taken from the old id.
-func (l *Local) findHRGroupAt(ctx context.Context, oldID string) (*dnsroute.DomainList, error) {
-	old, err := hydraroute.ParseGroupRef(strings.TrimPrefix(oldID, "hr:"))
-	if err != nil {
-		return l.findDNSList(ctx, oldID)
-	}
-	lists, err := l.c.DNSRoutes.List(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for i := range lists {
-		rest, ok := strings.CutPrefix(lists[i].ID, "hr:")
-		if !ok {
-			continue
-		}
-		if ref, err := hydraroute.ParseGroupRef(rest); err == nil && ref.Target == old.Target && ref.Index == old.Index {
-			return &lists[i], nil
-		}
-	}
-	return nil, fmt.Errorf("dns route %q not found", oldID)
 }
 
 func (l *Local) RemoveDNSRoute(ctx context.Context, id string) (mcpsrv.DNSRoute, error) {

@@ -4,7 +4,7 @@
 	import { highlightInlineRuleListContent } from '$lib/utils/singboxInlineRulesHighlight';
 	import { api } from '$lib/api/client';
 	import type { GeoFileEntry } from '$lib/types';
-	import { HrNeoGeoTagPicker } from '$lib/components/hrneo';
+	import { GeoTagPicker } from '$lib/components/geodata';
 	import {
 		isInlineRuleListEmpty,
 		parseInlineRuleList,
@@ -144,7 +144,7 @@ geosite:xai`);
 		</div>
 	</div>
 	{#if geositePickerOpen}
-		<HrNeoGeoTagPicker
+		<GeoTagPicker
 			kind="geosite"
 			files={geositeFiles}
 			compact={compactGeoPicker}
@@ -153,7 +153,7 @@ geosite:xai`);
 		/>
 	{/if}
 	{#if geoipPickerOpen}
-		<HrNeoGeoTagPicker
+		<GeoTagPicker
 			kind="geoip"
 			files={geoipFiles}
 			compact={compactGeoPicker}

@@ -39,7 +39,7 @@ func LoadBuiltins() ([]Preset, error) {
 	// правка не доедет до кэша.
 	//
 	// Глубже копия не идёт, и острый край тут не срезы, а указатели: Engines —
-	// это *DNSEngine, *SingboxEngine, *HydraRouteEngine (types.go), общие для
+	// это *DNSEngine, *SingboxEngine (types.go), общие для
 	// кэша и для всех вызывающих. Строка вида
 	// `p.Engines.Singbox.Action = "reject"` испортила бы каталог на весь
 	// процесс И дала бы гонку между параллельными HTTP-запросами. Сегодня

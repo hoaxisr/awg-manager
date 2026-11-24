@@ -123,8 +123,8 @@ export interface SSEEventHandlers {
 	// NOTE: staging updates arrive via resource:invalidated ("singbox.router.staging"),
 	// not as a direct push event. No onSingboxRouterStaging handler here.
 
-	// HydraRoute geo download progress
-	onHydraRouteGeoProgress?: (data: GeoDownloadProgressEvent) => void;
+	// Geo file download progress
+	onGeoProgress?: (data: GeoDownloadProgressEvent) => void;
 
 	// Sing-box install/update lifecycle progress
 	onSingboxInstallProgress?: (data: SingboxInstallProgressEvent) => void;
@@ -199,8 +199,8 @@ export function connectSSE(handlers: SSEEventHandlers): () => void {
 	// singbox-router:staging is NOT a direct push event; staging state arrives via
 	// resource:invalidated → onResourceInvalidated → singboxRouter.loadStaging()
 
-	// HydraRoute events
-	handle('hydraroute:geo-progress', handlers.onHydraRouteGeoProgress);
+	// Geo data events
+	handle('geo:progress', handlers.onGeoProgress);
 
 	// Sing-box install/update progress
 	handle('singbox:install-progress', handlers.onSingboxInstallProgress);

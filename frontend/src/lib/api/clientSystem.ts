@@ -14,13 +14,9 @@ import type {
 	ForeignIfaceCandidate,
 	GeoFileEntry,
 	GeoTag,
-	HydraRouteConfig,
-	HydraRouteOversizedResponse,
-	HydraRouteStatus,
 	IPCheckService,
 	IPResult,
 	IpInspectResult,
-	IpsetUsage,
 	LoginMethod,
 	LoginResult,
 	LogsResponse,
@@ -134,31 +130,8 @@ export class SystemClient extends TunnelsClient {
 		await this.request('/system/restart', { method: 'POST' });
 	}
 
-	async getHydraRouteStatus(): Promise<HydraRouteStatus> {
-		return this.request('/system/hydraroute-status');
-	}
-
-	async controlHydraRoute(action: 'start' | 'stop' | 'restart'): Promise<HydraRouteStatus> {
-		return this.request('/system/hydraroute-control', {
-			method: 'POST',
-			body: JSON.stringify({ action }),
-		});
-	}
-
-	async getHydraRouteConfig(): Promise<HydraRouteConfig> {
-		return this.request('/hydraroute/config');
-	}
-
-	/** Пишет только присланные поля; policyOrder и списки geo-файлов не меняет. */
-	async updateHydraRouteConfig(changes: Partial<HydraRouteConfig>): Promise<HydraRouteConfig> {
-		return this.request('/hydraroute/config/update', {
-			method: 'PUT',
-			body: JSON.stringify(changes),
-		});
-	}
-
 	async getGeoFiles(): Promise<GeoFileEntry[]> {
-		return this.request('/hydraroute/geo-files');
+		return this.request('/geo/files');
 	}
 
 	async listDownloadOutbounds(): Promise<DownloadOutbound[]> {
@@ -166,36 +139,25 @@ export class SystemClient extends TunnelsClient {
 	}
 
 	async addGeoFile(type: 'geosite' | 'geoip', url: string, route?: DownloadRoute): Promise<GeoFileEntry> {
-		return this.request('/hydraroute/geo-files/add', {
+		return this.request('/geo/files/add', {
 			method: 'POST',
 			body: JSON.stringify({ type, url, route }),
 		});
 	}
 
 	async deleteGeoFile(path: string): Promise<void> {
-		await this.request(`/hydraroute/geo-files/delete?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
+		await this.request(`/geo/files/delete?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
 	}
 
 	async updateGeoFile(path?: string, route?: DownloadRoute): Promise<{ updated: number; partial?: boolean; error?: string }> {
-		return this.request('/hydraroute/geo-files/update', {
+		return this.request('/geo/files/update', {
 			method: 'POST',
 			body: JSON.stringify({ path: path || '', route }),
 		});
 	}
 
-	async takeGeoFileControl(path: string): Promise<GeoFileEntry> {
-		return this.request('/hydraroute/geo-files/take-control', {
-			method: 'POST',
-			body: JSON.stringify({ path }),
-		});
-	}
-
-	async rescanGeoFiles(): Promise<{ adopted: number }> {
-		return this.request('/hydraroute/geo-files/rescan', { method: 'POST' });
-	}
-
 	async getGeoTags(path: string): Promise<GeoTag[]> {
-		return this.request(`/hydraroute/geo-tags?path=${encodeURIComponent(path)}`);
+		return this.request(`/geo/tags?path=${encodeURIComponent(path)}`);
 	}
 
 	async expandGeoTag(
@@ -203,37 +165,7 @@ export class SystemClient extends TunnelsClient {
 		tag: string,
 	): Promise<{ lines: string[]; path: string; count: number }> {
 		const q = new URLSearchParams({ kind, tag });
-		return this.request(`/hydraroute/geo-expand?${q.toString()}`);
-	}
-
-	async getIpsetUsage(): Promise<IpsetUsage> {
-		return this.request('/hydraroute/ipset-usage');
-	}
-
-	async getHydraRouteOversizedTags(): Promise<HydraRouteOversizedResponse> {
-		return this.request('/hydraroute/oversized-tags');
-	}
-
-	async deleteHydraRouteOversizedTag(name: string): Promise<void> {
-		await this.request(`/hydraroute/oversized-tags/delete?name=${encodeURIComponent(name)}`, { method: 'DELETE' });
-	}
-
-	async importNativeHydraRouteRules(): Promise<{ imported: number }> {
-		return this.request('/hydraroute/import-native', { method: 'POST' });
-	}
-
-	async setPolicyOrder(order: string[]): Promise<{ order: string[] }> {
-		return this.request('/hydraroute/policy-order', {
-			method: 'POST',
-			body: JSON.stringify({ order }),
-		});
-	}
-
-	async deleteHydraRouteTarget(target: string, revision: string): Promise<{ target: string }> {
-		return this.request('/hydraroute/targets/delete', {
-			method: 'POST',
-			body: JSON.stringify({ target, revision }),
-		});
+		return this.request(`/geo/expand?${q.toString()}`);
 	}
 
 	async getWANInterfaces(): Promise<WANInterface[]> {

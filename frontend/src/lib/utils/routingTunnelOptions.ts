@@ -148,7 +148,7 @@ export interface PolicyInterfaceGroup {
 	items: PolicyGlobalInterface[];
 }
 
-/** Unassigned policy ifaces grouped for the «Добавить» picker (HR Neo + NDMS policies). */
+/** Unassigned policy ifaces grouped for the «Добавить» picker (NDMS policies). */
 export function groupPolicyGlobalInterfaces(items: PolicyGlobalInterface[]): PolicyInterfaceGroup[] {
 	const byGroup = new Map<RoutingGroupId, PolicyGlobalInterface[]>();
 	for (const gi of items) {
@@ -221,7 +221,7 @@ export interface BuildRoutingTunnelDropdownOptions {
 }
 
 /**
- * Builds grouped `DropdownOption[]` for NDMS / HydraRoute tunnel pickers.
+ * Builds grouped `DropdownOption[]` for NDMS tunnel pickers.
  * Mirrors sing-box router outbound grouping where the catalog overlaps.
  */
 export function buildRoutingTunnelDropdownOptions(

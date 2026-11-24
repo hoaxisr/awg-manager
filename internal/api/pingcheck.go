@@ -32,7 +32,7 @@ type TunnelPingStatusDTO struct {
 	RestartCount  int      `json:"restartCount" example:"0"`
 	TunnelRunning bool     `json:"tunnelRunning" example:"true"`
 	CheckTarget   string   `json:"checkTarget,omitempty" example:"https://cp.cloudflare.com/generate_204"`
-	PolicyHolds   []string `json:"policyHolds,omitempty" example:"HydraRoute"`
+	PolicyHolds   []string `json:"policyHolds,omitempty" example:"Policy0"`
 }
 
 // PingCheckStatusData mirrors frontend PingCheckStatus.

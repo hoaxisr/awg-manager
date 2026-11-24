@@ -867,15 +867,8 @@ func TestServiceImpl_UpdateWithBuildsThePatchFromTheStoredList(t *testing.T) {
 	if got, err := svc.Get(ctx, created.ID); err != nil || got.Name != "renamed" {
 		t.Fatalf("a refused edit must write nothing: %+v, %v", got, err)
 	}
-	// A legacy row of a HydraRoute list still in the store: its source of
-	// truth is the HR files.
-	data := svc.store.Draft()
-	data.Lists = append(data.Lists, DomainList{ID: "legacy-hr", Name: "hr", Backend: "hydraroute"})
-	if err := svc.store.Save(data); err != nil {
-		t.Fatal(err)
-	}
 	called := false
-	for _, id := range []string{"hr:1:awgm0:0", "legacy-hr", "missing"} {
+	for _, id := range []string{"hr:1:awgm0:0", "missing"} {
 		if _, err := svc.UpdateWith(ctx, id, func(DomainList) (DomainList, error) { called = true; return DomainList{}, nil }); err == nil {
 			t.Errorf("%s: must be refused", id)
 		}
