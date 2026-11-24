@@ -23,7 +23,7 @@ func (s *Server) buildPageScan(ipInspect *ipinspect.Service) *api.PageScanHandle
 	return api.NewPageScanHandler(pagescan.NewService(pagescan.Options{
 		IPInspect:          ipInspect,
 		RouteChecker:       s.pageScanRouteChecker(),
-		ProxyURLProvider:   s.pageScanProxyURLProvider(),
+		ProxyURLProvider:   s.pageScanProxyURLProvider(fircTunnels),
 		InterfaceLister:    s.pageScanInterfaceLister(fircTunnels),
 		ProxyLister:        s.pageScanProxyLister(fircTunnels),
 		RouterProxyMatcher: s.pageScanRouterProxyMatcher(fircTunnels),
@@ -164,7 +164,7 @@ func (s *Server) isFircRoutingSelected() bool {
 
 // pageScanProxyURLProvider — прокси режима auto: только вход FIRC. Прокси для
 // LAN-устройств пользователь выбирает сам из списка, молча в него не уходим.
-func (s *Server) pageScanProxyURLProvider() pagescan.ProxyURLProvider {
+func (s *Server) pageScanProxyURLProvider(fircTunnels func(context.Context) []firc.Tunnel) pagescan.ProxyURLProvider {
 	return func(ctx context.Context) string {
 		if s == nil || s.fircHandler == nil || s.fircHandler.Operator() == nil {
 			return ""
@@ -173,11 +173,26 @@ func (s *Server) pageScanProxyURLProvider() pagescan.ProxyURLProvider {
 			return ""
 		}
 		fircOp := s.fircHandler.Operator()
-		port := int(fircOp.InboundPort())
-		if port <= 0 || !fircOp.IsRunning(ctx) || !probeLocalTCP("127.0.0.1", port) {
+		port := fircOp.InboundPort()
+		if port == 0 || !fircOp.IsRunning(ctx) {
 			return ""
 		}
-		return fmt.Sprintf("http://127.0.0.1:%d", port)
+		// fircd слушает только адрес интерфейса из listen (put_line в tunrun.c):
+		// 127.0.0.1 — лишь при listen «lo».
+		for _, t := range fircTunnels(ctx) {
+			if !t.Enable {
+				continue
+			}
+			for _, inb := range t.Inbounds {
+				if inb.Port != port || inb.User != "" || inb.Password != "" {
+					continue
+				}
+				if host := s.resolveRouterProxyHost(ctx, inb.Listen); probeLocalTCP(host, int(port)) {
+					return "http://" + net.JoinHostPort(host, strconv.Itoa(int(port)))
+				}
+			}
+		}
+		return ""
 	}
 }
 
@@ -361,10 +376,6 @@ func (s *Server) pageScanProxyLister(fircTunnels func(context.Context) []firc.Tu
 					}
 				}
 			}
-			if port := int(fircOp.InboundPort()); port > 0 && probeLocalTCP("127.0.0.1", port) {
-				addr := fmt.Sprintf("127.0.0.1:%d", port)
-				add("http://"+addr, fmt.Sprintf("FIRC inbound (%s)", addr))
-			}
 		}
 
 		addDeviceProxies := func() {
@@ -440,10 +451,6 @@ func (s *Server) pageScanRouterProxyMatcher(fircTunnels func(context.Context) []
 		}
 
 		if s.fircHandler != nil && s.fircHandler.Operator() != nil {
-			fircOp := s.fircHandler.Operator()
-			if int(fircOp.InboundPort()) == portNum {
-				return true
-			}
 			for _, t := range fircTunnels(probeCtx) {
 				if !t.Enable {
 					continue

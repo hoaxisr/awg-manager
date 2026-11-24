@@ -127,7 +127,20 @@ export function normalizeGroup(g: FircGroup): FircGroup {
 		...(g.resolver ? { resolver: g.resolver } : {}),
 		...(g.block ? { block: g.block } : {}),
 		...(g.cloudflare ? { cloudflare: true } : {}),
+		...(g.proxyGroupId ? { proxyGroupId: g.proxyGroupId } : {}),
 	};
+}
+
+/** Группы с приложенными связями из ext-конфига: демон их не хранит. */
+export function withGroupLinks(
+	groups: FircGroup[],
+	links: Record<string, string> | null | undefined,
+): FircGroup[] {
+	return links ? groups.map((g) => ({ ...g, proxyGroupId: links[g.id] })) : groups;
+}
+
+export function groupLinksOf(groups: FircGroup[]): Record<string, string> {
+	return Object.fromEntries(groups.flatMap((g) => (g.proxyGroupId ? [[g.id, g.proxyGroupId]] : [])));
 }
 
 export function serializeForDiff(list: FircGroup[]): string {
@@ -136,6 +149,7 @@ export function serializeForDiff(list: FircGroup[]): string {
 			id: g.id,
 			name: g.name,
 			interface: g.interface,
+			proxyGroupId: g.proxyGroupId || undefined,
 			enable: g.enable,
 			devices: g.devices,
 			rules: g.rules.map((r) => ({
@@ -169,6 +183,7 @@ export function serializeForDiff(list: FircGroup[]): string {
 export function savePayload(list: FircGroup[]): FircGroup[] {
 	return list.map((g) => ({
 		...g,
+		proxyGroupId: undefined,
 		name: g.name.trim() || 'group',
 		rules: g.rules.map((r) => ({
 			...r,
@@ -206,20 +221,28 @@ export function formatIfaceOption(opt: FircInterfaceOption): string {
 }
 
 /** Делает id основным выходом группы; true — пикер надо закрыть. */
+/** Выход, выбранный вручную: другая цепочка уже не от прокси-группы. */
+function setManualIface(group: FircGroup, iface: string | string[]) {
+	if (!sameChain(normalizeIfaceList(group.interface), normalizeIfaceList(iface))) {
+		group.proxyGroupId = undefined;
+	}
+	group.interface = iface;
+}
+
 export function setPrimaryIface(group: FircGroup, id: string): boolean {
 	if (isSpecialIface(id)) {
-		group.interface = id;
+		setManualIface(group, id);
 		if (id === 'block' && !group.block) group.block = 'null';
 		return true;
 	}
 	const cur = normalizeIfaceList(group.interface);
 	if (cur.length <= 1 || isSpecialIface(cur[0])) {
-		group.interface = id;
+		setManualIface(group, id);
 		return true;
 	}
 	const rest = cur.filter((x) => x !== id && !isSpecialIface(x));
 	const next = [id, ...rest].slice(0, MAX_GROUP_IFACES);
-	group.interface = denormalizeIfaceList(next);
+	setManualIface(group, denormalizeIfaceList(next));
 	return false;
 }
 
@@ -246,16 +269,16 @@ export function toggleBackupIface(group: FircGroup, id: string) {
 	if (idx >= 0) {
 		if (cur.length <= 1) return;
 		const next = cur.filter((x) => x !== id);
-		group.interface = denormalizeIfaceList(next);
+		setManualIface(group, denormalizeIfaceList(next));
 		ensureDefaultGroupCheck(group, true);
 	} else {
 		if (cur.length === 0 || isSpecialIface(cur[0])) {
-			group.interface = id;
+			setManualIface(group, id);
 			ensureDefaultGroupCheck(group, false);
 			return;
 		}
 		if (cur.length >= MAX_GROUP_IFACES) return;
-		group.interface = denormalizeIfaceList([...cur, id]);
+		setManualIface(group, denormalizeIfaceList([...cur, id]));
 		ensureDefaultGroupCheck(group, cur.length >= 2);
 	}
 }
@@ -344,6 +367,7 @@ export function applyProxyGroupToGroup(group: FircGroup, pg: FircProxyGroup): bo
 	if (!pg.interfaces || pg.interfaces.length === 0) return false;
 	const wasChain = normalizeIfaceList(group.interface).length >= 2;
 	group.interface = denormalizeIfaceList(pg.interfaces);
+	group.proxyGroupId = pg.id;
 	const pgCheck = buildGroupCheckFromProxyGroup(pg);
 	if (pgCheck) {
 		group.check = pgCheck;
@@ -404,12 +428,24 @@ export function ifaceDotTooltip(rt: FircGroupsRuntime, group: FircGroup, id: str
 	return m.firc_groups_iface_tip_unknown({ id });
 }
 
+/** Прокси-группа, с которой группа связана; цепочка должна оставаться её цепочкой. */
+function linkedProxyGroup(
+	proxyGroups: FircProxyGroup[],
+	group: Pick<FircGroup, 'interface' | 'proxyGroupId'>,
+): FircProxyGroup | undefined {
+	const list = normalizeIfaceList(group.interface);
+	return proxyGroups.find((pg) => pg.id === group.proxyGroupId && sameChain(pg.interfaces, list));
+}
+
+/** Прокси-группа для показа: связанная, иначе первая с той же цепочкой. */
 export function matchingProxyGroup(
 	proxyGroups: FircProxyGroup[],
-	group: Pick<FircGroup, 'interface'>,
+	group: Pick<FircGroup, 'interface' | 'proxyGroupId'>,
 ): FircProxyGroup | undefined {
 	const list = normalizeIfaceList(group.interface);
 	if (list.length === 0) return undefined;
+	const linked = linkedProxyGroup(proxyGroups, group);
+	if (linked) return linked;
 	let firstMatch: FircProxyGroup | undefined;
 	for (const pg of proxyGroups) {
 		if (sameChain(pg.interfaces, list)) {
@@ -420,12 +456,12 @@ export function matchingProxyGroup(
 	return firstMatch;
 }
 
-/** Прокси-группа, чья проверка действует на цепочку группы; без check она ничем не управляет. */
+/** Связанная прокси-группа, чью проверку наследует группа; без check она ничем не управляет. */
 export function managingProxyGroup(
 	proxyGroups: FircProxyGroup[],
-	group: Pick<FircGroup, 'interface'>,
+	group: Pick<FircGroup, 'interface' | 'proxyGroupId'>,
 ): FircProxyGroup | undefined {
-	const pg = matchingProxyGroup(proxyGroups, group);
+	const pg = linkedProxyGroup(proxyGroups, group);
 	return pg && buildGroupCheckFromProxyGroup(pg) ? pg : undefined;
 }
 
@@ -790,7 +826,7 @@ export function parseImportedGroups(text: string): FircGroup[] {
 		: Array.isArray(raw)
 			? raw
 			: [];
-	return imported.map((g) => normalizeGroup({ ...g, id: randomHexId() }));
+	return imported.map((g) => normalizeGroup({ ...g, id: randomHexId(), proxyGroupId: undefined }));
 }
 
 /** Правила из текста по одному на строку; `#` — комментарий. */
@@ -966,7 +1002,8 @@ export function groupFromForm(
 			nextIface = denormalizeIfaceList([form.iface, ...rest].slice(0, MAX_GROUP_IFACES));
 		}
 		const hasChain = normalizeIfaceList(nextIface).length >= 2 && !isSpecialIface(primaryIface(nextIface));
-		const managing = managingProxyGroup(proxyGroups, { interface: nextIface });
+		const proxyGroupId = sameChain(curList, normalizeIfaceList(nextIface)) ? cur.proxyGroupId : undefined;
+		const managing = managingProxyGroup(proxyGroups, { interface: nextIface, proxyGroupId });
 		const nextCheck: FircGroupCheck | undefined = hasChain
 			? normalizeGroupCheck(
 					managing?.check ?? { ...cur.check, mode: form.checkMode, url: form.checkUrl },
@@ -978,6 +1015,7 @@ export function groupFromForm(
 			...cur,
 			name: form.name.trim() || cur.name || 'group',
 			interface: nextIface,
+			proxyGroupId,
 			resolve,
 			...(nextCheck ? { check: nextCheck } : {}),
 			list: listObj,
@@ -1017,6 +1055,7 @@ export function normalizeExtConfig(ext: FircExtConfig): FircExtConfig {
 		globalTarget: ext.globalTarget,
 		keenDnsCloud: ext.keenDnsCloud ?? empty.keenDnsCloud,
 		serverRouting: ext.serverRouting ?? empty.serverRouting,
+		groupLinks: ext.groupLinks,
 	};
 }
 

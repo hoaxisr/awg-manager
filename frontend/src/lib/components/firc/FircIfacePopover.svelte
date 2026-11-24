@@ -2,7 +2,7 @@
 	import { m } from '$lib/i18n';
 	import { Button } from '$lib/components/ui';
 	import { Ban, ChevronDown, RefreshCw, Zap } from 'lucide-svelte';
-	import { formatProbeLatency, probeLatencyTone } from '$lib/utils/fircFallback';
+	import { formatProbeLatency, probeLatencyTone, type FircProxyGroupRuntime } from '$lib/utils/fircFallback';
 	import {
 		MAX_GROUP_IFACES,
 		applyProxyGroupToGroup,
@@ -70,6 +70,14 @@
 
 	function applyProxyGroup(pg: FircProxyGroup) {
 		if (applyProxyGroupToGroup(group, pg)) onclose();
+	}
+
+	function proxyGroupTitle(pgRt: FircProxyGroupRuntime): string {
+		if (!pgRt.activeIface) return m.firc_fallback_all_dead_title();
+		const iface = `${ifaceLabel(rt, pgRt.activeIface)} (${pgRt.activeIface})`;
+		return pgRt.isOnBackup
+			? m.firc_fallback_active_backup_title({ iface })
+			: m.firc_fallback_active_primary_title({ iface });
 	}
 
 	function anchorPopover(node: HTMLElement) {
@@ -208,7 +216,7 @@
 						type="button"
 						class="iface-row-main"
 						onclick={() => applyProxyGroup(pg)}
-						title={pgRt.activeIface ? m.firc_fallback_active_primary_title({ iface: `${ifaceLabel(rt, pgRt.activeIface)} (${pgRt.activeIface})` }) : m.firc_fallback_all_dead_title()}
+						title={proxyGroupTitle(pgRt)}
 					>
 						<span
 							class="iface-dot {pgRt.activeIface ? (pgRt.isOnBackup ? 'backup' : 'alive') : pgRt.allDead ? 'dead' : 'unknown'}"

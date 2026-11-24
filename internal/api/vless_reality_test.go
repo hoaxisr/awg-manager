@@ -142,8 +142,9 @@ func TestRealityRoute_QuickSetupPreserveClientsAndOutboundMode(t *testing.T) {
 	const testSNI = "dest.test"
 	for _, alpn := range []string{"0", "1", "2"} {
 		key := testDest + " " + testSNI + " " + alpn
+		// Ключи не удаляем: reality проверяет их в своей горутине, и под нагрузкой
+		// она запускалась после Cleanup — шла в сеть и роняла goleak (F892).
 		reality.GlobalPostHandshakeRecordsLens.Store(key, []int{})
-		t.Cleanup(func() { reality.GlobalPostHandshakeRecordsLens.Delete(key) })
 	}
 
 	port := freeAPITestPort(t)

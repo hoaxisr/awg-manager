@@ -135,6 +135,9 @@ func TestDynamicWGServers_InterfacesSubnetsGroupsAndMonitor(t *testing.T) {
 		},
 	}
 	op.SetWGServersProvider(func(context.Context) []DynamicWGServer { return dynamicList })
+	op.SetRouterPoliciesProvider(func(context.Context) (RouterPolicies, bool) {
+		return RouterPolicies{Interfaces: map[string]string{"Wireguard5": "Policy4"}}, true
+	})
 
 	ext := ExtConfig{
 		ServerRouting: ServerRoutingConfig{
@@ -154,7 +157,7 @@ func TestDynamicWGServers_InterfacesSubnetsGroupsAndMonitor(t *testing.T) {
 		Enable:    true,
 		Devices: GroupDevices{
 			Allow: []string{"192.168.1.50"},
-			Deny:  []string{"Policy4", "172.31.0.0/24", "192.168.1.99"},
+			Deny:  []string{"policy:Policy4", "172.31.0.0/24", "192.168.1.99"},
 		},
 	}}
 

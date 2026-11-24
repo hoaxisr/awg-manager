@@ -386,10 +386,12 @@ export class FircClient extends WarpScoutClient {
 	async fircSaveGroups(
 		groups: FircGroup[],
 		save = true,
+		/** Связи с прокси-группами; без них сервер оставит те, у чьих групп цепочка прежняя. */
+		groupLinks?: Record<string, string>,
 	): Promise<{ groups: FircGroup[] }> {
 		return this.requestV1<{ groups: FircGroup[] }>(`/groups?save=${save ? 'true' : 'false'}`, {
 			method: 'PUT',
-			body: JSON.stringify({ groups }),
+			body: JSON.stringify({ groups, groupLinks }),
 		});
 	}
 

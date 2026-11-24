@@ -74,6 +74,8 @@
 		presetSrsUrl,
 		proxyGroupsDraft,
 		proxyGroupsDraftError,
+		withGroupLinks,
+		groupLinksOf,
 		randomHexId,
 		savePayload,
 		serializeForDiff,
@@ -230,7 +232,7 @@
 					api.fircGetResolvers().catch(() => []),
 					api.fircGetExt().catch(() => null),
 				]);
-			const normalized = groupsRes.map(normalizeGroup);
+			const normalized = withGroupLinks(groupsRes.map(normalizeGroup), extRes?.groupLinks);
 			baselineGroups = normalized.map(normalizeGroup);
 			baselineJson = serializeForDiff(normalized);
 
@@ -478,8 +480,9 @@
 			}
 
 			const payload = savePayload(groups);
-			const res = await api.fircSaveGroups(payload, true);
-			acceptSavedGroups((res?.groups ?? payload).map(normalizeGroup));
+			const links = extConfig.groupLinks ? groupLinksOf(groups) : undefined;
+			const res = await api.fircSaveGroups(payload, true, links);
+			acceptSavedGroups(withGroupLinks((res?.groups ?? payload).map(normalizeGroup), links));
 			listPages.clearEdits();
 
 			await Promise.all([pollLiveState(), reloadFircAll()]);
@@ -493,7 +496,7 @@
 	}
 
 	function exportConfig() {
-		const blob = new Blob([JSON.stringify({ groups }, null, 2)], { type: 'application/json' });
+		const blob = new Blob([JSON.stringify({ groups: savePayload(groups) }, null, 2)], { type: 'application/json' });
 		const link = document.createElement('a');
 		link.href = URL.createObjectURL(blob);
 		link.download = 'config.firc';
@@ -747,8 +750,9 @@
 			}
 
 			const payload = savePayload([...groups, ...createdGroups]);
-			const res = await api.fircSaveGroups(payload, true);
-			const normalized = (res?.groups ?? payload).map(normalizeGroup);
+			const links = extConfig.groupLinks ? groupLinksOf(groups) : undefined;
+			const res = await api.fircSaveGroups(payload, true, links);
+			const normalized = withGroupLinks((res?.groups ?? payload).map(normalizeGroup), links);
 			acceptSavedGroups(normalized);
 			serviceCatalogOpen = false;
 
@@ -838,11 +842,12 @@
 			onSelectAllVisible={() => selection.setGroups(filteredGroups.map((entry) => entry.group.id))}
 			onDeselectAll={() => selection.setGroups([])}
 			onDone={toggleGroupSelectMode}
-			onSetInterface={(iface) =>
+			onSetInterface={(iface, proxyGroupId) =>
 				runBulkGroupAction({
 					kind: 'setInterface',
 					iface,
-					check: managingProxyGroup(extConfig.proxyGroups, { interface: iface })?.check,
+					check: managingProxyGroup(extConfig.proxyGroups, { interface: iface, proxyGroupId })?.check,
+					proxyGroupId,
 				})}
 			onOpenDevices={openBulkDevicesModal}
 			onEnable={() => runBulkGroupAction({ kind: 'enable', enable: true })}

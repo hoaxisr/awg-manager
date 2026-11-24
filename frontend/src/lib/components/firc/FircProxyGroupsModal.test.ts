@@ -42,15 +42,13 @@ describe('FircProxyGroupsModal', () => {
 		const select = screen.getByLabelText(m.firc_group_check_label());
 		expect(select).toHaveValue('');
 		expect(select).toHaveDisplayValue(m.firc_pg_check_mode_groups());
-		expect(screen.queryByText(m.firc_pg_check_scope_hint(), { exact: false })).toBeNull();
 	});
 
-	it('names the keendns mode and warns about every group on the chain', () => {
+	it('names the keendns mode', () => {
 		renderModal({ mode: 'keendns', timeoutMs: 5000 });
 		expect(screen.getByLabelText(m.firc_group_check_label())).toHaveDisplayValue(
 			m.firc_group_check_mode_keendns(),
 		);
-		expect(screen.getByText(m.firc_pg_check_scope_hint(), { exact: false })).toBeInTheDocument();
 	});
 
 	it('keeps thresholds when the mode or URL is edited', async () => {

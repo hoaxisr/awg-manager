@@ -269,6 +269,14 @@ export class WdttClient extends FreeturnClient {
 		);
 	}
 
+	/** Забыть сохранённый ключ диагностики: явный null — единственный способ стереть. */
+	async clearWdttClientDiagKey(id: string): Promise<void> {
+		await this.request(instancePath('wdtt-client', id), {
+			method: 'PATCH',
+			body: JSON.stringify({ config: { diagKey: null } })
+		});
+	}
+
 	async runWdttClientDiag(
 		id: string,
 		opts?: WdttDiagRequest,

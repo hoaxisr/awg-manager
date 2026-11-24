@@ -21,6 +21,7 @@ vi.hoisted(() => {
 
 const apiMock = vi.hoisted(() => ({
 	runWdttClientDiag: vi.fn(),
+	clearWdttClientDiagKey: vi.fn(),
 }));
 vi.mock('$lib/api/client', () => ({ api: apiMock }));
 
@@ -100,6 +101,20 @@ describe('WdttDiagModal', () => {
 		expect(await findByText('TURN VK')).toBeTruthy();
 		expect(await findByText('turn=ok')).toBeTruthy();
 		expect(await findByText('Сохранён из ссылки; оставьте пустым, чтобы использовать его')).toBeTruthy();
+	});
+
+	it('«Забыть» стирает сохранённый ключ и перечитывает конфиг; без ключа кнопки нет', async () => {
+		apiMock.clearWdttClientDiagKey.mockResolvedValueOnce(undefined);
+		const onkeycleared = vi.fn();
+		const props = { open: true, instanceId: 'nl', instanceName: 'Нидерланды', onkeycleared, onclose: () => {} };
+		const { findByRole, queryByRole, rerender } = render(WdttDiagModal, { props: { ...props, diagKeySet: true } });
+
+		await fireEvent.click(await findByRole('button', { name: 'Забыть сохранённый ключ' }));
+		await waitFor(() => expect(onkeycleared).toHaveBeenCalledTimes(1));
+		expect(apiMock.clearWdttClientDiagKey).toHaveBeenCalledWith('nl');
+
+		await rerender({ ...props, diagKeySet: false });
+		expect(queryByRole('button', { name: 'Забыть сохранённый ключ' })).toBeNull();
 	});
 
 	it('отображает ошибочный вердикт при exitCode=2 и пересылает выбранный транспорт при повторе', async () => {

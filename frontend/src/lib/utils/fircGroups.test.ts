@@ -3,6 +3,7 @@ import type { FircGroup, FircGroupCheck, FircProxyGroup } from '$lib/types/firc'
 import {
 	applyProxyGroupToGroup,
 	buildGroupCheckFromProxyGroup,
+	groupLinksOf,
 	groupFormFrom,
 	groupFromForm,
 	inferDraftProxyGroupCheck,
@@ -10,10 +11,14 @@ import {
 	matchingProxyGroup,
 	normalizeGroup,
 	normalizeProxyGroupForSave,
+	parseImportedGroups,
 	proxyGroupsDraft,
 	proxyGroupsDraftError,
+	savePayload,
+	serializeForDiff,
 	setPrimaryIface,
 	toggleBackupIface,
+	withGroupLinks,
 } from './fircGroups';
 
 describe('normalizeGroup', () => {
@@ -114,15 +119,28 @@ describe('proxy group check helpers', () => {
 		]);
 		expect(savedManual.check).toEqual({ mode: 'url', url: 'https://custom.example/204' });
 
-		const savedManaged = groupFromForm(form, manualCur, 1, [
+		const managed: FircProxyGroup[] = [
 			{
 				id: 'pg_managed',
 				name: 'Managed',
 				interfaces: ['tunvless0', 'tunvless1'],
 				check: { mode: 'keendns' },
 			},
-		]);
+		];
+		// Одной общей цепочки мало: проверку даёт только связь.
+		expect(groupFromForm(form, manualCur, 1, managed).check).toEqual({
+			mode: 'url',
+			url: 'https://custom.example/204',
+		});
+		const linkedCur = { ...manualCur, proxyGroupId: 'pg_managed' };
+		const savedManaged = groupFromForm(form, linkedCur, 1, managed);
 		expect(savedManaged.check).toEqual({ mode: 'keendns', url: '', timeoutMs: 5000 });
+		expect(savedManaged.proxyGroupId).toBe('pg_managed');
+
+		const moved = groupFromForm({ ...form, iface: 'tunvless1' }, linkedCur, 1, managed);
+		expect(moved.interface).toEqual(['tunvless1', 'tunvless0']);
+		expect(moved.proxyGroupId).toBeUndefined();
+		expect(moved.check).toEqual({ mode: 'url', url: 'https://custom.example/204' });
 	});
 
 	const CHAIN = ['eth3', 'tunvless0'];
@@ -187,12 +205,60 @@ describe('proxy group check helpers', () => {
 	});
 
 	it('does not manage groups until the proxy group has a check', () => {
-		const cur = group('g1', { mode: 'url', url: 'https://old.example/204' });
+		const cur = {
+			...group('g1', { mode: 'url', url: 'https://old.example/204' }),
+			proxyGroupId: 'pg',
+		};
 		expect(managingProxyGroup([pg()], cur)).toBeUndefined();
 		expect(managingProxyGroup([pg(FULL)], cur)?.id).toBe('pg');
+		expect(managingProxyGroup([pg(FULL)], { ...cur, proxyGroupId: undefined })).toBeUndefined();
+		expect(managingProxyGroup([pg(FULL, ['eth3', 'tunvless9'])], cur)).toBeUndefined();
 		const form = groupFormFrom(cur);
 		form.checkUrl = 'https://new.example/204';
 		expect(groupFromForm(form, cur, 1, [pg()]).check).toEqual({ mode: 'url', url: 'https://new.example/204' });
+	});
+
+	it('links a group to the picked proxy group and drops the link on a manual chain edit', () => {
+		const linked = () => {
+			const g = group('g1', undefined, 'eth3');
+			applyProxyGroupToGroup(g, pg(FULL));
+			return g;
+		};
+		expect(linked().proxyGroupId).toBe('pg');
+		// Показ: связанная прокси-группа важнее первой с той же цепочкой.
+		expect(matchingProxyGroup([{ ...pg(FULL), id: 'twin' }, pg()], linked())?.id).toBe('pg');
+
+		const same = linked();
+		setPrimaryIface(same, 'eth3');
+		expect(same.proxyGroupId).toBe('pg');
+
+		for (const edit of [
+			(g: FircGroup) => setPrimaryIface(g, 'tunvless0'),
+			(g: FircGroup) => setPrimaryIface(g, 'blackhole'),
+			(g: FircGroup) => toggleBackupIface(g, 'tunvless0'),
+			(g: FircGroup) => toggleBackupIface(g, 'tunvless7'),
+		]) {
+			const g = linked();
+			edit(g);
+			expect(g.proxyGroupId).toBeUndefined();
+		}
+		const single = { ...group('g1', undefined, 'eth3'), proxyGroupId: 'one' };
+		setPrimaryIface(single, 'tunvless0');
+		expect(single.proxyGroupId).toBeUndefined();
+		const blocked = { ...group('g1', undefined, 'block'), proxyGroupId: 'one' };
+		toggleBackupIface(blocked, 'eth3');
+		expect(blocked.proxyGroupId).toBeUndefined();
+	});
+
+	it('keeps links beside the groups, not in what goes to the daemon', () => {
+		const groups = withGroupLinks([group('g1'), group('g2')], { g1: 'pg', gone: 'pg' });
+		expect(groupLinksOf(groups)).toEqual({ g1: 'pg' });
+		expect(groups.map(normalizeGroup).map((g) => g.proxyGroupId)).toEqual(['pg', undefined]);
+		expect(JSON.stringify(savePayload(groups))).not.toContain('proxyGroupId');
+		// Ext-конфиг не прочитан — связи черновика не теряются.
+		expect(groupLinksOf(withGroupLinks(groups, null))).toEqual({ g1: 'pg' });
+		expect(serializeForDiff(groups)).not.toBe(serializeForDiff(withGroupLinks(groups, {})));
+		expect(parseImportedGroups(JSON.stringify({ groups }))[0].proxyGroupId).toBeUndefined();
 	});
 
 	it('never turns on a check disabled on an existing chain', () => {

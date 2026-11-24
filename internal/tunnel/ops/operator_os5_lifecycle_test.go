@@ -1389,3 +1389,51 @@ func TestSetupEndpointRoute_RawTunnelOifStillRefused(t *testing.T) {
 		t.Fatalf("сырой туннельный oif принят: err=%v", err)
 	}
 }
+
+// NDMS копирует нашу строку main в свои таблицы и после `ip route del` копий не
+// убирает (F891). Формат вывода снят со стенда 5.02.B.4.
+func TestStop_RemovesNDMSMirrors(t *testing.T) {
+	const own = "203.0.113.5 dev ppp0 scope link \n"
+	const mirrors = "203.0.113.5 dev ppp0 table 4096 scope link metric 1000 \n" +
+		"203.0.113.5 dev ppp0 table 16391 scope link metric 1000 \n" +
+		"203.0.113.5 dev ppp0 table 16392 proto static scope link metric 1000 \n" +
+		"203.0.113.5 dev eth3 table 16390 scope link metric 1000 \n" +
+		"203.0.113.5 dev ppp0 table 400 scope link metric 1000 \n" +
+		"203.0.113.5 dev ppp0 table 1718186597 scope link metric 1000 \n"
+	del := func(table string) string {
+		return "/opt/sbin/ip route del 203.0.113.5/32 table " + table + " dev ppp0 metric 1000"
+	}
+	for _, tc := range []struct {
+		name, out string
+		failDel   bool
+		want      []string
+	}{
+		{"копии наших таблиц сняты", mirrors + own, false, []string{del("4096"), del("16391")}},
+		{"рядом запись NDMS в main — копии её", mirrors + own + "203.0.113.5 dev ppp0 proto static scope link metric 1000 \n", false, nil},
+		{"нашей строки нет", mirrors, false, nil},
+		{"строка не снялась — копии остаются", mirrors + own, true, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o, _, rec := newOS5Lifecycle(t)
+			rec.stdout = map[string]string{"route show table all 203.0.113.5/32": tc.out}
+			if tc.failDel {
+				rec.failOn, rec.failErr = "route del 203.0.113.5/32", "Operation not permitted"
+			}
+			if _, err := o.RestoreEndpointTracking(context.Background(), "awg10", "203.0.113.5:51820"); err != nil {
+				t.Fatal(err)
+			}
+			if err := o.Stop(context.Background(), "awg10", "Germany"); err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			for _, c := range rec.Calls {
+				if strings.Contains(c, "route del 203.0.113.5/32 table") {
+					got = append(got, c)
+				}
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("снятие копий = %v, ждали %v", got, tc.want)
+			}
+		})
+	}
+}

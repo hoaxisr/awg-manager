@@ -349,6 +349,7 @@
 		instanceId={row.id}
 		instanceName={row.name}
 		diagKeySet={wdttClient?.diagKeySet}
+		onkeycleared={onreload}
 		onclose={() => (diagOpen = false)}
 	/>
 {/if}

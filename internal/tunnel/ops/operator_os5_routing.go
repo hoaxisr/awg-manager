@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
@@ -242,6 +244,9 @@ func (o *OperatorOS5Impl) removeHostRouteIfUnused(ctx context.Context, action, t
 		o.logWarn(action, tunnelID, "ip route del unreachable "+endpointIP+": "+err.Error())
 	}
 
+	// Копии нашей строки в таблицах NDMS — читаем до снятия, пока видно устройство.
+	mirrors := o.ndmsMirrorTables(ctx, endpointIP)
+
 	// NDMS кэширует маршруты ядра, но их снятие не отслеживает — снимаем в обоих.
 	kernelRemoved := true
 	if err := o.delKernelHostRoute(ctx, endpointIP, holders.Obfuscated); err != nil {
@@ -264,6 +269,11 @@ func (o *OperatorOS5Impl) removeHostRouteIfUnused(ctx context.Context, action, t
 		}
 	}
 	if kernelRemoved {
+		for _, m := range mirrors {
+			if _, err := o.ipRun(ctx, "/opt/sbin/ip", "route", "del", endpointIP+"/32", "table", m.table, "dev", m.device, "metric", ndmsMirrorMetric); err != nil {
+				o.logWarn(action, tunnelID, "ip route del "+endpointIP+" table "+m.table+": "+err.Error())
+			}
+		}
 		o.appLog.Info(action, tunnelID, "Маршрут до endpoint "+endpointIP+" удалён")
 	}
 }
@@ -390,6 +400,62 @@ func (o *OperatorOS5Impl) chainFallbackRoute(ctx context.Context, verb, endpoint
 	args := append(family, "route", verb, "unreachable", endpointIP+prefix, "metric", chainFallbackMetric)
 	result, err := o.ipRun(ctx, "/opt/sbin/ip", args...)
 	return exec.FormatError(result, err)
+}
+
+// ndmsMirrorMetric — метрика, с которой NDMS копирует маршрут main в свои таблицы.
+const ndmsMirrorMetric = "1000"
+
+type ndmsMirror struct{ table, device string }
+
+// ndmsMirrorTables — таблицы NDMS (4096 и таблицы интерфейсов 16384+), куда он
+// скопировал нашу строку main. Копии живут до следующей пересборки и после
+// `ip route del` остаются (стенд 5.02, F891). Чужая строка main на тот же адрес
+// — копии могут быть её, не трогаем.
+//
+// Только v4: у v6 копий не наблюдали.
+func (o *OperatorOS5Impl) ndmsMirrorTables(ctx context.Context, endpointIP string) []ndmsMirror {
+	if isIPv6(endpointIP) {
+		return nil
+	}
+	result, err := o.ipRun(ctx, "/opt/sbin/ip", "route", "show", "table", "all", endpointIP+"/32")
+	if err != nil {
+		return nil
+	}
+	var ours string
+	var mirrors []ndmsMirror
+	for _, line := range strings.Split(result.Stdout, "\n") {
+		f := strings.Fields(line)
+		if len(f) == 0 {
+			continue
+		}
+		table, device, metric, foreign := "", "", "", f[0] == "unreachable"
+		for i := 1; i+1 < len(f); i++ {
+			switch f[i] {
+			case "table":
+				table = f[i+1]
+			case "dev":
+				device = f[i+1]
+			case "metric":
+				metric = f[i+1]
+			case "proto":
+				foreign = true
+			}
+		}
+		if table == "" {
+			// Наша строка main — без proto и метрики; любая вторая — чужая.
+			if foreign || metric != "" || ours != "" {
+				return nil
+			}
+			ours = device
+			continue
+		}
+		n, err := strconv.Atoi(table)
+		if err != nil || foreign || metric != ndmsMirrorMetric || (n != 4096 && (n < 16384 || n >= 32768)) {
+			continue
+		}
+		mirrors = append(mirrors, ndmsMirror{table, device})
+	}
+	return slices.DeleteFunc(mirrors, func(m ndmsMirror) bool { return m.device != ours })
 }
 
 // delKernelHostRoute снимает host-route из ядра. ownOnly — только нашу строку:

@@ -242,6 +242,7 @@ func extWantsKeenDNS(ext ExtConfig) bool {
 
 func (op *Operator) enrichExtRuntimeStatus(ctx context.Context, ext ExtConfig) ExtConfig {
 	ext.AvailableServers = op.ListAvailableServers(ctx)
+	ext.GroupLinks = op.LoadExtConfig().GroupLinks
 	if extWantsKeenDNS(ext) {
 		lastErr, lastAt := op.keenDNSCloudStatus()
 		ext.KeenDNSCloud.LastSyncError = lastErr
@@ -256,11 +257,11 @@ func (op *Operator) enrichExtRuntimeStatus(ctx context.Context, ext ExtConfig) E
 func (op *Operator) loadExtConfigUnlocked() (ExtConfig, bool) {
 	data, err := os.ReadFile(op.extConfigPath())
 	if err != nil {
-		return normalizeExtConfig(ExtConfig{}), false
+		return normalizeExtConfig(ExtConfig{GroupLinks: map[string]string{}}), false
 	}
 	var ext ExtConfig
 	if err := json.Unmarshal(data, &ext); err != nil {
-		return normalizeExtConfig(ExtConfig{}), true
+		return normalizeExtConfig(ExtConfig{GroupLinks: map[string]string{}}), true
 	}
 	return normalizeExtConfig(ext), true
 }
@@ -299,26 +300,20 @@ func (op *Operator) LoadExtConfig() ExtConfig {
 
 // LoadExtConfigWithStatus returns the persisted ExtConfig enriched with live AvailableServers and KeenDNS sync statuses.
 func (op *Operator) LoadExtConfigWithStatus(ctx context.Context) ExtConfig {
+	op.migrateGroupLinks()
 	return op.enrichExtRuntimeStatus(ctx, op.LoadExtConfig())
 }
 
 // SaveExtConfig persists the AWGM FIRC extension config atomically.
 func (op *Operator) SaveExtConfig(ext ExtConfig) error {
 	ext = normalizeExtConfig(ext)
-	data, err := json.MarshalIndent(ext, "", "  ")
-	if err != nil {
-		return err
-	}
 	op.extConfigMu.Lock()
-	if err := os.MkdirAll(op.configDir, 0755); err != nil {
+	saved, _ := op.loadExtConfigUnlocked()
+	ext.GroupLinks = saved.GroupLinks
+	if err := op.writeExtConfigLocked(ext); err != nil {
 		op.extConfigMu.Unlock()
 		return err
 	}
-	if err := atomicWriteYAMLFile(op.extConfigPath(), data, 0644); err != nil {
-		op.extConfigMu.Unlock()
-		return err
-	}
-	op.extConfigSaved.Store(true)
 	op.extConfigGen.Add(1)
 	extNetfilterGen.Add(1)
 	op.extConfigMu.Unlock()
@@ -326,6 +321,21 @@ func (op *Operator) SaveExtConfig(ext ExtConfig) error {
 	if !extWantsKeenDNS(ext) {
 		op.abortKeenDNSCloudSync()
 	}
+	return nil
+}
+
+func (op *Operator) writeExtConfigLocked(ext ExtConfig) error {
+	data, err := json.MarshalIndent(ext, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(op.configDir, 0755); err != nil {
+		return err
+	}
+	if err := atomicWriteYAMLFile(op.extConfigPath(), data, 0644); err != nil {
+		return err
+	}
+	op.extConfigSaved.Store(true)
 	return nil
 }
 
@@ -809,20 +819,6 @@ func findProxyGroupByID(ext ExtConfig, id string) (ProxyGroup, bool) {
 	return ProxyGroup{}, false
 }
 
-// proxyGroupCheckForChain возвращает проверку прокси-группы с той же цепочкой
-// интерфейсов; nil — цепочкой никто не управляет.
-func proxyGroupCheckForChain(ext ExtConfig, ifaces []string) *GroupCheck {
-	if len(ifaces) < 2 {
-		return nil
-	}
-	for _, pg := range ext.ProxyGroups {
-		if pg.Check != nil && equalStringSlices(pg.Interfaces, ifaces) {
-			return normalizeProxyGroupCheck(pg.Check, len(ifaces))
-		}
-	}
-	return nil
-}
-
 // keepOmittedProxyGroupChecks возвращает прокси-группам без поля check сохранённую
 // проверку: вкладка со старым фронтом его не присылает, отсутствие — «не менять».
 func (op *Operator) keepOmittedProxyGroupChecks(ext ExtConfig) {
@@ -848,7 +844,8 @@ func resolveKeenDNSCheck(ext ExtConfig, kdIfaces []string, existingCheck *GroupC
 	if pg, ok := findProxyGroupByID(ext, ext.KeenDNSCloud.ProxyGroupID); ok && pg.Check != nil {
 		return normalizeProxyGroupCheck(pg.Check, len(kdIfaces))
 	}
-	if existingCheck != nil && strings.TrimSpace(existingCheck.Mode) == "url" {
+	// Связь — прежнюю проверку задала прокси-группа: она уходит вместе с ней.
+	if ext.GroupLinks[KeenDNSGroupID] == "" && existingCheck != nil && strings.TrimSpace(existingCheck.Mode) == "url" {
 		preserved := *existingCheck
 		return &preserved
 	}
@@ -1004,48 +1001,27 @@ func isKnownManagedServerSubnet(entry string, wgServers []DynamicWGServer) bool 
 	return false
 }
 
-func activeServerDenyExclusionsWithWG(sr ServerRoutingConfig, wantedSubnets []string, wgServers []DynamicWGServer, hasProvider bool) map[string]bool {
-	excl := make(map[string]bool)
-	for _, s := range wantedSubnets {
-		excl[strings.ToLower(strings.TrimSpace(s))] = true
-	}
-	addPolicy := func(p string) {
-		p = strings.ToLower(strings.TrimSpace(p))
-		p = strings.TrimPrefix(p, "policy:")
-		if p == "" || p == "none" {
-			return
-		}
-		excl["policy:"+p] = true
-		excl[p] = true
-	}
-	if sr.IsServerEnabled("wdtt_server") {
-		addPolicy("policy3")
-	}
-	if hasProvider {
-		for _, srv := range matchEnabledWGServers(sr, wgServers) {
-			addPolicy(srv.Policy)
-		}
-	} else if sr.IsServerEnabled("awg_server") || sr.IsServerEnabled("freeturn_server") {
-		addPolicy("policy4")
-	}
-	return excl
-}
-
 // syncGroupsWithExt returns an updated slice of FIRC groups incorporating KeenDNS Cloud
 // and inbound VPN server device subnets, plus a boolean indicating whether any group changed.
 func syncGroupsWithExt(groups []Group, ext ExtConfig) ([]Group, bool) {
-	return syncGroupsWithExtWithWG(groups, ext, nil, false)
+	updated, changed, _ := syncGroupsWithExtWithWG(groups, ext, nil, false, nil)
+	return updated, changed
 }
 
 func (op *Operator) syncGroupsWithExt(ctx context.Context, groups []Group, ext ExtConfig) ([]Group, bool) {
 	wgServers, hasProvider := op.resolveWGServers(ctx)
-	return syncGroupsWithExtWithWG(groups, ext, wgServers, hasProvider)
+	rp := op.routerPoliciesFor(ctx, groups, ext.ServerRouting)
+	updated, changed, denyRules := syncGroupsWithExtWithWG(groups, ext, wgServers, hasProvider, rp)
+	if rp != nil {
+		op.warnKeptServerDenies(updated, denyRules)
+	}
+	return updated, changed
 }
 
-func syncGroupsWithExtWithWG(groups []Group, ext ExtConfig, wgServers []DynamicWGServer, hasProvider bool) ([]Group, bool) {
+func syncGroupsWithExtWithWG(groups []Group, ext ExtConfig, wgServers []DynamicWGServer, hasProvider bool, rp *RouterPolicies) ([]Group, bool, serverDenyRules) {
 	changed := false
 	wantedSubnets := activeServerSubnetsWithWG(ext.ServerRouting, wgServers, hasProvider)
-	denyExcl := activeServerDenyExclusionsWithWG(ext.ServerRouting, wantedSubnets, wgServers, hasProvider)
+	denyRules := newServerDenyRules(ext.ServerRouting, wantedSubnets, wgServers, rp)
 	kdIfaces := resolveKeenDNSInterfaces(ext)
 	wantKeenDNS := ext.KeenDNSCloud.Enabled && len(kdIfaces) > 0
 
@@ -1058,6 +1034,9 @@ func syncGroupsWithExtWithWG(groups []Group, ext ExtConfig, wgServers []DynamicW
 			foundGlobal = true
 			if global.Check == nil {
 				global.Check = g.Check
+				if ext.GroupLinks[globalGroupID] != "" {
+					global.Check = &GroupCheck{Mode: "none"}
+				}
 			}
 			if !wantGlobal || !g.Enable || !slices.Equal(g.Interface, global.Interface) || !keenDNSRulesEqual(g.Rules, global.Rules) || !groupCheckEqual(g.Check, global.Check) {
 				changed = true
@@ -1097,11 +1076,11 @@ func syncGroupsWithExtWithWG(groups []Group, ext ExtConfig, wgServers []DynamicW
 			changed = true
 		}
 
-		// Strip any deny entries that conflict with enabled inbound VPN servers (e.g. Policy3 for WDTT, Policy4 for AWG).
-		if len(g.Devices.Deny) > 0 && len(denyExcl) > 0 {
+		// Strip any deny entries that conflict with enabled inbound VPN servers.
+		if len(g.Devices.Deny) > 0 {
 			var newDeny []string
 			for _, entry := range g.Devices.Deny {
-				if !denyExcl[strings.ToLower(strings.TrimSpace(entry))] {
+				if strip, _, _ := denyRules.verdict(entry); !strip {
 					newDeny = append(newDeny, entry)
 				}
 			}
@@ -1114,7 +1093,7 @@ func syncGroupsWithExtWithWG(groups []Group, ext ExtConfig, wgServers []DynamicW
 			}
 		}
 
-		if desired := proxyGroupCheckForChain(ext, g.Interface); desired != nil && !groupCheckEqual(g.Check, desired) {
+		if desired := linkedProxyGroupCheck(ext, g); desired != nil && !groupCheckEqual(g.Check, desired) {
 			g.Check = desired
 			changed = true
 		}
@@ -1139,7 +1118,7 @@ func syncGroupsWithExtWithWG(groups []Group, ext ExtConfig, wgServers []DynamicW
 			changed = true
 		}
 	}
-	return filtered, changed
+	return filtered, changed, denyRules
 }
 
 func equalStringSlices(a, b []string) bool {
@@ -1186,6 +1165,7 @@ func groupCheckEqual(a, b *GroupCheck) bool {
 // ApplyExtConfig saves the new ExtConfig, synchronizes FIRC groups (KeenDNS Cloud + server subnets),
 // and reconciles iptables hooks for server DNS redirection and OUTPUT chain routing.
 func (op *Operator) ApplyExtConfig(ctx context.Context, ext ExtConfig) (ExtConfig, error) {
+	op.migrateGroupLinks()
 	op.keepOmittedProxyGroupChecks(ext)
 	ext = normalizeExtConfig(ext)
 	if err := op.SaveExtConfig(ext); err != nil {
@@ -1204,8 +1184,10 @@ func (op *Operator) StageExtConfigOffline(ctx context.Context, ext ExtConfig) (E
 	op.mutationMu.Lock()
 	defer op.mutationMu.Unlock()
 
+	op.migrateGroupLinks()
 	op.keepOmittedProxyGroupChecks(ext)
 	ext = normalizeExtConfig(ext)
+	ext.GroupLinks = op.LoadExtConfig().GroupLinks
 	if err := op.checkMutationAllowed(); err != nil {
 		return op.enrichExtRuntimeStatus(ctx, ext), err
 	}
@@ -1221,6 +1203,9 @@ func (op *Operator) StageExtConfigOffline(ctx context.Context, ext ExtConfig) (E
 			return op.enrichExtRuntimeStatus(ctx, ext), err
 		}
 	}
+	if err := op.refreshGroupLinks(ext); err != nil {
+		return op.enrichExtRuntimeStatus(ctx, ext), err
+	}
 	return op.enrichExtRuntimeStatus(ctx, ext), nil
 }
 
@@ -1229,6 +1214,7 @@ func (op *Operator) ReconcileExt(ctx context.Context) error {
 	if op.ManuallyDisabled() {
 		return nil
 	}
+	op.migrateGroupLinks()
 	ext, cfgGen := op.loadExtConfigWithGen()
 	var groups []Group
 	var err error
@@ -1247,6 +1233,8 @@ func (op *Operator) ReconcileExt(ctx context.Context) error {
 			return applyErr
 		}
 		groups = res
+	} else if err := op.refreshGroupLinks(ext); err != nil {
+		return err
 	}
 	wantKeenDNS := extWantsKeenDNS(ext)
 	if wantKeenDNS {
@@ -1263,6 +1251,7 @@ func (op *Operator) reconcileExtOnStartLocked(ctx context.Context) error {
 	if op.ManuallyDisabled() {
 		return nil
 	}
+	op.migrateGroupLinks()
 	ext, cfgGen := op.loadExtConfigWithGen()
 	var groups []Group
 	var err error
@@ -1283,6 +1272,7 @@ func (op *Operator) reconcileExtOnStartLocked(ctx context.Context) error {
 			_ = op.SaveGroupsFile(groups)
 		}
 	}
+	_ = op.refreshGroupLinks(ext)
 	wantKeenDNS := extWantsKeenDNS(ext)
 	if wantKeenDNS {
 		if op.IsRunning(ctx) && !op.ManuallyDisabled() && isCloudIpsetRuntimeEnabled(op) {

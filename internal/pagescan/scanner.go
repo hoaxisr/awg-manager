@@ -387,7 +387,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, req ScanRequest) (*Result
 			if rawDefaultProxy == "" {
 				return nil, ErrProxyUnavailable
 			}
-			spec, err = parseTrustedLoopbackProxySpec(rawDefaultProxy)
+			spec, err = s.parseDefaultProxySpec(scanCtx, rawDefaultProxy)
 		}
 		if err != nil {
 			return nil, err
@@ -408,7 +408,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, req ScanRequest) (*Result
 				return nil, err
 			}
 			if proxyAvailable {
-				spec, pErr := parseTrustedLoopbackProxySpec(rawDefaultProxy)
+				spec, pErr := s.parseDefaultProxySpec(scanCtx, rawDefaultProxy)
 				if pErr != nil {
 					return nil, pErr
 				}
@@ -605,7 +605,9 @@ func parseProxySpecCommon(rawProxyURL string, invalidErr error) (scheme, host, p
 	return scheme, host, portStr, username, password, nil
 }
 
-func parseTrustedLoopbackProxySpec(rawProxyURL string) (proxySpec, error) {
+// parseDefaultProxySpec разбирает прокси режима auto: loopback либо известный
+// прокси на адресе самого роутера (вход FIRC слушает адрес LAN-интерфейса).
+func (s *Service) parseDefaultProxySpec(ctx context.Context, rawProxyURL string) (proxySpec, error) {
 	scheme, host, portStr, username, password, err := parseProxySpecCommon(rawProxyURL, ErrBlockedAddress)
 	if err != nil {
 		return proxySpec{}, err
@@ -625,10 +627,15 @@ func parseTrustedLoopbackProxySpec(rawProxyURL string) (proxySpec, error) {
 		}, nil
 	}
 	addr, addrErr := netip.ParseAddr(host)
-	if addrErr != nil || !addr.Unmap().IsLoopback() {
-		return proxySpec{}, fmt.Errorf("%w: proxy host %q is not loopback", ErrBlockedAddress, host)
+	addr = addr.Unmap()
+	known := addrErr == nil && addr.IsLoopback()
+	if addrErr == nil && !known && s.isRouterAddr(addr) {
+		_, known = s.knownRouterProxy(ctx, addr.String(), portStr)
 	}
-	dialAddr := net.JoinHostPort(addr.Unmap().String(), portStr)
+	if !known {
+		return proxySpec{}, fmt.Errorf("%w: proxy host %q is not a router proxy", ErrBlockedAddress, host)
+	}
+	dialAddr := net.JoinHostPort(addr.String(), portStr)
 	return proxySpec{
 		Scheme:     "http",
 		DialAddrs:  []string{dialAddr},

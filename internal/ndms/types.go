@@ -76,6 +76,9 @@ type Policy struct {
 	Description string           `json:"description"`
 	Standalone  bool             `json:"standalone"`
 	Interfaces  []PermittedIface `json:"interfaces"`
+	// RCOrder — место в ответе /show/rc/ip/policy: списки политик сортируются по
+	// номеру, а fircd при общем описании берёт первую по порядку ответа.
+	RCOrder int `json:"-"`
 }
 
 // PermittedIface — one interface entry in a policy's permit[] list.

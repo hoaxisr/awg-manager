@@ -1105,8 +1105,9 @@ func proxyResetPresentSlices(cfg any, keys map[string]json.RawMessage) {
 
 // proxyPruneBlankSecrets выбрасывает из тела пустые секретные поля (Н5):
 // отсутствующее И пустое значение означают «не менять». Стирание секрета в
-// пусто отдельной операцией не поддерживается — как и в старом мире, где
-// пустой пароль был невалиден.
+// пусто не поддерживается — как и в старом мире, где пустой пароль был
+// невалиден. Исключение — diagKey: он необязателен и после смены ключа на
+// сервере устаревает, поэтому явный null его стирает (F896).
 func proxyPruneBlankSecrets(raw json.RawMessage) (json.RawMessage, error) {
 	if len(raw) == 0 {
 		return nil, nil
@@ -1119,6 +1120,11 @@ func proxyPruneBlankSecrets(raw json.RawMessage) (json.RawMessage, error) {
 	for _, f := range proxySecretFields {
 		v, ok := m[f]
 		if !ok {
+			continue
+		}
+		if f == "diagKey" && string(v) == "null" {
+			m[f] = json.RawMessage(`""`)
+			dropped = true
 			continue
 		}
 		var s string

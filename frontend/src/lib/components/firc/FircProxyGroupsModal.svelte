@@ -308,9 +308,6 @@
 							{:else}
 								{m.firc_pg_check_groups_hint()}
 							{/if}
-							{#if pgMode}
-								{m.firc_pg_check_scope_hint()}
-							{/if}
 						</p>
 					</div>
 				{/if}

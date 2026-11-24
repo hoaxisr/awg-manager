@@ -216,10 +216,10 @@ describe('FircBulkGroupsBar', () => {
 		expect(ifaceSelect).toBeEnabled();
 
 		await fireEvent.change(ifaceSelect, { target: { value: 'pg:pg1' } });
-		expect(onSetInterface).toHaveBeenCalledWith(['tunvless0', 'tunvless1']);
+		expect(onSetInterface).toHaveBeenLastCalledWith(['tunvless0', 'tunvless1'], 'pg1');
 
 		await fireEvent.change(ifaceSelect, { target: { value: 'iface:tunvless0' } });
-		expect(onSetInterface).toHaveBeenCalledWith('tunvless0');
+		expect(onSetInterface).toHaveBeenLastCalledWith('tunvless0');
 
 		await fireEvent.click(screen.getByRole('button', { name: m.firc_bulk_groups_devices_btn() }));
 		await fireEvent.click(screen.getByRole('button', { name: m.firc_bulk_enable() }));

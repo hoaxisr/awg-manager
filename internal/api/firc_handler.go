@@ -1252,7 +1252,8 @@ func (h *FircHandler) handlePutGroups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var payload struct {
-		Groups []firc.Group `json:"groups"`
+		Groups     []firc.Group      `json:"groups"`
+		GroupLinks map[string]string `json:"groupLinks"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		response.ErrorWithStatus(w, http.StatusBadRequest, "invalid request body", "BAD_REQUEST")
@@ -1263,9 +1264,9 @@ func (h *FircHandler) handlePutGroups(w http.ResponseWriter, r *http.Request) {
 		err     error
 	)
 	if h.isExplicitlyUnselected() {
-		updated, err = h.op.StageGroupsOffline(payload.Groups)
+		updated, err = h.op.StageGroupsOfflineWithLinks(payload.Groups, payload.GroupLinks)
 	} else {
-		updated, err = h.op.ApplyGroups(r.Context(), payload.Groups)
+		updated, err = h.op.ApplyGroupsWithLinks(r.Context(), payload.Groups, payload.GroupLinks)
 	}
 	if err != nil {
 		if errors.Is(err, firc.ErrRecoveryRequired) {
@@ -1918,7 +1919,8 @@ func (h *FircHandler) handleV1Proxy(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodPut && cleanSubPath == "/groups" {
 		var payload struct {
-			Groups []firc.Group `json:"groups"`
+			Groups     []firc.Group      `json:"groups"`
+			GroupLinks map[string]string `json:"groupLinks"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			w.Header().Set("Content-Type", "application/json")
@@ -1931,9 +1933,9 @@ func (h *FircHandler) handleV1Proxy(w http.ResponseWriter, r *http.Request) {
 			err     error
 		)
 		if h.isExplicitlyUnselected() {
-			updated, err = h.op.StageGroupsOffline(payload.Groups)
+			updated, err = h.op.StageGroupsOfflineWithLinks(payload.Groups, payload.GroupLinks)
 		} else {
-			updated, err = h.op.ApplyGroups(r.Context(), payload.Groups)
+			updated, err = h.op.ApplyGroupsWithLinks(r.Context(), payload.Groups, payload.GroupLinks)
 		}
 		if err != nil {
 			w.Header().Set("Content-Type", "application/json")

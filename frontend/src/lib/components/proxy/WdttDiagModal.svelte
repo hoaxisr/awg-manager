@@ -25,6 +25,8 @@
 		instanceId: string;
 		instanceName: string;
 		diagKeySet?: boolean;
+		/** Сохранённый ключ стёрт — перечитать конфиг. */
+		onkeycleared?: () => Promise<void> | void;
 		onclose: () => void;
 	}
 
@@ -33,12 +35,14 @@
 		instanceId,
 		instanceName,
 		diagKeySet = false,
+		onkeycleared,
 		onclose,
 	}: Props = $props();
 
 	let transport = $state<WdttDiagTransport>('auto');
 	let diagKeyInput = $state('');
 	let running = $state(false);
+	let clearingKey = $state(false);
 	let result = $state<WdttDiagResult | null>(null);
 	let errorText = $state('');
 
@@ -112,6 +116,19 @@
 		}
 	}
 
+	async function clearKey(): Promise<void> {
+		clearingKey = true;
+		errorText = '';
+		try {
+			await api.clearWdttClientDiagKey(instanceId);
+			await onkeycleared?.();
+		} catch (err) {
+			errorText = errText(err);
+		} finally {
+			clearingKey = false;
+		}
+	}
+
 	$effect(() => {
 		if (!open) {
 			cancelDiag();
@@ -149,6 +166,13 @@
 					disabled={running}
 					fullWidth
 				/>
+				{#if diagKeySet}
+					<div>
+						<Button variant="ghost" size="sm" loading={clearingKey} disabled={running || clearingKey} onclick={clearKey}>
+							{m.proxy_wdtt_diag_diag_key_forget()}
+						</Button>
+					</div>
+				{/if}
 			</div>
 		</div>
 
