@@ -1088,7 +1088,7 @@ typedef struct {
     pthread_t th;
 } live_t;
 
-enum { DOH_GOOD = 0, DOH_SERVFAIL, DOH_SINK, DOH_FAIL, DOH_SILENT, DOH_BIG, DOH_REFUSE };
+enum { DOH_GOOD = 0, DOH_SERVFAIL, DOH_SINK, DOH_FAIL, DOH_SILENT, DOH_BIG, DOH_REFUSE, DOH_STRAY_ID, DOH_STRAY_NAME };
 
 #define DOH_ANSWER_OCTET 9
 #define DOH_CALLS 32
@@ -1136,6 +1136,8 @@ static void fdoh_fire(fdoh_call_t *c) {
     if (c->mode != DOH_BIG) { a[STUB_A_LAST_OCTET] = DOH_ANSWER_OCTET; }
     if (c->mode == DOH_SERVFAIL) { a[3] = (uint8_t)((a[3] & 0xf0) | 2); }
     if (c->mode == DOH_SINK) { memset(a + STUB_A_LAST_OCTET - 3, 0, 4); }
+    if (c->mode == DOH_STRAY_ID) { a[0] ^= 0xff; }
+    if (c->mode == DOH_STRAY_NAME) { a[13] = a[13] == 'z' ? 'y' : 'z'; }
     c->fn(c->ud, a, n, true);
 }
 
@@ -1748,6 +1750,24 @@ TEST a_doh_leg_losing_the_race_is_cancelled(void) {
     PASS();
 }
 
+/* Catches: a DoH answer to another question treated as a stray datagram, waiting for one that never comes. */
+TEST a_stray_doh_answer_fails_its_leg_at_once(void) {
+    int modes[2] = {DOH_STRAY_ID, DOH_STRAY_NAME};
+    for (int m = 0; m < 2; m++) {
+        live_t lv;
+        doh_setup(modes[m], DOH_MARK, false, false);
+        g_troute.url_ids[0] = DOH_URL;
+        ASSERT(live_start(&lv));
+        long t0 = ms_now();
+        ASSERT_EQ(1, ask(lv.proxy_port, 0xd251));
+        ASSERT_LT(ms_now() - t0, 500);
+        ASSERT_EQ(1, atomic_load(&g_fdoh.queries));
+        ASSERT_EQ(FIRC_DNS_RESOLVER_FALLBACK_SERVFAIL, atomic_load(&g_live_resolver));
+        live_stop(&lv);
+    }
+    PASS();
+}
+
 TEST a_dns_route_sets_no_mark(void) {
     live_t lv;
     tunnel_setup(0);
@@ -2118,6 +2138,7 @@ int main(int argc, char **argv)
     RUN_TEST(a_dns_routes_aaaa_passes_when_drop_aaaa_is_off);
     RUN_TEST(a_doh_server_answers_as_a_leg);
     RUN_TEST(a_doh_leg_losing_the_race_is_cancelled);
+    RUN_TEST(a_stray_doh_answer_fails_its_leg_at_once);
     RUN_TEST(a_dns_route_sets_no_mark);
     RUN_TEST(without_fallback_a_servfail_reaches_the_client);
     RUN_TEST(without_fallback_a_sink_answer_reaches_the_client);

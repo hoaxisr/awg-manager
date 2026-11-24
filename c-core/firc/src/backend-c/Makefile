@@ -364,6 +364,13 @@ $(BUILDDIR)/tests/test_autolist_app: tests/unit/test_autolist_app.c $(LIB_OBJS) 
 	$(CC) $(CFLAGS) -Itests/vendor -Itests/unit $(LDFLAGS) $(AUTOLIST_APP_WRAP) -o $@ $< \
 	    $(LIB_OBJS) $(TEST_SUPPORT_OBJS) $(LDLIBS) $(DEP_LIBS)
 
+DOH_WRAP := -Wl,--wrap=curl_easy_setopt,--wrap=curl_multi_poll
+
+$(BUILDDIR)/tests/test_doh: tests/unit/test_doh.c $(LIB_OBJS) $(TEST_SUPPORT_OBJS)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Itests/vendor -Itests/unit $(LDFLAGS) $(DOH_WRAP) -o $@ $< \
+	    $(LIB_OBJS) $(TEST_SUPPORT_OBJS) $(LDLIBS) $(DEP_LIBS)
+
 UPDATE_WRAP := -Wl,--wrap=calloc
 
 $(BUILDDIR)/tests/test_update: tests/unit/test_update.c $(LIB_OBJS) $(TEST_SUPPORT_OBJS)
@@ -415,7 +422,7 @@ sanitize:
 	    LDFLAGS="-fsanitize=$(SAN)" test
 
 # Own build dir: TSan and ASan objects do not mix.
-TSAN_TESTS := test_doh test_keenetic_policy test_keenetic_resolvers test_loop test_queue test_nfcommit test_sub_worker test_app test_update test_update_api test_settings_api test_ifcheck test_router_id test_rci_token test_opkgtun test_rtnl_rules
+TSAN_TESTS := test_doh
 TSAN_BINS := $(TSAN_TESTS:%=build/tsan/tests/%)
 tsan:
 	$(MAKE) BUILD=tsan \

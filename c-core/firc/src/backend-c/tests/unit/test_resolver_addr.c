@@ -446,6 +446,37 @@ TEST a_256_byte_url_is_refused(void)
     PASS();
 }
 
+/* Catches: a refused value logged with the account id a provider puts in the path. */
+TEST the_why_for_the_log_stops_at_the_host(void)
+{
+    static const struct {
+        const char *s, *shown;
+    } bad[] = {
+        {"https://h.example/secret?x", "\"https://h.example/…\" "},
+        {"https://u:secret@h.example:8443/secret", "\"https://h.example:8443/…\" "},
+        {"https://127.0.0.1/secret", "\"https://127.0.0.1/…\" "},
+        {"https://u-sixty-bytes-of-user-sixty-bytes-of-user-sixty-bytes:secret@h.example/", "\"https://h.example/…\" "},
+        {"1.1.1.1, https://h.example?secret", "\"https://h.example/…\" "},
+        {"h.example/secret", "\"h.example/…\" "},
+        {"https://a.example/secret, 1.1.1.1,", "\"https://a.example/…, 1.1.1.1,\" has an empty entry"},
+        {"https://a.example/secret,https://a.example/secret",
+         "\"https://a.example/…,https://a.example/…\" names \"https://a.example/…\" twice"},
+        {"https://a.io/secret,1.1.1.1,1.1.1.2,1.1.1.3,https://a.io/secret",
+         "\"https://a.io/…,1.1.1.1,1.1.1.2,1.1.1.3,https://a.io/…\" names more than 4 servers"},
+    };
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        firc_resolver_list_t l;
+        static char why[256], full[256];
+        firc_resolver_list_res_t r = firc_resolver_list_parse(bad[i].s, &l, full, sizeof(full));
+        ASSERT(r != FIRC_RESOLVER_LIST_OK);
+        ASSERT_EQ(r, firc_resolver_list_parse_for_log(bad[i].s, &l, why, sizeof(why)));
+        ASSERTm("the API's text stays whole", strcmp(full, why) != 0);
+        ASSERTm(why, strncmp(why, bad[i].shown, strlen(bad[i].shown)) == 0);
+        ASSERTm(why, strstr(why, "secret") == NULL);
+    }
+    PASS();
+}
+
 TEST the_why_names_the_bad_url(void)
 {
     firc_resolver_list_t l;
@@ -521,6 +552,7 @@ int main(int argc, char **argv)
     RUN_TEST(a_url_twin_is_refused);
     RUN_TEST(a_url_without_a_host_is_refused);
     RUN_TEST(a_256_byte_url_is_refused);
+    RUN_TEST(the_why_for_the_log_stops_at_the_host);
     RUN_TEST(the_why_names_the_bad_url);
     RUN_TEST(the_pool_check_skips_a_url_but_not_a_literal_host_inside_the_pool);
     RUN_TEST(a_doh_entry_formats_as_its_url);

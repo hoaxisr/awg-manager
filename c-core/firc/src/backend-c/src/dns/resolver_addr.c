@@ -153,9 +153,34 @@ static bool is_blank(char c)
     return c == ' ' || c == '\t';
 }
 
-static int len_quoted(size_t n)
+#define QUOTED_MAX 64
+
+/* The value as an error sentence quotes it. Masked, every entry ends at its host: the user, path and query stay out. */
+static const char *quote(const char *b, size_t n, bool masked, char buf[QUOTED_MAX + 1])
 {
-    return n > 64 ? 64 : (int)n;
+    if (!masked) {
+        snprintf(buf, QUOTED_MAX + 1, "%.*s", n > QUOTED_MAX ? QUOTED_MAX : (int)n, b);
+        return buf;
+    }
+    const char *end = b + n;
+    buf[0] = '\0';
+    for (size_t o = 0; b < end && o < QUOTED_MAX; o = strlen(buf)) {
+        const char *e = memchr(b, ',', (size_t)(end - b));
+        if (e == NULL) { e = end; }
+        const char *auth = b;
+        for (const char *c = b; c + 3 <= e && auth == b; c++) {
+            if (memcmp(c, "://", 3) == 0) { auth = c + 3; }
+        }
+        const char *host = auth;
+        const char *cut = auth;
+        for (; cut < e && *cut != '/' && *cut != '?' && *cut != '#'; cut++) {
+            if (*cut == '@') { host = cut + 1; }
+        }
+        snprintf(buf + o, QUOTED_MAX + 1 - o, "%.*s%.*s%s%s", (int)(auth - b), b, (int)(cut - host), host,
+                 cut < e ? "/…" : "", e < end ? "," : "");
+        b = e < end ? e + 1 : end;
+    }
+    return buf;
 }
 
 static void say(char *why, size_t cap, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
@@ -202,8 +227,8 @@ static bool url_authority(const char *url, size_t n, const char **host, size_t *
         *bracket = true;
         q = close + 1;
     } else {
-        const char *colon = memchr(q, ':', (size_t)(slash - q));
-        const char *he = colon != NULL ? colon : slash;
+        const char *he = q;
+        while (he < slash && *he != ':') { he++; }
         if (he == q) { return false; }
         *host = q;
         *host_len = (size_t)(he - q);
@@ -269,8 +294,8 @@ static bool same_server(const firc_resolver_list_t *l, size_t i, const firc_reso
     return a->port == b->port && a->ip.len == b->ip.len && memcmp(a->ip.b, b->ip.b, a->ip.len) == 0;
 }
 
-firc_resolver_list_res_t firc_resolver_list_parse(const char *s, firc_resolver_list_t *out, char *why,
-                                                  size_t why_cap)
+static firc_resolver_list_res_t list_parse(const char *s, firc_resolver_list_t *out, char *why, size_t why_cap,
+                                           bool masked)
 {
     memset(out, 0, sizeof(*out));
     if (why != NULL && why_cap > 0) { why[0] = '\0'; }
@@ -278,7 +303,8 @@ firc_resolver_list_res_t firc_resolver_list_parse(const char *s, firc_resolver_l
         say(why, why_cap, "is missing");
         return FIRC_RESOLVER_LIST_ADDR;
     }
-    int whole = len_quoted(strlen(s));
+    char whole[QUOTED_MAX + 1], one[QUOTED_MAX + 1];
+    (void)quote(s, strlen(s), masked, whole);
     const char *p = s;
     for (;;) {
         const char *end = strchr(p, ',');
@@ -290,12 +316,12 @@ firc_resolver_list_res_t firc_resolver_list_parse(const char *s, firc_resolver_l
         size_t n = (size_t)(e - b);
         if (n == 0) {
             memset(out, 0, sizeof(*out));
-            say(why, why_cap, "\"%.*s\" has an empty entry", whole, s);
+            say(why, why_cap, "\"%s\" has an empty entry", whole);
             return FIRC_RESOLVER_LIST_EMPTY;
         }
         if (out->n == FIRC_RESOLVE_MAX_SERVERS) {
             memset(out, 0, sizeof(*out));
-            say(why, why_cap, "\"%.*s\" names more than %d servers", whole, s, FIRC_RESOLVE_MAX_SERVERS);
+            say(why, why_cap, "\"%s\" names more than %d servers", whole, FIRC_RESOLVE_MAX_SERVERS);
             return FIRC_RESOLVER_LIST_TOO_MANY;
         }
         char entry[INET6_ADDRSTRLEN + 16];
@@ -309,8 +335,8 @@ firc_resolver_list_res_t firc_resolver_list_parse(const char *s, firc_resolver_l
             bool bracket;
             if (n > FIRC_RESOLVER_URL_MAX || !url_authority(b, n, &host, &hl, &bracket)) {
                 memset(out, 0, sizeof(*out));
-                say(why, why_cap, "\"%.*s\" is not a DoH URL (https://host[:port]/path, at most %d bytes, no user, "
-                    "query or fragment)", len_quoted(n), b, FIRC_RESOLVER_URL_MAX);
+                say(why, why_cap, "\"%s\" is not a DoH URL (https://host[:port]/path, at most %d bytes, no user, "
+                    "query or fragment)", quote(b, n, masked, one), FIRC_RESOLVER_URL_MAX);
                 return FIRC_RESOLVER_LIST_URL;
             }
             memcpy(url, b, n);
@@ -322,7 +348,7 @@ firc_resolver_list_res_t firc_resolver_list_parse(const char *s, firc_resolver_l
                 bool is_mapped = lit.len == 16 && memcmp(lit.b, V4_MAPPED, sizeof(V4_MAPPED)) == 0;
                 if (is_mapped || firc_resolver_ip_is_sink(&lit)) {
                     memset(out, 0, sizeof(*out));
-                    say(why, why_cap, "\"%.*s\" %s", len_quoted(n), b,
+                    say(why, why_cap, "\"%s\" %s", quote(b, n, masked, one),
                         firc_resolver_addr_why(is_mapped ? FIRC_RESOLVER_ADDR_MAPPED : FIRC_RESOLVER_ADDR_SINK));
                     return FIRC_RESOLVER_LIST_URL;
                 }
@@ -336,14 +362,14 @@ firc_resolver_list_res_t firc_resolver_list_parse(const char *s, firc_resolver_l
             }
             if (r != FIRC_RESOLVER_ADDR_OK) {
                 memset(out, 0, sizeof(*out));
-                say(why, why_cap, "\"%.*s\" %s", len_quoted(n), b, firc_resolver_addr_why(r));
+                say(why, why_cap, "\"%s\" %s", quote(b, n, masked, one), firc_resolver_addr_why(r));
                 return FIRC_RESOLVER_LIST_ADDR;
             }
         }
         for (size_t i = 0; i < out->n; i++) {
             if (same_server(out, i, &a, url)) {
                 memset(out, 0, sizeof(*out));
-                say(why, why_cap, "\"%.*s\" names \"%.*s\" twice", whole, s, len_quoted(n), b);
+                say(why, why_cap, "\"%s\" names \"%s\" twice", whole, quote(b, n, masked, one));
                 return FIRC_RESOLVER_LIST_DUPLICATE;
             }
         }
@@ -352,4 +378,16 @@ firc_resolver_list_res_t firc_resolver_list_parse(const char *s, firc_resolver_l
         if (*end == '\0') { return FIRC_RESOLVER_LIST_OK; }
         p = end + 1;
     }
+}
+
+firc_resolver_list_res_t firc_resolver_list_parse(const char *s, firc_resolver_list_t *out, char *why,
+                                                  size_t why_cap)
+{
+    return list_parse(s, out, why, why_cap, false);
+}
+
+firc_resolver_list_res_t firc_resolver_list_parse_for_log(const char *s, firc_resolver_list_t *out, char *why,
+                                                          size_t why_cap)
+{
+    return list_parse(s, out, why, why_cap, true);
 }

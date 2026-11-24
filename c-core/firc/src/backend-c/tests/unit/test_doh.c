@@ -2,14 +2,22 @@
 #include "greatest.h"
 
 #include <arpa/inet.h>
+#include <curl/curl.h>
+#include <fcntl.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <poll.h>
 #include <pthread.h>
+#include <signal.h>
+#include <spawn.h>
+#include <stdarg.h>
 #include <stdatomic.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -23,6 +31,7 @@
 typedef struct conn {
     pthread_t t;
     int fd;
+    int idx;
     struct srv *s;
 } conn_t;
 
@@ -33,12 +42,17 @@ typedef struct srv {
     _Atomic bool stop;
     _Atomic int accepts;
     _Atomic int replies;
+    _Atomic bool h2;
+    _Atomic int asked;
+    _Atomic int silent_conns;
+    _Atomic int swallow;
     int status;
     const char *ctype;
-    int delay_ms;
+    char location[64];
+    _Atomic int delay_ms;
     int accept_delay_ms;
-    uint8_t reply[64];
-    size_t reply_len;
+    uint8_t reply[65536];
+    _Atomic size_t reply_len;
     pthread_mutex_t mu;
     char method[8];
     char req_ctype[64];
@@ -108,10 +122,62 @@ static bool read_some(srv_t *s, int fd, char *buf, size_t *len, size_t cap)
     return false;
 }
 
+static bool read_upto(srv_t *s, int fd, char *buf, size_t *len, size_t cap, size_t need)
+{
+    while (*len < need) {
+        if (need > cap || !read_some(s, fd, buf, len, cap)) { return false; }
+    }
+    return true;
+}
+
+static bool send_frame(int fd, uint8_t type, uint8_t flags, const uint8_t stream[4], const void *body, size_t n)
+{
+    uint8_t f[256] = {0, 0, (uint8_t)n, type, flags};
+    memcpy(f + 5, stream, 4);
+    memcpy(f + 9, body, n);
+    return send(fd, f, 9 + n, MSG_NOSIGNAL) == (ssize_t)(9 + n);
+}
+
+/* HTTP/2 with prior knowledge, answering every request alike, so no header of one is decoded. */
+static void *h2_main(void *ud)
+{
+    conn_t *c = ud;
+    srv_t *s = c->s;
+    static const uint8_t zero[4] = {0};
+    static const uint8_t hdrs[] = "\x88\x0f\x10\x17" "application/dns-message";
+    char buf[4096];
+    size_t len = 0;
+    if (!read_upto(s, c->fd, buf, &len, sizeof buf, 24)) { return NULL; }
+    memmove(buf, buf + 24, len -= 24);
+    if (!send_frame(c->fd, 4, 0, zero, zero, 0)) { return NULL; }
+    for (;;) {
+        if (!read_upto(s, c->fd, buf, &len, sizeof buf, 9)) { return NULL; }
+        size_t need = 9 + (size_t)((uint8_t)buf[1] << 8 | (uint8_t)buf[2]);
+        if (!read_upto(s, c->fd, buf, &len, sizeof buf, need)) { return NULL; }
+        uint8_t type = (uint8_t)buf[3], flags = (uint8_t)buf[4], stream[4];
+        memcpy(stream, buf + 5, 4);
+        memmove(buf, buf + need, len -= need);
+        if (type == 4 && (flags & 1) == 0 && !send_frame(c->fd, 4, 1, zero, zero, 0)) { return NULL; }
+        if (type > 1 || (flags & 1) == 0) { continue; }
+        atomic_fetch_add(&s->asked, 1);
+        if (c->idx < atomic_load(&s->silent_conns)) { continue; }
+        if (atomic_load(&s->swallow) > 0) {
+            atomic_fetch_sub(&s->swallow, 1);
+            continue;
+        }
+        if (!nap_unless_stop(s, s->delay_ms) || !send_frame(c->fd, 1, 4, stream, hdrs, sizeof hdrs - 1) ||
+            !send_frame(c->fd, 0, 1, stream, s->reply, s->reply_len)) {
+            return NULL;
+        }
+        atomic_fetch_add(&s->replies, 1);
+    }
+}
+
 static void *conn_main(void *ud)
 {
     conn_t *c = ud;
     srv_t *s = c->s;
+    if (s->h2) { return h2_main(c); }
     char buf[4096];
     size_t len = 0;
     for (;;) {
@@ -145,10 +211,14 @@ static void *conn_main(void *ud)
             return NULL;
         }
         char out[512];
-        int n = snprintf(out, sizeof out, "HTTP/1.1 %d X\r\nContent-Type: %s\r\nContent-Length: %zu\r\n\r\n",
-                         s->status, s->ctype, s->reply_len);
-        memcpy(out + n, s->reply, s->reply_len);
-        if (send(c->fd, out, (size_t)n + s->reply_len, MSG_NOSIGNAL) < 0) {
+        size_t reply_len = atomic_load(&s->reply_len);
+        pthread_mutex_lock(&s->mu);
+        int n = snprintf(out, sizeof out, "HTTP/1.1 %d X\r\n%s%s%sContent-Type: %s\r\nContent-Length: %zu\r\n\r\n",
+                         s->status, s->location[0] != '\0' ? "Location: " : "", s->location,
+                         s->location[0] != '\0' ? "\r\n" : "", s->ctype, reply_len);
+        pthread_mutex_unlock(&s->mu);
+        if (send(c->fd, out, (size_t)n, MSG_NOSIGNAL | MSG_MORE) < 0 ||
+            send(c->fd, s->reply, reply_len, MSG_NOSIGNAL) < 0) {
             return NULL;
         }
         atomic_fetch_add(&s->replies, 1);
@@ -177,7 +247,8 @@ static void *accept_main(void *ud)
             close(fd);
             continue;
         }
-        conn_t *c = &s->conns[s->n_conns++];
+        conn_t *c = &s->conns[s->n_conns];
+        c->idx = s->n_conns++;
         c->fd = fd;
         c->s = s;
         pthread_create(&c->t, NULL, conn_main, c);
@@ -266,7 +337,7 @@ typedef struct got {
     int calls;
     bool ok;
     uint8_t resp[512];
-    size_t len;
+    size_t len, full_len;
     int replies_at_call;
     srv_t *s;
 } got_t;
@@ -276,6 +347,7 @@ static void on_done(void *ud, const uint8_t *resp, size_t len, bool ok)
     got_t *g = ud;
     g->calls++;
     g->ok = ok;
+    g->full_len = len;
     g->len = len < sizeof g->resp ? len : sizeof g->resp;
     if (resp != NULL) {
         memcpy(g->resp, resp, g->len);
@@ -308,6 +380,46 @@ static bool wait_replied(srv_t *s, int ms)
     return false;
 }
 
+CURLcode __real_curl_easy_setopt(CURL *e, CURLoption opt, ...);
+CURLcode __wrap_curl_easy_setopt(CURL *e, CURLoption opt, ...);
+CURLMcode __real_curl_multi_poll(CURLM *m, struct curl_waitfd fds[], unsigned n, int ms, int *ret);
+CURLMcode __wrap_curl_multi_poll(CURLM *m, struct curl_waitfd fds[], unsigned n, int ms, int *ret);
+
+static _Atomic bool g_h2c;
+static _Atomic long g_timeout_ms;
+static const char *_Atomic g_cafile;
+static _Atomic int g_poll_ms;
+
+/* What only a test needs from libcurl: HTTP/2 without TLS, a short transfer cap, a CA of the test's own. */
+CURLcode __wrap_curl_easy_setopt(CURL *e, CURLoption opt, ...)
+{
+    va_list ap;
+    va_start(ap, opt);
+    CURLcode rc;
+    if (opt >= CURLOPTTYPE_OFF_T) {
+        rc = __real_curl_easy_setopt(e, opt, va_arg(ap, curl_off_t));
+    } else if (opt >= CURLOPTTYPE_OBJECTPOINT) {
+        rc = __real_curl_easy_setopt(e, opt, va_arg(ap, void *));
+    } else {
+        long v = va_arg(ap, long);
+        long cap = atomic_load(&g_timeout_ms);
+        rc = __real_curl_easy_setopt(e, opt, opt == CURLOPT_TIMEOUT_MS && cap > 0 ? cap : v);
+    }
+    va_end(ap);
+    if (opt == CURLOPT_URL && atomic_load(&g_h2c)) {
+        (void)__real_curl_easy_setopt(e, CURLOPT_HTTP_VERSION, (long)CURL_HTTP_VERSION_2_PRIOR_KNOWLEDGE);
+    }
+    const char *ca = atomic_load(&g_cafile);
+    if (opt == CURLOPT_URL && ca != NULL) { (void)__real_curl_easy_setopt(e, CURLOPT_CAINFO, ca); }
+    return rc;
+}
+
+CURLMcode __wrap_curl_multi_poll(CURLM *m, struct curl_waitfd fds[], unsigned n, int ms, int *ret)
+{
+    atomic_store(&g_poll_ms, ms);
+    return __real_curl_multi_poll(m, fds, n, ms, ret);
+}
+
 typedef struct env {
     srv_t s;
     firc_loop_t *loop;
@@ -319,6 +431,9 @@ static bool env_up_with(env_t *e, int status, const char *ctype, int delay_ms, i
                         bool loopback, const firc_fakeip_t *pool)
 {
     memset(e, 0, sizeof *e);
+    atomic_store(&g_h2c, false);
+    atomic_store(&g_timeout_ms, 0);
+    atomic_store(&g_cafile, NULL);
     if (!srv_start(&e->s, status, ctype, delay_ms, accept_delay_ms) || firc_loop_create(&e->loop) != FIRC_OK) {
         return false;
     }
@@ -424,7 +539,7 @@ TEST a_loopback_peer_is_never_connected(void)
     PASS();
 }
 
-/* Catches: a name that resolved to one of firc's own fakes connected to. */
+/* Catches: a name that resolved to one of firc's own fakes connected to, also as ::ffff:a.b.c.d. */
 TEST a_peer_in_the_pool_is_never_connected(void)
 {
     firc_fakeip_cfg_t c;
@@ -443,12 +558,208 @@ TEST a_peer_in_the_pool_is_never_connected(void)
     env_t e;
     ASSERT(env_up_with(&e, 200, "application/dns-message", 0, 0, true, true, pool));
     firc_fakeip_free(pool);
+    got_t g = {0}, mapped = {0};
+    ASSERT_EQ(FIRC_OK, ask(&e, 0, 2000, &g, NULL));
+    ASSERT(run_until(e.loop, called, &g, 5000));
+    ASSERT_FALSE(g.ok);
+    char url[64];
+    snprintf(url, sizeof url, "http://[::ffff:127.0.0.1]:%u/dns-query", e.s.port);
+    e.id = firc_doh_intern(e.d, url);
+    ASSERT_EQ(FIRC_OK, ask(&e, 0, 2000, &mapped, NULL));
+    ASSERT(run_until(e.loop, called, &mapped, 5000));
+    ASSERT_FALSE(mapped.ok);
+    ASSERT_EQ(0, atomic_load(&e.s.accepts));
+    env_down(&e);
+    PASS();
+}
+
+/* Catches: a redirect followed, so the query goes where no one configured it to go. */
+TEST a_redirect_is_never_followed(void)
+{
+    env_t e;
+    srv_t to;
+    ASSERT(srv_start(&to, 200, "application/dns-message", 0, 0));
+    ASSERT(env_up(&e, 307, "application/dns-message", 0, 0));
+    pthread_mutex_lock(&e.s.mu);
+    snprintf(e.s.location, sizeof e.s.location, "http://127.0.0.1:%u/dns-query", to.port);
+    pthread_mutex_unlock(&e.s.mu);
     got_t g = {0};
     ASSERT_EQ(FIRC_OK, ask(&e, 0, 2000, &g, NULL));
     ASSERT(run_until(e.loop, called, &g, 5000));
     ASSERT_FALSE(g.ok);
-    ASSERT_EQ(0, atomic_load(&e.s.accepts));
+    ASSERT_EQ(0, atomic_load(&to.accepts));
     env_down(&e);
+    srv_stop(&to);
+    PASS();
+}
+
+/* Catches: a proxy of the environment taking the query past the group's mark. */
+TEST an_environment_proxy_is_never_used(void)
+{
+    env_t e;
+    srv_t proxy;
+    ASSERT(srv_start(&proxy, 200, "application/dns-message", 0, 0));
+    char url[64];
+    snprintf(url, sizeof url, "http://127.0.0.1:%u", proxy.port);
+    setenv("http_proxy", url, 1);
+    unsetenv("no_proxy");
+    unsetenv("NO_PROXY");
+    ASSERT(env_up(&e, 200, "application/dns-message", 0, 0));
+    got_t g = {0};
+    ASSERT_EQ(FIRC_OK, ask(&e, 0, 2000, &g, NULL));
+    ASSERT(run_until(e.loop, called, &g, 5000));
+    ASSERT(g.ok);
+    ASSERT_EQ(0, atomic_load(&proxy.accepts));
+    ASSERT_EQ(1, atomic_load(&e.s.accepts));
+    env_down(&e);
+    unsetenv("http_proxy");
+    srv_stop(&proxy);
+    PASS();
+}
+
+TEST an_answer_longer_than_a_dns_message_is_a_failure(void)
+{
+    for (size_t n = 65535; n <= 65536; n++) {
+        env_t e;
+        ASSERT(env_up(&e, 200, "application/dns-message", 0, 0));
+        e.s.reply_len = n;
+        got_t g = {0};
+        ASSERT_EQ(FIRC_OK, ask(&e, 0, 5000, &g, NULL));
+        ASSERT(run_until(e.loop, called, &g, 8000));
+        ASSERT_EQ(n == 65535, g.ok);
+        ASSERT_EQ(n == 65535 ? n : 0, g.full_len);
+        env_down(&e);
+    }
+    PASS();
+}
+
+#define TLS_OUT 4096
+
+typedef struct tls_srv {
+    pid_t pid;
+    int out;
+    uint16_t port;
+    char dir[32], cert[48], key[48];
+} tls_srv_t;
+
+static pid_t run_openssl(char *const argv[], int io)
+{
+    posix_spawn_file_actions_t fa;
+    posix_spawn_file_actions_init(&fa);
+    posix_spawn_file_actions_adddup2(&fa, io, 0);
+    posix_spawn_file_actions_adddup2(&fa, io, 1);
+    posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", O_WRONLY, 0);
+    pid_t pid = -1;
+    int rc = posix_spawnp(&pid, "openssl", &fa, NULL, argv, environ);
+    posix_spawn_file_actions_destroy(&fa);
+    return rc == 0 ? pid : -1;
+}
+
+static bool tls_accepts(uint16_t port)
+{
+    struct sockaddr_in a = {.sin_family = AF_INET};
+    a.sin_port = htons(port);
+    inet_pton(AF_INET, "127.0.0.1", &a.sin_addr);
+    int fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    bool up = fd >= 0 && connect(fd, (struct sockaddr *)&a, sizeof a) == 0;
+    if (fd >= 0) { close(fd); }
+    return up;
+}
+
+static void tls_stop(tls_srv_t *t)
+{
+    if (t->pid > 0) {
+        kill(t->pid, SIGKILL);
+        waitpid(t->pid, NULL, 0);
+    }
+    if (t->out >= 0) { close(t->out); }
+    unlink(t->cert);
+    unlink(t->key);
+    rmdir(t->dir);
+}
+
+/* openssl s_server with a self-signed certificate for that name; what a client sends it comes out of t->out. Its stdin
+   has to stay open: at EOF it hangs up on the client. */
+static bool tls_start(tls_srv_t *t, const char *san)
+{
+    *t = (tls_srv_t){.pid = -1, .out = -1, .dir = "/tmp/firc-doh-XXXXXX"};
+    if (mkdtemp(t->dir) == NULL) { return false; }
+    snprintf(t->cert, sizeof t->cert, "%s/cert.pem", t->dir);
+    snprintf(t->key, sizeof t->key, "%s/key.pem", t->dir);
+    char ext[64], accept[32];
+    snprintf(ext, sizeof ext, "subjectAltName=%s", san);
+    char *gen[] = {"openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes",
+                   "-subj", "/CN=firc-test", "-addext", ext, "-days", "2", "-keyout", t->key, "-out", t->cert, NULL};
+    int p[2];
+    if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, p) != 0) { return false; }
+    t->out = p[0];
+    pid_t pid = run_openssl(gen, p[1]);
+    int status = 1;
+    if (pid < 0 || waitpid(pid, &status, 0) != pid || status != 0) { return false; }
+    int fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    struct sockaddr_in a = {.sin_family = AF_INET};
+    inet_pton(AF_INET, "127.0.0.1", &a.sin_addr);
+    socklen_t al = sizeof a;
+    if (fd < 0 || bind(fd, (struct sockaddr *)&a, sizeof a) != 0 || getsockname(fd, (struct sockaddr *)&a, &al) != 0) {
+        return false;
+    }
+    close(fd);
+    t->port = ntohs(a.sin_port);
+    snprintf(accept, sizeof accept, "127.0.0.1:%u", t->port);
+    char *srv[] = {"openssl", "s_server", "-quiet", "-accept", accept, "-cert", t->cert, "-key", t->key, NULL};
+    t->pid = run_openssl(srv, p[1]);
+    close(p[1]);
+    for (int i = 0; t->pid > 0 && i < 500; i++) {
+        if (tls_accepts(t->port)) { return true; }
+        nap_ms(10);
+    }
+    return false;
+}
+
+static bool tls_got_post(tls_srv_t *t, int ms)
+{
+    char buf[TLS_OUT] = "";
+    size_t len = 0;
+    for (int i = 0; i <= ms / 10; i++) {
+        ssize_t n = recv(t->out, buf + len, sizeof buf - 1 - len, MSG_DONTWAIT);
+        if (n > 0) { len += (size_t)n; }
+        buf[len] = '\0';
+        if (strstr(buf, "POST /dns-query") != NULL) { return true; }
+        nap_ms(10);
+    }
+    return false;
+}
+
+/* Catches: SSL_VERIFYPEER or SSL_VERIFYHOST off. The first case proves the server reachable once it is trusted. */
+TEST a_certificate_is_checked_and_its_name_too(void)
+{
+    static const struct {
+        const char *san;
+        bool trusted, post;
+    } cases[] = {
+        {"IP:127.0.0.1", true, true},
+        {"IP:127.0.0.1", false, false},
+        {"DNS:other.example", true, false},
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        tls_srv_t t;
+        env_t e;
+        ASSERT(env_up_with(&e, 200, "application/dns-message", 0, 0, false, true, NULL));
+        bool up = tls_start(&t, cases[i].san);
+        atomic_store(&g_timeout_ms, 1000);
+        atomic_store(&g_cafile, cases[i].trusted ? t.cert : NULL);
+        char url[64];
+        snprintf(url, sizeof url, "https://127.0.0.1:%u/dns-query", t.port);
+        e.id = firc_doh_intern(e.d, url);
+        got_t g = {0};
+        bool asked = up && ask(&e, 0, 2000, &g, NULL) == FIRC_OK && run_until(e.loop, called, &g, 5000);
+        bool post = asked && tls_got_post(&t, 300);
+        env_down(&e);
+        tls_stop(&t);
+        ASSERTm("no openssl s_server", up);
+        ASSERT(asked);
+        ASSERT_EQ(cases[i].post, post);
+    }
     PASS();
 }
 
@@ -570,6 +881,7 @@ static pthread_mutex_t g_set_mu = PTHREAD_MUTEX_INITIALIZER;
 static int g_set_calls;
 static int g_set_fd;
 static uint32_t g_set_mark;
+static unsigned g_set_dead_ms;
 
 static int record_mark(int fd, int level, int name, const void *val, socklen_t len)
 {
@@ -580,6 +892,8 @@ static int record_mark(int fd, int level, int name, const void *val, socklen_t l
     g_set_calls++;
     g_set_fd = fd;
     memcpy(&g_set_mark, val, sizeof g_set_mark);
+    socklen_t dl = sizeof g_set_dead_ms;
+    (void)getsockopt(fd, IPPROTO_TCP, TCP_USER_TIMEOUT, &g_set_dead_ms, &dl);
     pthread_mutex_unlock(&g_set_mu);
     return 0;
 }
@@ -601,6 +915,7 @@ TEST different_marks_never_share_a_connection(void)
     ASSERT_EQ(1, g_set_calls);
     ASSERT_EQ(7u, g_set_mark);
     ASSERT(g_set_fd >= 0);
+    ASSERT_EQ(FIRC_DOH_DETACH_MS, g_set_dead_ms);
     pthread_mutex_unlock(&g_set_mu);
     env_down(&e);
     firc_sub_fetch_set_setsockopt_for_test(NULL);
@@ -645,6 +960,119 @@ TEST a_mark_forgotten_mid_transfer_drops_its_share_after(void)
     ASSERT_EQ(2, atomic_load(&e.s.accepts));
     env_down(&e);
     firc_sub_fetch_set_setsockopt_for_test(NULL);
+    PASS();
+}
+
+static bool h2_up(env_t *e, int delay_ms)
+{
+    bool up = env_up(e, 200, "application/dns-message", delay_ms, 0);
+    atomic_store(&g_h2c, true);
+    e->s.h2 = true;
+    return up;
+}
+
+static bool asked_three(void *ud) { return atomic_load(&((srv_t *)ud)->asked) == 3; }
+
+/* Catches: a query put on the connection of a mark already forgotten, while another still runs on it. */
+TEST a_forgotten_mark_is_not_reused_by_a_query_beside_one_in_flight(void)
+{
+    firc_sub_fetch_set_setsockopt_for_test(record_mark);
+    env_t e;
+    ASSERT(h2_up(&e, 300));
+    got_t a = {0}, b = {0};
+    ASSERT_EQ(FIRC_OK, ask(&e, 7, 3000, &a, NULL));
+    run_for(e.loop, 100);
+    firc_doh_forget_mark(e.d, 7);
+    ASSERT_EQ(FIRC_OK, ask(&e, 7, 3000, &b, NULL));
+    pair_t p = {&a, &b};
+    ASSERT(run_until(e.loop, both_called, &p, 5000));
+    ASSERT(a.ok && b.ok);
+    ASSERT_EQ(2, atomic_load(&e.s.accepts));
+    env_down(&e);
+    firc_sub_fetch_set_setsockopt_for_test(NULL);
+    PASS();
+}
+
+/* Catches: an HTTP/2 connection that went silent (the WAN address changed under it) kept for the next query. */
+TEST a_silent_connection_is_dropped_after_a_timeout(void)
+{
+    env_t e;
+    srv_t other;
+    ASSERT(srv_start(&other, 200, "application/dns-message", 0, 0));
+    other.h2 = true;
+    ASSERT(h2_up(&e, 0));
+    char url[64];
+    snprintf(url, sizeof url, "http://127.0.0.1:%u/dns-query", other.port);
+    uint16_t id = e.id, other_id = firc_doh_intern(e.d, url);
+    got_t a = {0}, b = {0}, c = {0}, o1 = {0}, o2 = {0};
+    ASSERT_EQ(FIRC_OK, ask(&e, 0, 3000, &a, NULL));
+    ASSERT(run_until(e.loop, called, &a, 5000));
+    e.id = other_id;
+    ASSERT_EQ(FIRC_OK, ask(&e, 0, 3000, &o1, NULL));
+    ASSERT(run_until(e.loop, called, &o1, 5000));
+    e.id = id;
+    ASSERT(a.ok && o1.ok);
+    atomic_store(&e.s.silent_conns, 1);
+    atomic_store(&g_timeout_ms, 300);
+    ASSERT_EQ(FIRC_OK, ask(&e, 0, 3000, &b, NULL));
+    ASSERT(run_until(e.loop, called, &b, 5000));
+    ASSERT_FALSE(b.ok);
+    ASSERT_EQ(1, atomic_load(&e.s.accepts));
+    atomic_store(&g_timeout_ms, 0);
+    ASSERT_EQ(FIRC_OK, ask(&e, 0, 3000, &c, NULL));
+    ASSERT(run_until(e.loop, called, &c, 5000));
+    ASSERT(c.ok);
+    ASSERT_EQ(2, atomic_load(&e.s.accepts));
+    e.id = other_id;
+    ASSERT_EQ(FIRC_OK, ask(&e, 0, 3000, &o2, NULL));
+    ASSERT(run_until(e.loop, called, &o2, 5000));
+    ASSERT(o2.ok);
+    ASSERT_EQm("another server keeps its connection", 1, atomic_load(&other.accepts));
+    env_down(&e);
+    srv_stop(&other);
+    PASS();
+}
+
+/* Catches: a timeout taking the other queries of its connection with it. */
+TEST a_query_beside_one_that_timed_out_is_still_answered(void)
+{
+    env_t e;
+    ASSERT(h2_up(&e, 0));
+    got_t a = {0}, b = {0}, c = {0}, d = {0};
+    ASSERT_EQ(FIRC_OK, ask(&e, 0, 3000, &a, NULL));
+    ASSERT(run_until(e.loop, called, &a, 5000));
+    atomic_store(&e.s.swallow, 1);
+    atomic_store(&g_timeout_ms, 300);
+    e.s.delay_ms = 800;
+    ASSERT_EQ(FIRC_OK, ask(&e, 0, 3000, &b, NULL));
+    run_for(e.loop, 100);
+    atomic_store(&g_timeout_ms, 0);
+    ASSERT_EQ(FIRC_OK, ask(&e, 0, 3000, &c, NULL));
+    ASSERT(run_until(e.loop, called, &b, 5000));
+    ASSERT_FALSE(b.ok);
+    ASSERT_EQ(0, c.calls);
+    ASSERT(run_until(e.loop, called, &c, 5000));
+    ASSERT(c.ok);
+    ASSERT_EQ(1, atomic_load(&e.s.accepts));
+    ASSERT(run_until(e.loop, asked_three, &e.s, 1000));
+    ASSERT_EQ(FIRC_OK, ask(&e, 0, 3000, &d, NULL));
+    ASSERT(run_until(e.loop, called, &d, 5000));
+    ASSERT(d.ok);
+    ASSERT_EQ(2, atomic_load(&e.s.accepts));
+    env_down(&e);
+    PASS();
+}
+
+TEST an_idle_client_does_not_wake(void)
+{
+    env_t e;
+    ASSERT(env_up(&e, 200, "application/dns-message", 0, 0));
+    got_t g = {0};
+    ASSERT_EQ(FIRC_OK, ask(&e, 0, 2000, &g, NULL));
+    ASSERT(run_until(e.loop, called, &g, 5000));
+    run_for(e.loop, 200);
+    ASSERT_GT(atomic_load(&g_poll_ms), 60000);
+    env_down(&e);
     PASS();
 }
 
@@ -779,6 +1207,10 @@ SUITE(doh)
     RUN_TEST(plain_http_is_never_spoken);
     RUN_TEST(a_loopback_peer_is_never_connected);
     RUN_TEST(a_peer_in_the_pool_is_never_connected);
+    RUN_TEST(a_redirect_is_never_followed);
+    RUN_TEST(an_environment_proxy_is_never_used);
+    RUN_TEST(an_answer_longer_than_a_dns_message_is_a_failure);
+    RUN_TEST(a_certificate_is_checked_and_its_name_too);
     RUN_TEST(a_non_200_is_a_failure);
     RUN_TEST(a_wrong_content_type_is_a_failure);
     RUN_TEST(a_slow_server_times_out);
@@ -789,6 +1221,10 @@ SUITE(doh)
     RUN_TEST(different_marks_never_share_a_connection);
     RUN_TEST(a_forgotten_mark_opens_a_new_connection);
     RUN_TEST(a_mark_forgotten_mid_transfer_drops_its_share_after);
+    RUN_TEST(a_forgotten_mark_is_not_reused_by_a_query_beside_one_in_flight);
+    RUN_TEST(a_silent_connection_is_dropped_after_a_timeout);
+    RUN_TEST(a_query_beside_one_that_timed_out_is_still_answered);
+    RUN_TEST(an_idle_client_does_not_wake);
     RUN_TEST(a_full_loop_queue_delays_the_answer_not_loses_it);
     RUN_TEST(the_same_url_interns_to_one_id);
     RUN_TEST(free_with_a_query_in_flight_calls_nothing);

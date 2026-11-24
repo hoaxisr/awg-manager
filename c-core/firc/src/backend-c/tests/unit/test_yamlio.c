@@ -72,7 +72,8 @@ TEST a_group_resolver_may_be_a_doh_url(void)
     ASSERT_EQ(FIRC_OK, firc_config_init_defaults(&cfg));
     char log[2048];
     ASSERT_FALSE(load_str_logged(&cfg, doc, log, sizeof(log)) == FIRC_OK);
-    ASSERT(strstr(log, "resolve.server \"http://dns.comss.one/dns-query\"") != NULL);
+    ASSERT(strstr(log, "resolve.server \"http://dns.comss.one/…\"") != NULL);
+    ASSERT_EQ(NULL, strstr(log, "dns-query"));
     firc_config_clear(&cfg);
     PASS();
 }

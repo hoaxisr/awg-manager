@@ -583,7 +583,7 @@ static firc_err_t load_resolve(yaml_document_t *doc, node_t *n, firc_group_resol
     if (r->server != NULL && r->server[0] != '\0') {
         firc_resolver_list_t l;
         char why[256];
-        if (firc_resolver_list_parse(r->server, &l, why, sizeof(why)) != FIRC_RESOLVER_LIST_OK) {
+        if (firc_resolver_list_parse_for_log(r->server, &l, why, sizeof(why)) != FIRC_RESOLVER_LIST_OK) {
             FIRC_ERROR("config: group \"%s\": resolve.server %s", group_name != NULL ? group_name : "", why);
             return FIRC_ERR_INVAL;
         }

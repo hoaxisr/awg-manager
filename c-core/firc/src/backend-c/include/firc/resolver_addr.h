@@ -56,6 +56,9 @@ typedef struct firc_resolver_list {
    On failure why (may be NULL) gets the quoted bad entry or value and the reason. */
 firc_resolver_list_res_t firc_resolver_list_parse(const char *s, firc_resolver_list_t *out, char *why,
                                                   size_t why_cap);
+/* The same, with why fit for the log: no user, path or query of an entry in it. */
+firc_resolver_list_res_t firc_resolver_list_parse_for_log(const char *s, firc_resolver_list_t *out, char *why,
+                                                          size_t why_cap);
 
 bool firc_resolver_url_literal(const char *url, firc_ip_t *ip);
 
