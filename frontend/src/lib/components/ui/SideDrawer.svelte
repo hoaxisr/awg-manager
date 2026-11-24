@@ -131,7 +131,7 @@
 		max-width: 100%;
 		background: var(--color-bg-secondary);
 		border-left: 1px solid var(--color-border);
-		box-shadow: -2px 0 12px rgba(0, 0, 0, 0.14);
+		box-shadow: -2px 0 16px rgba(0, 0, 0, 0.3);
 		z-index: var(--z-drawer);
 		animation: slide-in-right 200ms ease;
 		display: flex;
@@ -161,10 +161,6 @@
 		flex: 1;
 		padding: 1rem;
 		overflow-y: auto;
-		overflow-x: hidden;
-		min-width: 0;
-		max-width: 100%;
-		box-sizing: border-box;
 	}
 
 	.drawer-footer {
@@ -205,7 +201,7 @@
 			border-left: none;
 			border-right: none;
 			border-top: 1px solid var(--color-border);
-			box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.16);
+			box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.3);
 			animation: slide-up 220ms ease-out;
 			transform: translateY(var(--sheet-drag-y, 0));
 			transition: transform 0.2s ease;
@@ -243,7 +239,7 @@
 		}
 
 		.drawer-close {
-			display: inline-flex;
+			display: none;
 		}
 
 		.drawer-body {

@@ -3,7 +3,8 @@
 	import { AlertTriangle, RefreshCcw } from 'lucide-svelte';
 	import { api } from '$lib/api/client';
 	import { m } from '$lib/i18n';
-	import { Button, Card } from '$lib/components/ui';
+	import { Button, Card, SegmentedControl } from '$lib/components/ui';
+	import type { SegmentedOption } from '$lib/components/ui';
 	import RichText from '$lib/components/ui/RichText.svelte';
 	import { notifications } from '$lib/stores/notifications';
 	import { warpFindJunkPush, warpScanPush, warpWatchPush } from '$lib/stores/warpscout';
@@ -256,7 +257,19 @@
 
 	let mobileSection = $state<'radar' | 'autopilot'>('radar');
 	const scanHitsCount = $derived(ws?.scan?.hits?.length ?? 0);
-	const anyAutopilotActive = $derived((ws?.config?.profiles ?? []).some((p) => p.enabled));
+	const activeProfilesCount = $derived((ws?.config?.profiles ?? []).filter((p) => p.enabled).length);
+	const mobileSectionOptions = $derived<SegmentedOption<'radar' | 'autopilot'>[]>([
+		{
+			value: 'radar',
+			label: scanHitsCount > 0 ? `${m.warpscout_radar_title()} (${scanHitsCount})` : m.warpscout_radar_title(),
+		},
+		{
+			value: 'autopilot',
+			label: activeProfilesCount > 0
+				? `${m.warpscout_autopilot_title()} (${activeProfilesCount})`
+				: m.warpscout_autopilot_title(),
+		},
+	]);
 </script>
 
 <div class="warp-tab">
@@ -339,29 +352,14 @@
 		</div>
 
 		<!-- Мобильный переключатель секций (убирает длинную прокрутку на телефоне) -->
-		<div class="mobile-section-bar" role="tablist" aria-label={m.warpscout_mobile_tabs_aria()}>
-			<button
-				type="button"
-				role="tab"
-				aria-selected={mobileSection === 'radar'}
-				class="mob-sec-btn"
-				class:active={mobileSection === 'radar'}
-				onclick={() => (mobileSection = 'radar')}
-			>
-				<span>{m.warpscout_radar_title()}</span>
-				{#if scanHitsCount > 0}<span class="mono mob-sec-count">({scanHitsCount})</span>{/if}
-			</button>
-			<button
-				type="button"
-				role="tab"
-				aria-selected={mobileSection === 'autopilot'}
-				class="mob-sec-btn"
-				class:active={mobileSection === 'autopilot'}
-				onclick={() => (mobileSection = 'autopilot')}
-			>
-				<span class="mob-dot" class:ok={anyAutopilotActive}></span>
-				<span>{m.warpscout_autopilot_title()}</span>
-			</button>
+		<div class="mobile-section-bar">
+			<SegmentedControl
+				value={mobileSection}
+				options={mobileSectionOptions}
+				ariaLabel={m.warpscout_mobile_tabs_aria()}
+				fullWidth
+				onchange={(v) => (mobileSection = v)}
+			/>
 		</div>
 
 		<!-- Два столбца: слева сканер узлов, справа автопилот с журналом подмен -->
@@ -415,7 +413,6 @@
 		flex-direction: column;
 		gap: 0.75rem;
 		margin-top: 0.55rem;
-		padding-bottom: 3.75rem;
 	}
 	.top-bar {
 		display: flex;
@@ -446,51 +443,6 @@
 	}
 	.mobile-section-bar {
 		display: none;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 2px;
-		padding: 2px;
-		background: var(--color-bg-tertiary);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-sm);
-	}
-	.mob-sec-btn {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		gap: 0.35rem;
-		height: 32px;
-		padding: 0 0.65rem;
-		border: 0;
-		border-radius: calc(var(--radius-sm) - 2px);
-		background: transparent;
-		color: var(--color-text-secondary);
-		font: inherit;
-		font-size: 0.78rem;
-		font-weight: 500;
-		cursor: pointer;
-		white-space: nowrap;
-	}
-	.mob-sec-btn.active {
-		background: var(--color-accent-tint);
-		color: var(--color-accent);
-		box-shadow: inset 0 0 0 1px var(--color-accent-border);
-		font-weight: 600;
-	}
-	.mob-sec-count {
-		font-size: 0.72rem;
-	}
-	.mob-dot {
-		width: 7px;
-		height: 7px;
-		border-radius: 50%;
-		flex-shrink: 0;
-		background: var(--color-text-muted);
-	}
-	.mob-dot.ok {
-		background: var(--color-success);
-	}
-	.mono {
-		font-family: var(--font-mono);
 	}
 	.cockpit-grid {
 		display: grid;
@@ -546,8 +498,11 @@
 	}
 
 	@media (max-width: 768px) {
+		.warp-tab {
+			padding-bottom: 3.75rem;
+		}
 		.mobile-section-bar {
-			display: grid;
+			display: block;
 		}
 		.mobile-hidden {
 			display: none;

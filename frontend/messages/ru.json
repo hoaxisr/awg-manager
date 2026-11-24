@@ -8543,7 +8543,6 @@
 	"warpscout_filters_summary_rtt": "≤ {ms} мс",
 	"warpscout_filters_summary_tg": "TG ✓",
 	"warpscout_row_more_aria": "Дополнительные действия",
-	"warpscout_create_tunnel_menu": "Создать туннель",
 	"warpscout_download_conf_menu": "Скачать .conf",
 	"warpscout_copy_ep_menu": "Копировать IP:порт",
 	"warpscout_start_scan_btn": "Начать сканирование",

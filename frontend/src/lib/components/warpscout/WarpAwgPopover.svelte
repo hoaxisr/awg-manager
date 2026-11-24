@@ -1,11 +1,12 @@
 <script lang="ts">
-	import { ChevronDown, Shield, Sparkles, Square } from 'lucide-svelte';
+	import { Shield, Sparkles, Square } from 'lucide-svelte';
 	import { api } from '$lib/api/client';
 	import { m } from '$lib/i18n';
 	import { notifications } from '$lib/stores/notifications';
 	import { signatureHostPresetOptions, type SignatureHostPreset } from '$lib/utils/protocols';
 	import { Badge, Button, Dropdown, SegmentedControl, SideDrawer } from '$lib/components/ui';
 	import type { DropdownOption, SegmentedOption } from '$lib/components/ui';
+	import WarpChipButton from './WarpChipButton.svelte';
 	import type {
 		WarpAWGParams,
 		WarpFindJunkStatus,
@@ -312,36 +313,24 @@
 	}
 </script>
 
-<div class="pop-anchor">
-	<button
-		bind:this={chipEl}
-		type="button"
-		class="status-chip"
-		class:active={open}
-		aria-haspopup="dialog"
-		aria-expanded={open}
-		title={m.warpscout_awg_chip_tip()}
-		onclick={() => (open = !open)}
-	>
-		<Shield size={13} class="chip-ic" />
-		<span class="chip-dim hide-sm">{m.warpscout_awg_chip_label()}</span>
-		<span class="mono chip-strong">{signatureProfileLabel(awg.signatureProfile)}</span>
-		{#if awg.generatedDomain && showDomainPool}
-			<span class="mono chip-dim hide-sm">· {awg.generatedDomain}</span>
-		{/if}
-		<span class="mono chip-dim">· Jc {awg.jc} · {awg.jmin}–{awg.jmax}</span>
-		{#if chipVerBadge}
-			<span class="chip-awg3" title={chipAwg3Tag}>
-				<Badge variant="info" size="xs">{chipVerBadge}</Badge>
-			</span>
-		{/if}
-		{#if junkRunning}
-			<span class="mono chip-dim">· {Math.max(1, findJunk?.attempt ?? 0)}/{findJunk?.maxAttempts ?? junkMaxAttempts}</span>
-		{/if}
-		{#if dirty}<span class="unsaved-dot" title={m.warpscout_unsaved_tip()}></span>{/if}
-		<span class="chev" class:open><ChevronDown size={13} /></span>
-	</button>
-</div>
+<WarpChipButton bind:buttonEl={chipEl} {open} title={m.warpscout_awg_chip_tip()} onclick={() => (open = !open)}>
+	<Shield size={13} class="chip-ic" />
+	<span class="chip-dim hide-sm">{m.warpscout_awg_chip_label()}</span>
+	<span class="mono chip-strong">{signatureProfileLabel(awg.signatureProfile)}</span>
+	{#if awg.generatedDomain && showDomainPool}
+		<span class="mono chip-dim hide-sm">· {awg.generatedDomain}</span>
+	{/if}
+	<span class="mono chip-dim">· Jc {awg.jc} · {awg.jmin}–{awg.jmax}</span>
+	{#if chipVerBadge}
+		<span class="chip-awg3" title={chipAwg3Tag}>
+			<Badge variant="info" size="xs">{chipVerBadge}</Badge>
+		</span>
+	{/if}
+	{#if junkRunning}
+		<span class="mono chip-dim">· {Math.max(1, findJunk?.attempt ?? 0)}/{findJunk?.maxAttempts ?? junkMaxAttempts}</span>
+	{/if}
+	{#if dirty}<span class="unsaved-dot" title={m.warpscout_unsaved_tip()}></span>{/if}
+</WarpChipButton>
 
 <SideDrawer {open} title={m.warpscout_awg_pop_title()} width={460} onClose={closeDrawer}>
 	<div class="awg-drawer-content">
@@ -713,73 +702,13 @@
 </SideDrawer>
 
 <style>
-	.pop-anchor {
-		position: relative;
-		display: inline-flex;
-		min-width: 0;
-		max-width: 100%;
-	}
-	.status-chip {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.35rem;
-		height: 32px;
-		min-width: 0;
-		max-width: 100%;
-		overflow: hidden;
-		padding: 0 0.65rem;
-		border-radius: var(--radius-sm);
-		border: 1px solid var(--color-border);
-		background: var(--color-bg-secondary);
-		color: var(--color-text-primary);
-		font: inherit;
-		font-size: 0.75rem;
-		cursor: pointer;
-		white-space: nowrap;
-		transition: border-color 0.15s ease, background 0.15s ease;
-	}
-	.status-chip:hover {
-		border-color: var(--color-border-hover);
-		background: var(--color-bg-hover);
-	}
-	.status-chip.active {
-		border-color: var(--color-accent);
-		background: var(--color-accent-tint);
-	}
-	.status-chip :global(.chip-ic) {
-		color: var(--color-text-muted);
-		flex-shrink: 0;
-	}
-	.chip-strong {
-		min-width: 0;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		font-weight: 600;
-		color: var(--color-text-primary);
-	}
-	.chip-dim {
-		color: var(--color-text-secondary);
-	}
-	.unsaved-dot {
-		width: 6px;
-		height: 6px;
-		border-radius: 50%;
-		background: var(--color-warning);
-		flex-shrink: 0;
-	}
-	.chev {
-		display: inline-flex;
-		flex-shrink: 0;
-		color: var(--color-text-muted);
-		transition: transform 0.15s ease;
-	}
-	.chev.open {
-		transform: rotate(180deg);
-	}
 	.awg-drawer-content {
 		display: flex;
 		flex-direction: column;
 		gap: 0.75rem;
+		min-width: 0;
+		max-width: 100%;
+		overflow-x: hidden;
 	}
 	.awg-drawer-tabs {
 		display: flex;
@@ -1002,12 +931,6 @@
 		.awg-footer-actions {
 			margin-left: 0;
 			justify-content: flex-end;
-		}
-	}
-
-	@media (max-width: 720px) {
-		.hide-sm {
-			display: none;
 		}
 	}
 

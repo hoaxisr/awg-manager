@@ -469,7 +469,7 @@
     padding: 4px;
     max-height: 280px;
     overflow-y: auto;
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
     display: flex;
     flex-direction: column;
     gap: 1px;
@@ -508,7 +508,7 @@
   }
 
   :global(.dropdown-panel .option:disabled) {
-    opacity: 0.62;
+    opacity: 0.4;
     cursor: not-allowed;
   }
 
@@ -545,8 +545,9 @@
   :global(.dropdown-panel .option-desc) {
     font-size: 11px;
     color: var(--color-text-muted);
-    white-space: normal;
-    line-height: 1.3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   :global(.dropdown-panel .option-check) {

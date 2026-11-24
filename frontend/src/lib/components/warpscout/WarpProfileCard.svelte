@@ -281,15 +281,19 @@
 	.live-metric {
 		display: inline-flex;
 		align-items: baseline;
+		flex-wrap: wrap;
 		gap: 0.45rem;
 		padding: 0.15rem 0.55rem;
 		border-radius: var(--radius-sm);
 		background: var(--color-bg-secondary);
 		border: 1px solid var(--color-border);
+		max-width: 100%;
 	}
 	.live-ms {
 		font-size: 0.82rem;
 		font-weight: 700;
+		white-space: nowrap;
+		flex-shrink: 0;
 	}
 	.live-ms.ok {
 		color: var(--latency-color-ok, var(--color-success));
@@ -350,5 +354,13 @@
 	}
 	.warn {
 		color: var(--color-warning);
+	}
+
+	@media (max-width: 640px) {
+		.tel-right {
+			width: 100%;
+			justify-content: flex-end;
+			margin-left: 0;
+		}
 	}
 </style>

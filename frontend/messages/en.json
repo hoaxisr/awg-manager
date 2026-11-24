@@ -8143,7 +8143,6 @@
 	"warpscout_filters_summary_rtt": "≤ {ms} ms",
 	"warpscout_filters_summary_tg": "TG ✓",
 	"warpscout_row_more_aria": "More actions",
-	"warpscout_create_tunnel_menu": "Create tunnel",
 	"warpscout_download_conf_menu": "Download .conf",
 	"warpscout_copy_ep_menu": "Copy IP:port",
 	"warpscout_start_scan_btn": "Start scan",

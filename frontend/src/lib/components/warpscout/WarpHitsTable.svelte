@@ -29,7 +29,7 @@
 		}
 		const btn = e.currentTarget as HTMLButtonElement;
 		const rect = btn.getBoundingClientRect();
-		const menuH = onexport ? 120 : 86;
+		const menuH = onexport ? 86 : 48;
 		const spaceBelow = window.innerHeight - rect.bottom - 12;
 		const openUp = spaceBelow < menuH && rect.top > menuH + 12;
 		rowMenuPos = {
@@ -44,16 +44,36 @@
 		rowMenuHit = null;
 	}
 
+	function handleMenuExport(): void {
+		const hit = rowMenuHit;
+		closeRowMenu();
+		if (hit) onexport?.(hit);
+	}
+
+	function handleMenuCopy(): void {
+		const hit = rowMenuHit;
+		closeRowMenu();
+		if (hit) void copyEndpoint(hit.endpoint);
+	}
+
 	function handleWindowPointerDown(e: PointerEvent): void {
 		if (!rowMenuHit) return;
 		const t = e.target as HTMLElement | null;
-		if (t?.closest('.row-overflow-menu') || t?.closest('.row-more-btn')) return;
+		if (t?.closest('.row-overflow-menu') || t?.closest('.row-more-wrap')) return;
 		closeRowMenu();
 	}
 
 	function handleWindowKeyDown(e: KeyboardEvent): void {
 		if (e.key === 'Escape' && rowMenuHit) closeRowMenu();
 	}
+
+	$effect(() => {
+		if (!rowMenuHit) return;
+		window.addEventListener('scroll', closeRowMenu, true);
+		return () => {
+			window.removeEventListener('scroll', closeRowMenu, true);
+		};
+	});
 
 	async function copyEndpoint(ep: string): Promise<void> {
 		const ok = await copyToClipboard(ep);
@@ -65,11 +85,10 @@
 <svelte:window
 	onpointerdown={handleWindowPointerDown}
 	onkeydown={handleWindowKeyDown}
-	onscroll={closeRowMenu}
 	onresize={closeRowMenu}
 />
 
-<div class="hits-table-wrap">
+<div class="hits-table-wrap" onscroll={closeRowMenu}>
 	<table class="hits">
 		<thead>
 			<tr>
@@ -151,23 +170,30 @@
 							</Button>
 						</div>
 
-						<!-- Десктоп / компактный вид: основное действие + меню «⋯» -->
+						<!-- Десктоп / компактный вид: видимые основные действия + меню «⋯» -->
 						<div class="actions-desktop">
+							<Button
+								size="sm"
+								variant="outline-primary"
+								title={m.warpscout_create_tunnel_tip()}
+								onclick={() => oncreate(h)}
+							>
+								{#snippet iconBefore()}<Plus size={12} />{/snippet}
+								{m.warpscout_tunnel_btn()}
+							</Button>
 							<Button size="sm" variant="secondary" title={m.warpscout_swap_ep_tip()} onclick={() => onswap(h)}>
 								{#snippet iconBefore()}<Repeat size={12} />{/snippet}
 								{m.warpscout_swap_btn()}
 							</Button>
-							<button
-								type="button"
-								class="row-more-btn"
-								class:open={rowMenuHit?.endpoint === h.endpoint}
-								aria-label={m.warpscout_row_more_aria()}
-								aria-haspopup="menu"
-								aria-expanded={rowMenuHit?.endpoint === h.endpoint}
-								onclick={(e) => toggleRowMenu(h, e)}
-							>
-								<MoreHorizontal size={14} />
-							</button>
+							<span class="row-more-wrap" class:open={rowMenuHit?.endpoint === h.endpoint}>
+								<IconButton
+									ariaLabel={m.warpscout_row_more_aria()}
+									title={m.warpscout_row_more_aria()}
+									onclick={(e) => toggleRowMenu(h, e)}
+								>
+									<MoreHorizontal size={14} />
+								</IconButton>
+							</span>
 						</div>
 					</td>
 				</tr>
@@ -177,7 +203,6 @@
 </div>
 
 {#if rowMenuHit}
-	{@const hit = rowMenuHit}
 	<div
 		class="row-overflow-menu"
 		class:open-up={rowMenuPos.openUp}
@@ -185,27 +210,12 @@
 		style:top={`${rowMenuPos.top}px`}
 		style:right={`${rowMenuPos.right}px`}
 	>
-		<button
-			type="button"
-			class="row-menu-item"
-			role="menuitem"
-			onclick={() => {
-				closeRowMenu();
-				oncreate(hit);
-			}}
-		>
-			<Plus size={13} />
-			<span>{m.warpscout_create_tunnel_menu()}</span>
-		</button>
 		{#if onexport}
 			<button
 				type="button"
 				class="row-menu-item"
 				role="menuitem"
-				onclick={() => {
-					closeRowMenu();
-					onexport(hit);
-				}}
+				onclick={handleMenuExport}
 			>
 				<Download size={13} />
 				<span>{m.warpscout_download_conf_menu()}</span>
@@ -215,10 +225,7 @@
 			type="button"
 			class="row-menu-item"
 			role="menuitem"
-			onclick={() => {
-				closeRowMenu();
-				void copyEndpoint(hit.endpoint);
-			}}
+			onclick={handleMenuCopy}
 		>
 			<Copy size={13} />
 			<span>{m.warpscout_copy_ep_menu()}</span>
@@ -342,24 +349,12 @@
 	.actions-mobile {
 		display: none;
 	}
-	.row-more-btn {
+	.row-more-wrap {
 		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 28px;
-		height: 28px;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-sm);
-		background: var(--color-bg-secondary);
-		color: var(--color-text-secondary);
-		cursor: pointer;
-		transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
 	}
-	.row-more-btn:hover,
-	.row-more-btn.open {
-		color: var(--color-text-primary);
-		border-color: var(--color-border-hover);
+	.row-more-wrap.open :global(.icon-btn) {
 		background: var(--color-bg-hover);
+		color: var(--color-accent);
 	}
 	.row-overflow-menu {
 		position: fixed;

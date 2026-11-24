@@ -618,10 +618,27 @@ describe('WarpScoutTab', () => {
 
 		try {
 			const view = await mount(initial);
-			await waitFor(() => expect(view.container.querySelector('.actions-cell')).not.toBeNull());
-			const exportBtn = view.container.querySelector<HTMLButtonElement>('.actions-cell button:first-of-type');
-			expect(exportBtn).not.toBeNull();
-			await fireEvent.click(exportBtn!);
+			await waitFor(() => expect(view.container.querySelector('.actions-desktop')).not.toBeNull());
+			const desktopActions = view.container.querySelector<HTMLElement>('.actions-desktop')!;
+			const createBtn = desktopActions.querySelector<HTMLButtonElement>('button[title="Создать новый туннель WARP"]');
+			const swapBtn = desktopActions.querySelector<HTMLButtonElement>('button[title="Подменить узел в существующем туннеле"]');
+			expect(createBtn?.textContent?.trim()).toBe('Создать');
+			expect(swapBtn?.textContent?.trim()).toBe('Подменить');
+
+			const moreBtn = desktopActions.querySelector<HTMLButtonElement>('.row-more-wrap button');
+			expect(moreBtn).not.toBeNull();
+			await fireEvent.click(moreBtn!);
+
+			const menu = await waitFor(() => {
+				const el = view.container.querySelector<HTMLElement>('.row-overflow-menu[role="menu"]');
+				expect(el).not.toBeNull();
+				return el!;
+			});
+			const exportItem = Array.from(menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find((btn) =>
+				btn.textContent?.includes('Скачать .conf'),
+			);
+			expect(exportItem).not.toBeUndefined();
+			await fireEvent.click(exportItem!);
 
 			await waitFor(() =>
 				expect(api.warpscoutExport).toHaveBeenCalledWith({
@@ -632,6 +649,14 @@ describe('WarpScoutTab', () => {
 			);
 			expect(createUrlSpy).toHaveBeenCalled();
 			expect(revokeUrlSpy).toHaveBeenCalledWith('blob:mock');
+			await waitFor(() => expect(view.container.querySelector('.row-overflow-menu')).toBeNull());
+
+			// Повторно открываем меню и проверяем закрытие при скролле таблицы .hits-table-wrap.
+			await fireEvent.click(moreBtn!);
+			await waitFor(() => expect(view.container.querySelector('.row-overflow-menu')).not.toBeNull());
+			const wrap = view.container.querySelector<HTMLElement>('.hits-table-wrap')!;
+			await fireEvent.scroll(wrap);
+			await waitFor(() => expect(view.container.querySelector('.row-overflow-menu')).toBeNull());
 		} finally {
 			clickSpy.mockRestore();
 			URL.createObjectURL = origCreateUrl;

@@ -1,7 +1,9 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import { ChevronDown, X } from 'lucide-svelte';
+	import { X } from 'lucide-svelte';
 	import { m } from '$lib/i18n';
+	import { IconButton } from '$lib/components/ui';
+	import WarpChipButton from './WarpChipButton.svelte';
 
 	interface Props {
 		/** Содержимое кнопки-чипа (без шеврона). */
@@ -56,19 +58,9 @@
 </script>
 
 <div class="pop-anchor" bind:this={rootEl}>
-	<button
-		bind:this={chipEl}
-		type="button"
-		class="status-chip"
-		class:active={open}
-		aria-haspopup="dialog"
-		aria-expanded={open}
-		title={chipTitle}
-		onclick={() => (open = !open)}
-	>
+	<WarpChipButton bind:buttonEl={chipEl} {open} title={chipTitle} onclick={() => (open = !open)}>
 		{@render chip()}
-		<span class="chev" class:open><ChevronDown size={13} /></span>
-	</button>
+	</WarpChipButton>
 
 	{#if open}
 		<div class="pop-backdrop" role="presentation" onclick={() => (open = false)}></div>
@@ -84,9 +76,9 @@
 					<span class="pop-title">{title}</span>
 					{#if headExtra}{@render headExtra()}{/if}
 				</div>
-				<button type="button" class="pop-close" aria-label={m.common_close()} onclick={close}>
+				<IconButton ariaLabel={m.common_close()} title={m.common_close()} onclick={close}>
 					<X size={15} />
-				</button>
+				</IconButton>
 			</div>
 			{@render children(close)}
 		</div>
@@ -102,76 +94,6 @@
 	}
 	.pop-backdrop {
 		display: none;
-	}
-	.status-chip {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.35rem;
-		height: 32px;
-		min-width: 0;
-		max-width: 100%;
-		overflow: hidden;
-		padding: 0 0.65rem;
-		border-radius: var(--radius-sm);
-		border: 1px solid var(--color-border);
-		background: var(--color-bg-secondary);
-		color: var(--color-text-primary);
-		font: inherit;
-		font-size: 0.75rem;
-		cursor: pointer;
-		white-space: nowrap;
-		transition: border-color 0.15s ease, background 0.15s ease;
-	}
-	.status-chip:hover {
-		border-color: var(--color-border-hover);
-		background: var(--color-bg-hover);
-	}
-	.status-chip.active {
-		border-color: var(--color-accent);
-		background: var(--color-accent-tint);
-	}
-	/* Содержимое чипа приходит сниппетом из родителя — отсюда :global. */
-	.status-chip :global(.chip-ic) {
-		color: var(--color-text-muted);
-		flex-shrink: 0;
-	}
-	/* Длинное значение (подпись маршрута) сжимается с многоточием, а не
-	   растягивает страницу по горизонтали. */
-	.status-chip :global(.chip-strong) {
-		min-width: 0;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		font-weight: 600;
-		color: var(--color-text-primary);
-	}
-	.status-chip :global(.chip-dim) {
-		color: var(--color-text-secondary);
-	}
-	.status-chip :global(.chip-sep) {
-		color: var(--color-text-muted);
-	}
-	.status-chip :global(.chip-dot) {
-		width: 7px;
-		height: 7px;
-		border-radius: 50%;
-		flex-shrink: 0;
-		background: var(--color-success);
-	}
-	.status-chip :global(.unsaved-dot) {
-		width: 6px;
-		height: 6px;
-		border-radius: 50%;
-		background: var(--color-warning);
-		flex-shrink: 0;
-	}
-	.chev {
-		display: inline-flex;
-		flex-shrink: 0;
-		color: var(--color-text-muted);
-		transition: transform 0.15s ease;
-	}
-	.chev.open {
-		transform: rotate(180deg);
 	}
 
 	.popover {
@@ -212,24 +134,6 @@
 		gap: 0.45rem;
 		min-width: 0;
 		flex-wrap: wrap;
-	}
-	.pop-close {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 26px;
-		height: 26px;
-		border: 1px solid transparent;
-		border-radius: var(--radius-sm);
-		background: transparent;
-		color: var(--color-text-muted);
-		cursor: pointer;
-		flex-shrink: 0;
-	}
-	.pop-close:hover {
-		color: var(--color-text-primary);
-		background: var(--color-bg-tertiary);
-		border-color: var(--color-border);
 	}
 	.pop-title {
 		font-size: 0.82rem;
@@ -281,12 +185,6 @@
 			border-bottom: 0;
 			box-shadow: none;
 			padding: 0.9rem 1rem 1.1rem;
-		}
-	}
-
-	@media (max-width: 720px) {
-		.status-chip :global(.hide-sm) {
-			display: none;
 		}
 	}
 </style>
