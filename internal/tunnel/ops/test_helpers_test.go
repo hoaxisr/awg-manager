@@ -156,6 +156,8 @@ type ipRunRecorder struct {
 	// failErr — текст отказа; пусто = «нет такого маршрута» (ответ ip(8) на
 	// снятие того, чего нет).
 	failErr string
+	// stdout — вывод команд, чей argv содержит ключ.
+	stdout map[string]string
 }
 
 func (r *ipRunRecorder) run(_ context.Context, name string, args ...string) (*exec.Result, error) {
@@ -167,6 +169,11 @@ func (r *ipRunRecorder) run(_ context.Context, name string, args ...string) (*ex
 		}
 		// Как у живого exec.Run: причина в stderr, в ошибке — только код.
 		return &exec.Result{ExitCode: 2, Stderr: "RTNETLINK answers: No such process"}, errors.New("exit status 2")
+	}
+	for k, out := range r.stdout {
+		if strings.Contains(call, k) {
+			return &exec.Result{Stdout: out}, nil
+		}
 	}
 	return &exec.Result{}, nil
 }
