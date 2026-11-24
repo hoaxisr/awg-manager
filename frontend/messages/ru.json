@@ -2714,7 +2714,6 @@
 	"proxy_adv_diag_key_hint": "Генерирует новый diag.key сервера. Старые ссылки с прежним dk= перестанут проходить проверку при неверном пароле; запущенный сервер будет перезапущен.",
 	"proxy_adv_diag_key_aria": "Подсказка: ключ диагностики",
 	"proxy_adv_diag_key_rotated": "Ключ диагностики обновлён",
-	"proxy_adv_diag_key_rotated_restarted": "Ключ диагностики обновлён, сервер перезапущен",
 	"proxy_adv_backend": "Бэкенд (connect)",
 	"proxy_adv_tunnel_mode": "Режим туннеля",
 	"proxy_adv_kill_ports": "Освобождение портов",

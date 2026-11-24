@@ -2648,7 +2648,6 @@
 	"proxy_adv_diag_key_hint": "Generates a new server diag.key. Older links with the previous dk= will no longer check password status; a running server will be restarted.",
 	"proxy_adv_diag_key_aria": "Hint: diagnostics key",
 	"proxy_adv_diag_key_rotated": "Diagnostics key rotated",
-	"proxy_adv_diag_key_rotated_restarted": "Diagnostics key rotated, server restarted",
 	"proxy_adv_backend": "Backend (connect)",
 	"proxy_adv_tunnel_mode": "Tunnel mode",
 	"proxy_adv_kill_ports": "Free the ports",

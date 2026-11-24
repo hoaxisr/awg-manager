@@ -291,6 +291,8 @@ func execRunner(ctx context.Context, binary string, args []string) (string, stri
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	// Потомок, удержавший stdout, не должен держать обработчик и слот после Kill.
+	cmd.WaitDelay = 2 * time.Second
 	err := cmd.Run()
 	exitCode := 0
 	if err != nil {

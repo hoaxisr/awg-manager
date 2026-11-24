@@ -287,27 +287,6 @@ describe('ExitDetail: кнопка диагностики WDTT', () => {
 		expect(apiMock.runWdttClientDiag).toHaveBeenCalledTimes(1);
 	});
 
-	it('модалка диагностики закрывается при смене row.id без перемонтирования', async () => {
-		const { findByRole, findByText, queryByText, rerender } = mount('diag-poll-1', 'raw');
-		await fireEvent.click(await findByRole('button', { name: 'Диагностика' }));
-		await fireEvent.click(await findByRole('button', { name: 'Проверить' }));
-		await waitFor(() => expect(apiMock.runWdttClientDiag).toHaveBeenCalledTimes(1));
-		expect(await findByText('Путь ОК')).toBeTruthy();
-
-		await rerender({
-			row: row('diag-poll-2', 'raw'),
-			status: { ...status },
-			wdttClient: { ...CLIENT, connMode: 'raw' },
-			policies: [] as AccessPolicy[],
-			tunnels: [] as TunnelListItem[],
-			onstart: () => {},
-			onstop: () => {},
-			onsave: async () => null,
-			onreload: () => {},
-		});
-		await waitFor(() => expect(queryByText('Путь ОК')).toBeNull());
-	});
-
 	it('подсказка diagKeySet обновляется реактивно из пропа wdttClient без перемонтирования', async () => {
 		const { findByRole, queryByText, rerender } = mount('diag-dk-1', 'wg');
 		await fireEvent.click(await findByRole('button', { name: 'Диагностика' }));

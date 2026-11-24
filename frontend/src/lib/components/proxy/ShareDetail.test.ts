@@ -44,7 +44,7 @@ const notify = vi.hoisted(() => ({
 }));
 vi.mock("$lib/stores/notifications", () => ({ notifications: notify }));
 
-import { render, fireEvent, waitFor } from "@testing-library/svelte";
+import { render, fireEvent, waitFor, within } from "@testing-library/svelte";
 import ShareDetail from "./ShareDetail.svelte";
 import type { ProxyInstanceRow } from "./rows";
 
@@ -181,13 +181,18 @@ describe("ShareDetail: смена ключа диагностики", () => {
     await fireEvent.click(r.getByRole("button", { name: "Настройки" }));
     await fireEvent.click(r.getByRole("button", { name: "Дополнительно" }));
     await fireEvent.click(await r.findByRole("button", { name: "Сменить ключ" }));
+    // Сам ключ меняет только подтверждение в модалке.
+    expect(apiMock.rotateWdttServerDiagKey).not.toHaveBeenCalled();
+    await fireEvent.click(
+      within(await r.findByRole("dialog", { name: "Сменить ключ" })).getByRole("button", { name: "Сменить ключ" }),
+    );
 
     await waitFor(() =>
       expect(apiMock.rotateWdttServerDiagKey).toHaveBeenCalledWith("default"),
     );
     await waitFor(() => expect(onrestart).toHaveBeenCalledTimes(1));
     expect(notify.success).toHaveBeenCalledWith(
-      "Ключ диагностики обновлён, сервер перезапущен",
+      "Ключ диагностики обновлён",
     );
   });
 
@@ -210,6 +215,11 @@ describe("ShareDetail: смена ключа диагностики", () => {
     await fireEvent.click(r.getByRole("button", { name: "Настройки" }));
     await fireEvent.click(r.getByRole("button", { name: "Дополнительно" }));
     await fireEvent.click(await r.findByRole("button", { name: "Сменить ключ" }));
+    // Сам ключ меняет только подтверждение в модалке.
+    expect(apiMock.rotateWdttServerDiagKey).not.toHaveBeenCalled();
+    await fireEvent.click(
+      within(await r.findByRole("dialog", { name: "Сменить ключ" })).getByRole("button", { name: "Сменить ключ" }),
+    );
 
     await waitFor(() =>
       expect(apiMock.rotateWdttServerDiagKey).toHaveBeenCalledWith("default"),

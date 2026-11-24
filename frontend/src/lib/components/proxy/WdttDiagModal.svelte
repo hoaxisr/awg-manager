@@ -154,7 +154,7 @@
 
 		{#if running}
 			<div class="running-box" role="status">
-				<span class="spinner" aria-hidden="true"></span>
+				<span class="diag-spinner" aria-hidden="true"></span>
 				<span>{m.proxy_wdtt_diag_running()}</span>
 			</div>
 		{:else if !result && !errorText}
@@ -235,7 +235,7 @@
 		line-height: 1.45;
 	}
 
-	.spinner {
+	.diag-spinner {
 		width: 0.875rem;
 		height: 0.875rem;
 		border: 2px solid var(--color-border);

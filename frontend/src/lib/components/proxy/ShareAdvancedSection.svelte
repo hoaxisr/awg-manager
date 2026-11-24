@@ -4,7 +4,7 @@
 	// server.log и освобождение портов. Свёрнута: глобального режима «Эксперт»
 	// больше нет (решение Q7 ИА).
 	import { m } from '$lib/i18n';
-	import { Button, Dropdown, FieldHint, Input, SegmentedControl } from '$lib/components/ui';
+	import { Button, ConfirmModal, Dropdown, FieldHint, Input, SegmentedControl } from '$lib/components/ui';
 	import { modeOptions } from '../freeturn/options';
 	import { listenPortNumber } from '$lib/utils/listenPortUtils';
 	import { effectiveStaticWan } from '$lib/api/proxyInstances';
@@ -42,6 +42,9 @@
 		onrotatediagkey,
 		rotatingDiagKey = false,
 	}: Props = $props();
+
+	// Смена ключа гасит розданные ссылки и перезапускает сервер — через подтверждение.
+	let rotateOpen = $state(false);
 
 	// Внутренний WG-порт: наружу на него не приходят, снаружи не виден.
 	const wgPort = $derived(String(wdttServer?.wgPort || 56001));
@@ -140,7 +143,7 @@
 					size="sm"
 					loading={rotatingDiagKey}
 					disabled={busy || rotatingDiagKey}
-					onclick={() => onrotatediagkey?.()}
+					onclick={() => (rotateOpen = true)}
 				>
 					{m.proxy_adv_diag_key_rotate()}
 				</Button>
@@ -159,6 +162,18 @@
 
 	<KillPortSection title={m.proxy_adv_kill_ports()} {ports} />
 </DetailSection>
+
+<ConfirmModal
+	open={rotateOpen}
+	title={m.proxy_adv_diag_key_rotate()}
+	message={m.proxy_adv_diag_key_hint()}
+	confirmLabel={m.proxy_adv_diag_key_rotate()}
+	onConfirm={() => {
+		rotateOpen = false;
+		void onrotatediagkey?.();
+	}}
+	onClose={() => (rotateOpen = false)}
+/>
 
 <style>
 	.grid {

@@ -300,6 +300,35 @@ func TestHandler_UnsupportedTimeoutBusyAndRedactedFailure(t *testing.T) {
 		}
 	})
 
+	t.Run("request cancel stops run and frees slot", func(t *testing.T) {
+		started := make(chan struct{}, 1)
+		h := New(Deps{
+			Records: recs,
+			Binary:  bin,
+			Timeout: 5 * time.Second,
+			Runner: func(ctx context.Context, _ string, _ []string) (string, string, int, error) {
+				started <- struct{}{}
+				<-ctx.Done()
+				return "", "", -1, ctx.Err()
+			},
+		})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go func() {
+			<-started
+			cancel()
+		}()
+		req := httptest.NewRequest(http.MethodPost, "/", nil).WithContext(ctx)
+		rr := httptest.NewRecorder()
+		h.Serve(rr, req, rec.Key())
+		if rr.Code != http.StatusRequestTimeout || decodeEnv(t, rr).Code != "WDTT_DIAG_CANCELED" {
+			t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+		}
+		if !h.acquire() {
+			t.Fatal("слот не освобождён после отмены")
+		}
+	})
+
 	t.Run("global single flight returns 409 busy even across distinct instances", func(t *testing.T) {
 		secondRec := clientRec("wg")
 		secondRec.ID = "de"

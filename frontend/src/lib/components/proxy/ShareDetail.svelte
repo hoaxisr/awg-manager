@@ -282,12 +282,9 @@
 			rotatingDiagKey = true;
 			try {
 				await api.rotateWdttServerDiagKey(row.id);
-				if (running) {
-					await onrestart();
-					notifications.success(m.proxy_adv_diag_key_rotated_restarted());
-				} else {
-					notifications.success(m.proxy_adv_diag_key_rotated());
-				}
+				notifications.success(m.proxy_adv_diag_key_rotated());
+				// Отказ перезапуска показывает сам onrestart.
+				if (running) await onrestart();
 			} finally {
 				rotatingDiagKey = false;
 			}

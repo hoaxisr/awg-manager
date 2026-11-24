@@ -103,18 +103,6 @@
 	// Настройки — одноразовые: уезжают в ящик, как у раздачи.
 	let settingsOpen = $state(false);
 	let diagOpen = $state(false);
-	// Закрываем модалку только при смене id инстанса (на случай монтирования
-	// без {#key}): фоновый поллинг пересоздаёт объект row с тем же id и не
-	// должен сбрасывать открытую диагностику.
-	let prevRowId = untrack(() => row.id);
-
-	$effect(() => {
-		const id = row.id;
-		if (id !== prevRowId) {
-			prevRowId = id;
-			diagOpen = false;
-		}
-	});
 
 	// Правило имён ia.md §1.0: на странице NDMS-имя, kernel-имя — под (i).
 	const rawNdms = $derived(wdttStatus?.ndmsIface?.trim() || wdttClient?.ndmsIface?.trim() || '');
