@@ -162,8 +162,8 @@
 		{/if}
 
 		{#if errorText}
-			<div class="error-box" role="alert">
-				<p class="error-text">{errorText}</p>
+			<div class="diag-err-box" role="alert">
+				<p class="diag-err-msg">{errorText}</p>
 			</div>
 		{:else if result}
 			<WdttDiagResultView {result} />
@@ -251,14 +251,14 @@
 		}
 	}
 
-	.error-box {
+	.diag-err-box {
 		border: 1px solid var(--color-error-border);
 		border-radius: var(--radius);
 		padding: 0.75rem 0.875rem;
 		background: var(--color-error-tint);
 	}
 
-	.error-text {
+	.diag-err-msg {
 		margin: 0;
 		font-size: 0.8125rem;
 		color: var(--color-text-secondary);
