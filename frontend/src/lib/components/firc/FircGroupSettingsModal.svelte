@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { m } from '$lib/i18n';
 	import { Button, Badge, Toggle, Modal } from '$lib/components/ui';
 	import { LayoutGrid } from 'lucide-svelte';
@@ -56,6 +57,21 @@
 		form.listEnabled ? searchFircCatalog(catalog, form.listUrl, 100) : { items: [], total: 0 },
 	);
 	let catalogMatches = $derived(catalogSearch.items);
+
+	// Ошибка формы молчит, пока пользователь ничего не изменил и не пробовал применить.
+	let openedForm = $state('');
+	let attempted = $state(false);
+	$effect.pre(() => {
+		if (!open) return;
+		openedForm = untrack(() => JSON.stringify(form));
+		attempted = false;
+	});
+	let shownError = $derived(attempted || JSON.stringify(form) !== openedForm ? formError : '');
+
+	function submit() {
+		attempted = true;
+		if (!formError) onsubmit();
+	}
 </script>
 
 <!-- Modal 1: Group Create / Settings -->
@@ -218,9 +234,9 @@
 
 	{#snippet actions()}
 		<div class="modal-footer-btns">
-			{#if formError}<span class="form-err" role="alert">{formError}</span>{/if}
+			{#if shownError}<span class="form-err" role="alert">{shownError}</span>{/if}
 			<Button variant="ghost" size="sm" onclick={onclose}>{m.common_cancel()}</Button>
-			<Button variant="primary" size="sm" disabled={Boolean(formError)} onclick={onsubmit}>
+			<Button variant="primary" size="sm" disabled={Boolean(shownError)} onclick={submit}>
 				{mode === 'create' ? m.firc_groups_modal_create_btn() : m.common_apply()}
 			</Button>
 		</div>

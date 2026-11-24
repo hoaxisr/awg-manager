@@ -86,6 +86,21 @@ describe('DNS группы FIRC', () => {
 		expect(saved.resolve).toEqual({ server: DOH, fallback: false });
 	});
 
+	it('shows the form error only after input or an attempt to apply', async () => {
+		groups = [vpn({ interface: 'dns', resolve: { server: '' } })];
+		await openSettings();
+		expect(screen.queryByRole('alert')).toBeNull();
+		await fireEvent.click(button(m.common_apply()));
+		expect(screen.getByRole('alert').textContent).toBe(m.firc_dns_only_server_required());
+		expect(button(m.common_apply()).disabled).toBe(true);
+
+		await fireEvent.click(button(m.common_cancel()));
+		await fireEvent.click(await screen.findByTitle(m.firc_groups_settings_tip()));
+		expect(screen.queryByRole('alert')).toBeNull();
+		await fireEvent.input(document.getElementById('firc-gm-name') as HTMLInputElement, { target: { value: 'x' } });
+		expect(screen.getByRole('alert')).toBeTruthy();
+	});
+
 	it('edits the server list with inline errors and a limit of four', async () => {
 		groups = [vpn({ resolve: { tunnel: true, server: '1.1.1.1' } })];
 		await openSettings();
