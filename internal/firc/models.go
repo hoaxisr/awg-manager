@@ -1138,4 +1138,7 @@ type ExtConfig struct {
 	KeenDNSCloud     KeenDNSCloudConfig  `json:"keenDnsCloud"`
 	ServerRouting    ServerRoutingConfig `json:"serverRouting"`
 	AvailableServers []InboundServerItem `json:"availableServers,omitempty"`
+	// GroupLinks — группа → прокси-группа, чью проверку она наследует. nil (null в
+	// файле) — связи ещё не выводились; присланное через PUT /ext не принимается.
+	GroupLinks map[string]string `json:"groupLinks"`
 }

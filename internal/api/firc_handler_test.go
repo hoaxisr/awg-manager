@@ -2338,3 +2338,37 @@ func TestFircHandler_MonitorClientsOnDemand(t *testing.T) {
 		t.Fatalf("lists missing with ?clients=1: %+v", snap)
 	}
 }
+
+// Связи групп приходят вместе с группами по обоим путям и ложатся в ext-конфиг.
+func TestHandlePutGroups_StoresGroupLinks(t *testing.T) {
+	for _, path := range []string{"/api/firc/groups", "/api/firc/v1/groups?save=true"} {
+		t.Run(path, func(t *testing.T) {
+			store := storage.NewSettingsStore(t.TempDir())
+			if err := store.Update(func(s *storage.Settings) error {
+				s.SingboxRouter.RoutingEngine = "sing-box"
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			op := firc.NewOperator(firc.Options{ConfigDir: t.TempDir()})
+			if err := op.SaveExtConfig(firc.ExtConfig{ProxyGroups: []firc.ProxyGroup{
+				{ID: "pg", Name: "PG", Interfaces: []string{"eth3", "tunvless0"}},
+			}}); err != nil {
+				t.Fatal(err)
+			}
+			h := NewFircHandler(op)
+			h.SetSettingsStore(store)
+			mux := http.NewServeMux()
+			h.RegisterRoutes(mux, func(next http.HandlerFunc) http.HandlerFunc { return next })
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, path, strings.NewReader(
+				`{"groups":[{"id":"aa11bb22","name":"G","interface":["eth3","tunvless0"],"enable":true}],"groupLinks":{"aa11bb22":"pg"}}`)))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			if got := op.LoadExtConfig().GroupLinks; got["aa11bb22"] != "pg" {
+				t.Fatalf("links = %v", got)
+			}
+		})
+	}
+}

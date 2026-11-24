@@ -166,6 +166,23 @@ describe('applyBulkGroupAction', () => {
 		});
 		expect(resChainWithCheck.groups[0].check).not.toBe(resChainWithCheck.groups[1].check);
 
+		// Прокси-группа связывается, выход вручную связь снимает.
+		for (const check of [undefined, { mode: 'none' as const }]) {
+			const linked = applyBulkGroupAction(resChain.groups, new Set(['g1', 'g2']), {
+				kind: 'setInterface',
+				iface: ['qmi_br0', 'tunvless2'],
+				check,
+				proxyGroupId: 'pg1',
+			});
+			expect(linked.groups.map((g) => g.proxyGroupId)).toEqual(['pg1', 'pg1']);
+			const manual = applyBulkGroupAction(linked.groups, new Set(['g1']), {
+				kind: 'setInterface',
+				iface: ['qmi_br0', 'tunvless2'],
+				check,
+			});
+			expect(manual.groups.map((g) => g.proxyGroupId)).toEqual([undefined, 'pg1']);
+		}
+
 		const sharedDevices = { allow: ['mac:aa:bb:cc:dd:ee:01'], deny: [] };
 		const resDevices = applyBulkGroupAction(resChain.groups, new Set(['g1', 'g2']), {
 			kind: 'setDevices',

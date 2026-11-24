@@ -38,7 +38,7 @@ export type BulkRuleAction =
 
 export type BulkGroupAction =
 	| { kind: 'enable'; enable: boolean }
-	| { kind: 'setInterface'; iface: string | string[]; check?: FircGroupCheck }
+	| { kind: 'setInterface'; iface: string | string[]; check?: FircGroupCheck; proxyGroupId?: string }
 	| { kind: 'setDevices'; devices: FircDeviceSelector }
 	| { kind: 'delete' };
 
@@ -422,6 +422,7 @@ export function applyBulkGroupAction(
 				return {
 					...g,
 					interface: nextIface,
+					proxyGroupId: action.proxyGroupId,
 					check: { ...action.check },
 				};
 			}
@@ -431,9 +432,10 @@ export function applyBulkGroupAction(
 				? {
 						...g,
 						interface: nextIface,
+						proxyGroupId: action.proxyGroupId,
 						check: { mode: 'none' as const, url: '' },
 					}
-				: { ...g, interface: nextIface };
+				: { ...g, interface: nextIface, proxyGroupId: action.proxyGroupId };
 		}
 		return {
 			...g,

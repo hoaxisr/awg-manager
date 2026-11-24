@@ -1920,12 +1920,17 @@ func cloneGroups(groups []Group) []Group {
 // reconciliation fails, both groups.yaml and the live fircd/netfilter runtime are rolled back
 // to the previous group set; if rollback fails, recovery_required is set.
 func (o *Operator) ApplyGroups(ctx context.Context, groups []Group) ([]Group, error) {
-	o.mutationMu.Lock()
-	defer o.mutationMu.Unlock()
-	return o.applyGroupsLocked(ctx, groups)
+	return o.ApplyGroupsWithLinks(ctx, groups, nil)
 }
 
-func (o *Operator) applyGroupsLocked(ctx context.Context, groups []Group) ([]Group, error) {
+// ApplyGroupsWithLinks — ApplyGroups вместе со связями групп (см. nextGroupLinks).
+func (o *Operator) ApplyGroupsWithLinks(ctx context.Context, groups []Group, links map[string]string) ([]Group, error) {
+	o.mutationMu.Lock()
+	defer o.mutationMu.Unlock()
+	return o.applyGroupsLocked(ctx, groups, links)
+}
+
+func (o *Operator) applyGroupsLocked(ctx context.Context, groups []Group, links map[string]string) ([]Group, error) {
 	if err := o.checkMutationAllowed(); err != nil {
 		return nil, err
 	}
@@ -1946,11 +1951,13 @@ func (o *Operator) applyGroupsLocked(ctx context.Context, groups []Group) ([]Gro
 		prevGroups = diskGroups
 	}
 
-	return o.applyGroupsWithPrevLocked(ctx, groups, prevGroups, running)
+	return o.applyGroupsWithPrevLocked(ctx, groups, prevGroups, running, links)
 }
 
-func (o *Operator) applyGroupsWithPrevLocked(ctx context.Context, groups []Group, prevGroups []Group, running bool) ([]Group, error) {
+func (o *Operator) applyGroupsWithPrevLocked(ctx context.Context, groups []Group, prevGroups []Group, running bool, links map[string]string) ([]Group, error) {
+	o.migrateGroupLinks()
 	ext := o.LoadExtConfig()
+	ext = withNextGroupLinks(ext, groups, prevGroups, links)
 	groups, _ = o.syncGroupsWithExt(ctx, groups, ext)
 
 	snap, err := captureFileSnapshot(o.GroupsPath(), 0644)
@@ -2026,21 +2033,28 @@ func (o *Operator) applyGroupsWithPrevLocked(ctx context.Context, groups []Group
 				return nil, fmt.Errorf("save canonical groups.yaml after sync: %w", saveErr)
 			}
 		}
-		return updated, nil
+		return updated, o.settleGroupLinks(ext)
 	}
-	return groups, nil
+	return groups, o.settleGroupLinks(ext)
 }
 
 // StageGroupsOffline synchronizes ExtConfig derived groups and saves groups.yaml
 // under mutationMu without probing fircd IPC, invoking iptables, or starting any runtime process.
 func (o *Operator) StageGroupsOffline(groups []Group) ([]Group, error) {
+	return o.StageGroupsOfflineWithLinks(groups, nil)
+}
+
+// StageGroupsOfflineWithLinks — StageGroupsOffline вместе со связями групп (см. nextGroupLinks).
+func (o *Operator) StageGroupsOfflineWithLinks(groups []Group, links map[string]string) ([]Group, error) {
 	o.mutationMu.Lock()
 	defer o.mutationMu.Unlock()
 
 	if err := o.checkMutationAllowed(); err != nil {
 		return nil, err
 	}
-	ext := o.LoadExtConfig()
+	prev, _ := o.LoadGroupsFile() // нечитаемый файл сохранению не помеха: без прежних групп связи снимутся
+	o.migrateGroupLinks()
+	ext := withNextGroupLinks(o.LoadExtConfig(), groups, prev, links)
 	groups, _ = o.syncGroupsWithExt(context.Background(), groups, ext)
 	if groups == nil {
 		groups = []Group{}
@@ -2048,7 +2062,7 @@ func (o *Operator) StageGroupsOffline(groups []Group) ([]Group, error) {
 	if err := o.SaveGroupsFile(groups); err != nil {
 		return nil, fmt.Errorf("save groups.yaml: %w", err)
 	}
-	return groups, nil
+	return groups, o.settleGroupLinks(ext)
 }
 
 // AddConfirmedCandidate transactionally adds a manually confirmed autolist candidate domain
@@ -2180,7 +2194,7 @@ func (o *Operator) AddConfirmedCandidate(ctx context.Context, domain, groupID st
 		})
 	}
 
-	updated, err := o.applyGroupsWithPrevLocked(ctx, groups, prevGroups, running)
+	updated, err := o.applyGroupsWithPrevLocked(ctx, groups, prevGroups, running, nil)
 	if err != nil {
 		return nil, "", err
 	}

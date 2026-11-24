@@ -273,6 +273,8 @@ export interface FircGroup {
 	resolver?: FircGroupResolver;
 	block?: FircBlockAnswer;
 	cloudflare?: boolean;
+	/** Прокси-группа, через которую выбран выход. Только в панели: демону поле не уходит. */
+	proxyGroupId?: string;
 }
 
 export interface FircGroupIfaceState {
@@ -765,6 +767,8 @@ export interface FircExtConfig {
 	keenDnsCloud: FircKeenDNSCloudConfig;
 	serverRouting: FircServerRoutingConfig;
 	availableServers?: FircInboundServerItem[];
+	/** Группа → прокси-группа, чью проверку она наследует; меняется сохранением групп. */
+	groupLinks?: Record<string, string> | null;
 }
 
 export interface FircMonitorDomainStat {

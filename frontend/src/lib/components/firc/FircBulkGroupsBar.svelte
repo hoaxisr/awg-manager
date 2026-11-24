@@ -12,7 +12,7 @@
 		onSelectAllVisible: () => void;
 		onDeselectAll: () => void;
 		onDone: () => void;
-		onSetInterface: (iface: string | string[]) => void;
+		onSetInterface: (iface: string | string[], proxyGroupId?: string) => void;
 		onOpenDevices: () => void;
 		onEnable: () => void;
 		onDisable: () => void;
@@ -62,7 +62,7 @@
 			const pgId = raw.slice('pg:'.length);
 			const pg = proxyGroups.find((p) => p.id === pgId);
 			if (pg && pg.interfaces.length > 0) {
-				onSetInterface([...pg.interfaces]);
+				onSetInterface([...pg.interfaces], pg.id);
 			}
 			return;
 		}

@@ -2243,7 +2243,7 @@ func TestSyncGroupsWithExt_ProxyGroupCheckNormalizationAndPropagation(t *testing
 		t.Fatalf("CloudHealthCheck=true must enforce mode=keendns, got changed=%v check=%+v", changed, groups[0].Check)
 	}
 
-	// Regular user routing groups inherit matching PG.Check, while legacy nil Check and unrelated chains stay untouched.
+	// Regular user routing groups inherit the linked PG.Check, while legacy nil Check and unrelated chains stay untouched.
 	matchedUserGroup := Group{
 		ID:        "aa11bb22",
 		Name:      "UserFallback",
@@ -2266,6 +2266,7 @@ func TestSyncGroupsWithExt_ProxyGroupCheckNormalizationAndPropagation(t *testing
 		Check:     &GroupCheck{Mode: "none"},
 	}
 	propExt := ExtConfig{
+		GroupLinks: map[string]string{"aa11bb22": "pg_url", "bb22cc33": "pg_legacy"},
 		ProxyGroups: []ProxyGroup{
 			{
 				ID:         "pg_url",
@@ -2295,27 +2296,6 @@ func TestSyncGroupsWithExt_ProxyGroupCheckNormalizationAndPropagation(t *testing
 	}
 	if _, changedAgain := syncGroupsWithExt(synced, propExt); changedAgain {
 		t.Fatal("repeated syncGroupsWithExt after PG propagation must be idempotent")
-	}
-
-	// Duplicate chains: when an earlier PG has Check==nil and a later PG defines Check!=nil, prefer Check!=nil.
-	dupExt := ExtConfig{
-		ProxyGroups: []ProxyGroup{
-			{
-				ID:         "pg_dup_nil",
-				Name:       "Legacy Same Chain",
-				Interfaces: []string{"qmi_br0", "tunvless2"},
-			},
-			{
-				ID:         "pg_dup_configured",
-				Name:       "Configured Same Chain",
-				Interfaces: []string{"qmi_br0", "tunvless2"},
-				Check:      &GroupCheck{Mode: "url", URL: "https://preferred.example/204"},
-			},
-		},
-	}
-	dupSynced, dupChanged := syncGroupsWithExt([]Group{matchedUserGroup}, dupExt)
-	if !dupChanged || dupSynced[0].Check == nil || dupSynced[0].Check.Mode != "url" || dupSynced[0].Check.URL != "https://preferred.example/204" {
-		t.Fatalf("expected duplicate-chain lookup to prefer non-nil PG.Check, got changed=%v check=%+v", dupChanged, dupSynced[0].Check)
 	}
 }
 
