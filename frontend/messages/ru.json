@@ -7659,8 +7659,6 @@
 	"zapret_not_installed_detection_hint": "AWGM ищет работающий процесс, файлы в /opt или пакет, в имени которого есть «zapret» (например, zapret22 или zapret2). После установки обновите статус.",
 	"zapret_order_hint": "nfqws2 проверяет фильтры сверху вниз и применяет первый подошедший. Перестановка карточек меняет {config}; чтобы применить изменения, перезапустите Zapret.",
 	"zapret_service_aria": "Сервис Zapret",
-	"zapret_service_subtitle": "Активная установка: {base}",
-	"zapret_service_subtitle_without_path": "Путь установки недоступен",
 	"zapret_strategy_filter_l3_title": "Фильтр уровня L3",
 	"zapret_strategy_filter_l7_title": "Фильтр уровня L7",
 	"zapret_strategy_filter_packet_range_title": "Фильтр диапазона пакетов",
@@ -7684,8 +7682,6 @@
 	"zapret_apply_start_aria": "Запустить Zapret, чтобы применить изменения",
 	"zapret_apply_start_title": "Запустить Zapret, чтобы применить изменения",
 	"zapret_restart_required": "Изменения вступят в силу после перезапуска Zapret.",
-	"zapret_service_open_settings_aria": "Открыть настройки Zapret",
-	"zapret_service_open_settings_title": "Стратегии и списки Zapret",
 	"zapret_state_not_installed": "Не установлен",
 	"zapret_state_running": "Работает",
 	"zapret_state_stopped": "Остановлен",
@@ -7700,8 +7696,6 @@
 	"zapret_toggle_unavailable_title": "Zapret недоступен",
 	"settings_integrations_zapret_running_aria": "Zapret работает",
 	"settings_integrations_zapret_stopped_aria": "Zapret остановлен",
-	"settings_integrations_zapret_card_on_tunnels": "Показывать на странице туннелей",
-	"settings_integrations_zapret_card_on_tunnels_hint": "Настройка этого браузера.",
 	"zapret_hostlist_entries_count": [
 		{
 			"declarations": [

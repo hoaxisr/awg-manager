@@ -9,11 +9,7 @@
 	import { m, type UiText } from '$lib/i18n';
 	import { notifications } from '$lib/stores/notifications';
 	import { singboxStatus } from '$lib/stores/singbox';
-	import {
-		zapretStatusIfExpert,
-		zapretTunnelsCardHidden,
-		setZapretTunnelsCardHidden,
-	} from '$lib/stores/zapret';
+	import { zapretStatusIfExpert } from '$lib/stores/zapret';
 	import { proxyInstallStatus, type ProxySubsystem } from '$lib/stores/proxyInstall';
 	import { singboxErrorText } from '$lib/utils/singboxError';
 	import IntegrationsCard from './IntegrationsCard.svelte';
@@ -179,8 +175,6 @@
 	{singboxUninstalling}
 	{showSingbox}
 	zapretStatus={zapretStatusValue}
-	zapretCardOnTunnels={!$zapretTunnelsCardHidden}
-	onzapretCardOnTunnels={(show) => setZapretTunnelsCardHidden(!show)}
 	{bootstrapDNS}
 	{bootstrapSaving}
 	{onsaveBootstrapDNS}

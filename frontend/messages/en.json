@@ -7279,8 +7279,6 @@
 	"zapret_not_installed_detection_hint": "AWGM detects Zapret through a running process, files under /opt, or a package name containing “zapret” (such as zapret22 or zapret2). Refresh status after installation.",
 	"zapret_order_hint": "nfqws2 checks filters from top to bottom and applies the first match. Reordering these cards changes {config}; restart Zapret to apply the change.",
 	"zapret_service_aria": "Zapret service",
-	"zapret_service_subtitle": "Active installation: {base}",
-	"zapret_service_subtitle_without_path": "Installation path unavailable",
 	"zapret_strategy_filter_l3_title": "Layer 3 filter",
 	"zapret_strategy_filter_l7_title": "Layer 7 filter",
 	"zapret_strategy_filter_packet_range_title": "Packet range filter",
@@ -7304,8 +7302,6 @@
 	"zapret_apply_start_aria": "Start Zapret to apply changes",
 	"zapret_apply_start_title": "Start Zapret to apply changes",
 	"zapret_restart_required": "Changes apply after Zapret restarts.",
-	"zapret_service_open_settings_aria": "Open Zapret settings",
-	"zapret_service_open_settings_title": "Strategies and hostlists",
 	"zapret_state_not_installed": "Not installed",
 	"zapret_state_running": "Running",
 	"zapret_state_stopped": "Stopped",
@@ -7320,8 +7316,6 @@
 	"zapret_toggle_unavailable_title": "Zapret is unavailable",
 	"settings_integrations_zapret_running_aria": "Zapret is running",
 	"settings_integrations_zapret_stopped_aria": "Zapret is stopped",
-	"settings_integrations_zapret_card_on_tunnels": "Show on the tunnels page",
-	"settings_integrations_zapret_card_on_tunnels_hint": "Applies to this browser only.",
 	"zapret_hostlist_entries_count": [
 		{
 			"declarations": [

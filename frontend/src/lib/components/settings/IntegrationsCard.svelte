@@ -2,7 +2,7 @@
 	import { m, uiText, type UiText } from '$lib/i18n';
 	import type { SingboxStatus, ZapretStatus } from '$lib/types';
 	import type { ProxySubsystem } from '$lib/api/proxyInstances';
-	import { Button, ConfirmModal, Input, Modal, StatusDot, Toggle } from '$lib/components/ui';
+	import { Button, ConfirmModal, Input, Modal, StatusDot } from '$lib/components/ui';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
 	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { singboxInstallProgress } from '$lib/stores/singboxInstall';
@@ -32,8 +32,6 @@
 		singboxStatus: SingboxStatus | null;
 		singboxStatusLoading?: boolean;
 		zapretStatus?: ZapretStatus | null;
-		zapretCardOnTunnels?: boolean;
-		onzapretCardOnTunnels?: (show: boolean) => void;
 		singboxInstalling: boolean;
 		singboxUpdating?: boolean;
 		singboxInstallError: UiText | null;
@@ -60,8 +58,6 @@
 		singboxStatus,
 		singboxStatusLoading = false,
 		zapretStatus = null,
-		zapretCardOnTunnels = true,
-		onzapretCardOnTunnels,
 		singboxInstalling,
 		singboxUpdating = false,
 		singboxInstallError,
@@ -431,13 +427,6 @@
 					</div>
 				</div>
 				<Button variant="secondary" size="sm" href="/routing?tab=zapret">{m.settings_integrations_open()}</Button>
-			</div>
-			<div class="setting-row">
-				<div class="integration-meta">
-					<span class="font-medium">{m.settings_integrations_zapret_card_on_tunnels()}</span>
-					<span class="integration-sub">{m.settings_integrations_zapret_card_on_tunnels_hint()}</span>
-				</div>
-				<Toggle checked={zapretCardOnTunnels} controlled onchange={(show) => onzapretCardOnTunnels?.(show)} />
 			</div>
 		{/if}
 		</div>
