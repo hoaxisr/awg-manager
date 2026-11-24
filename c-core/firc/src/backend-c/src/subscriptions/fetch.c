@@ -250,6 +250,11 @@ static void fill_info(CURL *curl, CURLcode rc, firc_sub_fetch_info_t *info) {
 #endif
     info->connected = connect > 0;
     info->tls_done = app > 0;
+#if LIBCURL_VERSION_NUM < 0x073d00
+    info->appconnect_s = app;
+#else
+    info->appconnect_s = (double)app / 1e6;
+#endif
     info->reset =
         (rc == CURLE_RECV_ERROR || rc == CURLE_SEND_ERROR || rc == CURLE_SSL_CONNECT_ERROR) && os_errno == ECONNRESET;
     info->timed_out = rc == CURLE_OPERATION_TIMEDOUT;

@@ -11,28 +11,43 @@ import (
 
 // Controller serializes decisions and policy mutations. It deliberately limits
 // probes to one at a time on small routers. Status readers do not wait on I/O.
+// Цепочка решений по одной политике атомарна под замком её ref, а не под
+// общим замком: проба одной политики не держит правки другой и правки
+// туннелей вне политик. Порядок замков — в locks.go.
 type Controller struct {
+	// mu — только короткие секции над wanEvents и lastEvent; без I/O.
 	mu           sync.Mutex
-	stateMu      sync.RWMutex
+	gate         opGate
+	refs         sync.Map // ref → chan struct{} (семафор на 1)
+	probeSlot    chan struct{}
+	stateMu      sync.RWMutex // states и dnsDirty
 	store        *Store
 	resolver     Resolver
 	adapters     map[string]Adapter
 	states       map[string]State
 	now          func() time.Time
 	wake         chan struct{}
-	paused       bool
+	wanEvents    map[string]bool // провайдеры из WAN-событий; "" — все
+	lastEvent    map[string]time.Time
+	paused       atomic.Bool
 	backupPaused atomic.Bool
 	WANDNS       *WANDNS // configured before serving requests
 	dnsDirty     map[string]bool
 	// OnTransition is set before Run. It must not call back into Controller.
 	OnTransition func(string, State)
+	// OnStateChange is set before Run. Зовётся на смену того, что видно в UI
+	// (фаза, провайдер, устройство, ошибка, кандидат возврата и его счёт), —
+	// шире OnTransition, но не на каждый такт: Failures/NextCheck тикают
+	// постоянно и сюда не входят. Must not call back into Controller.
+	OnStateChange func(string)
 	// TargetCatalog is set before serving requests. It adds inventory-only
 	// targets alongside executable adapters; unavailable targets cannot be enabled.
 	TargetCatalog func(context.Context) ([]TargetInfo, error)
 }
 
 func New(store *Store, resolver Resolver, adapters map[string]Adapter) *Controller {
-	return &Controller{store: store, resolver: resolver, adapters: adapters, states: map[string]State{}, now: time.Now, wake: make(chan struct{}, 1)}
+	return &Controller{store: store, resolver: resolver, adapters: adapters, states: map[string]State{}, now: time.Now, wake: make(chan struct{}, 1),
+		probeSlot: make(chan struct{}, 1), wanEvents: map[string]bool{}, lastEvent: map[string]time.Time{}, dnsDirty: map[string]bool{}}
 }
 
 func (c *Controller) Providers() []Provider { return c.resolver.Providers() }
@@ -82,16 +97,31 @@ func (c *Controller) publish(id string, s State) {
 	if c.OnTransition != nil && (previous.Phase != s.Phase || previous.Provider != s.Provider || previous.LastError != s.LastError) {
 		c.OnTransition(id, s)
 	}
+	if c.OnStateChange != nil && visibleStateChanged(previous, s) {
+		c.OnStateChange(id)
+	}
+}
+
+func visibleStateChanged(a, b State) bool {
+	// LastError — по наличию, не по тексту: в тексте бывают адреса и порты,
+	// и сравнение по нему давало бы подсказку на каждую пробу.
+	return a.Phase != b.Phase || a.Provider != b.Provider || a.Device != b.Device ||
+		(a.LastError != "") != (b.LastError != "") || a.Candidate != b.Candidate ||
+		a.RecoverySuccesses != b.RecoverySuccesses
 }
 
 func (c *Controller) Put(ctx context.Context, p Policy) (Policy, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.paused {
-		return Policy{}, fmt.Errorf("%w: uplink controller paused for backup", ErrConflict)
-	}
-	if err := ctx.Err(); err != nil {
+	// Замок и прежней цели: снятие с неё (release ниже) — тоже I/O по ref.
+	// Ревизию сверяет CheckPut уже под замком, поэтому прочитанная до него
+	// старая цель совпадает с той, что правим.
+	prev, _ := c.policy(p.ID)
+	unlock, err := c.lockRefs(ctx, p.Target.Ref, prev.Target.Ref)
+	if err != nil {
 		return Policy{}, err
+	}
+	defer unlock()
+	if c.paused.Load() {
+		return Policy{}, fmt.Errorf("%w: uplink controller paused for backup", ErrConflict)
 	}
 	p.Defaults()
 	if err := p.Validate(); err != nil {
@@ -110,11 +140,9 @@ func (c *Controller) Put(ctx context.Context, p Policy) (Policy, error) {
 	if err := c.store.CheckPut(p); err != nil {
 		return Policy{}, err
 	}
-	var old Policy
-	for _, existing := range c.store.List() {
-		if existing.ID == p.ID {
-			old = existing
-		}
+	old, _ := c.policy(p.ID)
+	if old.Target.Ref != prev.Target.Ref && old.Target.Ref != p.Target.Ref {
+		return Policy{}, ErrConflict
 	}
 	if old.ID != "" && old.Target != p.Target && old.Enabled {
 		return Policy{}, fmt.Errorf("%w: disable policy before remapping its target", ErrConflict)
@@ -214,15 +242,19 @@ func (c *Controller) Put(ctx context.Context, p Policy) (Policy, error) {
 
 // Delete relinquishes management, preserving the last explicit binding. It
 // never silently restores automatic/direct routing.
-func (c *Controller) Delete(id string, revision uint64) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.paused {
+func (c *Controller) Delete(ctx context.Context, id string, revision uint64) error {
+	target, _ := c.policy(id)
+	unlock, err := c.lockRefs(ctx, target.Target.Ref)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if c.paused.Load() {
 		return fmt.Errorf("%w: uplink controller paused for backup", ErrConflict)
 	}
 	for _, p := range c.store.List() {
 		if p.ID == id {
-			if p.Revision != revision {
+			if p.Revision != revision || p.Target.Ref != target.Target.Ref {
 				return ErrConflict
 			}
 			if _, ok := c.adapters[p.Target.Engine].(Releaser); ok {
@@ -235,9 +267,10 @@ func (c *Controller) Delete(id string, revision uint64) error {
 					}
 					revision = p.Revision
 				}
-				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				err := c.release(ctx, p.Target)
-				cancel()
+				// Снятие не привязано к запросу: закрытая вкладка посреди
+				// release оставила бы recovery-required. ctx запроса нужен
+				// только на ожидание замков; release сам ограничен 30 с.
+				err := c.release(context.WithoutCancel(ctx), p.Target)
 				if err != nil {
 					c.publish(id, State{Phase: "recovery-required", LastError: err.Error()})
 					return err
@@ -252,6 +285,9 @@ func (c *Controller) Delete(id string, revision uint64) error {
 	c.stateMu.Lock()
 	delete(c.states, id)
 	c.stateMu.Unlock()
+	c.mu.Lock()
+	delete(c.lastEvent, id)
+	c.mu.Unlock()
 	return nil
 }
 
@@ -276,48 +312,105 @@ func (c *Controller) Tick(ctx context.Context) {
 
 // NotifyWANChange is safe inside an NDMS hook: it never waits for a probe or
 // mutation lock. Repeated notifications coalesce into one fresh reconciliation.
-func (c *Controller) NotifyWANChange() {
+// provider — NDMS ID изменившегося WAN; "" перепроверяет все политики.
+func (c *Controller) NotifyWANChange(provider string) {
+	c.mu.Lock()
+	c.wanEvents[provider] = true
+	c.mu.Unlock()
 	select {
 	case c.wake <- struct{}{}:
 	default:
 	}
 }
 
-func (c *Controller) tick(ctx context.Context, force bool) {
+// eventDue — внеочередная перепроверка по WAN-событию: только по событию
+// текущего провайдера политики, а у нездоровой — и любого провайдера из её
+// списка; не чаще раза в 5 с на политику — дребезг линии не должен
+// превращаться в поток проб.
+func (c *Controller) eventDue(p Policy, s State, changed map[string]bool) bool {
+	due := changed[""] || changed[s.Provider]
+	for _, id := range p.Providers {
+		due = due || (s.Phase != "healthy" && changed[id])
+	}
+	if !due {
+		return false
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.paused {
-		return
+	if last, ok := c.lastEvent[p.ID]; ok && c.now().Before(last.Add(5*time.Second)) {
+		return false
 	}
-	if err := c.recoverRename(ctx); err != nil {
-		for _, p := range c.store.List() {
-			c.publish(p.ID, State{Phase: "recovery-required", LastError: err.Error()})
+	c.lastEvent[p.ID] = c.now()
+	return true
+}
+
+func (c *Controller) policy(id string) (Policy, bool) {
+	for _, p := range c.store.List() {
+		if p.ID == id {
+			return p, true
 		}
+	}
+	return Policy{}, false
+}
+
+func (c *Controller) stateOf(id string) State {
+	c.stateMu.RLock()
+	defer c.stateMu.RUnlock()
+	return c.states[id]
+}
+
+// commit публикует итог сверки, только если политика за время сверки не
+// сменила ревизию: устаревший итог отбрасывается, следующий такт сверит
+// заново.
+func (c *Controller) commit(p Policy, s State) {
+	if current, ok := c.policy(p.ID); !ok || current.Revision != p.Revision {
 		return
 	}
+	c.publish(p.ID, s)
+}
+
+func (c *Controller) dnsIsDirty(id string) bool {
+	c.stateMu.RLock()
+	defer c.stateMu.RUnlock()
+	return c.dnsDirty[id]
+}
+
+func (c *Controller) tick(ctx context.Context, event bool) {
+	if c.paused.Load() {
+		return
+	}
+	var changed map[string]bool
+	if event {
+		c.mu.Lock()
+		changed, c.wanEvents = c.wanEvents, map[string]bool{}
+		c.mu.Unlock()
+	}
+	if c.store.renameIntent() != nil {
+		lease, err := c.AcquireEngineTransition(ctx)
+		if err != nil {
+			return
+		}
+		err = c.recoverRename(ctx)
+		lease.Release()
+		if err != nil {
+			for _, p := range c.store.List() {
+				c.publish(p.ID, State{Phase: "recovery-required", LastError: err.Error()})
+			}
+			return
+		}
+	}
+	// Снимок без замков; каждая политика сверяется под замком своего ref,
+	// по одной за раз.
 	for _, p := range c.store.List() {
 		if ctx.Err() != nil {
 			return
 		}
-		c.stateMu.RLock()
-		s := c.states[p.ID]
-		c.stateMu.RUnlock()
-		if !p.Enabled {
-			if !force && c.now().Before(s.NextCheck) {
+		s := c.stateOf(p.ID)
+		forced := event && c.eventDue(p, s, changed)
+		if !forced && c.now().Before(s.NextCheck) {
+			if !p.Enabled {
 				continue
 			}
-			s.Phase = "disabled"
-			s.NextCheck = c.now().Add(time.Duration(p.IntervalSeconds) * time.Second)
-			if err := c.release(ctx, p.Target); err != nil {
-				s.Phase = "recovery-required"
-				s.LastError = err.Error()
-			} else {
-				s.LastError = ""
-			}
-			c.publish(p.ID, s)
-			continue
-		}
-		if !force && c.now().Before(s.NextCheck) {
 			// The WAN model is updated by NDMS hooks. A physical outage
 			// bypasses the ordinary probe interval, including long intervals.
 			v, err := providerFor(c.Providers(), s.Provider)
@@ -325,8 +418,37 @@ func (c *Controller) tick(ctx context.Context, force bool) {
 				continue
 			}
 		}
-		c.reconcile(ctx, p, s, "")
+		c.reconcilePolicy(ctx, p, forced)
 	}
+}
+
+func (c *Controller) reconcilePolicy(ctx context.Context, snapshot Policy, event bool) {
+	unlock, err := c.lockRefs(ctx, snapshot.Target.Ref)
+	if err != nil {
+		return
+	}
+	defer unlock()
+	if c.paused.Load() {
+		return
+	}
+	p, ok := c.policy(snapshot.ID)
+	if !ok || p.Revision != snapshot.Revision {
+		return // правка политики между снимком и замком — сверит следующий такт
+	}
+	s := c.stateOf(p.ID)
+	if !p.Enabled {
+		s.Phase = "disabled"
+		s.NextCheck = c.now().Add(time.Duration(p.IntervalSeconds) * time.Second)
+		if err := c.release(ctx, p.Target); err != nil {
+			s.Phase = "recovery-required"
+			s.LastError = err.Error()
+		} else {
+			s.LastError = ""
+		}
+		c.commit(p, s)
+		return
+	}
+	c.reconcile(ctx, p, s, "", event)
 }
 
 func (c *Controller) release(ctx context.Context, t Target) error {
@@ -341,19 +463,20 @@ func (c *Controller) release(ctx context.Context, t Target) error {
 // Switch performs an explicit controlled attempt, also used for manual return
 // to the preferred provider. The caller must supply the current policy revision.
 func (c *Controller) Switch(ctx context.Context, id, provider string, revision uint64) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.paused {
-		return fmt.Errorf("%w: uplink controller paused for backup", ErrConflict)
-	}
-	if err := ctx.Err(); err != nil {
+	target, _ := c.policy(id)
+	unlock, err := c.lockRefs(ctx, target.Target.Ref)
+	if err != nil {
 		return err
+	}
+	defer unlock()
+	if c.paused.Load() {
+		return fmt.Errorf("%w: uplink controller paused for backup", ErrConflict)
 	}
 	for _, p := range c.store.List() {
 		if p.ID != id {
 			continue
 		}
-		if p.Revision != revision {
+		if p.Revision != revision || p.Target.Ref != target.Target.Ref {
 			return ErrConflict
 		}
 		if !p.Enabled {
@@ -375,13 +498,8 @@ func (c *Controller) Switch(ctx context.Context, id, provider string, revision u
 		if !wan.Up {
 			return errors.New("provider is down")
 		}
-		c.stateMu.RLock()
-		s := c.states[id]
-		c.stateMu.RUnlock()
-		c.reconcile(ctx, p, s, provider)
-		c.stateMu.RLock()
-		result := c.states[id]
-		c.stateMu.RUnlock()
+		c.reconcile(ctx, p, c.stateOf(id), provider, false)
+		result := c.stateOf(id)
 		if result.Phase != "healthy" || result.Provider != provider {
 			if result.LastError != "" {
 				return fmt.Errorf("requested path did not pass verification: %s", result.LastError)
@@ -393,14 +511,25 @@ func (c *Controller) Switch(ctx context.Context, id, provider string, revision u
 	return ErrNotFound
 }
 
-func (c *Controller) reconcile(ctx context.Context, p Policy, s State, forced string) {
+// reconcile вызывается под замком ref политики. wanEvent — внеочередная
+// перепроверка по WAN-событию: её неудачная проба не копит Failures.
+func (c *Controller) reconcile(ctx context.Context, p Policy, s State, forced string, wanEvent bool) {
 	automaticReturn := false
 	s.PolicyRevision = p.Revision
 	s.Generation++
 	s.OperationID = fmt.Sprintf("%s:%d:%d", p.ID, p.Revision, s.Generation)
 	a := c.adapters[p.Target.Engine]
+	scheduled := s.NextCheck
 	s.NextCheck = c.now().Add(time.Duration(p.IntervalSeconds) * time.Second)
-	defer func() { c.publish(p.ID, s) }()
+	defer func() {
+		// Неудачная внеочередная проба не сдвигает обычный такт: иначе
+		// частые события чужого WAN откладывали бы счёт отказов вечно, и
+		// мёртвый путь оставался бы suspect.
+		if wanEvent && s.Phase == "suspect" {
+			s.NextCheck = scheduled
+		}
+		c.commit(p, s)
+	}()
 	if a == nil {
 		s.Phase = "unsupported"
 		s.LastError = ErrUnsupported.Error()
@@ -454,7 +583,7 @@ func (c *Controller) reconcile(ctx context.Context, p Policy, s State, forced st
 	// After daemon restart no in-memory observation proves that an engine has
 	// consumed its on-disk binding. Reapply the adopted path before claiming
 	// health, rather than testing a potentially stale runtime configuration.
-	initializing := s.Device == "" || obs.NeedsRebind || c.dnsDirty[p.ID]
+	initializing := s.Device == "" || obs.NeedsRebind || c.dnsIsDirty(p.ID)
 	if forced == "" && !initializing && current.ID != "" && current.Up {
 		s.Provider = current.ID
 		s.Device = current.Device
@@ -493,9 +622,7 @@ func (c *Controller) reconcile(ctx context.Context, p Policy, s State, forced st
 				s.RecoverySuccesses = 0
 			}
 			if p.Failback == "automatic" {
-				candidateCtx, cancel := context.WithTimeout(ctx, time.Duration(p.TimeoutSeconds)*time.Second)
-				err := prober.ProbeCandidate(candidateCtx, p.Target, candidate.Device)
-				cancel()
+				err := c.probeCandidate(ctx, prober, p, candidate.Device)
 				if err != nil {
 					s.RecoverySuccesses = 0
 					s.LastError = fmt.Sprintf("preferred WAN verification: %v", err)
@@ -516,8 +643,15 @@ func (c *Controller) reconcile(ctx context.Context, p Policy, s State, forced st
 			if ctx.Err() != nil {
 				return
 			}
-			s.Failures++
-			if s.Failures < p.FailureThreshold && !s.LastSuccess.IsZero() {
+			// Порог действует и без LastSuccess (после рестарта демона,
+			// сразу после Put): физически лежащий WAN сюда не попадает —
+			// его current.Up ложен, и обход порога идёт веткой ниже.
+			// WAN-событие перепроверяет путь, но не копит отказы: дребезг
+			// линии иначе набирает порог за секунды.
+			if !wanEvent {
+				s.Failures++
+			}
+			if s.Failures < p.FailureThreshold {
 				s.Phase = "suspect"
 				return
 			}
@@ -550,7 +684,7 @@ func (c *Controller) reconcile(ctx context.Context, p Policy, s State, forced st
 			continue
 		}
 		s.Phase = "switching"
-		c.publish(p.ID, s)
+		c.commit(p, s)
 		applyCtx, done := context.WithTimeout(ctx, 30*time.Second)
 		e = a.Activate(applyCtx, p.Target, obs.Device, v.Device)
 		done()
@@ -568,7 +702,7 @@ func (c *Controller) reconcile(ctx context.Context, p Policy, s State, forced st
 		s.LastSwitch = c.now()
 		obs.Device = v.Device
 		s.Phase = "verifying"
-		c.publish(p.ID, s)
+		c.commit(p, s)
 		verifyCtx, stop := context.WithTimeout(ctx, 10*time.Second)
 		observed, e := a.Observe(verifyCtx, p.Target)
 		stop()
@@ -578,7 +712,9 @@ func (c *Controller) reconcile(ctx context.Context, p Policy, s State, forced st
 			return
 		}
 		if e = c.probe(ctx, a, p, v.Device); e == nil {
+			c.stateMu.Lock()
 			delete(c.dnsDirty, p.ID)
+			c.stateMu.Unlock()
 			s.Phase = "healthy"
 			s.Failures = 0
 			s.Candidate = ""
@@ -589,6 +725,19 @@ func (c *Controller) reconcile(ctx context.Context, p Policy, s State, forced st
 			return
 		}
 		lastErr = e
+		// Перепривязка своего же пути после рестарта демона (или из-за
+		// rebind/DNS): одна неудачная проба — ещё не отказ, порог тот же,
+		// что у здорового пути. Лежащий WAN сюда не доходит (!v.Up выше).
+		if initializing && forced == "" && v.ID == current.ID {
+			if !wanEvent {
+				s.Failures++
+			}
+			if s.Failures < p.FailureThreshold {
+				s.Phase = "suspect"
+				s.LastError = e.Error()
+				return
+			}
+		}
 	}
 	s.Phase = "unavailable"
 	// A failed manual attempt must not strand an otherwise working tunnel.
@@ -643,7 +792,23 @@ func (c *Controller) reconcile(ctx context.Context, p Policy, s State, forced st
 	s.NextCheck = c.now().Add(time.Duration(p.HoldDownSeconds) * time.Second)
 }
 
+func (c *Controller) probeCandidate(ctx context.Context, prober CandidateProber, p Policy, device string) error {
+	done, err := c.acquireProbe(ctx)
+	if err != nil {
+		return err
+	}
+	defer done()
+	candidateCtx, cancel := context.WithTimeout(ctx, time.Duration(p.TimeoutSeconds)*time.Second)
+	defer cancel()
+	return prober.ProbeCandidate(candidateCtx, p.Target, device)
+}
+
 func (c *Controller) probe(ctx context.Context, a Adapter, p Policy, device string) error {
+	done, err := c.acquireProbe(ctx)
+	if err != nil {
+		return fmt.Errorf("tunnel probe: %w", err)
+	}
+	defer done()
 	probeCtx, cancel := context.WithTimeout(ctx, time.Duration(p.TimeoutSeconds)*time.Second)
 	defer cancel()
 	if err := a.Probe(probeCtx, p.Target, device); err != nil {

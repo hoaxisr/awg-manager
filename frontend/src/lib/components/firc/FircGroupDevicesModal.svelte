@@ -6,10 +6,12 @@
 		Button,
 		Modal,
 		SegmentedControl,
-		Toggle,
 		type SegmentedOption,
 	} from '$lib/components/ui';
-	import { Monitor, Search, Shield, X } from 'lucide-svelte';
+	import { Monitor, Shield } from 'lucide-svelte';
+	import FircGroupDevicesRow from './FircGroupDevicesRow.svelte';
+	import FircGroupDevicesSearch from './FircGroupDevicesSearch.svelte';
+	import FircGroupDevicesManualBar from './FircGroupDevicesManualBar.svelte';
 	import type { FircDeviceSelector, FircHost, FircPolicy } from '$lib/types/firc';
 
 	interface Props {
@@ -123,10 +125,6 @@
 			else next.delete(key);
 			allowEntries = next;
 		}
-	}
-
-	function toggleEntry(key: string) {
-		setEntryEnabled(key, !isEntryEnabled(key));
 	}
 
 	function removeEntryChip(entry: string) {
@@ -300,41 +298,15 @@
 									{@const key = `policy:${pol.name}`}
 									{@const isOn = isEntryEnabled(key)}
 									{@const titleText = pol.description ? `${pol.description} (${pol.name})` : pol.name}
-									<div
-										class="dm-row"
-										class:dm-row-excluded={mode === 'all' && !isOn}
-										class:dm-row-selected={mode === 'allow' && isOn}
-										class:dm-row-muted={mode === 'allow' && !isOn}
-										data-entry={key}
-										data-enabled={isOn ? 'true' : 'false'}
-									>
-										<button
-											type="button"
-											class="dm-row-trigger"
-											title={titleText}
-											onclick={() => toggleEntry(key)}
-										>
-											<span class="dm-row-text">
-												<span class="dm-row-name">{pol.description || pol.name}</span>
-												<span class="dm-row-meta">
-													{pol.name}{#if pol.devices > 0} · {m.firc_devices_policy_hosts({ count: pol.devices })}{/if}
-												</span>
-											</span>
-										</button>
-										<div class="dm-row-control">
-											{#if mode === 'all' && !isOn}
-												<span class="dm-excl-pill">{m.firc_devices_badge_excluded()}</span>
-											{/if}
-											<Toggle
-												size="sm"
-												spinner="none"
-												controlled
-												checked={isOn}
-												ariaLabel={pol.description || pol.name}
-												onchange={(next) => setEntryEnabled(key, next)}
-											/>
-										</div>
-									</div>
+									<FircGroupDevicesRow
+										entryKey={key}
+										{mode}
+										{isOn}
+										label={pol.description || pol.name}
+										meta={pol.devices > 0 ? `${pol.name} · ${m.firc_devices_policy_hosts({ count: pol.devices })}` : pol.name}
+										title={titleText}
+										onset={(next) => setEntryEnabled(key, next)}
+									/>
 								{/each}
 							</div>
 						</div>
@@ -352,26 +324,7 @@
 								</span>
 							</div>
 
-							<div class="dm-search-wrap">
-								<Search size={13} class="dm-search-icon" />
-								<input
-									type="search"
-									class="dm-search-inp"
-									aria-label={m.firc_devices_search_placeholder()}
-									placeholder={m.firc_devices_search_placeholder()}
-									bind:value={searchQuery}
-								/>
-								{#if searchQuery.trim() !== ''}
-									<button
-										type="button"
-										class="dm-search-clear"
-										aria-label={m.common_clear()}
-										onclick={() => (searchQuery = '')}
-									>
-										<X size={12} />
-									</button>
-								{/if}
-							</div>
+							<FircGroupDevicesSearch bind:value={searchQuery} />
 						</div>
 
 						<div class="dm-list-scroll">
@@ -387,48 +340,16 @@
 										{@const label = h.name || h.ip || h.mac}
 										{@const meta = formatHostMeta(h)}
 										{@const titleText = [label, meta].filter(Boolean).join(' · ')}
-										<div
-											class="dm-row"
-											class:dm-row-excluded={mode === 'all' && !isOn}
-											class:dm-row-selected={mode === 'allow' && isOn}
-											class:dm-row-muted={mode === 'allow' && !isOn}
-											data-entry={key}
-											data-enabled={isOn ? 'true' : 'false'}
-										>
-											<button
-												type="button"
-												class="dm-row-trigger"
-												title={titleText}
-												onclick={() => toggleEntry(key)}
-											>
-												{#if h.online !== undefined}
-													<span
-														class="dm-online-dot"
-														class:dm-online={h.online}
-														title={h.online ? m.firc_devices_online() : m.firc_devices_offline()}
-													></span>
-												{/if}
-												<span class="dm-row-text">
-													<span class="dm-row-name">{label}</span>
-													{#if meta}
-														<span class="dm-row-meta">{meta}</span>
-													{/if}
-												</span>
-											</button>
-											<div class="dm-row-control">
-												{#if mode === 'all' && !isOn}
-													<span class="dm-excl-pill">{m.firc_devices_badge_excluded()}</span>
-												{/if}
-												<Toggle
-													size="sm"
-													spinner="none"
-													controlled
-													checked={isOn}
-													ariaLabel={label}
-													onchange={(next) => setEntryEnabled(key, next)}
-												/>
-											</div>
-										</div>
+										<FircGroupDevicesRow
+											entryKey={key}
+											{mode}
+											{isOn}
+											label={label ?? ''}
+											{meta}
+											title={titleText}
+											online={h.online}
+											onset={(next) => setEntryEnabled(key, next)}
+										/>
 									{/each}
 								</div>
 							{/if}
@@ -438,54 +359,14 @@
 			{/if}
 		</div>
 
-		<div class="dm-manual-bar">
-			<div class="dm-manual-row">
-				<input
-					type="text"
-					class="dm-manual-inp"
-					aria-label={mode === 'all'
-						? m.firc_devices_manual_placeholder_exclude()
-						: m.firc_devices_manual_placeholder_include()}
-					placeholder={mode === 'all'
-						? m.firc_devices_manual_placeholder_exclude()
-						: m.firc_devices_manual_placeholder_include()}
-					bind:value={manualInput}
-					onkeydown={(e) => {
-						if (e.key === 'Enter') {
-							e.preventDefault();
-							addManualEntry();
-						}
-					}}
-				/>
-				<Button
-					variant="secondary"
-					size="sm"
-					onclick={addManualEntry}
-					disabled={!manualInput.trim()}
-				>
-					{mode === 'all' ? m.firc_devices_manual_btn_exclude() : m.common_add()}
-				</Button>
-			</div>
-
-			{#if currentEntries.size > 0}
-				<div class="dm-chips-strip">
-					{#each Array.from(currentEntries) as entry (entry)}
-						<span class="dm-chip" class:dm-chip-excl={mode === 'all'}>
-							<span class="dm-chip-label">{formatEntryChipLabel(entry)}</span>
-							<button
-								type="button"
-								class="dm-chip-remove"
-								title={m.firc_devices_chip_remove()}
-								aria-label={m.firc_devices_chip_remove()}
-								onclick={() => removeEntryChip(entry)}
-							>
-								<X size={11} />
-							</button>
-						</span>
-					{/each}
-				</div>
-			{/if}
-		</div>
+		<FircGroupDevicesManualBar
+			{mode}
+			entries={currentEntries}
+			bind:value={manualInput}
+			chipLabel={formatEntryChipLabel}
+			onadd={addManualEntry}
+			onremove={removeEntryChip}
+		/>
 	</div>
 
 	{#snippet actions()}
@@ -650,59 +531,6 @@
 		flex-shrink: 0;
 	}
 
-	.dm-search-wrap {
-		position: relative;
-		display: flex;
-		align-items: center;
-		width: min(280px, 100%);
-		min-width: 170px;
-	}
-
-	:global(.dm-search-icon) {
-		position: absolute;
-		left: 9px;
-		color: var(--color-text-muted);
-		pointer-events: none;
-	}
-
-	.dm-search-inp {
-		width: 100%;
-		height: 30px;
-		padding: 0 26px 0 29px;
-		border-radius: var(--radius-sm);
-		border: 1px solid var(--color-border);
-		background: var(--color-bg-primary);
-		color: var(--color-text-primary);
-		font-size: 12px;
-		font-family: inherit;
-		outline: none;
-		transition: border-color var(--t-fast);
-	}
-
-	.dm-search-inp:focus {
-		border-color: var(--color-accent);
-	}
-
-	.dm-search-clear {
-		position: absolute;
-		right: 5px;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 20px;
-		height: 20px;
-		border: 0;
-		border-radius: 4px;
-		background: transparent;
-		color: var(--color-text-muted);
-		cursor: pointer;
-	}
-
-	.dm-search-clear:hover {
-		color: var(--color-text-primary);
-		background: var(--color-bg-hover);
-	}
-
 	.dm-list-scroll {
 		flex: 1;
 		min-height: 0;
@@ -727,216 +555,12 @@
 		grid-template-columns: repeat(3, minmax(0, 1fr));
 	}
 
-	.dm-row {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 8px;
-		min-width: 0;
-		padding: 6px 9px;
-		border-radius: var(--radius-sm);
-		border: 1px solid var(--color-border);
-		background: var(--color-bg-primary);
-		transition:
-			background var(--t-fast),
-			border-color var(--t-fast),
-			opacity var(--t-fast);
-	}
-
-	.dm-row:hover {
-		border-color: var(--color-border-hover);
-		background: var(--color-bg-hover);
-	}
-
-	.dm-row.dm-row-selected {
-		background: color-mix(in srgb, var(--color-accent-tint) 65%, var(--color-bg-primary));
-		border-color: var(--color-accent-border);
-	}
-
-	.dm-row.dm-row-excluded {
-		background: color-mix(in srgb, var(--color-warning-tint) 65%, var(--color-bg-primary));
-		border-color: var(--color-warning-border);
-		opacity: 0.78;
-	}
-
-	.dm-row.dm-row-muted {
-		opacity: 0.72;
-	}
-
-	.dm-row.dm-row-muted:hover,
-	.dm-row.dm-row-excluded:hover {
-		opacity: 0.96;
-	}
-
-	.dm-row-trigger {
-		flex: 1;
-		min-width: 0;
-		display: flex;
-		align-items: center;
-		gap: 7px;
-		border: 0;
-		padding: 0;
-		background: transparent;
-		color: inherit;
-		font: inherit;
-		text-align: left;
-		cursor: pointer;
-	}
-
-	.dm-online-dot {
-		width: 7px;
-		height: 7px;
-		border-radius: 50%;
-		flex-shrink: 0;
-		background: var(--color-text-muted);
-		opacity: 0.45;
-	}
-
-	.dm-online-dot.dm-online {
-		background: var(--color-success);
-		opacity: 1;
-	}
-
-	.dm-row-text {
-		flex: 1;
-		min-width: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 1px;
-	}
-
-	.dm-row-name {
-		font-size: 12.5px;
-		font-weight: 500;
-		color: var(--color-text-primary);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.dm-row.dm-row-selected .dm-row-name {
-		font-weight: 600;
-	}
-
-	.dm-row-meta {
-		font-family: var(--font-mono);
-		font-size: 10.5px;
-		color: var(--color-text-muted);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.dm-row-control {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		flex-shrink: 0;
-	}
-
-	.dm-excl-pill {
-		font-size: 10px;
-		font-weight: 600;
-		padding: 1px 6px;
-		border-radius: var(--radius-pill);
-		background: var(--color-warning-tint);
-		border: 1px solid var(--color-warning-border);
-		color: var(--color-warning);
-		white-space: nowrap;
-	}
-
 	.dm-empty-state,
 	.dm-empty-search {
 		padding: 28px 16px;
 		text-align: center;
 		font-size: 12.5px;
 		color: var(--color-text-muted);
-	}
-
-	.dm-manual-bar {
-		flex: 0 0 auto;
-		display: flex;
-		flex-direction: column;
-		gap: 8px;
-		padding: 10px 12px 12px;
-		border-top: 1px solid var(--color-border);
-		background: color-mix(in srgb, var(--color-bg-primary) 35%, transparent);
-	}
-
-	.dm-manual-row {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-	}
-
-	.dm-manual-inp {
-		flex: 1;
-		min-width: 0;
-		height: 32px;
-		padding: 0 10px;
-		border-radius: var(--radius-sm);
-		border: 1px solid var(--color-border);
-		background: var(--color-bg-primary);
-		color: var(--color-text-primary);
-		font-family: var(--font-mono);
-		font-size: 12px;
-		outline: none;
-		transition: border-color var(--t-fast);
-	}
-
-	.dm-manual-inp:focus {
-		border-color: var(--color-accent);
-	}
-
-	.dm-chips-strip {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 5px;
-		max-height: 60px;
-		overflow-y: auto;
-	}
-
-	.dm-chip {
-		display: inline-flex;
-		align-items: center;
-		gap: 5px;
-		padding: 2px 8px;
-		border-radius: var(--radius-sm);
-		background: var(--color-accent-tint);
-		border: 1px solid var(--color-accent-border);
-		color: var(--color-text-primary);
-		font-size: 11.5px;
-		font-weight: 500;
-		max-width: 260px;
-	}
-
-	.dm-chip.dm-chip-excl {
-		background: var(--color-warning-tint);
-		border-color: var(--color-warning-border);
-	}
-
-	.dm-chip-label {
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.dm-chip-remove {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		border: 0;
-		background: transparent;
-		color: var(--color-text-muted);
-		cursor: pointer;
-		padding: 1px;
-		border-radius: 3px;
-		flex-shrink: 0;
-	}
-
-	.dm-chip-remove:hover {
-		color: var(--color-error);
-		background: var(--color-error-tint);
 	}
 
 	.dm-footer-btns {
@@ -980,9 +604,6 @@
 		}
 		.dm-devices-head {
 			flex-wrap: wrap;
-		}
-		.dm-search-wrap {
-			width: 100%;
 		}
 	}
 </style>

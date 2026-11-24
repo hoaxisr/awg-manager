@@ -14,13 +14,13 @@ import (
 const externalBackupManifestVersion = 1
 
 type externalBackupManifest struct {
-	Version         int                 `json:"version"`
-	ExternalPackage string              `json:"externalPackage"`
-	WasRunning      bool                `json:"wasRunning"`
-	WasDisabled     bool                `json:"wasDisabled"`
-	TargetSpec      FircBinarySpec      `json:"targetSpec"`
-	UserConfigFiles []legacyBackedEntry `json:"userConfigFiles"`
-	VarStateFiles   []legacyBackedEntry `json:"varStateFiles"`
+	Version         int            `json:"version"`
+	ExternalPackage string         `json:"externalPackage"`
+	WasRunning      bool           `json:"wasRunning"`
+	WasDisabled     bool           `json:"wasDisabled"`
+	TargetSpec      FircBinarySpec `json:"targetSpec"`
+	UserConfigFiles []backedEntry  `json:"userConfigFiles"`
+	VarStateFiles   []backedEntry  `json:"varStateFiles"`
 }
 
 func (i *OnDemandInstaller) externalBackupDir() string {
@@ -38,49 +38,48 @@ func (i *OnDemandInstaller) runWithRuntimeLock(op *Operator, fn func()) {
 	fn()
 }
 
-func (i *OnDemandInstaller) snapshotBackedEntry(filesDir, rel string, seq *int, syncHook func(string) error) (legacyBackedEntry, bool, error) {
+func (i *OnDemandInstaller) snapshotBackedEntry(filesDir, rel string, seq *int) (backedEntry, bool, error) {
 	full := i.rootPath(rel)
 	st, err := os.Lstat(full)
 	if os.IsNotExist(err) {
-		return legacyBackedEntry{}, false, nil
+		return backedEntry{}, false, nil
 	}
 	if err != nil {
-		return legacyBackedEntry{}, false, err
+		return backedEntry{}, false, err
 	}
 	if st.IsDir() {
-		return legacyBackedEntry{}, false, nil
+		return backedEntry{}, false, nil
 	}
-	entry := legacyBackedEntry{
+	entry := backedEntry{
 		RelPath: filepath.ToSlash(strings.TrimPrefix(rel, "/")),
 		Mode:    st.Mode().Perm(),
 	}
 	if st.Mode()&os.ModeSymlink != 0 {
 		target, err := os.Readlink(full)
 		if err != nil {
-			return legacyBackedEntry{}, false, err
+			return backedEntry{}, false, err
 		}
 		entry.IsSymlink = true
 		entry.LinkTarget = filepath.ToSlash(target)
 		return entry, true, nil
 	}
 	if !st.Mode().IsRegular() {
-		return legacyBackedEntry{}, false, fmt.Errorf("unsupported file type at %s", full)
+		return backedEntry{}, false, fmt.Errorf("unsupported file type at %s", full)
 	}
 	*seq++
 	blobName := fmt.Sprintf("blob-%04d", *seq)
 	data, err := os.ReadFile(full)
 	if err != nil {
-		return legacyBackedEntry{}, false, err
+		return backedEntry{}, false, err
 	}
 	sum, size, err := writeAndSyncBackupFile(
 		filepath.Join(filesDir, blobName),
 		"blobs/"+blobName,
 		data,
 		0600,
-		syncHook,
 	)
 	if err != nil {
-		return legacyBackedEntry{}, false, err
+		return backedEntry{}, false, err
 	}
 	entry.BackupName = blobName
 	entry.SHA256 = sum
@@ -91,9 +90,8 @@ func (i *OnDemandInstaller) snapshotBackedEntry(filesDir, rel string, seq *int, 
 func (i *OnDemandInstaller) walkAndBackupDir(
 	absDir, relPrefix, filesDir string,
 	excludeRel func(string) bool,
-	syncHook func(string) error,
 	seq *int,
-) ([]legacyBackedEntry, error) {
+) ([]backedEntry, error) {
 	dirPath := i.rootPath(absDir)
 	st, err := os.Stat(dirPath)
 	if os.IsNotExist(err) || (err == nil && !st.IsDir()) {
@@ -102,7 +100,7 @@ func (i *OnDemandInstaller) walkAndBackupDir(
 	if err != nil {
 		return nil, err
 	}
-	var entries []legacyBackedEntry
+	var entries []backedEntry
 	walkErr := filepath.Walk(dirPath, func(p string, info os.FileInfo, wErr error) error {
 		if wErr != nil {
 			return wErr
@@ -124,7 +122,7 @@ func (i *OnDemandInstaller) walkAndBackupDir(
 		if excludeRel != nil && excludeRel(relSlash) {
 			return nil
 		}
-		entry, ok, err := i.snapshotBackedEntry(filesDir, relPrefix+relSlash, seq, syncHook)
+		entry, ok, err := i.snapshotBackedEntry(filesDir, relPrefix+relSlash, seq)
 		if err != nil {
 			return err
 		}
@@ -145,6 +143,7 @@ func (i *OnDemandInstaller) StartExternalMigration(op *Operator) error {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
+		i.prewarmVerifiedIPK(ctx)
 		i.runWithRuntimeLock(op, func() {
 			i.finish(i.migrateExternalLocked(ctx, op))
 		})
@@ -159,6 +158,7 @@ func (i *OnDemandInstaller) MigrateExternalRuntime(ctx context.Context, op *Oper
 	if err := i.reserve("migrate_external"); err != nil {
 		return err
 	}
+	i.prewarmVerifiedIPK(ctx)
 	var err error
 	i.runWithRuntimeLock(op, func() {
 		err = i.migrateExternalLocked(ctx, op)
@@ -209,7 +209,6 @@ func (i *OnDemandInstaller) captureExternalBackup(
 	targetSpec FircBinarySpec,
 	op *Operator,
 ) (externalBackupManifest, error) {
-	hooks := i.getLegacyMigrationFaultHooks()
 	var m externalBackupManifest
 	m.Version = externalBackupManifestVersion
 	m.ExternalPackage = extPkg
@@ -243,18 +242,18 @@ func (i *OnDemandInstaller) captureExternalBackup(
 	var err error
 	m.UserConfigFiles, err = i.walkAndBackupDir("/opt/etc/firc", "opt/etc/firc/", filesDir, func(relSlash string) bool {
 		return relSlash == "SHA256SUMS"
-	}, hooks.FileSync, &seq)
+	}, &seq)
 	if err != nil {
 		return m, err
 	}
 	m.VarStateFiles, err = i.walkAndBackupDir("/opt/var/lib/firc", "opt/var/lib/firc/", filesDir, func(relSlash string) bool {
 		return relSlash == "update" || strings.HasPrefix(relSlash, "update/")
-	}, hooks.FileSync, &seq)
+	}, &seq)
 	if err != nil {
 		return m, err
 	}
 
-	if err := syncBackupDir(filesDir, hooks.DirSync); err != nil {
+	if err := syncBackupDir(filesDir); err != nil {
 		return m, err
 	}
 	rawManifest, err := json.MarshalIndent(m, "", "  ")
@@ -266,25 +265,20 @@ func (i *OnDemandInstaller) captureExternalBackup(
 		"manifest.json",
 		rawManifest,
 		0600,
-		hooks.FileSync,
 	); err != nil {
 		return m, err
 	}
-	if err := syncBackupDir(tmpDir, hooks.DirSync); err != nil {
+	if err := syncBackupDir(tmpDir); err != nil {
 		return m, err
 	}
 
 	_ = os.RemoveAll(backupDir)
-	if hooks.BackupRename != nil {
-		if err := hooks.BackupRename(tmpDir, backupDir); err != nil {
-			return m, fmt.Errorf("rename external backup dir %s -> %s: %w", tmpDir, backupDir, err)
-		}
-	} else if err := os.Rename(tmpDir, backupDir); err != nil {
+	if err := os.Rename(tmpDir, backupDir); err != nil {
 		return m, fmt.Errorf("rename external backup dir %s -> %s: %w", tmpDir, backupDir, err)
 	}
 	cleanupTmp = false
 
-	if err := syncParentDir(backupDir, hooks.ParentDirSync); err != nil {
+	if err := syncParentDir(backupDir, nil); err != nil {
 		return m, fmt.Errorf("sync external backup parent dir: %w", err)
 	}
 	return i.verifyExternalBackup(backupDir)
@@ -451,6 +445,7 @@ func (i *OnDemandInstaller) migrateExternalLocked(ctx context.Context, op *Opera
 	if err := os.MkdirAll(cache, 0700); err != nil {
 		return err
 	}
+	i.pruneRuntimeCache(cache)
 	stage, err := os.MkdirTemp(cache, "ext-migrate-stage-")
 	if err != nil {
 		return err
@@ -491,7 +486,7 @@ func (i *OnDemandInstaller) migrateExternalLocked(ctx context.Context, op *Opera
 	if err != nil {
 		return fmt.Errorf("backup external FIRC config and state: %w", err)
 	}
-	if err := i.saveOperationWithHook(runtimeOperation{
+	if err := i.saveOperation(runtimeOperation{
 		Action:          "migrate_external",
 		Pending:         true,
 		ExternalPackage: extPkg,
@@ -512,7 +507,7 @@ func (i *OnDemandInstaller) migrateExternalLocked(ctx context.Context, op *Opera
 			if result != nil {
 				j.Error = result.Error()
 			}
-			if saveErr := i.saveOperationWithHook(j); saveErr != nil {
+			if saveErr := i.saveOperation(j); saveErr != nil {
 				result = errors.Join(result, fmt.Errorf("persist external migration journal: %w", saveErr))
 				return
 			}
@@ -538,7 +533,7 @@ func (i *OnDemandInstaller) migrateExternalLocked(ctx context.Context, op *Opera
 				}
 				cancel()
 			}
-			if saveErr := i.saveOperationWithHook(runtimeOperation{
+			if saveErr := i.saveOperation(runtimeOperation{
 				Action:          "migrate_external",
 				Pending:         false,
 				ExternalPackage: extPkg,
@@ -550,7 +545,7 @@ func (i *OnDemandInstaller) migrateExternalLocked(ctx context.Context, op *Opera
 			}
 			return
 		}
-		if saveErr := i.saveOperationWithHook(runtimeOperation{
+		if saveErr := i.saveOperation(runtimeOperation{
 			Action:          "migrate_external",
 			Pending:         true,
 			ExternalPackage: extPkg,
@@ -629,7 +624,7 @@ func (i *OnDemandInstaller) recoverExternalMigrationLocked(ctx context.Context, 
 		if err := i.restoreExternalBackupState(backupDir, manifest); err != nil {
 			return err
 		}
-		if err := i.saveOperationWithHook(runtimeOperation{
+		if err := i.saveOperation(runtimeOperation{
 			Action:          "migrate_external",
 			Pending:         false,
 			ExternalPackage: manifest.ExternalPackage,
@@ -670,7 +665,7 @@ func (i *OnDemandInstaller) recoverExternalMigrationLocked(ctx context.Context, 
 			errMsg = restartErr.Error()
 		}
 	}
-	if err := i.saveOperationWithHook(runtimeOperation{
+	if err := i.saveOperation(runtimeOperation{
 		Action:          "migrate_external",
 		Pending:         false,
 		ExternalPackage: manifest.ExternalPackage,

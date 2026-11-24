@@ -129,6 +129,18 @@ func (h *ControlHandler) publishRoutingTunnels(_ context.Context) {
 	h.bus.PublishInvalidated(events.ResourceRoutingTunnels, "state-changed")
 }
 
+// lifecycleEvent — событие жизненного цикла под стражем uplink, как у
+// service.Start/Stop/Restart. Страж снимается до возврата: следом может
+// идти svc.SetEnabled, который берёт его сам.
+func (h *ControlHandler) lifecycleEvent(ctx context.Context, typ orchestrator.EventType, id string) error {
+	release, err := h.svc.GuardUplinkMutation(ctx, id, "lifecycle")
+	if err != nil {
+		return err
+	}
+	defer release()
+	return h.orch.HandleEvent(ctx, orchestrator.Event{Type: typ, Tunnel: id})
+}
+
 func (h *ControlHandler) getStatus(r *http.Request, id string) string {
 	state := h.svc.GetState(r.Context(), id)
 	return stateToStatus(state.State)
@@ -164,10 +176,7 @@ func (h *ControlHandler) Start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.orch.HandleEvent(r.Context(), orchestrator.Event{
-		Type:   orchestrator.EventStart,
-		Tunnel: id,
-	})
+	err := h.lifecycleEvent(r.Context(), orchestrator.EventStart, id)
 	if errors.Is(err, tunnel.ErrAlreadyRunning) {
 		err = nil // tunnel already running — user's intent fulfilled
 	}
@@ -229,10 +238,7 @@ func (h *ControlHandler) Stop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.orch.HandleEvent(r.Context(), orchestrator.Event{
-		Type:   orchestrator.EventStop,
-		Tunnel: id,
-	}); err != nil {
+	if err := h.lifecycleEvent(r.Context(), orchestrator.EventStop, id); err != nil {
 		if errors.Is(err, tunnel.ErrOperationInProgress) {
 			// Busy lock — nothing was attempted, do NOT flip Enabled.
 			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "OPERATION_IN_PROGRESS")
@@ -287,10 +293,7 @@ func (h *ControlHandler) Restart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.orch.HandleEvent(r.Context(), orchestrator.Event{
-		Type:   orchestrator.EventRestart,
-		Tunnel: id,
-	}); err != nil {
+	if err := h.lifecycleEvent(r.Context(), orchestrator.EventRestart, id); err != nil {
 		if errors.Is(err, tunnel.ErrOperationInProgress) {
 			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "OPERATION_IN_PROGRESS")
 			return
@@ -343,10 +346,7 @@ func (h *ControlHandler) RestartAll(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		err := h.orch.HandleEvent(r.Context(), orchestrator.Event{
-			Type:   orchestrator.EventRestart,
-			Tunnel: t.ID,
-		})
+		err := h.lifecycleEvent(r.Context(), orchestrator.EventRestart, t.ID)
 		result := map[string]interface{}{
 			"id":     t.ID,
 			"status": h.getStatus(r, t.ID),

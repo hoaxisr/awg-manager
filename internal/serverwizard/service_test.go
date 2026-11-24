@@ -158,7 +158,6 @@ func setupTestWizard(t *testing.T) (*WizardService, *mockCoordinatorBridge, *moc
 	_ = os.MkdirAll(filepath.Join(procDir, "net"), 0755)
 	_ = os.WriteFile(filepath.Join(procDir, "net", "tcp"), []byte(""), 0644)
 	fingerprint.SetProcDir(procDir)
-	fingerprint.SetInitScripts([]string{})
 
 	planStore := NewPlanStore()
 	jobRunner := NewJobRunner()

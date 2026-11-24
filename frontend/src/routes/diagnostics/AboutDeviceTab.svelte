@@ -19,7 +19,6 @@
 		DeviceProxyConfig,
 		DeviceProxyRuntime,
 		DnsCheckStartResponse,
-		HydraRouteStatus,
 		PolicyDevice,
 		Subscription,
 	} from '$lib/types';
@@ -52,8 +51,6 @@
 	const isOS5 = $derived(sysInfo?.isOS5 ?? false);
 
 	type AwgmCounts = {
-		hydra?: HydraRouteStatus | null;
-		hydraLoaded?: boolean;
 		deviceProxy?: DeviceProxyConfig | null;
 		deviceProxyRuntime?: DeviceProxyRuntime | null;
 		clientRoutesTotal?: number;
@@ -84,9 +81,6 @@
 			authenticated: get(auth).authenticated,
 			login: get(auth).login,
 			singbox: get(singboxStatus).data,
-			hydra: c.hydra ?? null,
-			hydraLoaded: c.hydraLoaded ?? false,
-			showHydra: isRoutingSubTabVisible(level, 'hrNeo'),
 			deviceProxy: c.deviceProxy ?? null,
 			deviceProxyRuntime: c.deviceProxyRuntime ?? null,
 			clientRoutesTotal: c.clientRoutesTotal ?? 0,
@@ -132,22 +126,10 @@
 		}
 	}
 
-	function loadHydraStatus(level: UsageLevel) {
-		if (!isRoutingSubTabVisible(level, 'hrNeo')) return;
-		void api
-			.getHydraRouteStatus()
-			.then((hydra) => {
-				patchAwgmFromStores({ hydra, hydraLoaded: true });
-			})
-			.catch(() => {
-				patchAwgmFromStores({ hydra: null, hydraLoaded: true });
-			});
-	}
-
 	async function loadRemoteContext() {
 		const level = get(usageLevel);
 
-		// Клиент в сети — приоритет, без ожидания HydraRoute и тяжёлых счётчиков.
+		// Клиент в сети — приоритет, без ожидания тяжёлых счётчиков.
 		const [dns, policies, devices] = await Promise.all([
 			fetchClientContext(),
 			fetchAccessPolicies(),
@@ -224,7 +206,6 @@
 				.catch(() => {});
 		}
 
-		loadHydraStatus(level);
 	}
 
 	async function refresh() {

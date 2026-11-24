@@ -146,3 +146,20 @@ func TestPlanStore_MarkConsumed_OwnershipAndIdempotency(t *testing.T) {
 		t.Errorf("expected plan to reset to available after owner release, got %+v", checkRec)
 	}
 }
+
+// Ревью F821: чистка не трогает зарезервированный план, даже протухший —
+// его держит идущее задание.
+func TestPlanStore_PruneKeepsReserved(t *testing.T) {
+	store := NewPlanStore()
+	now := time.Now()
+	store.clock = func() time.Time { return now }
+	rec := store.SavePlan(WizardPlanRequest{Kind: "xray"}, DesiredWizardConfig{}, "s1", ChangePlan{}, "fp", time.Minute)
+	if _, err := store.Reserve(rec.PlanID, "s1", "job-1"); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Hour)
+	store.PruneExpired()
+	if _, err := store.MarkConsumed(rec.PlanID, "job-1"); err != nil {
+		t.Fatalf("reserved plan pruned: %v", err)
+	}
+}

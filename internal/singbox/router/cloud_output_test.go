@@ -1288,3 +1288,76 @@ func TestCheckCloudOutboundSwitch_FailoverDeferredCooldownAndFailback(t *testing
 		t.Fatalf("stopped sing-box triggered reset: %d", resets)
 	}
 }
+
+// F809: в выключенном состоянии полное снятие (дампы iptables, ip rule, ipset)
+// идёт один раз, а не на каждом тике; попытка включения возвращает его.
+func TestReconcileCloudOutput_DetachedSteadyStateNoExec(t *testing.T) {
+	seedProcNetSockets(t, 0, cloudOutputPort, 54321, cloudOutputUDPPort, 54322, 4242)
+	svc, tables, proc, _ := newCloudOutputTestService(t, "cloud-fallback")
+	setCloudOutputIpsetRunner(tables.ipsetRunner)
+	defer setCloudOutputIpsetRunner(nil)
+	setCloudOutputDNSLookupIPv4(func(context.Context, string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("185.10.184.178")}, nil
+	})
+	defer setCloudOutputDNSLookupIPv4(nil)
+
+	var dumps int
+	inner := svc.deps.IPTables.runIPTablesOut
+	svc.deps.IPTables.runIPTablesOut = func(ctx context.Context, args ...string) (string, error) {
+		dumps++
+		return inner(ctx, args...)
+	}
+	ctx := context.Background()
+	off := storage.SingboxRouterSettings{Enabled: true}
+
+	if err := svc.reconcileCloudOutput(ctx, off, false); err != nil {
+		t.Fatal(err)
+	}
+	if dumps == 0 {
+		t.Fatal("first reconcile must detach (stale rules after unclean exit)")
+	}
+	dumps = 0
+	for i := 0; i < 3; i++ {
+		if err := svc.reconcileCloudOutput(ctx, off, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if dumps != 0 {
+		t.Fatalf("steady detached state ran %d iptables dumps, want 0", dumps)
+	}
+
+	on := storage.SingboxRouterSettings{Enabled: true, KeenDNSCloudOutbound: "cloud-fallback"}
+	if err := svc.reconcileCloudOutput(ctx, on, false); err != nil {
+		t.Fatal(err)
+	}
+	if !tables.hasCloudHooks() {
+		t.Fatal("expected cloud hooks after attach")
+	}
+	if err := svc.reconcileCloudOutput(ctx, off, false); err != nil {
+		t.Fatal(err)
+	}
+	if tables.anyCloudState() {
+		t.Fatal("detach after attach must strip cloud state")
+	}
+
+	// Настроено, но sing-box не запущен: тот же один раз, не каждый тик.
+	if err := svc.reconcileCloudOutput(ctx, on, false); err != nil {
+		t.Fatal(err)
+	}
+	proc.isRunningFn = func() (bool, int) { return false, 0 }
+	if err := svc.reconcileCloudOutput(ctx, on, false); err != nil {
+		t.Fatal(err)
+	}
+	if tables.anyCloudState() {
+		t.Fatal("stopped sing-box must strip cloud state")
+	}
+	dumps = 0
+	for i := 0; i < 3; i++ {
+		if err := svc.reconcileCloudOutput(ctx, on, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if dumps != 0 {
+		t.Fatalf("stopped sing-box ran %d iptables dumps per steady ticks, want 0", dumps)
+	}
+}

@@ -87,11 +87,11 @@ func TestWANDNSReappliesOnlyCurrentProxyAndPreservesConflict(t *testing.T) {
 	c.Tick(context.Background())
 	a.activated = nil
 	c.WANDNS, _ = OpenWANDNS(filepath.Join(t.TempDir(), "dns.json"))
-	c.paused = true
+	c.paused.Store(true)
 	if _, e := c.UpdateWANDNS(context.Background(), WANDNSUpdate{Provider: "ISP1", Servers: []string{"1.1.1.1"}}); !errors.Is(e, ErrConflict) || c.WANDNS.Snapshot().Revision != 0 {
 		t.Fatal("backup pause bypassed", e)
 	}
-	c.paused = false
+	c.paused.Store(false)
 	if _, e := c.UpdateWANDNS(context.Background(), WANDNSUpdate{Provider: "unknown", Servers: []string{"1.1.1.1"}}); e == nil {
 		t.Fatal("foreign WAN accepted")
 	}

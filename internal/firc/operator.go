@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // ErrRecoveryRequired is returned when a previous engine switch or runtime config rollback
@@ -189,6 +191,7 @@ type MigrationJournalCommitFaultHooks struct {
 // Leaf locks (extConfigMu, cloudStateMu, cloudCancelMu, mu, extIpsetMu, extIptablesMu, extCloudDNSMu,
 // extCloudClockMu) must never acquire any lock listed above.
 type Operator struct {
+	runtimeObs               runtimeObserver
 	mu                       sync.Mutex
 	mutationMu               sync.Mutex
 	lifecycleMu              sync.Mutex
@@ -1079,39 +1082,13 @@ func atomicWriteYAMLFile(path string, data []byte, perm os.FileMode) error {
 	return atomicWriteYAMLFileWithSyncHook(path, data, perm, nil)
 }
 
+// atomicWriteYAMLFileWithSyncHook пишет через storage.AtomicWritePerm, а затем
+// ещё раз синкает каталог строго: у storage fsync каталога best-effort, а здесь
+// его отказ — ошибка записи, и через dirSyncHook её подставляют тесты.
 func atomicWriteYAMLFileWithSyncHook(path string, data []byte, perm os.FileMode, dirSyncHook func(dir string) error) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("mkdir %s: %w", dir, err)
+	if err := storage.AtomicWritePerm(path, data, perm); err != nil {
+		return err
 	}
-	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp.*")
-	if err != nil {
-		return fmt.Errorf("create temp file for %s: %w", path, err)
-	}
-	tmpName := tmp.Name()
-	cleanup := true
-	defer func() {
-		if cleanup {
-			_ = tmp.Close()
-			_ = os.Remove(tmpName)
-		}
-	}()
-	if err := tmp.Chmod(perm); err != nil {
-		return fmt.Errorf("chmod %s: %w", tmpName, err)
-	}
-	if _, err := tmp.Write(data); err != nil {
-		return fmt.Errorf("write %s: %w", tmpName, err)
-	}
-	if err := tmp.Sync(); err != nil {
-		return fmt.Errorf("fsync %s: %w", tmpName, err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close %s: %w", tmpName, err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("rename %s -> %s: %w", tmpName, path, err)
-	}
-	cleanup = false
 	if err := syncParentDir(path, dirSyncHook); err != nil {
 		return fmt.Errorf("sync parent dir of %s: %w", path, err)
 	}

@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"os"
 	"sort"
 
 	"github.com/hoaxisr/awg-manager/internal/cdndispatcher"
@@ -14,15 +13,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/tgwebproxy"
 	"github.com/hoaxisr/awg-manager/internal/vlessserver"
 )
-
-var DefaultInitScripts = []string{
-	"/opt/etc/init.d/S99telemt",
-	"/opt/etc/init.d/S99telemt.disabled",
-	"/opt/etc/init.d/S95tproxy-server",
-	"/opt/etc/init.d/S95tproxy-server.disabled",
-	"/opt/etc/init.d/S96telemt-raw",
-	"/opt/etc/init.d/S96telemt-raw.disabled",
-}
 
 var DefaultTargetPorts = []int{
 	9008, // xray inbound
@@ -69,7 +59,6 @@ type FingerprintEngine struct {
 	rec         RecoveryStateReader
 	egress      EgressSummaryReader
 	procDir     string
-	initScripts []string
 	targetPorts []int
 }
 
@@ -88,7 +77,6 @@ func NewFingerprintEngine(
 		rec:         rec,
 		egress:      egress,
 		procDir:     "/proc",
-		initScripts: DefaultInitScripts,
 		targetPorts: DefaultTargetPorts,
 	}
 }
@@ -96,11 +84,6 @@ func NewFingerprintEngine(
 // SetProcDir overrides procfs path (useful for unit testing).
 func (e *FingerprintEngine) SetProcDir(dir string) {
 	e.procDir = dir
-}
-
-// SetInitScripts overrides init scripts watched for changes.
-func (e *FingerprintEngine) SetInitScripts(scripts []string) {
-	e.initScripts = scripts
 }
 
 // SetTargetPorts overrides target ports queried via procnet.
@@ -151,18 +134,6 @@ func (e *FingerprintEngine) Compute(ctx context.Context) string {
 	if e.rec != nil {
 		recReq, recReason := e.rec.IsRecoveryRequired()
 		h.Write([]byte(fmt.Sprintf("rec:%t:%s\n", recReq, recReason)))
-	}
-
-	// 5. Init Scripts state (existence, size, modtime)
-	sortedScripts := append([]string(nil), e.initScripts...)
-	sort.Strings(sortedScripts)
-	for _, p := range sortedScripts {
-		info, err := os.Stat(p)
-		if err != nil {
-			h.Write([]byte(fmt.Sprintf("init:%s:absent\n", p)))
-		} else {
-			h.Write([]byte(fmt.Sprintf("init:%s:%d:%d\n", p, info.Size(), info.ModTime().UnixNano())))
-		}
 	}
 
 	// 6. Procfs Port Occupancy via procnet
@@ -249,21 +220,6 @@ func (e *FingerprintEngine) ComputeStrict(ctx context.Context) (string, error) {
 	if e.rec != nil {
 		recReq, recReason := e.rec.IsRecoveryRequired()
 		h.Write([]byte(fmt.Sprintf("rec:%t:%s\n", recReq, recReason)))
-	}
-
-	// 5. Init Scripts state (existence, size, modtime)
-	sortedScripts := append([]string(nil), e.initScripts...)
-	sort.Strings(sortedScripts)
-	for _, p := range sortedScripts {
-		info, err := os.Stat(p)
-		if err != nil {
-			if !os.IsNotExist(err) {
-				return "", fmt.Errorf("stat init script %s: %w", p, err)
-			}
-			h.Write([]byte(fmt.Sprintf("init:%s:absent\n", p)))
-		} else {
-			h.Write([]byte(fmt.Sprintf("init:%s:%d:%d\n", p, info.Size(), info.ModTime().UnixNano())))
-		}
 	}
 
 	// 6. Procfs Port Occupancy via procnet

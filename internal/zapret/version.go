@@ -66,9 +66,8 @@ func parseVersionOutput(out string) string {
 }
 
 // binaryFingerprint — ключ кэша версии. Смена размера или mtime бинаря
-// означает новую установку/обновление, и кэш надо сбросить. Формат
-// взят из hydraroute.getVersionCachedLocked: версии у нас меняются
-// только при замене файла.
+// означает новую установку/обновление, и кэш надо сбросить. Версии
+// меняются только при замене файла.
 func binaryFingerprint(path string) string {
 	st, err := os.Stat(path)
 	if err != nil || st.IsDir() {

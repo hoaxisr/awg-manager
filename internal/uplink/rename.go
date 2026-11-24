@@ -105,7 +105,7 @@ func (c *Controller) RenameTarget(ctx context.Context, from, to Target, apply fu
 		return err
 	}
 	defer guard.Release()
-	if c.paused {
+	if c.paused.Load() {
 		return fmt.Errorf("%w: uplink controller paused for backup", ErrConflict)
 	}
 	if err := c.recoverRename(ctx); err != nil {

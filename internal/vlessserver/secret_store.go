@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // SecretRef identifies a stored secret without exposing its cleartext value.
@@ -122,7 +124,7 @@ func (s *DiskSecretStore) StageSecret(ctx context.Context, txID string, secretTy
 	if err != nil {
 		return SecretRef{}, fmt.Errorf("marshal secret: %w", err)
 	}
-	if err := atomicWriteFile(filepath.Join(txStagingDir, secID+".json"), data, 0600); err != nil {
+	if err := storage.AtomicWritePerm(filepath.Join(txStagingDir, secID+".json"), data, 0600); err != nil {
 		return SecretRef{}, fmt.Errorf("write staged secret: %w", err)
 	}
 	return ref, nil
@@ -184,7 +186,7 @@ func (s *DiskSecretStore) CommitTx(ctx context.Context, txID string) error {
 			if readErr != nil {
 				return fmt.Errorf("fallback read secret %s: %w", entry.Name(), readErr)
 			}
-			if writeErr := atomicWriteFile(dst, data, 0600); writeErr != nil {
+			if writeErr := storage.AtomicWritePerm(dst, data, 0600); writeErr != nil {
 				return fmt.Errorf("fallback write secret %s: %w", entry.Name(), writeErr)
 			}
 			_ = os.Remove(src)

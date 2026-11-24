@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // JournalFileBackup stores the pre-mutation state of a single file for durable crash recovery.
@@ -36,7 +38,7 @@ type MigrationJournal struct {
 }
 
 // writeMigrationJournalDetailed marshals and writes j to migration-journal.json.
-// It returns renamed=true if and only if os.Rename(tmpName, jPath) succeeded, meaning
+// It returns renamed=true if and only if the atomic publish (storage.AtomicWritePerm) succeeded, meaning
 // the new journal content has been published at migration-journal.json on disk.
 // Any error occurring after os.Rename (such as syncParentDir or readback verification)
 // returns renamed=true alongside the non-nil error so the caller never mistakes a
@@ -62,38 +64,12 @@ func (o *Operator) writeMigrationJournalDetailed(
 		return false, fmt.Errorf("marshal migration journal: %w", err)
 	}
 
-	dir := filepath.Dir(jPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return false, fmt.Errorf("write migration journal: mkdir %s: %w", dir, err)
+	// Ошибка AtomicWritePerm — всегда до публикации или на самом rename: свой
+	// fsync каталога он делает best-effort и не возвращает. Строгий fsync
+	// каталога (с подменой из тестов) — ниже, уже после публикации.
+	if err := storage.AtomicWritePerm(jPath, raw, 0600); err != nil {
+		return false, fmt.Errorf("write migration journal: %w", err)
 	}
-	tmp, err := os.CreateTemp(dir, filepath.Base(jPath)+".tmp.*")
-	if err != nil {
-		return false, fmt.Errorf("write migration journal: create temp file for %s: %w", jPath, err)
-	}
-	tmpName := tmp.Name()
-	cleanup := true
-	defer func() {
-		if cleanup {
-			_ = tmp.Close()
-			_ = os.Remove(tmpName)
-		}
-	}()
-	if err := tmp.Chmod(0600); err != nil {
-		return false, fmt.Errorf("write migration journal: chmod %s: %w", tmpName, err)
-	}
-	if _, err := tmp.Write(raw); err != nil {
-		return false, fmt.Errorf("write migration journal: write %s: %w", tmpName, err)
-	}
-	if err := tmp.Sync(); err != nil {
-		return false, fmt.Errorf("write migration journal: fsync %s: %w", tmpName, err)
-	}
-	if err := tmp.Close(); err != nil {
-		return false, fmt.Errorf("write migration journal: close %s: %w", tmpName, err)
-	}
-	if err := os.Rename(tmpName, jPath); err != nil {
-		return false, fmt.Errorf("write migration journal: rename %s -> %s: %w", tmpName, jPath, err)
-	}
-	cleanup = false
 	// Publication point passed: jPath now points to the newly renamed journal file on disk.
 	renamed = true
 

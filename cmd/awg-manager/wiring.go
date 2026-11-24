@@ -17,7 +17,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/downloader"
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/firc"
-	"github.com/hoaxisr/awg-manager/internal/hydraroute"
+	"github.com/hoaxisr/awg-manager/internal/geodata"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
 	"github.com/hoaxisr/awg-manager/internal/monitoring"
@@ -48,7 +48,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/staticroute"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
-	"github.com/hoaxisr/awg-manager/internal/telemt"
 	"github.com/hoaxisr/awg-manager/internal/terminal"
 	"github.com/hoaxisr/awg-manager/internal/testing"
 	"github.com/hoaxisr/awg-manager/internal/tgwebproxy"
@@ -164,11 +163,10 @@ type app struct {
 	orch       *orchestrator.Orchestrator
 
 	// routing / aux services
-	hydraService        *hydraroute.Service
 	zapretService       *zapret.Service
 	autolistService     *autolistdetect.Service
-	geoDataStore        *hydraroute.GeoDataStore
-	geoRefreshScheduler *hydraroute.GeoRefreshScheduler
+	geoDataStore        *geodata.GeoDataStore
+	geoRefreshScheduler *geodata.GeoRefreshScheduler
 	dnsRouteStore       *dnsroute.Store
 	dnsRouteService     *dnsroute.ServiceImpl
 	dnsFailover         *dnsroute.FailoverManager
@@ -190,11 +188,8 @@ type app struct {
 	managedService      *managed.Service
 	vlessServerService  *vlessserver.Service
 	tgWebProxyService   *tgwebproxy.Service
-	telemtService       *telemt.Service
-	telemtHandler       *api.TelemtHandler
 	cdnDispatcher       *cdndispatcher.Dispatcher
 	ingressCoordinator  *serveringress.Coordinator
-	ingressWatcher      *serveringress.ConfigWatcher
 	terminalManager     *terminal.ManagerImpl
 	clientRouteStore    *storage.ClientRouteStore
 	clientRouteService  *clientroute.ServiceImpl

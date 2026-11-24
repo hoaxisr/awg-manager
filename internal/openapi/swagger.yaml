@@ -1157,29 +1157,6 @@ definitions:
         example: a1b2c3d4e5f60718293a4b5c
         type: string
     type: object
-  api.DeleteTargetData:
-    properties:
-      target:
-        example: Belka
-        type: string
-    type: object
-  api.DeleteTargetRequest:
-    properties:
-      revision:
-        example: 3f2a9c0d1b7e
-        type: string
-      target:
-        example: Belka
-        type: string
-    type: object
-  api.DeleteTargetResponse:
-    properties:
-      data:
-        $ref: '#/definitions/api.DeleteTargetData'
-      success:
-        example: true
-        type: boolean
-    type: object
   api.DetectHeadersRequest:
     properties:
       headers:
@@ -1414,8 +1391,7 @@ definitions:
       backend:
         enum:
         - ndms
-        - hydraroute
-        example: hydraroute
+        example: ndms
         type: string
       createdAt:
         example: "2024-01-01T00:00:00Z"
@@ -1446,21 +1422,6 @@ definitions:
           # local bypass
           .local
           10.0.0.0/8
-        type: string
-      hrPolicyInterfaces:
-        example:
-        - Wireguard0
-        items:
-          type: string
-        type: array
-      hrPolicyName:
-        example: Streaming
-        type: string
-      hrRouteMode:
-        enum:
-        - interface
-        - policy
-        example: interface
         type: string
       iconUrl:
         example: data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...
@@ -1555,8 +1516,7 @@ definitions:
       backend:
         enum:
         - ndms
-        - hydraroute
-        example: hydraroute
+        example: ndms
         type: string
       enabled:
         example: true
@@ -1578,21 +1538,6 @@ definitions:
           # local bypass
           .local
           10.0.0.0/8
-        type: string
-      hrPolicyInterfaces:
-        example:
-        - Wireguard0
-        items:
-          type: string
-        type: array
-      hrPolicyName:
-        example: Streaming
-        type: string
-      hrRouteMode:
-        enum:
-        - interface
-        - policy
-        example: interface
         type: string
       iconUrl:
         example: data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...
@@ -1828,7 +1773,7 @@ definitions:
         example: true
         type: boolean
       path:
-        example: /opt/etc/hrneo/geosite.db
+        example: /opt/etc/awg-manager/geo/geosite.dat
         type: string
       size:
         example: 3145728
@@ -1884,20 +1829,6 @@ definitions:
     properties:
       data:
         $ref: '#/definitions/api.GeoFileUpdatedData'
-      success:
-        example: true
-        type: boolean
-    type: object
-  api.GeoFilesRescannedData:
-    properties:
-      adopted:
-        example: 1
-        type: integer
-    type: object
-  api.GeoFilesRescannedResponse:
-    properties:
-      data:
-        $ref: '#/definitions/api.GeoFilesRescannedData'
       success:
         example: true
         type: boolean
@@ -1978,108 +1909,6 @@ definitions:
     properties:
       data:
         $ref: '#/definitions/api.HealthData'
-      success:
-        example: true
-        type: boolean
-    type: object
-  api.HydraRouteConfigData:
-    properties:
-      autoStart:
-        example: true
-        type: boolean
-      cidr:
-        example: true
-        type: boolean
-      clearIPSet:
-        example: false
-        type: boolean
-      conntrackFlush:
-        example: true
-        type: boolean
-      directRouteEnabled:
-        example: false
-        type: boolean
-      geoIPFiles:
-        example:
-        - /opt/etc/hrneo/geoip.db
-        items:
-          type: string
-        type: array
-      geoSiteFiles:
-        example:
-        - /opt/etc/hrneo/geosite.db
-        items:
-          type: string
-        type: array
-      globalRouting:
-        example: false
-        type: boolean
-      hrRevision:
-        example: 3f2a9c0d1b7e
-        type: string
-      ipsetEnableTimeout:
-        example: false
-        type: boolean
-      ipsetMaxElem:
-        example: 65536
-        type: integer
-      ipsetTimeout:
-        example: 0
-        type: integer
-      log:
-        example: warn
-        type: string
-      logFile:
-        example: /var/log/hrneo.log
-        type: string
-      policyOrder:
-        example:
-        - default
-        items:
-          type: string
-        type: array
-    type: object
-  api.HydraRouteConfigResponse:
-    properties:
-      data:
-        $ref: '#/definitions/api.HydraRouteConfigData'
-      success:
-        example: true
-        type: boolean
-    type: object
-  api.HydraRouteStatusData:
-    properties:
-      installed:
-        example: true
-        type: boolean
-      lastError:
-        example: 'neo restart: exit status 1'
-        type: string
-      pid:
-        example: 12345
-        type: integer
-      processState:
-        enum:
-        - not_installed
-        - stopped
-        - running
-        - dead
-        example: running
-        type: string
-      running:
-        example: true
-        type: boolean
-      stalePid:
-        example: 12345
-        type: integer
-      version:
-        example: 2.4.1
-        type: string
-    type: object
-  api.HydraRouteStatusResponse:
-    properties:
-      data:
-        $ref: '#/definitions/api.HydraRouteStatusData'
       success:
         example: true
         type: boolean
@@ -2193,24 +2022,6 @@ definitions:
           с [instance] в Content.
       wdttClientId:
         type: string
-    type: object
-  api.IpsetUsageData:
-    properties:
-      maxElem:
-        example: 65536
-        type: integer
-      usage:
-        additionalProperties:
-          type: integer
-        type: object
-    type: object
-  api.IpsetUsageResponse:
-    properties:
-      data:
-        $ref: '#/definitions/api.IpsetUsageData'
-      success:
-        example: true
-        type: boolean
     type: object
   api.LANSegmentEntryDTO:
     properties:
@@ -3004,39 +2815,6 @@ definitions:
         example: true
         type: boolean
     type: object
-  api.OversizedTagDTO:
-    properties:
-      count:
-        example: 82000
-        type: integer
-      file:
-        example: /opt/etc/hrneo/geosite.db
-        type: string
-      name:
-        example: netflix
-        type: string
-    type: object
-  api.OversizedTagsData:
-    properties:
-      installed:
-        example: true
-        type: boolean
-      maxelem:
-        example: 65536
-        type: integer
-      tags:
-        items:
-          $ref: '#/definitions/api.OversizedTagDTO'
-        type: array
-    type: object
-  api.OversizedTagsResponse:
-    properties:
-      data:
-        $ref: '#/definitions/api.OversizedTagsData'
-      success:
-        example: true
-        type: boolean
-    type: object
   api.PageScanEnvelope:
     properties:
       data:
@@ -3349,23 +3127,6 @@ definitions:
       id:
         example: Policy0
         type: string
-    type: object
-  api.PolicyOrderData:
-    properties:
-      order:
-        example:
-        - default
-        items:
-          type: string
-        type: array
-    type: object
-  api.PolicyOrderResponse:
-    properties:
-      data:
-        $ref: '#/definitions/api.PolicyOrderData'
-      success:
-        example: true
-        type: boolean
     type: object
   api.PresetsListResponse:
     properties:
@@ -4266,15 +4027,6 @@ definitions:
         - none
         example: internet-only
         type: string
-    type: object
-  api.SetPolicyOrderRequest:
-    properties:
-      order:
-        example:
-        - default
-        items:
-          type: string
-        type: array
     type: object
   api.SetServerEndpointRequest:
     properties:
@@ -7358,12 +7110,6 @@ definitions:
         example: true
         type: boolean
     type: object
-  api.TakeGeoFileControlRequest:
-    properties:
-      path:
-        example: /opt/etc/HydraRoute/geosite_GA.dat
-        type: string
-    type: object
   api.TerminalInstallData:
     properties:
       installed:
@@ -7633,7 +7379,7 @@ definitions:
         type: string
       policyHolds:
         example:
-        - HydraRoute
+        - Policy0
         items:
           type: string
         type: array
@@ -7810,7 +7556,7 @@ definitions:
   api.UpdateGeoFileRequest:
     properties:
       path:
-        example: /opt/etc/hrneo/geosite.db
+        example: /opt/etc/awg-manager/geo/geosite.dat
         type: string
       route:
         $ref: '#/definitions/api.DownloadRouteDTO'
@@ -9011,17 +8757,8 @@ definitions:
     properties:
       dns:
         $ref: '#/definitions/presets.DNSEngine'
-      hydraroute:
-        $ref: '#/definitions/presets.HydraRouteEngine'
       singbox:
         $ref: '#/definitions/presets.SingboxEngine'
-    type: object
-  presets.HydraRouteEngine:
-    properties:
-      geoTags:
-        items:
-          type: string
-        type: array
     type: object
   presets.Origin:
     enum:
@@ -9437,62 +9174,6 @@ definitions:
       payload:
         $ref: '#/definitions/wdttlink.ImportPayload'
     type: object
-  telemt.Config:
-    properties:
-      enabled:
-        type: boolean
-      listenIp:
-        type: string
-      mode:
-        description: '"direct" (Fake-TLS) or "web" (Native Web Proxy)'
-        type: string
-      port:
-        type: integer
-      secret:
-        type: string
-      tlsDomain:
-        type: string
-      upstreamDevice:
-        type: string
-      webCarrier:
-        description: '"https-lanes", "websocket", "https"'
-        type: string
-      webDecoy:
-        description: e.g. "http://127.0.0.1:80"
-        type: string
-      webHost:
-        description: e.g. "proxy.example.com"
-        type: string
-    type: object
-  telemt.Status:
-    properties:
-      arch:
-        type: string
-      archSupported:
-        type: boolean
-      binary:
-        type: string
-      config:
-        $ref: '#/definitions/telemt.Config'
-      error:
-        type: string
-      installed:
-        type: boolean
-      latestVersion:
-        type: string
-      link:
-        type: string
-      pid:
-        type: integer
-      running:
-        type: boolean
-      source:
-        type: string
-      updateAvailable:
-        type: boolean
-      version:
-        type: string
-    type: object
   uplink.Capabilities:
     properties:
       automaticFailback:
@@ -9882,8 +9563,6 @@ definitions:
     type: object
   vlessserver.Status:
     properties:
-      active_generation:
-        type: string
       backend:
         type: string
       binary_path:
@@ -9901,8 +9580,6 @@ definitions:
       installed:
         type: boolean
       listen_address:
-        type: string
-      migration_status:
         type: string
       pid:
         type: integer
@@ -12006,10 +11683,6 @@ paths:
           description: Bad Request
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
-        "409":
-          description: Conflict
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
@@ -12039,10 +11712,6 @@ paths:
             $ref: '#/definitions/api.APIEnvelope'
         "400":
           description: Bad Request
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "409":
-          description: Conflict
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
@@ -12158,10 +11827,6 @@ paths:
           description: Bad Request
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
-        "409":
-          description: Conflict
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
           description: Internal Server Error
           schema:
@@ -12196,10 +11861,6 @@ paths:
             $ref: '#/definitions/api.DnsRouteResponse'
         "400":
           description: Bad Request
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "409":
-          description: Conflict
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
         "500":
@@ -12359,9 +12020,9 @@ paths:
     post:
       consumes:
       - application/json
-      description: Transactionally migrates FIRC ownership from legacy bundled awg-manager
-        or (when replaceExternalPackage=true) an allowlisted external Entware FIRC
-        package to awg-firc-runtime, preserving configs and runtime state.
+      description: Transactionally migrates FIRC ownership from an allowlisted external
+        Entware FIRC package (requires replaceExternalPackage=true) to awg-firc-runtime,
+        preserving configs and runtime state.
       parameters:
       - description: Migration options; set replaceExternalPackage=true to replace
           an external Entware FIRC package
@@ -12452,78 +12113,7 @@ paths:
       summary: Upgrade the installed FIRC runtime package
       tags:
       - firc
-  /health:
-    get:
-      description: Cheap check for frontend pollers; no NDMS or I/O.
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.HealthResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      summary: Health / liveness
-      tags:
-      - system
-  /hydraroute/config:
-    get:
-      description: Available when HydraRoute service is wired on the device.
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.HydraRouteConfigResponse'
-      security:
-      - CookieAuth: []
-      summary: Get HydraRoute config
-      tags:
-      - hydraroute
-  /hydraroute/config/update:
-    put:
-      consumes:
-      - application/json
-      description: Changes the HydraRoute (HrNeo) config fields present in the body
-        (others keep their values; policyOrder and geo file lists are not changed
-        here) and schedules a neo restart. The cached status becomes stale and is
-        invalidated via SSE.
-      parameters:
-      - description: hydraroute.Config
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/api.HydraRouteConfigData'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.HydraRouteConfigResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Update HydraRoute config
-      tags:
-      - hydraroute
-  /hydraroute/geo-expand:
+  /geo/expand:
     get:
       parameters:
       - description: geosite or geoip
@@ -12550,10 +12140,10 @@ paths:
               type: object
       security:
       - CookieAuth: []
-      summary: HydraRoute geo tag expand
+      summary: Geo tag expand
       tags:
-      - hydraroute
-  /hydraroute/geo-files:
+      - geo
+  /geo/files:
     get:
       produces:
       - application/json
@@ -12568,10 +12158,10 @@ paths:
             $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
-      summary: List HydraRoute geo files
+      summary: List geo files
       tags:
-      - hydraroute
-  /hydraroute/geo-files/add:
+      - geo
+  /geo/files/add:
     post:
       consumes:
       - application/json
@@ -12599,13 +12189,13 @@ paths:
             $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
-      summary: Add HydraRoute geo file
+      summary: Add geo file
       tags:
-      - hydraroute
-  /hydraroute/geo-files/delete:
+      - geo
+  /geo/files/delete:
     delete:
-      description: Removes the tracked geo data file at the given path and re-syncs
-        the geo file list to config.
+      description: 'Removes the tracked geo data file at the given path. A file of
+        another program (external) stays on disk: only the catalog entry is removed.'
       parameters:
       - description: Filesystem path of the geo file
         in: query
@@ -12629,59 +12219,10 @@ paths:
             $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
-      summary: Delete HydraRoute geo file
+      summary: Delete geo file
       tags:
-      - hydraroute
-  /hydraroute/geo-files/rescan:
-    post:
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.GeoFilesRescannedResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Rescan HydraRoute geo files from hrneo.conf
-      tags:
-      - hydraroute
-  /hydraroute/geo-files/take-control:
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: Filesystem path of the external geo file
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/api.TakeGeoFileControlRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.GeoFileResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Take HydraRoute geo file under awg-manager control
-      tags:
-      - hydraroute
-  /hydraroute/geo-files/update:
+      - geo
+  /geo/files/update:
     post:
       consumes:
       - application/json
@@ -12712,10 +12253,10 @@ paths:
             $ref: '#/definitions/api.APIErrorEnvelope'
       security:
       - CookieAuth: []
-      summary: Refresh HydraRoute geo file(s)
+      summary: Refresh geo file(s)
       tags:
-      - hydraroute
-  /hydraroute/geo-tags:
+      - geo
+  /geo/tags:
     get:
       parameters:
       - description: Geo file path
@@ -12732,100 +12273,19 @@ paths:
             $ref: '#/definitions/api.GeoTagsResponse'
       security:
       - CookieAuth: []
-      summary: HydraRoute geo tags
+      summary: Geo tags
       tags:
-      - hydraroute
-  /hydraroute/ipset-usage:
+      - geo
+  /health:
     get:
+      description: Cheap check for frontend pollers; no NDMS or I/O.
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.IpsetUsageResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: HydraRoute ipset usage
-      tags:
-      - hydraroute
-  /hydraroute/oversized-tags:
-    get:
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.OversizedTagsResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: HydraRoute oversized geo tags
-      tags:
-      - hydraroute
-  /hydraroute/oversized-tags/delete:
-    delete:
-      description: Removes the tag from HR Neo's `##impossible to use` section in
-        ip.list (all duplicates; an emptied section is removed). The rest of ip.list,
-        domain.conf and the rules are not changed and HR Neo is not restarted. 400
-        for an empty name or when HR Neo is not installed, 404 when the tag is not
-        in the section.
-      parameters:
-      - description: Tag name, e.g. geoip:ru-blocked
-        in: query
-        name: name
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.OkResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Remove HydraRoute disabled geo tag
-      tags:
-      - hydraroute
-  /hydraroute/policy-order:
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: Ordered list of policy names
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/api.SetPolicyOrderRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.PolicyOrderResponse'
+            $ref: '#/definitions/api.HealthResponse'
         "400":
           description: Bad Request
           schema:
@@ -12834,42 +12294,9 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Set HydraRoute policy order
+      summary: Health / liveness
       tags:
-      - hydraroute
-  /hydraroute/targets/delete:
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: Target and rules revision
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/api.DeleteTargetRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.DeleteTargetResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "409":
-          description: Conflict
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Delete HydraRoute rule target
-      tags:
-      - hydraroute
+      - system
   /import/conf:
     post:
       consumes:
@@ -16976,7 +16403,7 @@ paths:
       consumes:
       - application/json
       description: Starts, stops, or restarts the sing-box engine. Returns the fresh
-        status snapshot. Mirrors /system/hydraroute-control.
+        status snapshot.
       parameters:
       - description: Action to perform
         in: body
@@ -22486,52 +21913,6 @@ paths:
       tags:
       - system
       - expert
-  /system/hydraroute-control:
-    post:
-      consumes:
-      - application/json
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.APIEnvelope'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: HydraRoute control (system)
-      tags:
-      - system
-  /system/hydraroute-status:
-    get:
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.HydraRouteStatusResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: HydraRoute status (system)
-      tags:
-      - system
   /system/info:
     get:
       produces:
@@ -23254,253 +22635,6 @@ paths:
       summary: WAN interfaces
       tags:
       - system
-  /telemt/config:
-    get:
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/api.APIEnvelope'
-            - properties:
-                data:
-                  $ref: '#/definitions/telemt.Config'
-              type: object
-        "503":
-          description: Service Unavailable
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Get telemt configuration
-      tags:
-      - telemt
-    post:
-      consumes:
-      - application/json
-      parameters:
-      - description: telemt configuration
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/telemt.Config'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/api.APIEnvelope'
-            - properties:
-                data:
-                  $ref: '#/definitions/telemt.Status'
-              type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "503":
-          description: Service Unavailable
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Save telemt configuration
-      tags:
-      - telemt
-  /telemt/install:
-    post:
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/api.APIEnvelope'
-            - properties:
-                data:
-                  $ref: '#/definitions/telemt.Status'
-              type: object
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "503":
-          description: Service Unavailable
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Install telemt binary
-      tags:
-      - telemt
-  /telemt/restart:
-    post:
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/api.APIEnvelope'
-            - properties:
-                data:
-                  $ref: '#/definitions/telemt.Status'
-              type: object
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "503":
-          description: Service Unavailable
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Restart telemt service
-      tags:
-      - telemt
-  /telemt/start:
-    post:
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/api.APIEnvelope'
-            - properties:
-                data:
-                  $ref: '#/definitions/telemt.Status'
-              type: object
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "503":
-          description: Service Unavailable
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Start telemt service
-      tags:
-      - telemt
-  /telemt/status:
-    get:
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/api.APIEnvelope'
-            - properties:
-                data:
-                  $ref: '#/definitions/telemt.Status'
-              type: object
-        "503":
-          description: Service Unavailable
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Get telemt service status
-      tags:
-      - telemt
-  /telemt/stop:
-    post:
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/api.APIEnvelope'
-            - properties:
-                data:
-                  $ref: '#/definitions/telemt.Status'
-              type: object
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "503":
-          description: Service Unavailable
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Stop telemt service
-      tags:
-      - telemt
-  /telemt/uninstall:
-    post:
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/api.APIEnvelope'
-            - properties:
-                data:
-                  $ref: '#/definitions/telemt.Status'
-              type: object
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "503":
-          description: Service Unavailable
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Uninstall telemt service
-      tags:
-      - telemt
-  /telemt/update:
-    post:
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/api.APIEnvelope'
-            - properties:
-                data:
-                  $ref: '#/definitions/telemt.Status'
-              type: object
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "503":
-          description: Service Unavailable
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Update telemt binary
-      tags:
-      - telemt
   /terminal/install:
     post:
       produces:

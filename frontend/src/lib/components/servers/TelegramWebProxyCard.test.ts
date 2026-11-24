@@ -80,10 +80,10 @@ describe('TelegramWebProxyCard', () => {
 
 		await findByText('Частично работает');
 		expect(queryByText('Работает')).toBeNull();
-		await findByText(/выключён в настройках, но процесс ещё активен/);
-		await findByText('Выключена');
-		await findByText('Запущен');
-		await findByText('Не проверена');
+		await findByText(new RegExp(m.servers_tg_partial_disabled_running()));
+		await findByText(m.servers_tg_config_disabled());
+		await findByText(m.servers_tg_process_running());
+		await findByText(m.servers_tg_reach_unchecked());
 	});
 
 	it('closes Settings & Diagnostics modal via Закрыть and × even after ConnectionChecks completes', async () => {
@@ -113,28 +113,28 @@ describe('TelegramWebProxyCard', () => {
 
 		render(TelegramWebProxyCard, {});
 
-		const settingsBtn = await screen.findByRole('button', { name: /Настройки/ });
+		const settingsBtn = await screen.findByRole('button', { name: new RegExp(m.servers_tg_settings_btn()) });
 		await fireEvent.click(settingsBtn);
 
-		await screen.findByText('Настройки и диагностика Telegram');
-		const diagTab = screen.getByRole('button', { name: 'Диагностика и проверка' });
+		await screen.findByText(m.servers_tg_settings_title());
+		const diagTab = screen.getByRole('button', { name: m.servers_tg_settings_tab_diagnostics() });
 		await fireEvent.click(diagTab);
 
 		await screen.findByText('Telegram: MTProto (прямое подключение)');
 		expect(api.verifyWizard).toHaveBeenCalledWith('tgwebproxy');
 
-		const footerCloseBtn = screen.getByText('Закрыть').closest('button');
+		const footerCloseBtn = screen.getByText(m.common_close()).closest('button');
 		expect(footerCloseBtn).not.toBeNull();
 		await fireEvent.click(footerCloseBtn!);
 
 		await waitFor(() => {
-			expect(screen.queryByText('Настройки и диагностика Telegram')).toBeNull();
+			expect(screen.queryByText(m.servers_tg_settings_title())).toBeNull();
 		});
 
 		// Re-open, trigger diagnostics again, and close via header × button
-		await fireEvent.click(screen.getByRole('button', { name: /Настройки/ }));
-		await screen.findByText('Настройки и диагностика Telegram');
-		await fireEvent.click(screen.getByRole('button', { name: 'Диагностика и проверка' }));
+		await fireEvent.click(screen.getByRole('button', { name: new RegExp(m.servers_tg_settings_btn()) }));
+		await screen.findByText(m.servers_tg_settings_title());
+		await fireEvent.click(screen.getByRole('button', { name: m.servers_tg_settings_tab_diagnostics() }));
 		await screen.findByText('Telegram: MTProto (прямое подключение)');
 
 		const xBtn = document.body.querySelector('button.modal-close');
@@ -142,7 +142,7 @@ describe('TelegramWebProxyCard', () => {
 		await fireEvent.click(xBtn!);
 
 		await waitFor(() => {
-			expect(screen.queryByText('Настройки и диагностика Telegram')).toBeNull();
+			expect(screen.queryByText(m.servers_tg_settings_title())).toBeNull();
 		});
 	});
 
@@ -157,8 +157,8 @@ describe('TelegramWebProxyCard', () => {
 
 		render(TelegramWebProxyCard, {});
 
-		await fireEvent.click(await screen.findByRole('button', { name: /Настройки/ }));
-		await screen.findByText('Настройки и диагностика Telegram');
+		await fireEvent.click(await screen.findByRole('button', { name: new RegExp(m.servers_tg_settings_btn()) }));
+		await screen.findByText(m.servers_tg_settings_title());
 
 		await fireEvent.click(screen.getByRole('button', { name: m.server_reset_button() }));
 		await screen.findByText(m.server_reset_tg_modal_title());
@@ -172,11 +172,11 @@ describe('TelegramWebProxyCard', () => {
 		});
 		await waitFor(() => {
 			expect(screen.queryByText(m.server_reset_tg_modal_title())).toBeNull();
-			expect(screen.queryByText('Настройки и диагностика Telegram')).toBeNull();
+			expect(screen.queryByText(m.servers_tg_settings_title())).toBeNull();
 		});
 
 		// Open again and check KeenDNS deletion checkbox
-		await fireEvent.click(await screen.findByRole('button', { name: /Настройки/ }));
+		await fireEvent.click(await screen.findByRole('button', { name: new RegExp(m.servers_tg_settings_btn()) }));
 		await fireEvent.click(screen.getByRole('button', { name: m.server_reset_button() }));
 		await screen.findByText(m.server_reset_tg_modal_title());
 
@@ -260,7 +260,7 @@ describe('TelegramWebProxyCard', () => {
 
 		const { findByRole } = render(TelegramWebProxyCard, {});
 
-		const qrBtn = await findByRole('button', { name: /QR \/ Ссылка/ });
+		const qrBtn = await findByRole('button', { name: m.servers_tg_user_qr_link() });
 		await fireEvent.click(qrBtn);
 
 		const secretInput = (await findByRole('textbox', {
@@ -332,7 +332,7 @@ describe('TelegramWebProxyCard', () => {
 		});
 
 		const { findAllByRole, findByRole } = render(TelegramWebProxyCard, {});
-		const qrButtons = await findAllByRole('button', { name: /QR \/ Ссылка/ });
+		const qrButtons = await findAllByRole('button', { name: m.servers_tg_user_qr_link() });
 		await fireEvent.click(qrButtons[0]);
 
 		const secretInput = () =>
@@ -435,14 +435,14 @@ describe('TelegramWebProxyCard', () => {
 			setupBackend([A, B], { 'u-a': '11'.repeat(16), 'u-b': '22'.repeat(16) });
 			render(TelegramWebProxyCard, {});
 
-			await fireEvent.click((await screen.findAllByRole('button', { name: /QR \/ Ссылка/ }))[0]);
+			await fireEvent.click((await screen.findAllByRole('button', { name: m.servers_tg_user_qr_link() }))[0]);
 			await waitFor(async () => expect((await secretInput()).value).toBe('11'.repeat(16)));
 			await closeModal();
 			await deleteFirstUser();
-			await waitFor(() => expect(screen.getAllByRole('button', { name: /QR \/ Ссылка/ })).toHaveLength(1));
+			await waitFor(() => expect(screen.getAllByRole('button', { name: m.servers_tg_user_qr_link() })).toHaveLength(1));
 
 			vi.mocked(api.revealTgWebProxySecret).mockClear();
-			await fireEvent.click(screen.getByRole('button', { name: /QR \/ Ссылка/ }));
+			await fireEvent.click(screen.getByRole('button', { name: m.servers_tg_user_qr_link() }));
 			await waitFor(async () => expect((await secretInput()).value).toBe('22'.repeat(16)));
 			expect(api.revealTgWebProxySecret).not.toHaveBeenCalledWith('u-a');
 			expect(notifications.error).not.toHaveBeenCalled();
@@ -453,14 +453,14 @@ describe('TelegramWebProxyCard', () => {
 			setupBackend([L], { default: '33'.repeat(16) });
 			render(TelegramWebProxyCard, {});
 
-			await fireEvent.click(await screen.findByRole('button', { name: /QR \/ Ссылка/ }));
+			await fireEvent.click(await screen.findByRole('button', { name: m.servers_tg_user_qr_link() }));
 			await waitFor(async () => expect((await secretInput()).value).toBe('33'.repeat(16)));
 			await closeModal();
 
 			vi.mocked(api.revealTgWebProxySecret).mockClear();
 			await deleteFirstUser();
 			await screen.findByText(m.tg_users_empty());
-			expect(screen.queryByRole('button', { name: /QR \/ Ссылка/ })).toBeNull();
+			expect(screen.queryByRole('button', { name: m.servers_tg_user_qr_link() })).toBeNull();
 			expect(api.revealTgWebProxySecret).not.toHaveBeenCalled();
 			expect(notifications.error).not.toHaveBeenCalled();
 		});
@@ -470,11 +470,11 @@ describe('TelegramWebProxyCard', () => {
 			setupBackend([A], { 'u-a': '44'.repeat(16) });
 			render(TelegramWebProxyCard, {});
 
-			await fireEvent.click(await screen.findByRole('button', { name: /QR \/ Ссылка/ }));
+			await fireEvent.click(await screen.findByRole('button', { name: m.servers_tg_user_qr_link() }));
 			await waitFor(async () => expect((await secretInput()).value).toBe('44'.repeat(16)));
 			await closeModal();
 
-			await fireEvent.click(await screen.findByRole('button', { name: /QR \/ Ссылка/ }));
+			await fireEvent.click(await screen.findByRole('button', { name: m.servers_tg_user_qr_link() }));
 			await waitFor(async () => expect((await secretInput()).value).toBe('44'.repeat(16)));
 			expect(api.revealTgWebProxySecret).toHaveBeenCalledTimes(1);
 			expect(notifications.error).not.toHaveBeenCalled();
@@ -488,12 +488,12 @@ describe('TelegramWebProxyCard', () => {
 			const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + shift);
 			try {
 				render(TelegramWebProxyCard, {});
-				await fireEvent.click(await screen.findByRole('button', { name: /QR \/ Ссылка/ }));
+				await fireEvent.click(await screen.findByRole('button', { name: m.servers_tg_user_qr_link() }));
 				await waitFor(async () => expect((await secretInput()).value).toBe('66'.repeat(16)));
 				await closeModal();
 
 				shift = 6000;
-				await fireEvent.click(await screen.findByRole('button', { name: /QR \/ Ссылка/ }));
+				await fireEvent.click(await screen.findByRole('button', { name: m.servers_tg_user_qr_link() }));
 				await waitFor(async () => expect((await secretInput()).value).toBe('66'.repeat(16)));
 				expect(api.revealTgWebProxySecret).toHaveBeenCalledTimes(2);
 				expect(notifications.error).not.toHaveBeenCalled();
@@ -507,13 +507,13 @@ describe('TelegramWebProxyCard', () => {
 			setupBackend([A], { 'u-a': '55'.repeat(16) });
 			render(TelegramWebProxyCard, {});
 
-			await fireEvent.click(await screen.findByRole('button', { name: /QR \/ Ссылка/ }));
+			await fireEvent.click(await screen.findByRole('button', { name: m.servers_tg_user_qr_link() }));
 			await waitFor(async () => expect((await secretInput()).value).toBe('55'.repeat(16)));
 			await fireEvent.click(await screen.findByRole('button', { name: /Сгенерировать|Generate/ }));
 			await waitFor(async () => expect((await secretInput()).value).toBe('ab'.repeat(16)));
 			await closeModal();
 
-			await fireEvent.click(await screen.findByRole('button', { name: /QR \/ Ссылка/ }));
+			await fireEvent.click(await screen.findByRole('button', { name: m.servers_tg_user_qr_link() }));
 			await waitFor(async () => expect((await secretInput()).value).toBe('ab'.repeat(16)));
 			expect(notifications.error).not.toHaveBeenCalled();
 		});
@@ -535,7 +535,7 @@ describe('TelegramWebProxyCard', () => {
 
 		await findByText(/\(\+1 (резерв|failover)\)/);
 
-		const changeBtn = await findByRole('button', { name: /^Изменить$/ });
+		const changeBtn = await findByRole('button', { name: m.common_edit() });
 		await fireEvent.click(changeBtn);
 
 		await findByText(/Выходные каналы \(Upstreams\)|Outbound channels \(Upstreams\)/);

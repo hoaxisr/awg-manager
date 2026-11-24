@@ -149,14 +149,4 @@
 		color: var(--color-error);
 	}
 
-	/* lucide-svelte forwards `class` onto the <svg>; spin the current-step ring. */
-	:global(.spin) {
-		animation: spin 0.9s linear infinite;
-	}
-
-	@keyframes spin {
-		to {
-			transform: rotate(360deg);
-		}
-	}
-</style>
+	/* lucide-svelte forwards `class` onto the <svg>; spin the current-step ring. */</style>

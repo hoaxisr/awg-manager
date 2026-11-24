@@ -689,3 +689,34 @@ func TestSelfLoopDrop6(t *testing.T) {
 		t.Error("v6-хук не чистит self-loop DROP перед restore mangle")
 	}
 }
+
+// F815: старые DNS-RESCUE снимаются ДО restore. Правила стоят `-I PREROUTING 1`,
+// и `-D` после restore снял бы новую копию, оставив старую на прежнем месте.
+func TestInstall_DNSRescueDeletedBeforeRestore(t *testing.T) {
+	fe := &fakeExec{}
+	it := newFakeIPTables(fe)
+	old := `-A PREROUTING -i br0 -m mark --mark 0x0 -m pkttype --pkt-type unicast -p udp --dport 53 -m comment --comment "` + DNSRescueTag + `" -j REDIRECT --to-ports 41100`
+	it.runIPTablesOut = func(_ context.Context, args ...string) (string, error) {
+		if len(args) >= 2 && args[1] == "nat" {
+			return jumpsPresentDump() + old + "\n", nil
+		}
+		return jumpsPresentDump(), nil
+	}
+	spec := RestoreInputSpec{LANBridges: []LANBridgeDNSRedir{{Bridge: "br0", Port: 41100}}}
+	if err := it.Install(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+	restoreAt, deleteAt := -1, -1
+	for i, c := range fe.calls {
+		if c.kind == "restore" && restoreAt < 0 {
+			restoreAt = i
+		}
+		if c.kind == "iptables" && strings.Contains(strings.Join(c.args, " "), "-D PREROUTING") &&
+			strings.Contains(strings.Join(c.args, " "), DNSRescueTag) && deleteAt < 0 {
+			deleteAt = i
+		}
+	}
+	if deleteAt < 0 || restoreAt < 0 || deleteAt > restoreAt {
+		t.Fatalf("DNS-RESCUE delete at %d, restore at %d; want delete before restore: %+v", deleteAt, restoreAt, fe.calls)
+	}
+}

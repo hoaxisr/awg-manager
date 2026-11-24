@@ -4,35 +4,6 @@ import type { UsageLevel } from './usageLevel';
 // #region System — info, WAN, interfaces
 // ─────────────────────────────────────────────
 
-export interface HydraRouteStatus {
-	installed: boolean;
-	running: boolean;
-	version?: string;
-	pid?: number;
-	stalePid?: number;
-	processState?: 'not_installed' | 'stopped' | 'running' | 'dead';
-	lastError?: string;
-}
-
-export interface HydraRouteConfig {
-	autoStart: boolean;
-	clearIPSet: boolean;
-	cidr: boolean;
-	ipsetEnableTimeout: boolean;
-	ipsetTimeout: number;
-	ipsetMaxElem: number;
-	directRouteEnabled: boolean;
-	globalRouting: boolean;
-	conntrackFlush: boolean;
-	log: string;
-	logFile: string;
-	geoIPFiles: string[];
-	geoSiteFiles: string[];
-	policyOrder: string[];
-	/** Ревизия файлов правил HR Neo (domain.conf + ip.list). */
-	hrRevision?: string;
-}
-
 export interface GeoFileEntry {
 	type: 'geosite' | 'geoip';
 	path: string;
@@ -40,7 +11,7 @@ export interface GeoFileEntry {
 	size: number;
 	tagCount: number;
 	updated: string;
-	/** True for files discovered in hrneo.conf but not managed by awg-manager. */
+	/** Файл другой программы: только для чтения, «Удалить» убирает лишь запись. */
 	external?: boolean;
 }
 
@@ -60,23 +31,6 @@ export interface DownloadOutbound {
 export interface GeoTag {
 	name: string;
 	count: number;
-}
-
-export interface IpsetUsage {
-	maxElem: number;
-	usage: Record<string, number>;
-}
-
-export interface OversizedTag {
-	name: string;
-	count: number;
-	file: string;
-}
-
-export interface HydraRouteOversizedResponse {
-	installed: boolean;
-	maxelem: number;
-	tags: OversizedTag[];
 }
 
 export interface SystemInfo {

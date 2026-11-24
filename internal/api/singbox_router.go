@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
@@ -27,6 +29,13 @@ type SingboxRouterHandler struct {
 	// autolistRunning — «сателлит Autolist сейчас работает» (опционально):
 	// teardown объектов при работающем сателлите отвечают 409.
 	autolistRunning func(r *http.Request) bool
+	bus             *events.Bus
+}
+
+// SetEventBus wires the SSE event bus. Нужен странице серверов: она читает
+// ingressInterfaces из этих настроек.
+func (h *SingboxRouterHandler) SetEventBus(bus *events.Bus) {
+	h.bus = bus
 }
 
 // Service exposes the router service so other wiring (the MCP adapter)
@@ -229,6 +238,10 @@ func (h *SingboxRouterHandler) PutSettings(w http.ResponseWriter, r *http.Reques
 	}
 	if h.onSettingsUpdated != nil {
 		h.onSettingsUpdated(r.Context(), cur, sr)
+	}
+	// Смену движка уже публикует свитчер (firc); здесь — только входы.
+	if !slices.Equal(cur.IngressInterfaces, sr.IngressInterfaces) {
+		h.bus.PublishInvalidated(events.ResourceServersIngress, "ingress-interfaces-changed")
 	}
 	h.log.Info("settings", "", "Sing-box router settings updated")
 	response.Success(w, map[string]bool{"ok": true})

@@ -229,11 +229,6 @@ type DispatcherSystemHookCleaner interface {
 	CleanupSystemHooks()
 }
 
-// TelemtResetComponent resets standalone telemt config/PID state while preserving the telemt binary.
-type TelemtResetComponent interface {
-	ResetConfig(ctx context.Context) error
-}
-
 // KeenDNSResetOperator is an optional capability on KeenDNSOperator to safely delete non-shared ingress publications.
 type KeenDNSResetOperator interface {
 	DeleteIngressPublications(ctx context.Context, labels []string, allowedPorts []int) (deleted []string, skipped []string, warnings []string)

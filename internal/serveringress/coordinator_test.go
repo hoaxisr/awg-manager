@@ -831,73 +831,6 @@ func TestCoordinatorRollbackComponentErrorKeepsJournal(t *testing.T) {
 	}
 }
 
-func TestResolveMigration_NoDeadlock(t *testing.T) {
-	t.Run("keep_legacy_rejected", func(t *testing.T) {
-		dataDir := t.TempDir()
-		xraySvc := vlessserver.New(dataDir, nil)
-		disp := &mockDispatcher{}
-		tg := &mockTgWebProxy{}
-		coord := New(dataDir, xraySvc, disp, tg)
-
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-
-		done := make(chan error, 1)
-		go func() {
-			done <- coord.ResolveMigration(ctx, "keep_legacy", nil)
-		}()
-
-		select {
-		case err := <-done:
-			if !errors.Is(err, vlessserver.ErrLegacyRuntimeRemoved) {
-				t.Fatalf("ResolveMigration keep_legacy error = %v, want ErrLegacyRuntimeRemoved", err)
-			}
-		case <-time.After(3 * time.Second):
-			t.Fatal("ResolveMigration keep_legacy deadlocked!")
-		}
-	})
-
-	t.Run("import_legacy_draft", func(t *testing.T) {
-		dataDir := t.TempDir()
-		xraySvc := vlessserver.New(dataDir, nil)
-		disp := &mockDispatcher{}
-		tg := &mockTgWebProxy{}
-		coord := New(dataDir, xraySvc, disp, tg)
-
-		legacyCfg := &vlessserver.Config{
-			Enabled:      false,
-			ListenPort:   9008,
-			Path:         "/imported",
-			PublicDomain: "imported.cdn.net",
-			Clients: []vlessserver.Client{
-				{ID: "legacy-client-1", Remark: "Legacy", Enabled: true},
-			},
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-
-		done := make(chan error, 1)
-		go func() {
-			done <- coord.ResolveMigration(ctx, "import_legacy_draft", legacyCfg)
-		}()
-
-		select {
-		case err := <-done:
-			if err != nil {
-				t.Fatalf("ResolveMigration import_legacy_draft failed: %v", err)
-			}
-		case <-time.After(3 * time.Second):
-			t.Fatal("ResolveMigration import_legacy_draft deadlocked!")
-		}
-
-		curCfg := xraySvc.GetConfig()
-		if curCfg.Path != "/imported" || curCfg.PublicDomain != "imported.cdn.net" {
-			t.Errorf("imported config mismatch: %+v", curCfg)
-		}
-	})
-}
-
 func TestCoordinatorParallelApplyXrayConfig_RaceSafe(t *testing.T) {
 	dataDir := t.TempDir()
 	xraySvc := vlessserver.New(dataDir, nil)
@@ -1084,34 +1017,6 @@ func TestCoordinatorHostnameClearing(t *testing.T) {
 	// TG managed config PublicHostname must be empty
 	if mockTG.cfg.PublicHostname != "" {
 		t.Errorf("expected tgwebproxy hostname to be cleared, got %q", mockTG.cfg.PublicHostname)
-	}
-}
-
-func TestResolveMigration_KeepNewAndKeepLegacyRejection(t *testing.T) {
-	dataDir := t.TempDir()
-	mockX := &mockXray{
-		cfg: vlessserver.Config{
-			Enabled:    true,
-			ListenPort: 9008,
-		},
-	}
-	mockDisp := &mockDispatcher{running: true}
-	mockTG := &mockTgWebProxy{cfg: tgwebproxy.Config{Enabled: false}}
-	coord := New(dataDir, mockX, mockDisp, mockTG)
-
-	if err := coord.ResolveMigration(context.Background(), "keep_legacy", nil); !errors.Is(err, vlessserver.ErrLegacyRuntimeRemoved) {
-		t.Fatalf("ResolveMigration(keep_legacy) error = %v, want ErrLegacyRuntimeRemoved", err)
-	}
-
-	if err := coord.ResolveMigration(context.Background(), "keep_new", nil); err != nil {
-		t.Fatalf("ResolveMigration(keep_new) failed: %v", err)
-	}
-	dec, err := vlessserver.GetRuntimeDecision(dataDir)
-	if err != nil {
-		t.Fatalf("GetRuntimeDecision failed: %v", err)
-	}
-	if dec.ActiveGeneration != "new" || dec.MigrationStatus != "migrated" {
-		t.Errorf("unexpected runtime decision: %+v", dec)
 	}
 }
 

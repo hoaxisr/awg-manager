@@ -99,6 +99,11 @@ func (s *ServiceImpl) SetASCParams(ctx context.Context, name string, params json
 	if !ok {
 		return fmt.Errorf("интерфейса %s нет в NDMS", name)
 	}
+	// Очищенная форма = «снять обфускацию». Записью пустых значений NDMS ASC
+	// не снимает: null → «no input», 0/"" → молчаливый no-op (F886).
+	if isEmptyASC(params) {
+		return s.commands.Wireguard.ResetASCParams(ctx, iface)
+	}
 	// У интерфейса-сервера сигнатура — свойство каждого его пира, а не
 	// интерфейса: форма ASC её не задаёт, и до NDMS ключи не доходят.
 	if s.isServerInterface(ctx, name) {
@@ -117,4 +122,21 @@ func (s *ServiceImpl) SetASCParams(ctx context.Context, name string, params json
 		return err
 	}
 	return s.commands.Wireguard.SetASCParams(ctx, iface, params)
+}
+
+// isEmptyASC — форма с полями, и все они пустые: null, "", 0 или false.
+// Пустой объект и null снятием не считаются.
+func isEmptyASC(params json.RawMessage) bool {
+	var asc map[string]any
+	if json.Unmarshal(params, &asc) != nil || len(asc) == 0 {
+		return false
+	}
+	for _, v := range asc {
+		switch v {
+		case nil, "", float64(0), false:
+		default:
+			return false
+		}
+	}
+	return true
 }

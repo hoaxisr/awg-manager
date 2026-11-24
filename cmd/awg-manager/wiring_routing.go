@@ -93,7 +93,6 @@ func (a *app) setupOrchestrator() {
 		return nil
 	})
 	a.dnsFailover.SetLogger(dnsFailoverJournal{log: logging.NewScopedLogger(a.loggingService, logging.GroupRouting, logging.SubDnsRoute)})
-	a.dnsRouteService.SetHydraRoute(a.hydraService)
 	a.dnsRouteService.SetFailoverManager(a.dnsFailover)
 	a.dnsFailover.SetAffectedListsLookup(a.dnsRouteService.LookupAffectedLists)
 
@@ -109,14 +108,10 @@ func (a *app) setupOrchestrator() {
 	// Route SetInterfaceUp for managed tunnels through the orchestrator
 	// lifecycle (NativeWG needs kmod proxy + endpoint rewrite, not a raw NDMS
 	// flip — issue #183). System interfaces keep the raw flip.
-	a.accessPolicySvc.SetTunnelLifecycle(orchLifecycleAdapter{a.orch}, storeManagedTunnelResolver{a.awgStore})
+	a.accessPolicySvc.SetTunnelLifecycle(orchLifecycleAdapter{a.orch, a.tunnelService.GuardUplinkMutation}, storeManagedTunnelResolver{a.awgStore})
 	// Больной туннель мониторинг уводит из политик снятием permit (F743).
 	a.pingCheckService.SetPolicies(pingcheckPolicies{a.accessPolicySvc, a.ndmsQueries.Policies})
 	a.accessPolicySvc.SetPolicyHolds(a.pingCheckService)
-
-	// HydraRoute NDMS wiring — now that ndmsCommands/Queries are ready.
-	a.hydraService.SetQueries(a.ndmsQueries)
-	a.hydraService.SetPolicies(a.ndmsCommands.Policies)
 
 	// Диспетчер, HookSink и читатель spool созданы в setupNDMS — до
 	// прогрева списков (см. там); здесь только запуск воркера. События,
@@ -163,15 +158,6 @@ func (a *app) setupEventWiring() {
 	a.sysfsTrafficPoller.SetClientCounter(a.eventBus)
 	a.sysfsTrafficPoller.Start()
 
-	// Сторож hrneo: за живостью чужого процесса раньше следила ПАНЕЛЬ — стор
-	// опрашивал статус из каждой открытой вкладки по HTTP (F353). Событий о
-	// смерти процесса не бывает ни у кого, поэтому наблюдать надо, но наблюдает
-	// пусть демон, один раз и локально (F364).
-	if a.hydraService != nil {
-		stopHydraWatchdog := a.hydraService.StartWatchdog(context.Background(), a.eventBus)
-		a.deferOnExit(stopHydraWatchdog)
-	}
-
 	a.orch.SetEventBus(a.eventBus)
 	// Refresh the NDMS interface cache when a kernel tunnel is confirmed up:
 	// OpkgTun iflayerchanged hooks are unreliable, so the cache otherwise keeps
@@ -215,14 +201,6 @@ func (a *app) setupEventWiring() {
 	// api.NewHookSink в wiring_core): ifdestroyed записи, снятой нашим
 	// `no interface`, оркестратор не проверяет списком и туннель не трогает.
 	a.ndmsDispatcher.SetExistenceListed(existencePublisher(a.eventBus))
-	// Full hr-neo restart on tunnel-running — NDMS assigns fwmarks only
-	// during rci_create_policies (hr-neo startup), so tunnels appearing
-	// after startup would miss CONNMARK rules without this.
-	if a.hydraService != nil {
-		a.orch.SetOnTunnelRunning(func(id string) {
-			go a.hydraService.ScheduleRestart("tunnel-running: " + id)
-		})
-	}
 	a.loggingService.SetEventBus(a.eventBus)
 	a.tunnelService.SetEventBus(a.eventBus)
 	a.pingCheckFacade.SetEventBus(a.eventBus)
@@ -231,7 +209,7 @@ func (a *app) setupEventWiring() {
 	// Stream geo-file download progress over SSE so the UI can show a
 	// real progress bar instead of a guess.
 	a.geoDataStore.SetProgressReporter(func(rawURL, fileType, phase string, downloaded, total int64, errMsg string) {
-		a.eventBus.Publish("hydraroute:geo-progress", events.GeoDownloadProgressEvent{
+		a.eventBus.Publish("geo:progress", events.GeoDownloadProgressEvent{
 			URL:        rawURL,
 			FileType:   fileType,
 			Downloaded: downloaded,

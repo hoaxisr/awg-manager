@@ -40,32 +40,34 @@ const (
 
 // InstallStatus is the JSON payload for /api/firc/install-status.
 type InstallStatus struct {
-	State                  InstallState `json:"state"`
-	InstalledVersion       string       `json:"installedVersion,omitempty"`
-	AvailableVersion       string       `json:"availableVersion,omitempty"`
-	UpdateAvailable        bool         `json:"updateAvailable"`
-	Available              bool         `json:"available"`
-	UnavailableReason      string       `json:"unavailableReason,omitempty"`
-	FircdPresent           bool         `json:"fircdPresent"`
-	TunvlessPresent        bool         `json:"tunvlessPresent"`
-	InitScriptPresent      bool         `json:"initScriptPresent"`
-	NDMHookPresent         bool         `json:"ndmHookPresent"`
-	ConfigPresent          bool         `json:"configPresent"`
-	FreeDiskBytes          int64        `json:"freeDiskBytes,omitempty"`
-	RequiredDiskBytes      int64        `json:"requiredDiskBytes,omitempty"`
-	Busy                   bool         `json:"busy"`
-	BusyAction             string       `json:"busyAction,omitempty"`
-	Progress               float64      `json:"progress,omitempty"` // 0.0вЂ“1.0
-	Error                  string       `json:"error,omitempty"`
-	ActiveEngine           bool         `json:"activeEngine"`
-	LegacyBundledOwnership bool         `json:"legacyBundledOwnership,omitempty"`
-	ExternalPackage        string       `json:"externalPackage,omitempty"`
-	ExternalMigratable     bool         `json:"externalMigratable,omitempty"`
-	DependentServices      []string     `json:"dependentServices,omitempty"`
+	State              InstallState `json:"state"`
+	InstalledVersion   string       `json:"installedVersion,omitempty"`
+	AvailableVersion   string       `json:"availableVersion,omitempty"`
+	UpdateAvailable    bool         `json:"updateAvailable"`
+	Available          bool         `json:"available"`
+	UnavailableReason  string       `json:"unavailableReason,omitempty"`
+	FircdPresent       bool         `json:"fircdPresent"`
+	TunvlessPresent    bool         `json:"tunvlessPresent"`
+	InitScriptPresent  bool         `json:"initScriptPresent"`
+	NDMHookPresent     bool         `json:"ndmHookPresent"`
+	ConfigPresent      bool         `json:"configPresent"`
+	FreeDiskBytes      int64        `json:"freeDiskBytes,omitempty"`
+	RequiredDiskBytes  int64        `json:"requiredDiskBytes,omitempty"`
+	Busy               bool         `json:"busy"`
+	BusyAction         string       `json:"busyAction,omitempty"`
+	Progress           float64      `json:"progress,omitempty"` // 0.0–1.0
+	Error              string       `json:"error,omitempty"`
+	ActiveEngine       bool         `json:"activeEngine"`
+	ExternalPackage    string       `json:"externalPackage,omitempty"`
+	ExternalMigratable bool         `json:"externalMigratable,omitempty"`
+	DependentServices  []string     `json:"dependentServices,omitempty"`
 }
 
 // OnDemandInstaller manages on-demand FIRC binary download, verification, and install/uninstall.
 type OnDemandInstaller struct {
+	// onFinished — подписчик на конец операции (успех или ошибка); зовётся
+	// из finish вне i.mu. Задаётся до первой операции.
+	onFinished func()
 	mu         sync.Mutex
 	busy       bool
 	busyAction string
@@ -87,7 +89,6 @@ type OnDemandInstaller struct {
 	checkDependenciesFn func(ctx context.Context) ([]string, error)
 	lockRuntime         func() func()
 	packages            RuntimePackageManager
-	legacyFaultHooks    LegacyMigrationFaultHooks
 }
 
 func (odi *OnDemandInstaller) SetRuntimeLocker(lock func() func()) { odi.lockRuntime = lock }
@@ -130,7 +131,6 @@ func (odi *OnDemandInstaller) ExternalRuntimePackage() (string, error) {
 }
 
 // Refuse direct mutation of files owned by a third-party IPK (such as upstream firc or tunvless).
-// Legacy bundled awg-manager ownership is handled exclusively via transactional migration.
 func (odi *OnDemandInstaller) checkExternalPackageOwnership() error {
 	pkg, err := odi.ExternalRuntimePackage()
 	if err != nil {
@@ -138,20 +138,6 @@ func (odi *OnDemandInstaller) checkExternalPackageOwnership() error {
 	}
 	if pkg != "" {
 		return fmt.Errorf("firc runtime belongs to external package %s.list; refusing to overwrite", pkg)
-	}
-	return nil
-}
-
-func (odi *OnDemandInstaller) checkPackageOwnership() error {
-	if err := odi.checkExternalPackageOwnership(); err != nil {
-		return err
-	}
-	legacy, err := odi.HasLegacyBundledOwnership()
-	if err != nil {
-		return err
-	}
-	if legacy {
-		return errors.New("firc runtime belongs to package awg-manager.list; use legacy ownership migration before modifying it")
 	}
 	return nil
 }
@@ -326,14 +312,11 @@ func (odi *OnDemandInstaller) GetInstallStatus(ctx context.Context, op *Operator
 			installedVer, packageErr = odi.packages.Version(ctx, extPkg)
 		}
 	}
-	legacyOwned, legacyErr := odi.HasLegacyBundledOwnership()
 	journal, journalErr := odi.readOperation()
 	if extPkgErr != nil {
 		lastErr = extPkgErr.Error()
 	} else if packageErr != nil {
 		lastErr = packageErr.Error()
-	} else if legacyErr != nil {
-		lastErr = legacyErr.Error()
 	} else if journalErr != nil {
 		lastErr = journalErr.Error()
 	} else if journal.Error != "" {
@@ -353,13 +336,13 @@ func (odi *OnDemandInstaller) GetInstallStatus(ctx context.Context, op *Operator
 
 	var state InstallState
 	switch {
-	case busy && (busyAction == "install" || busyAction == "upgrade" || busyAction == "migrate_legacy" || busyAction == "migrate_external"):
+	case busy && (busyAction == "install" || busyAction == "upgrade" || busyAction == "migrate_external"):
 		state = InstallStateInstalling
 	case busy && busyAction == "uninstall":
 		state = InstallStateUninstalling
-	case journalErr != nil || journal.Pending || extPkgErr != nil || packageErr != nil || dependencyErr != nil || legacyErr != nil:
+	case journalErr != nil || journal.Pending || extPkgErr != nil || packageErr != nil || dependencyErr != nil:
 		state = InstallStateRecoveryNeeded
-	case !fircdPresent && !tunvlessPresent && !initPresent && installedVer == "" && !legacyOwned && extPkg == "":
+	case !fircdPresent && !tunvlessPresent && !initPresent && installedVer == "" && extPkg == "":
 		if !available {
 			state = InstallStateUnavailable
 		} else {
@@ -377,7 +360,6 @@ func (odi *OnDemandInstaller) GetInstallStatus(ctx context.Context, op *Operator
 	}
 
 	updateAvailable := available &&
-		!legacyOwned &&
 		extPkg == "" &&
 		(state == InstallStateInstalled || state == InstallStateRunning) &&
 		installedVer != "" &&
@@ -385,26 +367,25 @@ func (odi *OnDemandInstaller) GetInstallStatus(ctx context.Context, op *Operator
 		installedVer != effectiveSpec.Version
 
 	status := InstallStatus{
-		State:                  state,
-		InstalledVersion:       installedVer,
-		AvailableVersion:       effectiveSpec.Version,
-		UpdateAvailable:        updateAvailable,
-		Available:              available,
-		UnavailableReason:      unavailableReason,
-		FircdPresent:           fircdPresent,
-		TunvlessPresent:        tunvlessPresent,
-		InitScriptPresent:      initPresent,
-		NDMHookPresent:         ndmHookPresent,
-		ConfigPresent:          cfgPresent,
-		Busy:                   busy,
-		BusyAction:             busyAction,
-		Progress:               progress,
-		Error:                  lastErr,
-		ActiveEngine:           active,
-		LegacyBundledOwnership: legacyOwned,
-		ExternalPackage:        extPkg,
-		ExternalMigratable:     extPkg != "" && isAllowedExternalFircPackage(extPkg),
-		DependentServices:      dependentServices,
+		State:              state,
+		InstalledVersion:   installedVer,
+		AvailableVersion:   effectiveSpec.Version,
+		UpdateAvailable:    updateAvailable,
+		Available:          available,
+		UnavailableReason:  unavailableReason,
+		FircdPresent:       fircdPresent,
+		TunvlessPresent:    tunvlessPresent,
+		InitScriptPresent:  initPresent,
+		NDMHookPresent:     ndmHookPresent,
+		ConfigPresent:      cfgPresent,
+		Busy:               busy,
+		BusyAction:         busyAction,
+		Progress:           progress,
+		Error:              lastErr,
+		ActiveEngine:       active,
+		ExternalPackage:    extPkg,
+		ExternalMigratable: extPkg != "" && isAllowedExternalFircPackage(extPkg),
+		DependentServices:  dependentServices,
 	}
 
 	required := effectiveSpec.PackageSize*4 + diskReserveBytes

@@ -6,12 +6,22 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/uplink"
 )
 
 // UplinkHandler is registered behind the same authentication as tunnel CRUD.
-type UplinkHandler struct{ Controller *uplink.Controller }
+type UplinkHandler struct {
+	Controller *uplink.Controller
+	bus        *events.Bus
+}
+
+// SetEventBus wires the SSE event bus: успешные мутации публикуют
+// ResourceUplink.
+func (h *UplinkHandler) SetEventBus(bus *events.Bus) {
+	h.bus = bus
+}
 
 // UplinkSnapshotDTO describes the Multi-WAN policy snapshot returned by GET /uplink/policies.
 type UplinkSnapshotDTO struct {
@@ -113,6 +123,7 @@ func (h *UplinkHandler) handlePutDNS(w http.ResponseWriter, r *http.Request) {
 		uplinkError(w, err)
 		return
 	}
+	h.bus.PublishInvalidated(events.ResourceUplink, "wan-dns-updated")
 	response.Success(w, saved)
 }
 
@@ -213,6 +224,7 @@ func (h *UplinkHandler) handlePutPolicy(w http.ResponseWriter, r *http.Request) 
 		uplinkError(w, err)
 		return
 	}
+	h.bus.PublishInvalidated(events.ResourceUplink, "policy-saved")
 	response.Success(w, saved)
 }
 
@@ -235,10 +247,11 @@ func (h *UplinkHandler) handleDeletePolicy(w http.ResponseWriter, r *http.Reques
 	if !uplinkDecode(w, r, &req) {
 		return
 	}
-	if err := h.Controller.Delete(req.ID, req.Revision); err != nil {
+	if err := h.Controller.Delete(r.Context(), req.ID, req.Revision); err != nil {
 		uplinkError(w, err)
 		return
 	}
+	h.bus.PublishInvalidated(events.ResourceUplink, "policy-deleted")
 	response.Success(w, nil)
 }
 
@@ -270,5 +283,6 @@ func (h *UplinkHandler) Switch(w http.ResponseWriter, r *http.Request) {
 		uplinkError(w, err)
 		return
 	}
+	h.bus.PublishInvalidated(events.ResourceUplink, "policy-switched")
 	response.Success(w, h.Controller.List())
 }

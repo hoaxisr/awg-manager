@@ -445,3 +445,38 @@ func TestCoverageIndexBudgetTakesTighterLimit(t *testing.T) {
 		t.Fatalf("budget = %d, want no limit", got)
 	}
 }
+
+// network бывает и строкой, и списком — обе формы принимает sing-box, и обе
+// должны приниматься здесь (иначе один набор роняет весь индекс покрытия).
+func TestCoverageIndexAcceptsNetworkArray(t *testing.T) {
+	entry, err := compileCoverageIndexEntry([]map[string]any{
+		{"network": []any{"udp"}, "ip_cidr": []any{"192.0.2.0/24"}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("network as array: %v", err)
+	}
+	// Правило с network требует контекста протокола — по одному IP не матчится.
+	if entry.match("192.0.2.7") {
+		t.Fatal("network-scoped rule must not match without protocol context")
+	}
+	// Без network тот же префикс матчится.
+	plain, err := compileCoverageIndexEntry([]map[string]any{
+		{"ip_cidr": []any{"192.0.2.0/24"}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("without network: %v", err)
+	}
+	if !plain.match("192.0.2.7") {
+		t.Fatal("expected match for the plain prefix")
+	}
+}
+
+// Неприводимое правило пропускает набор, а не роняет весь индекс.
+func TestCoverageIndexUnsupportedRuleSetIsSkipped(t *testing.T) {
+	_, err := compileCoverageIndexEntry([]map[string]any{
+		{"domain_suffix": []any{"example.com"}, "unknown_field": true},
+	}, nil)
+	if !errors.Is(err, errCoverageIndexUnsupported) {
+		t.Fatalf("expected errCoverageIndexUnsupported, got %v", err)
+	}
+}

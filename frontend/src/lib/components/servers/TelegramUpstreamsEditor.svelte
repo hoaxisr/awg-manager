@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { m } from '$lib/i18n';
 	import type { TelegramUpstream } from '$lib/types';
-	import { Button, Toggle } from '$lib/components/ui';
+	import { Button, IconButton, Toggle } from '$lib/components/ui';
 	import { Plus, Trash2 } from 'lucide-svelte';
 
 	interface Props {
@@ -105,16 +105,15 @@
 						/>
 					</label>
 
-					<button
-						type="button"
-						class="btn-row-remove"
-						aria-label={m.tg_upstreams_remove_aria()}
+					<IconButton
+						variant="danger"
+						ariaLabel={m.tg_upstreams_remove_aria()}
 						title={m.tg_upstreams_remove_aria()}
 						disabled={upstreams.length <= 1}
 						onclick={() => removeUpstream(idx)}
 					>
 						<Trash2 size={14} />
-					</button>
+					</IconButton>
 				</div>
 
 				{#if u.type === 'socks5'}
@@ -277,30 +276,6 @@
 	.weight-input {
 		width: 68px;
 		text-align: right;
-	}
-
-	.btn-row-remove {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 28px;
-		height: 28px;
-		border-radius: var(--radius-sm);
-		border: 1px solid var(--color-border);
-		background: var(--color-bg-primary);
-		color: var(--color-text-secondary);
-		cursor: pointer;
-	}
-
-	.btn-row-remove:hover:not(:disabled) {
-		color: var(--color-error);
-		border-color: var(--color-error);
-		background: var(--color-error-tint);
-	}
-
-	.btn-row-remove:disabled {
-		opacity: 0.4;
-		cursor: not-allowed;
 	}
 
 	.upstream-fields-direct,

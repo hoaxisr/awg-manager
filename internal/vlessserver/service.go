@@ -16,6 +16,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/realityserver"
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/xhttpserver"
 )
 
@@ -163,11 +164,17 @@ func (s *Service) SyncFircServerRouting(enabled bool) {
 			changed = true
 		}
 	}
+	var saveErr error
 	if changed {
-		_ = s.saveConfig()
+		saveErr = s.saveConfig()
 	}
 	if s.config.Enabled {
-		_ = s.syncDaemonLocked()
+		_ = s.syncDaemonLocked() // свою ошибку кладёт в lastRuntimeErr
+	}
+	// Режим в памяти уже сменён, а на диск не лёг: после рестарта он вернётся.
+	// Показываем это в статусе, а не теряем молча.
+	if saveErr != nil {
+		s.lastRuntimeErr = "save outbound mode: " + saveErr.Error()
 	}
 }
 
@@ -273,14 +280,17 @@ func (s *Service) syncDaemonLocked() error {
 		s.syncRealityLocked()
 		return nil
 	}
+	defer s.syncRealityLocked()
 	if err := validateConfigTransports(s.config); err != nil {
 		s.lastRuntimeErr = err.Error()
 		return err
 	}
-	defer s.syncRealityLocked()
 	xCfg := buildXHTTPServerConfig(s.config)
 	if s.fircRoutingOverride {
 		xCfg.Egress.Mode = "router"
+	}
+	if p := s.realityUpstreamPathLocked(); p != "" {
+		xCfg.PathPrefixes = append(xCfg.PathPrefixes, p)
 	}
 	if s.testRuntimeHook != nil {
 		if err := s.testRuntimeHook(xCfg); err != nil {
@@ -323,9 +333,29 @@ func (s *Service) syncDaemonLocked() error {
 		s.lastRuntimeErr = err.Error()
 		return err
 	}
+	srv.SetOnUnexpectedExit(func() { s.restartCrashedDaemon(srv) })
 	s.daemon = srv
 	s.lastRuntimeErr = ""
 	return nil
+}
+
+// daemonRestartDelay — пауза перед подъёмом упавшего awgm-xhttpd.
+var daemonRestartDelay = 10 * time.Second
+
+// restartCrashedDaemon поднимает awgm-xhttpd после падения (OOM-kill и т.п.),
+// если srv всё ещё текущий демон: Stop/Shutdown обнуляют s.daemon, и тогда
+// перезапуск не нужен. ponytail: одна попытка на падение — неудачный подъём
+// оставляет причину в lastRuntimeErr; при повторяющихся падениях не чаще раза
+// в daemonRestartDelay.
+func (s *Service) restartCrashedDaemon(srv *xhttpserver.Server) {
+	time.AfterFunc(daemonRestartDelay, func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.daemon != srv || srv.IsRunning() {
+			return
+		}
+		_ = s.syncDaemonLocked()
+	})
 }
 
 func (s *Service) IsRecoveryRequired() bool {
@@ -346,47 +376,6 @@ func (s *Service) cfgPath() string {
 
 func (s *Service) xrayDir() string {
 	return filepath.Join(s.dataDir, "xray")
-}
-
-// tryAutoImportLegacyOnMissingSettings attempts non-destructive import from existing dataDir/xray/config.json
-// or dataDir/xray/profiles/*/active.json ONLY when xray-server-settings.json does not exist yet.
-func (s *Service) tryAutoImportLegacyOnMissingSettings() {
-	candidates := []string{
-		filepath.Join(s.xrayDir(), "config.json"),
-	}
-	if matches, err := filepath.Glob(filepath.Join(s.xrayDir(), "profiles", "*", "active.json")); err == nil {
-		candidates = append(candidates, matches...)
-	}
-	for _, src := range candidates {
-		if !fileExists(src) {
-			continue
-		}
-		disc, err := DiscoverLegacy(src, "")
-		if err != nil {
-			s.recoveryRequired = true
-			s.recoveryReason = fmt.Sprintf("legacy configuration read error (%s): %v", src, err)
-			return
-		}
-		if !disc.Found {
-			continue
-		}
-		if disc.Topology == TopologyC {
-			_ = BackupLegacyConfigFile(src, s.dataDir)
-			s.recoveryRequired = true
-			s.recoveryReason = fmt.Sprintf("unsupported legacy configuration in %s: %s", filepath.Base(src), disc.ConflictReason)
-			return
-		}
-		migrated, err := MigrateLegacy(context.Background(), disc, s.dataDir, 9008)
-		if err != nil && !errors.Is(err, ErrAlreadyMigrated) {
-			s.recoveryRequired = true
-			s.recoveryReason = fmt.Sprintf("legacy configuration import failed (%s): %v", filepath.Base(src), err)
-			return
-		}
-		if migrated != nil {
-			s.config = *migrated
-		}
-		return
-	}
 }
 
 func defaultConfig() Config {
@@ -414,7 +403,6 @@ func (s *Service) loadConfig() {
 	if err != nil {
 		if os.IsNotExist(err) {
 			s.recoveryRequired = false
-			s.tryAutoImportLegacyOnMissingSettings()
 			return
 		}
 		s.recoveryRequired = true
@@ -491,56 +479,13 @@ func (s *Service) loadConfig() {
 	s.config.UplinkMethod = t.UplinkMethod
 }
 
-func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("mkdir %s: %w", dir, err)
-	}
-
-	tmpFile, err := os.CreateTemp(dir, filepath.Base(path)+".tmp.*")
-	if err != nil {
-		return fmt.Errorf("create temp file: %w", err)
-	}
-	tmpName := tmpFile.Name()
-	defer func() {
-		if tmpFile != nil {
-			_ = tmpFile.Close()
-			_ = os.Remove(tmpName)
-		}
-	}()
-
-	if err := tmpFile.Chmod(perm); err != nil {
-		return fmt.Errorf("chmod %s: %w", tmpName, err)
-	}
-	if _, err := tmpFile.Write(data); err != nil {
-		return fmt.Errorf("write %s: %w", tmpName, err)
-	}
-	if err := tmpFile.Sync(); err != nil {
-		return fmt.Errorf("sync %s: %w", tmpName, err)
-	}
-	if err := tmpFile.Close(); err != nil {
-		return fmt.Errorf("close %s: %w", tmpName, err)
-	}
-	tmpFile = nil
-
-	if err := os.Rename(tmpName, path); err != nil {
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("rename to %s: %w", path, err)
-	}
-	if dirF, err := os.Open(dir); err == nil {
-		_ = dirF.Sync()
-		_ = dirF.Close()
-	}
-	return nil
-}
-
 func (s *Service) writeSettingsBytes(data []byte) error {
 	if s.saveSettingsHook != nil {
 		if err := s.saveSettingsHook(s.cfgPath(), data); err != nil {
 			return err
 		}
 	}
-	return atomicWriteFile(s.cfgPath(), data, 0600)
+	return storage.AtomicWritePerm(s.cfgPath(), data, 0600)
 }
 
 func (s *Service) saveConfig() error {

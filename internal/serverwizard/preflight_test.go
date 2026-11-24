@@ -81,39 +81,8 @@ func TestPreflightEngine_TelegramChecks(t *testing.T) {
 		t.Fatalf("expected CanProceed=false on port conflict")
 	}
 
-	// Missing binary telemt
-	engine.statFn = func(path string) (os.FileInfo, error) {
-		if path == "/opt/bin/telemt" {
-			return nil, errors.New("file not found")
-		}
-		return mockFileInfo{name: path, size: 1000}, nil
-	}
-
-	resp = engine.Run(ctx, WizardPlanRequest{Kind: "tgwebproxy"})
-	if resp.CanProceed {
-		t.Fatalf("expected CanProceed=false on missing telemt binary")
-	}
-
-	// But if telemt exists at managed path, and scenario is direct_fake_tls without tproxy-server:
 	engine.findProcFn = func(procDir, addr string, port int) (procnet.ListenerLookup, error) {
 		return procnet.ListenerLookup{SocketFound: false}, nil
-	}
-	engine.statFn = func(path string) (os.FileInfo, error) {
-		if path == "/opt/bin/telemt" || path == "/opt/bin/tproxy-server" {
-			return nil, errors.New("file not found")
-		}
-		if path == "/opt/etc/awg-manager/telemt/telemt" {
-			return mockFileInfo{name: path, size: 1000}, nil
-		}
-		return mockFileInfo{name: path, size: 1000}, nil
-	}
-	resp = engine.Run(ctx, WizardPlanRequest{
-		Kind:       "tgwebproxy",
-		Scenario:   "direct_fake_tls",
-		DirectPort: 8443,
-	})
-	if !resp.CanProceed {
-		t.Fatalf("expected CanProceed=true for direct_fake_tls with managed telemt binary, got %+v", resp.Checks)
 	}
 
 	// With embedded mtg & tproxy, dual scenario succeeds even without /opt/bin/telemt or /opt/bin/tproxy-server

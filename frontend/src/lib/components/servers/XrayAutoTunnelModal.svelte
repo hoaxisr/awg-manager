@@ -2,6 +2,7 @@
 	import { untrack } from 'svelte';
 	import { Modal, Button } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
+	import { m } from '$lib/i18n';
 	import { notifications } from '$lib/stores/notifications';
 	import { copyToClipboard } from '$lib/utils/clipboard';
 	import type { XrayShareLinks, XrayEndpointConfig } from '$lib/types';
@@ -58,7 +59,7 @@
 			const dom = ep?.public_domain?.split(',')[0]?.trim();
 			links = await api.getXrayClientLinks(clientId, dom || undefined, ep?.id || undefined);
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка получения данных');
+			notifications.error(e instanceof Error ? e.message : m.servers_xray_data_load_failed());
 		} finally {
 			if (initial) loading = false;
 		}
@@ -74,21 +75,21 @@
 		if (await copyToClipboard(activeUrl)) {
 			notifications.success(
 				transportMode === 'finiteproto'
-					? 'VLESS FiniteProto ссылка скопирована'
-					: 'VLESS XHTTP ссылка скопирована'
+					? m.servers_xray_fp_link_copied()
+					: m.servers_xray_xhttp_link_copied()
 			);
 		}
 	}
 </script>
 
-<Modal bind:open title={`Создать туннель: ${clientRemark || 'Клиент'}`} {onclose} size="md">
+<Modal bind:open title={m.servers_xray_autotunnel_title({ name: clientRemark || m.servers_xray_client_fallback() })} {onclose} size="md">
 	{#if loading}
-		<div class="loading-box">Загрузка данных...</div>
+		<div class="loading-box">{m.servers_xray_loading_data()}</div>
 	{:else if links}
 		<div class="modal-body">
 			{#if activeEndpoints.length > 1}
 				<div class="route-picker">
-					<span class="route-picker-label">Маршрут подключения VLESS:</span>
+					<span class="route-picker-label">{m.servers_xray_vless_route_label()}</span>
 					<div class="route-pills">
 						{#each activeEndpoints as ep (ep.id)}
 							<button
@@ -116,8 +117,8 @@
 						<Router size={20} />
 					</div>
 					<div class="target-info">
-						<div class="target-title">Другой роутер Keenetic</div>
-						<div class="target-desc">Подключение второго роутера к этому серверу VLESS</div>
+						<div class="target-title">{m.servers_xray_target_router_title()}</div>
+						<div class="target-desc">{m.servers_xray_target_router_desc()}</div>
 					</div>
 				</button>
 
@@ -131,15 +132,15 @@
 						<Network size={20} />
 					</div>
 					<div class="target-info">
-						<div class="target-title">Локальная проверка на этом роутере</div>
-						<div class="target-desc">Исходящее подключение в FIRC / Sing-box для проверки работы сервера</div>
+						<div class="target-title">{m.servers_xray_target_local_title()}</div>
+						<div class="target-desc">{m.servers_xray_target_local_desc()}</div>
 					</div>
 				</button>
 			</div>
 
 			{#if links.finiteproto_url}
 				<div class="route-picker">
-					<span class="route-picker-label">Транспортный протокол туннеля:</span>
+					<span class="route-picker-label">{m.servers_xray_tunnel_transport_label()}</span>
 					<div class="route-pills">
 						<button
 							type="button"
@@ -147,8 +148,8 @@
 							class:active={transportMode === 'finiteproto'}
 							onclick={() => (transportMode = 'finiteproto')}
 						>
-							<span class="route-pill-title">FiniteProto (FP01 / C-мост)</span>
-							<span class="route-pill-sub font-mono">Устойчивый транспорт через CDN (Роутер ↔ Роутер)</span>
+							<span class="route-pill-title">{m.servers_xray_fp_pill_title()}</span>
+							<span class="route-pill-sub font-mono">{m.servers_xray_fp_pill_sub()}</span>
 						</button>
 						<button
 							type="button"
@@ -157,7 +158,7 @@
 							onclick={() => (transportMode = 'xhttp')}
 						>
 							<span class="route-pill-title">VLESS XHTTP (packet-up)</span>
-							<span class="route-pill-sub font-mono">Классический XHTTP транспорт</span>
+							<span class="route-pill-sub font-mono">{m.servers_xray_xhttp_pill_sub()}</span>
 						</button>
 					</div>
 				</div>
@@ -167,56 +168,56 @@
 				<div class="guide-box">
 					<div class="guide-step">
 						<span class="step-num">1</span>
-						<span>Скопируйте ссылку подключения VLESS ({transportMode === 'finiteproto' ? 'FiniteProto' : 'XHTTP'}):</span>
+						<span>{m.servers_xray_autotunnel_step1({ transport: transportMode === 'finiteproto' ? 'FiniteProto' : 'XHTTP' })}</span>
 					</div>
 					<div class="copy-box">
 						<div class="vless-url-box">{activeUrl}</div>
 						<Button variant="primary" size="sm" onclick={copyLink}>
 							<Copy size={14} class="mr-1" />
-							Копировать
+							{m.common_copy()}
 						</Button>
 					</div>
 
 					<div class="guide-step mt-3">
 						<span class="step-num">2</span>
-						<span>На втором роутере откройте веб-интерфейс AWG-Manager:</span>
+						<span>{m.servers_xray_autotunnel_step2()}</span>
 					</div>
 					<div class="guide-instruction">
-						Перейдите в <strong>«Туннели»</strong> &rarr; нажмите <strong>«+ Добавить туннель»</strong> &rarr; выберите <strong>«Импорт по ссылке»</strong> и вставьте скопированный VLESS URL.
+						{m.servers_xray_autotunnel_import_go()}<strong>{m.servers_xray_autotunnel_import_tunnels()}</strong>{m.servers_xray_autotunnel_import_press()}<strong>{m.servers_xray_autotunnel_import_add()}</strong>{m.servers_xray_autotunnel_import_choose()}<strong>{m.servers_xray_autotunnel_import_by_link()}</strong>{m.servers_xray_autotunnel_import_paste()}
 					</div>
 
 					<div class="note-box">
 						{#if transportMode === 'finiteproto'}
-							Транспорт <strong>FiniteProto (FP01)</strong> автоматически поднимает C-клиент <code>awgm-fpc</code> на втором роутере и передаёт трафик короткими конечными HTTP-запросами без зависаний на CDN.
+							{m.servers_xray_autotunnel_fp_note_before()}<strong>FiniteProto (FP01)</strong>{m.servers_xray_autotunnel_fp_note_mid()}<code>awgm-fpc</code>{m.servers_xray_autotunnel_fp_note_after()}
 						{:else}
-							Подключение использует домен и параметры транспорта XHTTP, указанные в ссылке.
+							{m.servers_xray_autotunnel_xhttp_note()}
 						{/if}
 					</div>
 				</div>
 			{:else}
 				<div class="guide-box">
 					<div class="guide-instruction">
-						Для добавления туннеля в активный движок роутера (FIRC или Sing-box):
+						{m.servers_xray_autotunnel_local_intro()}
 					</div>
 					<div class="copy-box">
 						<div class="vless-url-box">{activeUrl}</div>
 						<Button variant="primary" size="sm" onclick={copyLink}>
 							<Copy size={14} class="mr-1" />
-							Копировать
+							{m.common_copy()}
 						</Button>
 					</div>
 					<div class="guide-instruction mt-2">
-						Перейдите во вкладку <strong>«Подписки»</strong> или <strong>«Туннели»</strong> и добавьте узел через импорт VLESS.
+						{m.servers_xray_autotunnel_local_go()}<strong>{m.servers_xray_autotunnel_local_subs()}</strong>{m.servers_xray_autotunnel_local_or()}<strong>{m.servers_xray_autotunnel_import_tunnels()}</strong>{m.servers_xray_autotunnel_local_add()}
 					</div>
 				</div>
 			{/if}
 		</div>
 	{:else}
-		<div class="error-box">Не удалось подготовить туннель</div>
+		<div class="error-box">{m.servers_xray_autotunnel_failed()}</div>
 	{/if}
 
 	{#snippet actions()}
-		<Button variant="secondary" onclick={onclose}>Закрыть</Button>
+		<Button variant="secondary" onclick={onclose}>{m.common_close()}</Button>
 	{/snippet}
 </Modal>
 

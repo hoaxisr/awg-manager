@@ -245,7 +245,7 @@ func TestRouterKernelManagedUplinkAcceptance(t *testing.T) {
 		t.Fatal(err)
 	}
 	check("GigabitEthernet1")
-	if err = c.Delete(p.ID, p.Revision); err != nil {
+	if err = c.Delete(context.Background(), p.ID, p.Revision); err != nil {
 		t.Fatal(err)
 	}
 	t.Log("production kernel AWG manager: allocate, selective WAN fallback, restart, pre-up recovery, manual return and release passed")

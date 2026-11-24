@@ -36,6 +36,12 @@ var (
 		netip.MustParsePrefix("203.0.113.0/24"),
 		netip.MustParsePrefix("240.0.0.0/4"),
 		netip.MustParsePrefix("2001:db8::/32"),
+		netip.MustParsePrefix("0.0.0.0/8"),    // «этот хост/сеть»
+		netip.MustParsePrefix("192.0.0.0/24"), // IETF protocol assignments; anycast .9/.10 целью скана быть незачем
+		netip.MustParsePrefix("fec0::/10"),    // site-local (устаревший)
+		netip.MustParsePrefix("2001::/32"),    // Teredo
+		netip.MustParsePrefix("2002::/16"),    // 6to4: внутри любой IPv4
+		netip.MustParsePrefix("::/96"),        // IPv4-compatible (устаревший)
 	}
 )
 
@@ -122,6 +128,15 @@ func ClassifyAddr(addr netip.Addr) (family, scope string) {
 		family = "ipv4"
 	} else if nat64WellKnown.Contains(addr) || nat64LocalUse.Contains(addr) {
 		family = "nat64"
+		// Well-known NAT64 ведёт на вложенный IPv4 (последние 32 бита):
+		// 64:ff9b::7f00:1 — это loopback, а не публичный адрес. У local-use
+		// /48 место IPv4 зависит от длины префикса оператора — не угадываем.
+		if nat64WellKnown.Contains(addr) {
+			b := addr.As16()
+			if _, inner := ClassifyAddr(netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]})); inner != "public" {
+				return family, inner
+			}
+		}
 	} else {
 		family = "ipv6"
 	}

@@ -1187,6 +1187,13 @@ func (it *IPTables) Install(ctx context.Context, spec RestoreInputSpec) error {
 	// during removeSourceHooks -> iptables-restore. Deleting exact pre-restore
 	// counts (c_old) after restore adds c_new copies leaves exact c_new rules,
 	// and preserves existing rules untouched if restoreNoflush fails.
+	//
+	// DNS-RESCUE — исключение: он вставляется `-I PREROUTING 1`, и `-D` по
+	// спецификации после restore снял бы новую копию (первое совпадение),
+	// оставив старую там, где она стояла, — возможно, уже за правилами NDMS.
+	// Его снимаем до restore: без него в окне работает штатный :53 NDMS, это
+	// не утечка мимо политики.
+	removeCommentTaggedRules(ctx, it.runIPTablesOut, it.runIPTables, "nat", "PREROUTING", DNSRescueTag)
 	staleDeletes := it.collectSourceHookDeletes(ctx)
 	if err := it.restoreNoflush(ctx, input); err != nil {
 		return fmt.Errorf("iptables-restore: %w", err)

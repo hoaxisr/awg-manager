@@ -108,26 +108,6 @@ describe('FIRC runtime settings', () => {
 		await fireEvent.click(buttons[buttons.length - 1]);
 		await waitFor(() => expect(uninstall).toHaveBeenCalledWith(false));
 	});
-	it('offers ownership migration for legacy bundled installations even when running, while blocking direct removal', async () => {
-		status
-			.mockResolvedValueOnce({
-				...base,
-				state: 'running',
-				activeEngine: true,
-				legacyBundledOwnership: true,
-				fircdPresent: true,
-				tunvlessPresent: true,
-			})
-			.mockResolvedValue({ ...base, state: 'installing', busy: true, busyAction: 'migrate_legacy', progress: 0.25 });
-		render(FircIntegrationSection);
-		const migrateBtn = await screen.findByRole('button', { name: /Перенести в пакет FIRC|Migrate FIRC package/ });
-		const removeBtn = screen.getByRole('button', { name: /Удалить FIRC|Remove FIRC/ });
-		await waitFor(() => expect(migrateBtn).toBeEnabled());
-		expect(removeBtn).toBeDisabled();
-		await fireEvent.click(migrateBtn);
-		await waitFor(() => expect(migrate).toHaveBeenCalledTimes(1));
-		expect(install).not.toHaveBeenCalled();
-	});
 	it('shows external package notice and disables package mutations when managed via opkg', async () => {
 		status.mockResolvedValue({
 			...base,

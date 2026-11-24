@@ -40,7 +40,7 @@ export async function loadPresetCatalog(force = false): Promise<void> {
 	return inflight;
 }
 
-/** DNS-capable presets, for the DNS-route / HrNeo pickers. */
+/** DNS-capable presets, for the DNS-route pickers. */
 export const dnsPresets = derived(presetCatalog, ($c) =>
 	$c.filter((p) => isDnsApplicablePreset(p, $c)),
 );

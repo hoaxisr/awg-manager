@@ -3,7 +3,6 @@ package dnsroute
 import (
 	"encoding/json"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -49,9 +48,6 @@ func (s *Store) Load() (*StoreData, error) {
 
 	if data.Lists == nil {
 		data.Lists = []DomainList{}
-	}
-	if data.HRRuleIcons == nil {
-		data.HRRuleIcons = map[string]string{}
 	}
 	normalizeLists(data.Lists)
 	migrateLegacyExcludes(&data)
@@ -247,8 +243,6 @@ func migrateRawEditorText(data *StoreData) {
 	for i := range data.Lists {
 		list := &data.Lists[i]
 
-		// HR Neo rules are sourced from HR files; keep this migration scoped to
-		// NDMS/stored DNS routes only.
 		if isHydraRoute(list.Backend) {
 			continue
 		}
@@ -323,10 +317,9 @@ func (s *Store) writeLocked(data *StoreData) error {
 	return nil
 }
 
-// dropLegacyHRRows removes HydraRoute-backed rows from data.Lists. HR rules
-// live in HR config files (source of truth); any hydraroute-backed row left in
-// dns-routes.json is a legacy leftover — hidden from List(), never reconciled,
-// and only pollutes the dedup index. Returns how many rows were removed.
+// dropLegacyHRRows removes HydraRoute-backed rows from data.Lists: awg-manager
+// no longer manages HydraRoute rules, and a leftover row must not turn into an
+// NDMS one. Returns how many rows were removed.
 func dropLegacyHRRows(data *StoreData) int {
 	if data == nil || len(data.Lists) == 0 {
 		return 0
@@ -371,8 +364,7 @@ func (s *Store) GetCached() *StoreData {
 //   - Subscriptions каждого списка — refreshSubscriptions пишет поля
 //     Subscriptions[j] через указатель;
 //   - Routes каждого списка — Update без присланных маршрутов берёт срез
-//     записи, и resolveRouteInterfaces пишет в него Interface на месте;
-//   - HRRuleIcons — запись и delete в map (setHRIcon).
+//     записи, и resolveRouteInterfaces пишет в него Interface на месте.
 //
 // Остальные срезы и указатели элемента (Domains, Excludes, ManualText, …)
 // общие с кэшем: пути правки их только читают или заменяют присваиванием
@@ -391,15 +383,13 @@ func (s *Store) Draft() *StoreData {
 		d.Lists[i].Subscriptions = slices.Clone(d.Lists[i].Subscriptions)
 		d.Lists[i].Routes = slices.Clone(d.Lists[i].Routes)
 	}
-	d.HRRuleIcons = maps.Clone(d.HRRuleIcons)
 	return &d
 }
 
 // defaultStoreData returns empty store data with initialized collections.
 func defaultStoreData() *StoreData {
 	return &StoreData{
-		Lists:       []DomainList{},
-		HRRuleIcons: map[string]string{},
+		Lists: []DomainList{},
 	}
 }
 

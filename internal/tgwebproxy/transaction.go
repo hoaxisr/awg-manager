@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 var (
@@ -135,25 +137,10 @@ func (tc *TransactionCoordinator) writeManifestAtomic(manifest *TransactionManif
 		return fmt.Errorf("marshal manifest: %w", err)
 	}
 
-	tmpPath := tc.manifestPath() + ".tmp"
-	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
-	if err != nil {
-		return fmt.Errorf("open manifest tmp: %w", err)
+	if err := storage.AtomicWritePerm(tc.manifestPath(), data, 0600); err != nil {
+		return fmt.Errorf("write manifest: %w", err)
 	}
-
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("write manifest tmp: %w", err)
-	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("fsync manifest tmp: %w", err)
-	}
-	_ = f.Close()
-
-	if err := os.Rename(tmpPath, tc.manifestPath()); err != nil {
-		return fmt.Errorf("rename manifest: %w", err)
-	}
+	// fsync каталога у AtomicWritePerm best-effort; здесь его отказ — ошибка.
 	return fsyncDir(tc.baseDir)
 }
 

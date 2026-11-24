@@ -160,7 +160,7 @@ func TestUnknownExitIsErrorNotGarbageName(t *testing.T) {
 	// GetKernelIfaceName уже отвергает неизвестный id через c.store.Get
 	// (catalog.go:331-334). Смысл — запереть эту гарантию на новом пути:
 	// после правки lookupExit стоит ПЕРЕД store.Get, и уход в tunnel.NewNames
-	// при !ok записал бы мусорное имя интерфейса в domain.conf HydraRoute.
+	// при !ok отдал бы мусорное имя интерфейса.
 	// Живой мутационный страж на это — пункт (5) в Step 5.
 	cat := NewCatalog(&mockTunnelProvider{}, nil, &mockStoreClient{}, noExits(), nil)
 	got, err := cat.GetKernelIfaceName(context.Background(), "wdttraw-ghost")
@@ -172,8 +172,7 @@ func TestUnknownExitIsErrorNotGarbageName(t *testing.T) {
 func TestExitWithoutAllocatedNamesFailsClosed(t *testing.T) {
 	// Сверх брифа: три ветки «имя не выделено» иначе не покрыты ничем, а
 	// именно они держат fail-closed. Их снятие отдаёт пустое имя интерфейса
-	// как валидное — правило уходит в никуда, а HydraRoute пишет пустоту в
-	// domain.conf. До правки то же самое стерегли проверки RawNdmsIface/
+	// как валидное — правило уходит в никуда. До правки то же самое стерегли проверки RawNdmsIface/
 	// RawKernelIface != "" (catalog.go:255, :305, :340).
 	exits := mockExits{m: map[string]ExitEntry{
 		"wdttraw-de": {NDMSName: "", KernelIface: "", Ready: true},

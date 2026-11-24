@@ -73,6 +73,7 @@ func setupTgWebProxyWithLinks(t *testing.T) (*TgWebProxyHandler, *tgwebproxy.Ser
 		t.Fatal(err)
 	}
 	svc := tgwebproxy.New(tempDir, nil)
+	svc.SetRuntimeDCProbeForTest(func(string) bool { return true })
 	handler := NewTgWebProxyHandler(svc, sessionStore)
 	t.Cleanup(func() {
 		sessionStore.Stop()

@@ -59,6 +59,10 @@ func (w *Writer) Add(ctx context.Context, target model.Target, targetInterface s
 // owner rule onto the tunnel's outbound (managed tunnel), then applies the
 // draft. Called after a targetInterface change so existing entries follow
 // the new tunnel immediately instead of waiting for the next add.
+//
+// The owner rule always follows the mapped outbound, and the own direct
+// outbound is removed once the rule no longer needs it (the tunnel's own
+// outbound serves the rule instead).
 // Idempotent: an already-consistent configuration is a no-op (Persisted=false).
 func (w *Writer) RefreshTargetOutbound(ctx context.Context, targetInterface string) (WriteResult, error) {
 	if w == nil || w.client == nil {
@@ -82,21 +86,29 @@ func (w *Writer) RefreshTargetOutbound(ctx context.Context, targetInterface stri
 	if ownerOutbound == "" {
 		return WriteResult{}, nil
 	}
-	outbound, mutated, err := w.ensureTargetOutbound(ctx, targetInterface)
+	outbound, own, mutated, err := w.resolveTargetOutbound(ctx, targetInterface)
 	if err != nil {
 		return WriteResult{}, fmt.Errorf("target outbound: %w", err)
 	}
-	if !mutated {
-		// The outbound is already mapped; ensureOwnerRule would rewrite the
-		// rule onto `outbound` only when it differs. Apply only when the
-		// rule actually changed: a no-op must not leave a dangling draft.
-		ownerMutated, err := w.ensureOwnerRule(ctx, outbound)
+	// The owner rule follows the mapped outbound even when the own outbound
+	// was just re-bound: otherwise the rule would keep the old exit while
+	// the outbound already points at the new interface.
+	ownerMutated, err := w.ensureOwnerRule(ctx, outbound)
+	if err != nil {
+		return WriteResult{Outbound: outbound}, err
+	}
+	// The own outbound is only needed while the rule points at it. Once the
+	// rule uses the tunnel's own outbound, the stale direct is removed.
+	ownRemoved := false
+	if !own {
+		removed, err := w.removeOwnDirectOutbound(ctx)
 		if err != nil {
 			return WriteResult{Outbound: outbound}, err
 		}
-		if !ownerMutated {
-			return WriteResult{Outbound: outbound}, nil
-		}
+		ownRemoved = removed
+	}
+	if !mutated && !ownerMutated && !ownRemoved {
+		return WriteResult{Outbound: outbound}, nil
 	}
 	if err := w.applyStaging(ctx); err != nil {
 		return WriteResult{Outbound: outbound, Persisted: true}, fmt.Errorf("route objects written (as draft), but staging apply failed: %w", err)
@@ -145,7 +157,7 @@ func (w *Writer) write(ctx context.Context, target model.Target, targetInterface
 		result.Outbound = ownerOutbound
 	} else {
 		var outboundMutated bool
-		outbound, outboundMutated, err = w.ensureTargetOutbound(ctx, targetInterface)
+		outbound, _, outboundMutated, err = w.resolveTargetOutbound(ctx, targetInterface)
 		if err != nil {
 			return result, fmt.Errorf("target outbound: %w", err)
 		}
@@ -166,6 +178,15 @@ func (w *Writer) write(ctx context.Context, target model.Target, targetInterface
 			return result, err
 		}
 		result.Persisted = result.Persisted || ownerMutated
+		// The own direct outbound is only needed while the rule points at it.
+		// After the rule moved to a tunnel's outbound it is stale.
+		if outbound != targetOutboundTag {
+			removed, err := w.removeOwnDirectOutbound(ctx)
+			if err != nil {
+				return result, err
+			}
+			result.Persisted = result.Persisted || removed
+		}
 	}
 
 	if result.Persisted {
@@ -558,26 +579,28 @@ func (w *Writer) updateRuleSet(ctx context.Context, set map[string]any, rules []
 	return nil
 }
 
-// ensureTargetOutbound maps targetInterface to the exact outbound the owner
-// rule must use on Add. A bindable kernel interface gets the writer's own direct
-// outbound (created or updated). All other interfaces need exactly one enabled
-// mapping in TunnelCatalog;
+// resolveTargetOutbound maps targetInterface to the exact outbound the owner
+// rule must use. A bindable kernel interface gets the writer's own direct
+// outbound (created or updated); own=true marks it as the writer's own, so
+// the caller can drop it once the rule uses a tunnel's outbound instead.
+// All other interfaces need exactly one enabled mapping in TunnelCatalog;
 // zero, ambiguous or disabled mappings are errors, and no arbitrary group
 // is ever substituted.
-func (w *Writer) ensureTargetOutbound(ctx context.Context, iface string) (string, bool, error) {
+func (w *Writer) resolveTargetOutbound(ctx context.Context, iface string) (outbound string, own, mutated bool, err error) {
 	bindable, err := w.client.BindableInterfaces(ctx)
 	if err != nil {
-		return "", false, fmt.Errorf("bindable interfaces: %w", err)
+		return "", false, false, fmt.Errorf("bindable interfaces: %w", err)
 	}
 	for _, name := range bindable {
 		if name == iface {
-			return w.ensureOwnDirectOutbound(ctx, iface)
+			tag, changed, err := w.ensureOwnDirectOutbound(ctx, iface)
+			return tag, true, changed, err
 		}
 	}
 
 	catalog, err := w.client.TunnelCatalog(ctx)
 	if err != nil {
-		return "", false, err
+		return "", false, false, err
 	}
 	var matches, enabled []Tunnel
 	for _, tunnel := range catalog {
@@ -591,17 +614,17 @@ func (w *Writer) ensureTargetOutbound(ctx context.Context, iface string) (string
 	}
 	switch {
 	case len(enabled) == 1:
-		return enabled[0].Outbound, false, nil
+		return enabled[0].Outbound, false, false, nil
 	case len(enabled) > 1:
 		tags := make([]string, 0, len(enabled))
 		for _, tunnel := range enabled {
 			tags = append(tags, tunnel.Outbound)
 		}
-		return "", false, fmt.Errorf("multiple exact outbounds for interface %q: %s", iface, strings.Join(tags, ", "))
+		return "", false, false, fmt.Errorf("multiple exact outbounds for interface %q: %s", iface, strings.Join(tags, ", "))
 	case len(matches) > 0:
-		return "", false, fmt.Errorf("tunnel for interface %q is disabled or unmapped", iface)
+		return "", false, false, fmt.Errorf("tunnel for interface %q is disabled or unmapped", iface)
 	default:
-		return "", false, fmt.Errorf("no exact managed outbound for interface %q", iface)
+		return "", false, false, fmt.Errorf("no exact managed outbound for interface %q", iface)
 	}
 }
 
@@ -633,6 +656,44 @@ func (w *Writer) ensureOwnDirectOutbound(ctx context.Context, iface string) (str
 		return "", false, fmt.Errorf("outbound add: %w", err)
 	}
 	return targetOutboundTag, true, nil
+}
+
+// removeOwnDirectOutbound deletes the writer's own direct outbound once no
+// rule needs it any more. A still-referenced outbound is left alone: the
+// owner rule was re-pointed first, so anything else that still references it
+// belongs to the user — the outbound is still needed and must stay.
+func (w *Writer) removeOwnDirectOutbound(ctx context.Context) (bool, error) {
+	rules, err := w.listRawRules(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, rule := range rules {
+		if rule["outbound"] == targetOutboundTag {
+			return false, nil // still in use: keep it
+		}
+	}
+	outbounds, err := w.client.Outbounds(ctx)
+	if err != nil {
+		return false, fmt.Errorf("outbounds list: %w", err)
+	}
+	found := false
+	for _, outbound := range outbounds {
+		if outbound.Tag != targetOutboundTag {
+			continue
+		}
+		found = true
+		if !strings.EqualFold(outbound.Type, "direct") {
+			return false, fmt.Errorf("outbound %q is not the writer's own direct", targetOutboundTag)
+		}
+	}
+	if !found {
+		return false, nil
+	}
+	payload := map[string]any{"tag": targetOutboundTag}
+	if err := w.client.post(ctx, "/api/singbox/router/outbounds/delete", payload, nil); err != nil {
+		return false, fmt.Errorf("outbound delete: %w", err)
+	}
+	return true, nil
 }
 
 // ensureOwnerRule creates or updates the single unconditional owner rule

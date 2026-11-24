@@ -53,15 +53,7 @@ export interface DnsRoute {
 	createdAt: string;
 	updatedAt: string;
 	lastDedupeReport?: DedupeReport;
-	backend?: 'ndms' | 'hydraroute';
-	hrRouteMode?: 'interface' | 'policy';
-	hrPolicyName?: string;
-	/**
-	 * Tunnel IDs permitted in a newly-created HR policy, in priority order.
-	 * Only honored when hrRouteMode === 'policy' and the policy is new.
-	 * Absent for existing-policy and interface-mode flows.
-	 */
-	hrPolicyInterfaces?: string[];
+	backend?: 'ndms';
 	/** Optional URL for a custom icon (e.g. Qure CDN PNG or user-supplied URL). */
 	iconUrl?: string;
 }

@@ -51,6 +51,7 @@ type ruleSetCache struct {
 
 type ruleSetCacheEntry struct {
 	path      string
+	format    string
 	expiresAt time.Time
 }
 
@@ -201,7 +202,9 @@ func (c *ruleSetCache) getOrDownloadContext(ctx context.Context, url, format str
 
 	c.mu.Lock()
 	if entry, ok := c.entries[url]; ok && time.Now().Before(entry.expiresAt) {
-		if _, err := os.Stat(entry.path); err == nil {
+		// Формат набора могли переключить (json → srs) — старый файл не подходит,
+		// качаем заново, иначе правка формата видна только после перезагрузки.
+		if _, err := os.Stat(entry.path); err == nil && entry.format == format {
 			path := entry.path
 			c.mu.Unlock()
 			if emit != nil {
@@ -209,7 +212,7 @@ func (c *ruleSetCache) getOrDownloadContext(ctx context.Context, url, format str
 			}
 			return path, nil
 		}
-		// File vanished — fall through and re-download.
+		// File vanished or format changed — fall through and re-download.
 	}
 	c.mu.Unlock()
 
@@ -269,6 +272,7 @@ func (c *ruleSetCache) getOrDownloadContext(ctx context.Context, url, format str
 	c.mu.Lock()
 	c.entries[url] = ruleSetCacheEntry{
 		path:      filePath,
+		format:    format,
 		expiresAt: time.Now().Add(ruleSetCacheTTL),
 	}
 	c.mu.Unlock()
