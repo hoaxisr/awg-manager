@@ -1,6 +1,6 @@
 // Package httpdownload provides shared utilities for streaming HTTP
 // downloads with throttled progress reporting. Used by both the
-// hydraroute geo-data store and the singbox installer to surface
+// geo-data store and the singbox installer to surface
 // live byte-stream progress over SSE without each caller maintaining
 // its own throttled counter.
 package httpdownload

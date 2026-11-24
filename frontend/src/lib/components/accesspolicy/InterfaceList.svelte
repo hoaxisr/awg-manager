@@ -15,8 +15,6 @@
 	interface Props {
 		interfaces: AccessPolicyInterface[];
 		availableInterfaces: PolicyGlobalInterface[];
-		/** scroll: toggle + capped scroll. panel: toggle + full list без скролла (HR Neo, политики доступа). */
-		addPickerVariant?: 'scroll' | 'panel';
 		/** Интерфейсы, снятые мониторингом с политики до восстановления связи (F752). */
 		held?: string[];
 		onpermit: (iface: string, order: number) => void;
@@ -28,15 +26,12 @@
 	let {
 		interfaces: rawInterfaces,
 		availableInterfaces,
-		addPickerVariant = 'scroll',
 		held = [],
 		onpermit,
 		ondeny,
 		onreorder,
 		onupdate,
 	}: Props = $props();
-
-	const isPanelPicker = $derived(addPickerVariant === 'panel');
 
 	let interfaces = $derived(rawInterfaces ?? []);
 	let showAdd = $state(false);
@@ -104,7 +99,7 @@
 	}
 </script>
 
-<div class="iface-section" class:iface-section--panel={isPanelPicker}>
+<div class="iface-section iface-section--panel">
 	<div class="section-header">
 		<h4>{m.access_policy_interfaces_title()}</h4>
 		{#if unassigned.length > 0}
@@ -115,7 +110,7 @@
 	</div>
 
 	{#if showAdd}
-		<div class="add-dropdown" class:add-dropdown--panel={isPanelPicker}>
+		<div class="add-dropdown add-dropdown--panel">
 			{#each unassignedGroups as { group, items }}
 				<div class="group-label" role="presentation">{group}</div>
 				{#each items as gi (gi.name)}

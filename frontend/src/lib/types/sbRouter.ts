@@ -758,13 +758,9 @@ export interface PresetSingboxEngine {
 	ruleSets?: PresetRuleRef[];
 	action: string;
 }
-export interface PresetHydraRouteEngine {
-	geoTags?: string[];
-}
 export interface PresetEngines {
 	dns?: PresetDNSEngine;
 	singbox?: PresetSingboxEngine;
-	hydraroute?: PresetHydraRouteEngine;
 }
 export interface CatalogPreset {
 	id: string;

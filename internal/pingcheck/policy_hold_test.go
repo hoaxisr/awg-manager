@@ -82,8 +82,8 @@ func TestPolicyHold_ReleasedAtThresholdRestoredOnSuccess(t *testing.T) {
 	t.Cleanup(func() { httpprobe.Client = orig })
 	s, m, config, _ := newKernelSensorService(t)
 	fp := &fakePolicies{lists: map[string][]string{
-		"HydraRoute": {"OpkgTun7", "OpkgTun8", "Proxy1"},
-		"Policy0":    {"PPPoE0"},
+		"Policy5": {"OpkgTun7", "OpkgTun8", "Proxy1"},
+		"Policy0": {"PPPoE0"},
 	}}
 	s.SetPolicies(fp)
 
@@ -91,10 +91,10 @@ func TestPolicyHold_ReleasedAtThresholdRestoredOnSuccess(t *testing.T) {
 	for range 3 {
 		s.sensorTick(m, config)
 	}
-	if got := fp.lists["HydraRoute"]; !reflect.DeepEqual(got, []string{"OpkgTun8", "Proxy1"}) {
+	if got := fp.lists["Policy5"]; !reflect.DeepEqual(got, []string{"OpkgTun8", "Proxy1"}) {
 		t.Fatalf("после порога политика = %v, туннель должен уйти", got)
 	}
-	if got := holdsOf(t, s); !reflect.DeepEqual(got, []storage.PolicyHold{{Policy: "HydraRoute", Order: 0}}) {
+	if got := holdsOf(t, s); !reflect.DeepEqual(got, []storage.PolicyHold{{Policy: "Policy5", Order: 0}}) {
 		t.Fatalf("holds = %+v", got)
 	}
 
@@ -104,21 +104,74 @@ func TestPolicyHold_ReleasedAtThresholdRestoredOnSuccess(t *testing.T) {
 	if fp.denies != 1 {
 		t.Fatalf("повторное снятие на втором пороге: denies = %d", fp.denies)
 	}
-	if got := holdsOf(t, s); !reflect.DeepEqual(got, []storage.PolicyHold{{Policy: "HydraRoute", Order: 0}}) {
+	if got := holdsOf(t, s); !reflect.DeepEqual(got, []storage.PolicyHold{{Policy: "Policy5", Order: 0}}) {
 		t.Fatalf("второй порог перезаписал позицию: %+v", got)
 	}
 
 	httpprobe.Client = okDoer{}
 	s.sensorTick(m, config)
-	if got := fp.lists["HydraRoute"]; !reflect.DeepEqual(got, []string{"OpkgTun8", "Proxy1"}) {
+	if got := fp.lists["Policy5"]; !reflect.DeepEqual(got, []string{"OpkgTun8", "Proxy1"}) {
 		t.Fatalf("после первого успеха политика = %v, возврат — только после второго", got)
 	}
 	s.sensorTick(m, config)
-	if got := fp.lists["HydraRoute"]; !reflect.DeepEqual(got, []string{"OpkgTun7", "OpkgTun8", "Proxy1"}) {
+	if got := fp.lists["Policy5"]; !reflect.DeepEqual(got, []string{"OpkgTun7", "OpkgTun8", "Proxy1"}) {
 		t.Fatalf("после успеха политика = %v, туннель должен вернуться первым", got)
 	}
 	if got := holdsOf(t, s); len(got) != 0 {
 		t.Fatalf("holds после возврата = %+v", got)
+	}
+}
+
+// Политики, созданные не роутером и не нами (HydraRoute Neo и подобные), ведёт
+// другая программа: permit в них мониторинг не снимает.
+func TestPolicyHold_ForeignPolicyNotReleased(t *testing.T) {
+	orig := httpprobe.Client
+	t.Cleanup(func() { httpprobe.Client = orig })
+	s, m, config, _ := newKernelSensorService(t)
+	fp := &fakePolicies{lists: map[string][]string{
+		"Policy0": {"OpkgTun7", "PPPoE0"},
+		"Germany": {"OpkgTun7", "PPPoE0"},
+	}}
+	s.SetPolicies(fp)
+
+	httpprobe.Client = alwaysFailDoer{}
+	for range 3 {
+		s.sensorTick(m, config)
+	}
+	if got := fp.lists["Germany"]; !reflect.DeepEqual(got, []string{"OpkgTun7", "PPPoE0"}) {
+		t.Fatalf("чужая политика тронута: %v", got)
+	}
+	if got := fp.lists["Policy0"]; !reflect.DeepEqual(got, []string{"PPPoE0"}) {
+		t.Fatalf("Policy0 = %v, туннель должен уйти", got)
+	}
+	if got := holdsOf(t, s); !reflect.DeepEqual(got, []storage.PolicyHold{{Policy: "Policy0", Order: 0}}) {
+		t.Fatalf("holds = %+v, want только Policy0", got)
+	}
+}
+
+// Permit, снятый с чужой политики прежней версией, возвращается.
+func TestPolicyHold_ForeignHoldStillRestored(t *testing.T) {
+	orig := httpprobe.Client
+	t.Cleanup(func() { httpprobe.Client = orig })
+	s, m, config, _ := newKernelSensorService(t)
+	fp := &fakePolicies{lists: map[string][]string{"Germany": {"PPPoE0"}}}
+	s.SetPolicies(fp)
+	if err := s.tunnels.Update("awg7", func(tun *storage.AWGTunnel) error {
+		tun.PolicyHolds = []storage.PolicyHold{{Policy: "Germany", Order: 0}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	httpprobe.Client = okDoer{}
+	for range 2 {
+		s.sensorTick(m, config)
+	}
+	if got := fp.lists["Germany"]; !reflect.DeepEqual(got, []string{"OpkgTun7", "PPPoE0"}) {
+		t.Fatalf("Germany = %v, permit должен вернуться", got)
+	}
+	if got := holdsOf(t, s); len(got) != 0 {
+		t.Fatalf("holds = %+v", got)
 	}
 }
 
@@ -128,7 +181,7 @@ func TestPolicyHold_SingleSuccessBetweenFailuresKeepsHold(t *testing.T) {
 	orig := httpprobe.Client
 	t.Cleanup(func() { httpprobe.Client = orig })
 	s, m, config, _ := newKernelSensorService(t)
-	fp := &fakePolicies{lists: map[string][]string{"HydraRoute": {"OpkgTun7", "PPPoE0"}}}
+	fp := &fakePolicies{lists: map[string][]string{"Policy5": {"OpkgTun7", "PPPoE0"}}}
 	s.SetPolicies(fp)
 
 	for range 3 {
@@ -139,7 +192,7 @@ func TestPolicyHold_SingleSuccessBetweenFailuresKeepsHold(t *testing.T) {
 		httpprobe.Client = okDoer{}
 		s.sensorTick(m, config)
 	}
-	if got := fp.lists["HydraRoute"]; !reflect.DeepEqual(got, []string{"PPPoE0"}) {
+	if got := fp.lists["Policy5"]; !reflect.DeepEqual(got, []string{"PPPoE0"}) {
 		t.Fatalf("политика = %v: одиночный успех вернул permit", got)
 	}
 	if fp.denies != 1 {
@@ -153,7 +206,7 @@ func TestPolicyHold_LinkDownResetsSuccessRun(t *testing.T) {
 	orig := httpprobe.Client
 	t.Cleanup(func() { httpprobe.Client = orig })
 	s, m, config, _ := newKernelSensorService(t)
-	fp := &fakePolicies{lists: map[string][]string{"HydraRoute": {"OpkgTun7", "PPPoE0"}}}
+	fp := &fakePolicies{lists: map[string][]string{"Policy5": {"OpkgTun7", "PPPoE0"}}}
 	s.SetPolicies(fp)
 
 	httpprobe.Client = alwaysFailDoer{}
@@ -166,11 +219,11 @@ func TestPolicyHold_LinkDownResetsSuccessRun(t *testing.T) {
 	s.sensorTick(m, config)
 	stubIfaceUp(t, true)
 	s.sensorTick(m, config)
-	if got := fp.lists["HydraRoute"]; !reflect.DeepEqual(got, []string{"PPPoE0"}) {
+	if got := fp.lists["Policy5"]; !reflect.DeepEqual(got, []string{"PPPoE0"}) {
 		t.Fatalf("политика = %v: успехи через опускание линка засчитаны подряд", got)
 	}
 	s.sensorTick(m, config)
-	if got := fp.lists["HydraRoute"]; !reflect.DeepEqual(got, []string{"OpkgTun7", "PPPoE0"}) {
+	if got := fp.lists["Policy5"]; !reflect.DeepEqual(got, []string{"OpkgTun7", "PPPoE0"}) {
 		t.Fatalf("политика = %v: два успеха после подъёма не вернули permit", got)
 	}
 }
@@ -182,7 +235,7 @@ func TestPolicyHold_SuspendedLinkNotChecked(t *testing.T) {
 	orig := httpprobe.Client
 	t.Cleanup(func() { httpprobe.Client = orig })
 	s, m, config, _ := newKernelSensorService(t)
-	fp := &fakePolicies{lists: map[string][]string{"HydraRoute": {"OpkgTun7", "PPPoE0"}}}
+	fp := &fakePolicies{lists: map[string][]string{"Policy5": {"OpkgTun7", "PPPoE0"}}}
 	s.SetPolicies(fp)
 	httpprobe.Client = alwaysFailDoer{}
 
@@ -221,7 +274,7 @@ func TestPolicyHold_LinkDownDuringProbeNotCounted(t *testing.T) {
 	orig := httpprobe.Client
 	t.Cleanup(func() { httpprobe.Client = orig })
 	s, m, config, _ := newKernelSensorService(t)
-	fp := &fakePolicies{lists: map[string][]string{"HydraRoute": {"OpkgTun7", "PPPoE0"}}}
+	fp := &fakePolicies{lists: map[string][]string{"Policy5": {"OpkgTun7", "PPPoE0"}}}
 	s.SetPolicies(fp)
 
 	up := true
@@ -287,18 +340,18 @@ func TestPolicyHold_RestoreEdgeCases(t *testing.T) {
 func TestPolicyHold_StopMonitoringRestoresWithoutMonitor(t *testing.T) {
 	s, _, _, _ := newKernelSensorService(t)
 	s.monitors = map[string]*tunnelMonitor{}
-	fp := &fakePolicies{lists: map[string][]string{"HydraRoute": {"Proxy1"}}}
+	fp := &fakePolicies{lists: map[string][]string{"Policy5": {"Proxy1"}}}
 	s.SetPolicies(fp)
 	if err := s.tunnels.Update("awg7", func(t *storage.AWGTunnel) error {
-		t.PolicyHolds = []storage.PolicyHold{{Policy: "HydraRoute", Order: 0}}
+		t.PolicyHolds = []storage.PolicyHold{{Policy: "Policy5", Order: 0}}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	s.StopMonitoring("awg7")
-	if got := fp.lists["HydraRoute"]; !reflect.DeepEqual(got, []string{"OpkgTun7", "Proxy1"}) {
-		t.Fatalf("HydraRoute = %v", got)
+	if got := fp.lists["Policy5"]; !reflect.DeepEqual(got, []string{"OpkgTun7", "Proxy1"}) {
+		t.Fatalf("Policy5 = %v", got)
 	}
 }
 
@@ -306,7 +359,7 @@ func TestPolicyHold_StopMonitoringRestoresWithoutMonitor(t *testing.T) {
 // а не потеряется.
 func TestPolicyHold_HoldsWrittenBeforeDeny(t *testing.T) {
 	s, _, _, _ := newKernelSensorService(t)
-	fp := &fakePolicies{lists: map[string][]string{"HydraRoute": {"OpkgTun7", "Proxy1"}}}
+	fp := &fakePolicies{lists: map[string][]string{"Policy5": {"OpkgTun7", "Proxy1"}}}
 	fp.onDeny = func(policy string) {
 		for _, h := range holdsOf(t, s) {
 			if h.Policy == policy {
@@ -323,29 +376,30 @@ func TestPolicyHold_HoldsWrittenBeforeDeny(t *testing.T) {
 }
 
 // Непустая запись не значит «снято» (ревью 27.10): возврат прошёл частично
-// (A вернулся, B нет) — следующий порог обязан снять A снова и не забыть B;
+// (Policy1 вернулась, Policy2 нет) — следующий порог обязан снять Policy1 снова
+// и не забыть Policy2;
 // deny прошлого порога упал — следующий порог повторяет его.
 func TestPolicyHold_ReleaseByLiveListNotByRecord(t *testing.T) {
 	s, _, _, _ := newKernelSensorService(t)
 	fp := &fakePolicies{lists: map[string][]string{
-		"A": {"Proxy1", "OpkgTun7"},
-		"B": {"OpkgTun7"},
+		"Policy1": {"Proxy1", "OpkgTun7"},
+		"Policy2": {"OpkgTun7"},
 	}}
 	s.SetPolicies(fp)
 
 	s.releasePolicies("awg7")
-	fp.permitErr = map[string]error{"B": errors.New("rci down")}
+	fp.permitErr = map[string]error{"Policy2": errors.New("rci down")}
 	s.restorePolicies("awg7")
-	if got := holdsOf(t, s); !reflect.DeepEqual(got, []storage.PolicyHold{{Policy: "B", Order: 0}}) {
+	if got := holdsOf(t, s); !reflect.DeepEqual(got, []storage.PolicyHold{{Policy: "Policy2", Order: 0}}) {
 		t.Fatalf("после частичного возврата holds = %+v", got)
 	}
 
 	s.releasePolicies("awg7")
-	if got := fp.lists["A"]; !reflect.DeepEqual(got, []string{"Proxy1"}) {
-		t.Fatalf("A после повторного порога = %v, туннель должен уйти снова", got)
+	if got := fp.lists["Policy1"]; !reflect.DeepEqual(got, []string{"Proxy1"}) {
+		t.Fatalf("Policy1 после повторного порога = %v, туннель должен уйти снова", got)
 	}
 	got := holdsOf(t, s)
-	want := []storage.PolicyHold{{Policy: "A", Order: 1}, {Policy: "B", Order: 0}}
+	want := []storage.PolicyHold{{Policy: "Policy1", Order: 1}, {Policy: "Policy2", Order: 0}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("holds = %+v, want %+v", got, want)
 	}
@@ -357,8 +411,8 @@ func TestPolicyHold_ReleaseByLiveListNotByRecord(t *testing.T) {
 	s.releasePolicies("awg7")
 	fp.denyErr = nil
 	s.releasePolicies("awg7")
-	if got := fp.lists["A"]; !reflect.DeepEqual(got, []string{"Proxy1"}) {
-		t.Fatalf("A = %v: упавший deny не повторён", got)
+	if got := fp.lists["Policy1"]; !reflect.DeepEqual(got, []string{"Proxy1"}) {
+		t.Fatalf("Policy1 = %v: упавший deny не повторён", got)
 	}
 }
 
@@ -367,18 +421,18 @@ func TestPolicyHold_ReleaseByLiveListNotByRecord(t *testing.T) {
 func TestPolicyHold_StopMonitoringAllRestores(t *testing.T) {
 	s, _, _, _ := newKernelSensorService(t)
 	s.monitors = map[string]*tunnelMonitor{}
-	fp := &fakePolicies{lists: map[string][]string{"HydraRoute": {"Proxy1"}}}
+	fp := &fakePolicies{lists: map[string][]string{"Policy5": {"Proxy1"}}}
 	s.SetPolicies(fp)
 	if err := s.tunnels.Update("awg7", func(t *storage.AWGTunnel) error {
-		t.PolicyHolds = []storage.PolicyHold{{Policy: "HydraRoute", Order: 0}}
+		t.PolicyHolds = []storage.PolicyHold{{Policy: "Policy5", Order: 0}}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	s.StopMonitoringAll()
-	if got := fp.lists["HydraRoute"]; !reflect.DeepEqual(got, []string{"OpkgTun7", "Proxy1"}) {
-		t.Fatalf("HydraRoute = %v", got)
+	if got := fp.lists["Policy5"]; !reflect.DeepEqual(got, []string{"OpkgTun7", "Proxy1"}) {
+		t.Fatalf("Policy5 = %v", got)
 	}
 }
 
@@ -390,17 +444,17 @@ func TestPolicyHold_ServiceStopKeepsHolds(t *testing.T) {
 	s.monitors = map[string]*tunnelMonitor{}
 	s.running = true
 	s.cancel = func() {}
-	fp := &fakePolicies{lists: map[string][]string{"HydraRoute": {"Proxy1"}}}
+	fp := &fakePolicies{lists: map[string][]string{"Policy5": {"Proxy1"}}}
 	s.SetPolicies(fp)
 	if err := s.tunnels.Update("awg7", func(t *storage.AWGTunnel) error {
-		t.PolicyHolds = []storage.PolicyHold{{Policy: "HydraRoute", Order: 0}}
+		t.PolicyHolds = []storage.PolicyHold{{Policy: "Policy5", Order: 0}}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	s.Stop()
-	if got := fp.lists["HydraRoute"]; !reflect.DeepEqual(got, []string{"Proxy1"}) {
+	if got := fp.lists["Policy5"]; !reflect.DeepEqual(got, []string{"Proxy1"}) {
 		t.Fatalf("Stop вернул permit: %v", got)
 	}
 	if len(holdsOf(t, s)) != 1 {
@@ -412,7 +466,7 @@ func TestPolicyHold_ServiceStopKeepsHolds(t *testing.T) {
 func TestHeldInterfaces(t *testing.T) {
 	s, _, _, _ := newKernelSensorService(t)
 	if err := s.tunnels.Update("awg7", func(tn *storage.AWGTunnel) error {
-		tn.PolicyHolds = []storage.PolicyHold{{Policy: "HydraRoute"}, {Policy: "Policy1", Order: 2}}
+		tn.PolicyHolds = []storage.PolicyHold{{Policy: "Policy5"}, {Policy: "Policy1", Order: 2}}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -421,7 +475,7 @@ func TestHeldInterfaces(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string][]string{"HydraRoute": {"OpkgTun7"}, "Policy1": {"OpkgTun7"}}
+	want := map[string][]string{"Policy5": {"OpkgTun7"}, "Policy1": {"OpkgTun7"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("held = %v, want %v", got, want)
 	}

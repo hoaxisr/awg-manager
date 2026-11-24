@@ -12,7 +12,6 @@
         routingDnsNdmsTabReady,
         routingIpTabReady,
         routingClientVpnTabReady,
-        hydrarouteStatusStore,
     } from '$lib/stores/routing';
     import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
     import { zapretStatusIfExpert } from '$lib/stores/zapret';
@@ -27,8 +26,6 @@
     import IpRoutesTab from './IpRoutesTab.svelte';
     import AccessPoliciesTab from './AccessPoliciesTab.svelte';
     import ClientRoutesTab from './ClientRoutesTab.svelte';
-    import { HrNeoTab } from '$lib/components/hrneo';
-    import { hrPosKey } from '$lib/components/hrneo/hrIds';
     import { SingboxRouterRedesignPage } from '$lib/components/sb-router';
     import { ZapretTab } from '$lib/components/zapret';
     import { AutolistTab } from '$lib/components/autolist';
@@ -71,20 +68,29 @@
         // settings. Without this the dormant mode's chip rendered as active
         // until the user first visited a sing-box tab (which runs loadAll).
         void singboxRouterStore.reloadSettings();
+        void loadGeoFileCount();
     });
     $effect(() => {
-        if (browser && $page.url.searchParams.get('tab') === 'uplink') {
+        if (!browser) return;
+        const tab = $page.url.searchParams.get('tab');
+        if (tab === 'uplink') {
             void goto('/?tab=uplink', { replaceState: true });
+        } else if (tab !== null && !(ROUTING_TABS as readonly string[]).includes(tab)) {
+            // Закладка на снятую вкладку (hrneo): пока параметр в адресе, Tabs
+            // ждёт её появления и выбор пользователя в адрес не пишет.
+            const url = new URL($page.url);
+            url.searchParams.delete('tab');
+            void goto(url, { replaceState: true, keepFocus: true, noScroll: true });
         }
     });
     onDestroy(() => {
         unsubRouting?.();
     });
 
-    const ROUTING_TABS = ['hrneo', 'geodata', 'dns', 'ip', 'policy', 'clientvpn', 'firc', 'singbox', 'fakeip', 'zapret', 'autolist'] as const;
+    const ROUTING_TABS = ['geodata', 'dns', 'ip', 'policy', 'clientvpn', 'firc', 'singbox', 'fakeip', 'zapret', 'autolist'] as const;
     type RoutingTab = (typeof ROUTING_TABS)[number];
 
-    // «Любимая» вкладка — открывается первой вместо NDMS. Per-browser
+    // «Любимая» вкладка — открывается первой вместо FIRC. Per-browser
     // удобство, поэтому localStorage, а не настройки роутера.
     const FAVORITE_TAB_KEY = 'awgm.routing.favoriteTab';
 
@@ -112,15 +118,22 @@
         }
     }
 
-    let activeTab = $state<RoutingTab>(savedFavoriteTab ?? 'dns');
+    // Вкладка из ссылки — сразу: иначе сперва монтируется стартовая и шлёт
+    // свои запросы (F890).
+    function tabFromUrl(): RoutingTab | null {
+        const v = browser ? new URL(window.location.href).searchParams.get('tab') : null;
+        return ROUTING_TABS.includes(v as RoutingTab) ? (v as RoutingTab) : null;
+    }
+
+    const urlTab = tabFromUrl();
+    const startTab = urlTab ?? savedFavoriteTab ?? 'firc';
+    let activeTab = $state<RoutingTab>(startTab);
 
     // ?policy=Policy1 — прямой переход из настроек sing-box в редактор
     // конкретной политики (#573).
     let deepLinkPolicy = $derived($page.url.searchParams.get('policy'));
 
     let isOS5 = $derived($systemInfo.data?.isOS5 ?? false);
-    let hydrarouteInstalled = $derived($routing.hydrarouteStatus?.installed ?? false);
-    let hasDnsEngine = $derived(isOS5 || hydrarouteInstalled);
     let singboxInstalled = $derived($systemInfo.data?.singbox?.installed ?? false);
     // Zapret ставит пользователь, а не AWGM, поэтому вкладка появляется
     // только когда движок реально найден на роутере.
@@ -159,16 +172,7 @@
     let searchOpen = $state(false);
 
     async function handleSearchRuleClick(id: string, type: 'dns' | 'ip') {
-        if (type === 'dns') {
-            // dnsRoutes mixes NDMS and hydraroute backends in one array;
-            // route hydraroute hits to the HR Neo tab so the edit modal
-            // actually opens (DnsRoutesTab filters those out).
-            // By position: an HR id's revision may be stale after a write.
-            const route = dnsRoutes.find(r => hrPosKey(r.id) === hrPosKey(id));
-            activeTab = route?.backend === 'hydraroute' ? 'hrneo' : 'dns';
-        } else {
-            activeTab = 'ip';
-        }
+        activeTab = type;
         searchOpen = false;
         // A freshly mounted tab captures editRuleCounter at mount; bump it only
         // after the switched-to tab has mounted so its effect sees the change.
@@ -178,15 +182,10 @@
     }
 
     // NDMS tab is OS5-only (see tabItems gate). On OS4, bounce off `dns`
-    // to HR Neo when hydraroute is installed, otherwise IP.
+    // to IP.
     $effect(() => {
         if (!$systemInfo.data) return;
-        const hr = $hydrarouteStatusStore;
-        if (hr.lastFetchedAt === 0 && hr.status !== 'error') return;
-
-        if (!isOS5 && activeTab === 'dns') {
-            activeTab = hydrarouteInstalled ? 'hrneo' : 'ip';
-        }
+        if (!isOS5 && activeTab === 'dns') activeTab = 'ip';
     });
 
     // In fakeip-tun mode, land on the FakeIP tab instead of the tproxy-
@@ -260,14 +259,10 @@
     }
 
     // Derived: tab badges
-    let hrRuleCount = $derived(dnsRoutes.filter(r => r.backend === 'hydraroute').length);
-    let geoFileCount = $state(0);
+    // null — ещё не прочитано.
+    let geoFileCount = $state<number | null>(null);
 
     async function loadGeoFileCount() {
-        if (!hydrarouteInstalled && !singboxInstalled) {
-            geoFileCount = 0;
-            return;
-        }
         try {
             const files = await api.getGeoFiles();
             geoFileCount = files?.length ?? 0;
@@ -275,12 +270,7 @@
             geoFileCount = 0;
         }
     }
-
-    $effect(() => {
-        if (hydrarouteInstalled || singboxInstalled) void loadGeoFileCount();
-        else geoFileCount = 0;
-    });
-    let dnsActiveCount = $derived(dnsRoutes.filter(r => r.enabled && r.backend !== 'hydraroute').length);
+    let dnsActiveCount = $derived(dnsRoutes.filter(r => r.enabled).length);
     let ipActiveCount = $derived(ipRoutes.filter(r => r.enabled).length);
     let clientActiveCount = $derived(clientRoutes.filter(r => r.enabled).length);
     let policyCount = $derived(accessPolicies.length);
@@ -306,7 +296,6 @@
         clientvpn: 'clientRoutes',
         dns: 'dnsRoutes',
         ip: 'ipRoutes',
-        hrneo: 'hrNeo',
         zapret: 'zapret',
         autolist: 'autolist',
         geodata: 'geoData',
@@ -351,19 +340,11 @@
 
     let tabItems = $derived(
         ([
-            // NDMS dns-proxy with object-group fqdn is OS5-only — gate the
-            // tab on isOS5 so OS4 routers don't see an unusable NDMS tab
-            // (hydraroute users on OS4 use the HR Neo tab instead).
-            isOS5 ? { id: 'dns', label: 'NDMS', badge: dnsActiveCount } : null,
-            { id: 'ip', label: m.routing_page_tab_ip(), badge: ipActiveCount },
-            { id: 'clientvpn', label: m.routing_page_tab_clientvpn(), badge: clientActiveCount },
-            { id: 'policy', label: m.routing_page_tab_policy(), badge: policyCount },
             {
                 id: 'firc',
                 label: 'FIRC',
                 badge: $fircHasDraft ? '•' : undefined,
                 badgeTone: $fircHasDraft ? 'warning' : undefined,
-                separatorBefore: true,
             },
             // Sing-box modes as one dropdown chip (same pattern as tunnels page).
             singboxMenuChildren.length > 0
@@ -374,9 +355,10 @@
                         children: singboxMenuChildren,
                     }
                 : null,
-            // HR Neo is a separate routing engine (not sing-box) — divider before it.
-            hydrarouteInstalled ? { id: 'hrneo', label: 'HR Neo', badge: hrRuleCount, separatorBefore: true } : null,
-            // Zapret — тоже отдельный движок, и ставит его пользователь, а не
+            { id: 'ip', label: m.routing_page_tab_ip(), badge: ipActiveCount, separatorBefore: true },
+            { id: 'clientvpn', label: m.routing_page_tab_clientvpn(), badge: clientActiveCount },
+            { id: 'policy', label: m.routing_page_tab_policy(), badge: policyCount },
+            // Zapret — отдельный движок, и ставит его пользователь, а не
             // AWGM. Вкладка появляется только когда движок найден на роутере.
             zapretInstalled
                 ? {
@@ -389,9 +371,14 @@
             autolistAvailable
                 ? { id: 'autolist', label: m.routing_page_tab_autolist(), badge: autolistWaitingCount, separatorBefore: true }
                 : null,
-            (hydrarouteInstalled || singboxInstalled)
-                ? { id: 'geodata', label: m.routing_page_tab_geodata(), badge: geoFileCount, separatorBefore: true }
+            // Файлы нужны sing-box, но и без него скачанное должно быть видно:
+            // только здесь их удаляют и выключают автообновление.
+            singboxInstalled || (geoFileCount ?? 0) > 0
+                ? { id: 'geodata', label: m.routing_page_tab_geodata(), badge: geoFileCount ?? 0, separatorBefore: true }
                 : null,
+            // NDMS dns-proxy with object-group fqdn is OS5-only — gate the
+            // tab on isOS5 so OS4 routers don't see an unusable NDMS tab.
+            isOS5 ? { id: 'dns', label: 'NDMS', badge: dnsActiveCount, separatorBefore: true } : null,
         ] as (TabItem | null)[])
             .filter((t): t is TabItem => t !== null)
             .filter((t) => (t.children ? true : tabVisible(t.id)))
@@ -403,46 +390,40 @@
     $effect(() => {
         if (!$systemInfo.data) return;
         if (!singboxInstalled && (activeTab === 'singbox' || activeTab === 'fakeip' || activeTab === 'autolist')) {
-            activeTab = 'dns';
+            activeTab = 'firc';
         }
     });
 
-    // Пока список вкладок меняется (systemInfo, HR, уровень), не держим
+    // Пока список вкладок меняется (systemInfo, уровень), не держим
     // active на id, которого ещё нет в tabItems — иначе пустой контент.
     // Не сбрасываем NDMS/sing-box до прихода systemInfo: до fetch
     // isOS5=false и вкладки dns ещё нет в списке — иначе F5 с NDMS
-    // уводил на IP. Аналогично HR Neo — ждём hydraroute-status.
+    // уводил на IP.
     $effect(() => {
         const items = tabItems;
         if (items.length === 0) return;
 
         const si = $systemInfo;
-        const systemKnown = si.lastFetchedAt > 0 || si.status === 'error';
-        const hr = $hydrarouteStatusStore;
-        const hrKnown = hr.lastFetchedAt > 0 || hr.status === 'error';
+        // Отказ system/info вкладку из ссылки не сбрасывает: сброс ушёл бы в
+        // адрес, и после восстановления ссылка была бы потеряна.
+        const systemKnown = si.lastFetchedAt > 0 || (si.status === 'error' && activeTab !== urlTab);
 
         if (
             !systemKnown &&
-            (activeTab === 'dns' || activeTab === 'singbox' || activeTab === 'fakeip' || activeTab === 'autolist') &&
+            (activeTab === 'dns' || activeTab === 'singbox' || activeTab === 'fakeip' || activeTab === 'autolist' || activeTab === 'geodata') &&
             !tabsInclude(items, activeTab)
         ) {
             return;
         }
-        if (
-            !hrKnown &&
-            (activeTab === 'hrneo' || activeTab === 'geodata') &&
-            !tabsInclude(items, activeTab)
-        ) {
-            return;
-        }
-        // Любимую не сбрасываем, пока не пришло то, от чего зависит её
-        // видимость: до загрузки настроек usageLevel = 'advanced' и
+        if (activeTab === 'geodata' && geoFileCount === null && !tabsInclude(items, activeTab)) return;
+        // Стартовую (из ссылки или любимую) не сбрасываем, пока не пришло то,
+        // от чего зависит её видимость: до загрузки настроек usageLevel = 'advanced' и
         // expert-вкладки скрыты; FakeIP ниже expert виден только по
         // routingMode из настроек sing-box. Ждём лишь эти вкладки и лишь
         // пока настройки не отказали, чтобы упавшая загрузка не держала
         // их вечно.
-        if (activeTab === savedFavoriteTab && !tabsInclude(items, activeTab)) {
-            const levelGated = activeTab === 'hrneo' || activeTab === 'geodata' || activeTab === 'singbox' || activeTab === 'fakeip';
+        if (activeTab === startTab && !tabsInclude(items, activeTab)) {
+            const levelGated = activeTab === 'geodata' || activeTab === 'singbox' || activeTab === 'fakeip';
             if (levelGated && $settings === null && !$settingsUnavailable) return;
             if (activeTab === 'fakeip' && $singboxSettings === null) return;
         }
@@ -470,7 +451,10 @@
 
         if (!tabsInclude(items, activeTab)) {
             const first = items[0];
-            activeTab = (first.children?.[0]?.id ?? first.id) as typeof activeTab;
+            activeTab =
+                savedFavoriteTab && tabsInclude(items, savedFavoriteTab)
+                    ? savedFavoriteTab
+                    : ((first.children?.[0]?.id ?? first.id) as typeof activeTab);
         }
     });
 
@@ -525,28 +509,18 @@
         urlParam="tab"
         persistKey="routing-sections"
         skipMemorySearchParams={['policy', 'rule', 'edit']}
-        memoryReady={$settings !== null && $systemInfo.lastFetchedAt > 0 && $hydrarouteStatusStore.lastFetchedAt > 0 && (!singboxInstalled || $singboxSettings !== null)}
+        memoryReady={$settings !== null && $systemInfo.lastFetchedAt > 0 && (!singboxInstalled || $singboxSettings !== null)}
         restoreMemory={savedFavoriteTab === null}
-        defaultTab={favoriteTab ?? 'dns'}
+        defaultTab={favoriteTab ?? 'firc'}
     />
 
-    {#if activeTab === 'hrneo'}
-        <HrNeoTab
-            {dnsRoutes}
-            tunnels={routingTunnels}
-            policies={accessPolicies}
-            {policyInterfaces}
-            {editRuleId}
-            {editRuleCounter}
-        />
-    {:else if activeTab === 'dns'}
+    {#if activeTab === 'dns'}
         <DnsRoutesTab
             {dnsRoutes}
             {routingTunnels}
             {editRuleId}
             {editRuleCounter}
             {isOS5}
-            {hasDnsEngine}
             bodyLoading={!$routingDnsNdmsTabReady}
         />
     {:else if activeTab === 'ip'}

@@ -52,7 +52,7 @@
     'bypass-set': m.diag_logs_sub_bypass_set,
     subscription: m.diag_logs_sub_subscription,
     deviceproxy: () => 'Device proxy',
-    hrneo: () => 'HrNeo',
+    geodata: m.geodata_title,
     catalog: m.diag_logs_sub_catalog,
     'awg-outbounds': () => 'AWG outbounds',
     // server

@@ -35,9 +35,7 @@ type Deps interface {
 	// Domains; implementations must not truncate them here.
 	GetDNSRoute(ctx context.Context, id string) (DNSRouteDetail, error)
 	// ListDNSRouteDetails returns every list in full in one call, for
-	// tools that must match against whole lists (explain_route). One call
-	// because per-id reads of HydraRoute lists re-read its config files
-	// each time.
+	// tools that must match against whole lists (explain_route).
 	ListDNSRouteDetails(ctx context.Context) ([]DNSRouteDetail, error)
 	AddDNSRoute(ctx context.Context, in DNSRouteInput) (DNSRoute, error)
 	// UpdateDNSRoute applies a partial edit and returns the list as it
@@ -166,25 +164,13 @@ type Deps interface {
 	// parameters, read from the router.
 	GetWireguardServer(ctx context.Context, id string) (WireguardServerDetail, error)
 	SetWireguardServerObfuscation(ctx context.Context, id string, params map[string]any) (WireguardServer, error)
-	// HydraRoute Neo: its rule groups are DNS routes (hr: ids); these
-	// methods cover the daemon, its settings, geo files and disabled tags.
-	HydraRouteStatus(ctx context.Context) (HydraRouteStatus, error)
-	// ControlHydraRoute runs start, stop or restart and returns the status.
-	ControlHydraRoute(ctx context.Context, action string) (HydraRouteStatus, error)
-	// UpdateHydraRouteSettings writes hrneo.conf with the patch over the
-	// stored values; the daemon restarts to read it.
-	UpdateHydraRouteSettings(ctx context.Context, p HydraRouteSettingsPatch) (HydraRouteStatus, error)
-	ListHydraRouteGeoFiles(ctx context.Context) ([]HydraRouteGeoFile, error)
-	// HydraRouteGeoTags returns one page of a geo file's tags.
-	HydraRouteGeoTags(ctx context.Context, path string, offset int) (HydraRouteGeoTags, error)
-	// UpdateHydraRouteGeoFiles downloads one file again (path) or every
-	// file (""), waits, and restarts the daemon to read them. A download
-	// that failed for some files and a hrneo.conf that was not updated are
-	// told apart in the result, each with its reason.
-	UpdateHydraRouteGeoFiles(ctx context.Context, path string) (HydraRouteGeoUpdate, error)
-	// RemoveHydraRouteDisabledTag removes a tag from the disabled list. It
-	// renumbers every hr: id.
-	RemoveHydraRouteDisabledTag(ctx context.Context, name string) error
+	ListGeoFiles(ctx context.Context) ([]GeoFile, error)
+	// GeoTags returns one page of a geo file's tags.
+	GeoTags(ctx context.Context, path string, offset int) (GeoTags, error)
+	// UpdateGeoFiles downloads one file again (path) or every
+	// file ("") and waits. A download that failed for some files is in the
+	// result with its reason.
+	UpdateGeoFiles(ctx context.Context, path string) (GeoUpdate, error)
 	// ServerPeerConfig renders the client .conf, private key included.
 	ServerPeerConfig(ctx context.Context, serverID, publicKey string) (string, error)
 	ControlSingbox(ctx context.Context, action string) (SingboxStatus, error)

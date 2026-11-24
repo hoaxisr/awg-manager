@@ -326,9 +326,7 @@ func TestTools_ExplainRouteFlagsGeoIPSubnets(t *testing.T) {
 }
 
 // TestTools_ExplainRouteReadsListsOnce — ревью нашло: инструмент дёргал
-// GetDNSRoute на каждый список, а для HydraRoute-id это перечитывание
-// конфигов HR под замком на каждый вызов — O(N²) от валидного ключа.
-// Полные записи читаются одним вызовом.
+// GetDNSRoute на каждый список. Полные записи читаются одним вызовом.
 func TestTools_ExplainRouteReadsListsOnce(t *testing.T) {
 	deps, fake := explainFake(t)
 	counting := &countingDeps{resolvingFake: deps}

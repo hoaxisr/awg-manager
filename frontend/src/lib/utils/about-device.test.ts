@@ -11,7 +11,6 @@ describe('awgmServicesRows', () => {
 		authenticated: false,
 		login: null,
 		singbox: null,
-		hydra: null,
 		deviceProxy: { enabled: false, port: 1080, selectedOutbound: '' } as never,
 		deviceProxyRuntime: null,
 		clientRoutesTotal: 1,

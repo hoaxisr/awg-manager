@@ -95,9 +95,6 @@ func TestFailedWrite_LeavesCacheUntouched(t *testing.T) {
 			return err
 		}},
 		{"ForgetTunnel", func(svc *ServiceImpl) error { return svc.ForgetTunnel(ctx, "t1") }},
-		{"setHRIcon", func(svc *ServiceImpl) error {
-			return svc.setHRIcon("Wireguard0", "group", "https://1.1.1.1/i.png")
-		}},
 		{"RefreshSubscriptions", func(svc *ServiceImpl) error {
 			// Неудачная загрузка пишет LastError в Subscriptions[i] на месте.
 			svc.SetDownloader(failingDownloader{err: errors.New("i/o timeout")})

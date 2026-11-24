@@ -4,10 +4,10 @@ import type { CatalogPreset } from '$lib/types';
 /** Preset with optional composite covers (catalog + sing-box router). */
 export type PresetCoverRef = Pick<CatalogPreset, 'id' | 'name' | 'covers'>;
 
-/** Inline DNS entries above this — warn in NDMS / HR Neo pickers. */
+/** Inline DNS entries above this — warn in NDMS pickers. */
 export const DNS_LARGE_LIST_THRESHOLD = 300;
 
-/** Shown on catalog tiles with large DNS lists (NDMS / HR Neo only). */
+/** Shown on catalog tiles with large DNS lists (NDMS only). */
 export function dnsLargeListNotice(): string {
 	return m.catalog_preset_dns_large_list_notice();
 }
@@ -171,16 +171,6 @@ export function applyPresetToggle(
 	const preset = catalog.find((p) => p.id === presetId);
 	for (const id of preset?.covers ?? []) next.delete(id);
 	return next;
-}
-
-/** HR Neo: resolved inline domain/CIDR (no subscription-only lists). */
-export function hrNeoCatalogPresetFilter(
-	p: CatalogPreset,
-	catalog: CatalogPreset[] = [],
-): boolean {
-	if (p.engines.dns?.subscriptionUrl) return false;
-	if (catalog.length === 0) return presetDnsEntryCount(p) > 0;
-	return resolvedPresetDnsEntryCount(p, catalog) > 0;
 }
 
 export function dnsRouteCatalogPresetFilter(

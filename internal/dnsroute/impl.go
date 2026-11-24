@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
@@ -17,30 +16,23 @@ import (
 
 // InterfaceResolver resolves tunnel IDs to router interface names.
 // ResolveInterface returns the NDMS name (for RCI commands).
-// GetKernelIfaceName returns the kernel-level interface name (for HR Neo).
-// SystemTunnelsByIface maps an HR Neo target (kernel name, or the NDMS id
-// left by older files) back to its "system:<NDMS id>" tunnel ID.
 type InterfaceResolver interface {
 	ResolveInterface(ctx context.Context, tunnelID string) (string, error)
-	GetKernelIfaceName(ctx context.Context, tunnelID string) (string, error)
-	SystemTunnelsByIface(ctx context.Context) map[string]string
 }
 
 // ServiceImpl implements the Service interface.
 // All operations are serialized via opMu to prevent race conditions between
 // concurrent HTTP handlers, background scheduler, and tunnel lifecycle hooks.
 type ServiceImpl struct {
-	opMu               sync.Mutex
-	dlMu               sync.RWMutex
-	store              *Store
-	queries            *query.Queries
-	commands           *command.Commands
-	resolver           InterfaceResolver
-	appLog             *logging.ScopedLogger
-	failover           *FailoverManager
-	hydra              *hydraroute.Service
-	policyOrchestrator policyOrchestrator
-	dl                 Downloader
+	opMu     sync.Mutex
+	dlMu     sync.RWMutex
+	store    *Store
+	queries  *query.Queries
+	commands *command.Commands
+	resolver InterfaceResolver
+	appLog   *logging.ScopedLogger
+	failover *FailoverManager
+	dl       Downloader
 }
 
 type Downloader interface {
@@ -73,16 +65,6 @@ func (s *ServiceImpl) downloader() Downloader {
 // SetFailoverManager sets the failover manager for DNS route failover.
 func (s *ServiceImpl) SetFailoverManager(fm *FailoverManager) {
 	s.failover = fm
-}
-
-// SetHydraRoute sets the HydraRoute Neo service for hydraroute-backend lists.
-// hydraroute.Service satisfies the policyOrchestrator seam, so tests that
-// override policyOrchestrator before calling SetHydraRoute keep their stub.
-func (s *ServiceImpl) SetHydraRoute(h *hydraroute.Service) {
-	s.hydra = h
-	if s.policyOrchestrator == nil {
-		s.policyOrchestrator = h
-	}
 }
 
 // LookupAffectedLists returns DNS lists that reference the given tunnelID,
@@ -175,7 +157,7 @@ func (s *ServiceImpl) Create(ctx context.Context, list DomainList) (*DomainList,
 	defer s.opMu.Unlock()
 
 	if isHydraRoute(list.Backend) {
-		return s.createHydraRoute(ctx, list)
+		return nil, ErrHydraRouteBackend
 	}
 
 	data := s.store.Draft()
@@ -285,8 +267,7 @@ func (s *ServiceImpl) Get(ctx context.Context, id string) (*DomainList, error) {
 	return nil, fmt.Errorf("dns route list %q not found", id)
 }
 
-// List returns all domain lists: NDMS-backed ones from JSON storage merged
-// with HR-backed ones read straight from HR Neo's config files.
+// List returns all domain lists.
 func (s *ServiceImpl) List(ctx context.Context) ([]DomainList, error) {
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
@@ -297,20 +278,7 @@ func (s *ServiceImpl) List(ctx context.Context) ([]DomainList, error) {
 	}
 
 	result := make([]DomainList, 0, len(data.Lists))
-	for _, l := range data.Lists {
-		// HR-backed entries are legacy rows; the HR files are now SoT.
-		if !isHydraRoute(l.Backend) {
-			result = append(result, l)
-		}
-	}
-
-	hrLists, err := s.listHydraRoute(ctx)
-	if err != nil {
-		s.appLog.Warn("hydraroute-list-rules", "", err.Error())
-	}
-	result = append(result, hrLists...)
-
-	return result, nil
+	return append(result, data.Lists...), nil
 }
 
 // Update modifies an existing domain list, persists changes, and reconciles.
@@ -326,7 +294,6 @@ func (s *ServiceImpl) Update(ctx context.Context, list DomainList) (*DomainList,
 // снимок: изменение из веб-интерфейса между чтением и записью терялось бы.
 // edit получает хранимый список и не должен менять его срезы — это кэш
 // хранилища; вернуть он должен разреженную правку, как для Update.
-// Списки HydraRoute сюда не идут: их источник — файлы HR, а не хранилище.
 func (s *ServiceImpl) UpdateWith(ctx context.Context, id string, edit func(DomainList) (DomainList, error)) (*DomainList, error) {
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
@@ -336,9 +303,6 @@ func (s *ServiceImpl) UpdateWith(ctx context.Context, id string, edit func(Domai
 		return nil, fmt.Errorf("store not loaded")
 	}
 	i := slices.IndexFunc(data.Lists, func(l DomainList) bool { return l.ID == id })
-	if isHRID(id) || (i >= 0 && isHydraRoute(data.Lists[i].Backend)) {
-		return nil, fmt.Errorf("dns route list %q is a HydraRoute list: UpdateWith edits stored lists only", id)
-	}
 	if i < 0 {
 		return nil, fmt.Errorf("dns route list %q not found", id)
 	}
@@ -352,8 +316,8 @@ func (s *ServiceImpl) UpdateWith(ctx context.Context, id string, edit func(Domai
 
 // updateLocked is Update under s.opMu.
 func (s *ServiceImpl) updateLocked(ctx context.Context, list DomainList) (*DomainList, error) {
-	if isHRID(list.ID) || isHydraRoute(list.Backend) {
-		return s.updateHydraRoute(ctx, list.ID, list)
+	if isHydraRoute(list.Backend) {
+		return nil, ErrHydraRouteBackend
 	}
 
 	data := s.store.Draft()
@@ -417,12 +381,6 @@ func (s *ServiceImpl) updateLocked(ctx context.Context, list DomainList) (*Domai
 	}
 	if list.Backend == "" {
 		list.Backend = existing.Backend
-	}
-	if list.HRRouteMode == "" {
-		list.HRRouteMode = existing.HRRouteMode
-	}
-	if list.HRPolicyName == "" {
-		list.HRPolicyName = existing.HRPolicyName
 	}
 	if list.SkipIPv6 == nil {
 		list.SkipIPv6 = existing.SkipIPv6
@@ -506,7 +464,7 @@ func (s *ServiceImpl) updateLocked(ctx context.Context, list DomainList) (*Domai
 
 		// Merge domains: manual domains + existing subscription domains + new
 		// subscriptions' domains, then classify into DNS-style domains vs CIDR
-		// subnets so HR Neo writes them into the correct file (domain.conf vs ip.list).
+		// subnets.
 		manual := deduplicateDomains(list.ManualDomains)
 		// Содержимое стоящих подписок — Domains и Subnets за вычетом ручных
 		// строк: подсети подписок лежат в Subnets и иначе терялись (F697).
@@ -564,18 +522,6 @@ func (s *ServiceImpl) Delete(ctx context.Context, id string) error {
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
 
-	if isHRID(id) {
-		if !s.hrReady() {
-			return fmt.Errorf("HydraRoute Neo is not installed")
-		}
-		ref, err := refFromHRID(id)
-		if err != nil {
-			return err
-		}
-		// Иконку убирает reconcileHRIcons в следующем List.
-		return s.hydra.DeleteGroups([]hydraroute.GroupRef{ref})
-	}
-
 	data := s.store.Draft()
 	if data == nil {
 		return fmt.Errorf("store not loaded")
@@ -614,41 +560,13 @@ func (s *ServiceImpl) DeleteBatch(ctx context.Context, ids []string) (int, error
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
 
-	// HR-группы удаляются одной записью: их позиции разрешаются по одному
-	// снимку, поштучное удаление сдвинуло бы позиции следующих.
-	// Смешанный пакет HR+NDMS не атомарен: HR-группы пишутся первыми, сбой
-	// дальше их не вернёт. Фронт смешанных пакетов не шлёт.
-	var hrRefs []hydraroute.GroupRef
-	rest := ids[:0:0]
-	for _, id := range ids {
-		if !isHRID(id) {
-			rest = append(rest, id)
-			continue
-		}
-		ref, err := refFromHRID(id)
-		if err != nil {
-			return 0, err
-		}
-		hrRefs = append(hrRefs, ref)
-	}
-	hrDeleted := 0
-	if len(hrRefs) > 0 {
-		if !s.hrReady() {
-			return 0, fmt.Errorf("HydraRoute Neo is not installed")
-		}
-		if err := s.hydra.DeleteGroups(hrRefs); err != nil {
-			return 0, err
-		}
-		hrDeleted = len(hrRefs)
-	}
-
 	data := s.store.Draft()
 	if data == nil {
-		return hrDeleted, fmt.Errorf("store not loaded")
+		return 0, fmt.Errorf("store not loaded")
 	}
 
-	toDelete := make(map[string]bool, len(rest))
-	for _, id := range rest {
+	toDelete := make(map[string]bool, len(ids))
+	for _, id := range ids {
 		toDelete[id] = true
 	}
 
@@ -664,20 +582,20 @@ func (s *ServiceImpl) DeleteBatch(ctx context.Context, ids []string) (int, error
 	}
 
 	if deleted == 0 {
-		return hrDeleted, nil
+		return 0, nil
 	}
 
 	data.Lists = kept
 
 	if err := s.store.Save(data); err != nil {
-		return hrDeleted, fmt.Errorf("save after delete batch: %w", err)
+		return 0, fmt.Errorf("save after delete batch: %w", err)
 	}
 
 	if err := s.reconcileAll(ctx); err != nil {
 		s.logError("delete-batch", "", "Reconcile failed", err.Error())
 	}
 
-	return deleted + hrDeleted, nil
+	return deleted, nil
 }
 
 // CreateBatch adds multiple domain lists, persists once, and reconciles once.
@@ -693,28 +611,19 @@ func (s *ServiceImpl) CreateBatch(ctx context.Context, lists []DomainList) ([]*D
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	var createdIDs []string
-	var hrCreated []*DomainList
 	hasSubs := false
 
 	// Первый проход — без побочных эффектов: нормализация, пропуски и
 	// проверки маршрутов всех списков. Ошибка любого списка отвергает батч
-	// целиком до записи HR-файлов и правки кэша (F693): иначе ранние списки
+	// целиком до правки кэша (F693): иначе ранние списки
 	// оставались в живом кэше и доезжали до роутера со следующим Save.
 	prepared := make([]DomainList, 0, len(lists))
 	for _, list := range lists {
 		applyManualText(&list)
 		applyExcludesText(&list)
 
-		// HydraRoute-backed entries go through the real HR creation path
-		// (HR files = SoT); they must NOT land in data.Lists. HR has no
-		// subscriptions — create from ManualDomains and log-ignore any.
-		// The name is optional for HR groups (HRweb model).
 		if isHydraRoute(list.Backend) {
-			if len(list.ManualDomains) == 0 {
-				continue
-			}
-			prepared = append(prepared, list)
-			continue
+			return nil, fmt.Errorf("%q: %w", list.Name, ErrHydraRouteBackend)
 		}
 		if strings.TrimSpace(list.Name) == "" {
 			continue
@@ -736,19 +645,6 @@ func (s *ServiceImpl) CreateBatch(ctx context.Context, lists []DomainList) ([]*D
 	}
 
 	for _, list := range prepared {
-		if isHydraRoute(list.Backend) {
-			if len(list.Subscriptions) > 0 {
-				s.logInfo("create-batch", list.Name, "HR rule: subscriptions unsupported, ignored")
-			}
-			dl, err := s.createHydraRoute(ctx, list)
-			if err != nil {
-				s.logError("create-batch", list.Name, "HR create failed", err.Error())
-				continue
-			}
-			hrCreated = append(hrCreated, dl)
-			continue
-		}
-
 		list.ID = nextListID(data.Lists)
 		assignGroupSlug(&list, data.Lists)
 		list.Enabled = true
@@ -767,9 +663,8 @@ func (s *ServiceImpl) CreateBatch(ctx context.Context, lists []DomainList) ([]*D
 	}
 
 	if len(createdIDs) == 0 {
-		// Никаких NDMS-изменений: Save/reconcile не нужны. Чисто-HR батч
-		// (каталог OS4) возвращает созданные HR-правила напрямую.
-		return hrCreated, nil
+		// Никаких изменений: Save/reconcile не нужны.
+		return nil, nil
 	}
 
 	if err := s.store.Save(data); err != nil {
@@ -808,7 +703,6 @@ func (s *ServiceImpl) CreateBatch(ctx context.Context, lists []DomainList) ([]*D
 		}
 	}
 
-	result = append(result, hrCreated...)
 	return result, nil
 }
 
@@ -816,21 +710,6 @@ func (s *ServiceImpl) CreateBatch(ctx context.Context, lists []DomainList) ([]*D
 func (s *ServiceImpl) SetEnabled(ctx context.Context, id string, enabled bool) error {
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
-
-	if isHRID(id) {
-		if !s.hrReady() {
-			return fmt.Errorf("HydraRoute Neo is not installed")
-		}
-		ref, err := refFromHRID(id)
-		if err != nil {
-			return err
-		}
-		if err := s.hydra.SetGroupEnabled(ref, enabled); err != nil {
-			return err
-		}
-		s.logInfo("set-enabled", id, fmt.Sprintf("enabled=%v backend=hydraroute", enabled))
-		return nil
-	}
 
 	data := s.store.Draft()
 	if data == nil {
@@ -1277,9 +1156,7 @@ func nextListID(lists []DomainList) string {
 
 // deduplicateDomains returns a trimmed, deduplicated list. Real domains get
 // lowercased (DNS is case-insensitive). geosite:/geoip: tags are preserved
-// as-is — HR Neo matches them byte-for-byte against the .dat file, which
-// uses upper-case geosite tags (GOOGLE) and lower-case geoip country codes
-// (ru). Dedup is case-insensitive in either case.
+// as-is. Dedup is case-insensitive in either case.
 func deduplicateDomains(domains []string) []string {
 	seen := make(map[string]bool, len(domains))
 	result := make([]string, 0, len(domains))
@@ -1305,15 +1182,14 @@ func deduplicateDomains(domains []string) []string {
 }
 
 // isGeoTag reports whether the entry is a geosite:/geoip: tag whose case
-// must be preserved for HR Neo's byte-for-byte tag match.
+// must be preserved.
 func isGeoTag(s string) bool {
 	return strings.HasPrefix(s, "geosite:") || strings.HasPrefix(s, "geoip:")
 }
 
 // hasGeoPrefix — geosite:/geoip: в любом регистре. NDMS не принимает
 // geo-теги в object-group fqdn вообще (стенд KN-1810 5.02.B.1, 20.10:
-// status error 101582220 «invalid FQDN or IP address», E в журнале ndm), их
-// понимает только HydraRoute (F700).
+// status error 101582220 «invalid FQDN or IP address», E в журнале ndm; F700).
 func hasGeoPrefix(s string) bool {
 	l := strings.ToLower(strings.TrimSpace(s))
 	return strings.HasPrefix(l, "geosite:") || strings.HasPrefix(l, "geoip:")
@@ -1351,9 +1227,7 @@ func subscriptionDomains(allDomains, manualDomains []string) []string {
 	return sub
 }
 
-// reconcileAll runs NDMS reconciliation. HR rules no longer participate —
-// HR config files are the source of truth and are written directly by the
-// hydraroute service; there is nothing to reconcile from JSON storage.
+// reconcileAll runs NDMS reconciliation.
 func (s *ServiceImpl) reconcileAll(ctx context.Context) error {
 	return s.reconcile(ctx)
 }

@@ -1,7 +1,7 @@
 <!--
-  Карточка «Действия»: перезапуск демона и управление sing-box, HydraRoute
-  Neo, zapret. Общих настроек не меняет — статусы служб берёт из их сторов,
-  запросы делает сама. Видимость строк sing-box/Hydra (уровень интерфейса)
+  Карточка «Действия»: перезапуск демона и управление sing-box и
+  zapret. Общих настроек не меняет — статусы служб берёт из их сторов,
+  запросы делает сама. Видимость строки sing-box (уровень интерфейса)
   решает страница.
 -->
 <script lang="ts">
@@ -11,7 +11,6 @@
 	import { runZapretControl } from '$lib/components/zapret';
 	import { notifications } from '$lib/stores/notifications';
 	import { singboxStatus } from '$lib/stores/singbox';
-	import { hydrarouteStatus } from '$lib/stores/hydraroute';
 	import { zapretStatusIfExpert } from '$lib/stores/zapret';
 	import { readBackendInstanceId, requestDaemonRestart, waitForDaemonRestart } from '$lib/utils/daemonRestart';
 	import type { ZapretControlAction } from '$lib/types';
@@ -20,22 +19,18 @@
 
 	interface Props {
 		showSingbox: boolean;
-		showHydra: boolean;
 	}
 
-	let { showSingbox, showHydra }: Props = $props();
+	let { showSingbox }: Props = $props();
 
 	let restarting = $state(false);
 	let restartConfirmOpen = $state(false);
 	let singboxBusy = $state(false);
-	let hydraBusy = $state(false);
 	let zapretBusy = $state(false);
 
 	const singboxStatusValue = $derived($singboxStatus.data ?? null);
 	const singboxInstalled = $derived(singboxStatusValue?.installed ?? false);
 	const singboxRunning = $derived(singboxStatusValue?.running ?? false);
-	const hydraInstalled = $derived($hydrarouteStatus.data?.installed ?? false);
-	const hydraRunning = $derived($hydrarouteStatus.data?.running ?? false);
 	const zapretStatusValue = $derived($zapretStatusIfExpert?.data ?? null);
 	const zapretInstalled = $derived(zapretStatusValue?.installed ?? false);
 	const zapretRunning = $derived(zapretStatusValue?.running ?? false);
@@ -53,22 +48,6 @@
 			notifications.error(e instanceof Error ? e.message : m.settings_page_singbox_control_failed());
 		} finally {
 			singboxBusy = false;
-		}
-	}
-
-	async function controlHydra(action: 'start' | 'stop' | 'restart') {
-		hydraBusy = true;
-		try {
-			const fresh = await api.controlHydraRoute(action);
-			hydrarouteStatus.applyMutationResponse(fresh);
-			notifications.success(
-				action === 'restart' ? m.settings_page_hydra_restarted() :
-				action === 'stop' ? m.settings_page_hydra_stopped() : m.settings_page_hydra_started(),
-			);
-		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : m.settings_page_hydra_control_failed());
-		} finally {
-			hydraBusy = false;
 		}
 	}
 
@@ -148,25 +127,6 @@
 					<Button variant="danger" size="sm" onclick={() => controlSingbox('stop')} loading={singboxBusy}>{m.common_stop()}</Button>
 				{:else}
 					<Button variant="success" size="sm" onclick={() => controlSingbox('start')} loading={singboxBusy}>{m.common_start()}</Button>
-				{/if}
-			</div>
-		</div>
-	{/if}
-
-	{#if hydraInstalled && showHydra}
-		<div class="setting-row">
-			<div class="flex flex-col gap-1">
-				<span class="font-medium">HydraRoute Neo</span>
-				<span class="setting-description">
-					{hydraRunning ? m.settings_page_daemon_running() : m.settings_page_daemon_stopped()}
-				</span>
-			</div>
-			<div class="action-buttons">
-				{#if hydraRunning}
-					<Button variant="secondary" size="sm" onclick={() => controlHydra('restart')} loading={hydraBusy}>{m.common_restart()}</Button>
-					<Button variant="danger" size="sm" onclick={() => controlHydra('stop')} loading={hydraBusy}>{m.common_stop()}</Button>
-				{:else}
-					<Button variant="success" size="sm" onclick={() => controlHydra('start')} loading={hydraBusy}>{m.common_start()}</Button>
 				{/if}
 			</div>
 		</div>

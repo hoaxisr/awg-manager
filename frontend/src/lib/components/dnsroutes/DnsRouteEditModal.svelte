@@ -276,7 +276,6 @@
 			manualText,
 			subscriptions,
 			routes,
-			// Правила HR Neo правит HrNeoEditModal — здесь только NDMS (F689).
 			backend: 'ndms',
 			excludes: parsedExcludes,
 			excludesText,

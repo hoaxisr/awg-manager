@@ -24,15 +24,14 @@ export function isIPv6Entry(entry: string): boolean {
 
 /**
  * Список со SkipIPv6, в котором все записи — IPv6: на роутер из него не
- * уходит ничего, хотя список включён. Только NDMS — HydraRoute флаг не читает.
+ * уходит ничего, хотя список включён.
  */
 export function skipIPv6LeavesNothing(route: {
 	skipIPv6?: boolean;
-	backend?: string;
 	domains?: string[];
 	subnets?: string[];
 }): boolean {
-	if (!route.skipIPv6 || route.backend === 'hydraroute') return false;
+	if (!route.skipIPv6) return false;
 	const entries = [...(route.domains ?? []), ...(route.subnets ?? [])];
 	return entries.length > 0 && entries.every(isIPv6Entry);
 }
