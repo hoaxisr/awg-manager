@@ -751,3 +751,91 @@ func TestTgWebProxy_RevealWithNoUsersNotRateLimited(t *testing.T) {
 		}
 	}
 }
+
+func TestTgWebProxyAction_DeleteLastUserThenStopAndStartDoesNotResurrect(t *testing.T) {
+	handler, svc, _, sessionToken, tempDir := setupTestTgWebProxyHandler(t)
+	coord := serveringress.New(tempDir, nil, nil, svc)
+	handler.SetCoordinator(coord)
+
+	directPort := freeTCPPortForTest(t)
+	listenPort := freeTCPPortForTest(t)
+	epListenPort := freeTCPPortForTest(t)
+	epAdminPort := freeTCPPortForTest(t)
+	rawPort := freeTCPPortForTest(t)
+
+	initialCfg := svc.GetInternalConfig()
+	initialCfg.Enabled = true
+	initialCfg.Scenario = tgwebproxy.ScenarioDirectFakeTLS
+	initialCfg.DirectHost = "127.0.0.1"
+	initialCfg.DirectPort = directPort
+	initialCfg.ListenPort = listenPort
+	initialCfg.AdminPort = epAdminPort
+	initialCfg.Backend = (&net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: rawPort}).String()
+	initialCfg.Endpoints = []tgwebproxy.WebProxyEndpoint{{
+		ID:          "ep-1",
+		Hostname:    "tg.example.com",
+		ListenPort:  epListenPort,
+		AdminPort:   epAdminPort,
+		IsCDN:       true,
+		CarrierMode: tgwebproxy.DefaultCarrierMode,
+	}}
+	if err := coord.ApplyTelegramConfig(context.Background(), initialCfg); err != nil {
+		t.Fatalf("initial ApplyTelegramConfig: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = coord.SetTelegramEnabled(context.Background(), false)
+	})
+
+	decodeUsers := func(t *testing.T, body []byte) []tgwebproxy.TelegramUser {
+		t.Helper()
+		var env struct {
+			Data tgwebproxy.Status `json:"data"`
+		}
+		if err := json.Unmarshal(body, &env); err != nil {
+			t.Fatalf("decode action status: %v: %s", err, string(body))
+		}
+		return env.Data.Users
+	}
+
+	userID := svc.GetConfig().Users[0].ID
+	wDel := postTgAction(t, handler, sessionToken, `{"action":"delete_user","user_id":"`+userID+`"}`)
+	if wDel.Code != http.StatusOK {
+		t.Fatalf("delete_user failed (%d): %s", wDel.Code, wDel.Body.String())
+	}
+	if users := decodeUsers(t, wDel.Body.Bytes()); len(users) != 0 {
+		t.Fatalf("expected 0 users after delete_user, got %+v", users)
+	}
+	if cfg := svc.GetInternalConfig(); cfg.Secret != "" || len(cfg.ActiveSecrets()) != 0 {
+		t.Fatalf("expected cleared secret after delete_user, got %+v", cfg)
+	}
+
+	wStop := postTgAction(t, handler, sessionToken, `{"action":"stop"}`)
+	if wStop.Code != http.StatusOK {
+		t.Fatalf("stop action failed (%d): %s", wStop.Code, wStop.Body.String())
+	}
+	if users := decodeUsers(t, wStop.Body.Bytes()); len(users) != 0 {
+		t.Fatalf("stop resurrected users: %+v", users)
+	}
+	if cfg := svc.GetInternalConfig(); cfg.Enabled || cfg.Secret != "" || len(cfg.ActiveSecrets()) != 0 {
+		t.Fatalf("expected disabled config with empty secret after stop, got %+v", cfg)
+	}
+
+	wStart := postTgAction(t, handler, sessionToken, `{"action":"start"}`)
+	if wStart.Code != http.StatusOK {
+		t.Fatalf("start action failed (%d): %s", wStart.Code, wStart.Body.String())
+	}
+	if users := decodeUsers(t, wStart.Body.Bytes()); len(users) != 0 {
+		t.Fatalf("start resurrected users: %+v", users)
+	}
+	if cfg := svc.GetInternalConfig(); !cfg.Enabled || cfg.Secret != "" || len(cfg.ActiveSecrets()) != 0 {
+		t.Fatalf("expected enabled config with empty secret after start, got %+v", cfg)
+	}
+
+	wRot := postTgAction(t, handler, sessionToken, `{"action":"rotate_secret"}`)
+	if wRot.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 Not Found on rotate_secret with 0 users, got %d: %s", wRot.Code, wRot.Body.String())
+	}
+	if users := svc.GetStatus().Users; len(users) != 0 {
+		t.Fatalf("rotate_secret with 0 users mutated users: %+v", users)
+	}
+}

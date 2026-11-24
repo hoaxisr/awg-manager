@@ -333,7 +333,8 @@ func (s *Service) loadAndMigrateConfig() error {
 		return fmt.Errorf("decode config json: %w", err)
 	}
 
-	needsMigration := (rawCheck.SchemaVersion == nil) || (*rawCheck.SchemaVersion < CurrentSchemaVersion)
+	isLegacySchema := (rawCheck.SchemaVersion == nil) || (*rawCheck.SchemaVersion < CurrentSchemaVersion)
+	needsMigration := isLegacySchema
 
 	var loaded Config
 	if err := json.Unmarshal(data, &loaded); err != nil {
@@ -427,11 +428,22 @@ func (s *Service) loadAndMigrateConfig() error {
 			migrated.AdminPort = DefaultAdminPort
 		}
 		if migrated.Secret == "" {
-			sec, err := randomHexSecret(s.randReader)
-			if err != nil {
-				return fmt.Errorf("generate migrated secret: %w", err)
+			for _, u := range migrated.Users {
+				if strings.TrimSpace(u.Secret) != "" {
+					migrated.Secret = u.Secret
+					break
+				}
 			}
-			migrated.Secret = sec
+			// Only backfill a missing top-level Secret when migrating a legacy
+			// pre-v2 config; a v2 config with 0 users intentionally leaves both
+			// Users and Secret empty so "default" is not resurrected.
+			if migrated.Secret == "" && len(migrated.Users) == 0 && isLegacySchema {
+				sec, err := randomHexSecret(s.randReader)
+				if err != nil {
+					return fmt.Errorf("generate migrated secret: %w", err)
+				}
+				migrated.Secret = sec
+			}
 		}
 		migrated.SchemaVersion = CurrentSchemaVersion
 		s.config = migrated
@@ -985,6 +997,9 @@ func (s *Service) RotateSecret() error {
 	}
 
 	newCfg := s.config
+	if len(newCfg.GetUsers()) == 0 {
+		return fmt.Errorf("%w: нет пользователей для смены секрета", ErrUserNotFound)
+	}
 	oldSecret := s.config.Secret
 	newCfg.LegacySecret = oldSecret
 	sec, err := randomHexSecret(s.randReader)
@@ -1178,6 +1193,8 @@ func (s *Service) DeleteUser(id string) error {
 	if len(remaining) == 0 {
 		newCfg.Users = []TelegramUser{}
 		newCfg.Secret = ""
+		newCfg.LegacySecret = ""
+		newCfg.LegacyExpiresAt = ""
 	} else {
 		newCfg.Users = remaining
 		if deletedSecret != "" && newCfg.Secret == deletedSecret {

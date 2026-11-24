@@ -416,6 +416,10 @@ func (h *TgWebProxyHandler) Action(w http.ResponseWriter, r *http.Request) {
 			WriteError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		if errors.Is(err, tgwebproxy.ErrUserNotFound) {
+			WriteError(w, http.StatusNotFound, err.Error())
+			return
+		}
 		WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
