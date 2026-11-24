@@ -1579,6 +1579,9 @@ func migrateSingboxRouterFragment(data []byte, tagToIface map[string]string, com
 		if len(grp.Rules) == 0 && grp.List == nil && len(grp.Devices.Allow) == 0 {
 			continue
 		}
+		if grp.IsDNSOnly() { // неразрешённый тег "dns" sing-box — не группа «только DNS» FIRC
+			continue
+		}
 		out = append(out, *grp)
 	}
 	return out, ruleSetsCount

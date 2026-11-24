@@ -2587,7 +2587,7 @@ groups:
     last_update: 1794918216
     overrides: []
 `)
-	groups, err := validateFircGroupsYAML(groups070)
+	groups, err := validateFircGroupsYAML(groups070, nil)
 	if err != nil {
 		t.Fatalf("expected firc 0.7.0 groups.yaml to validate cleanly, got: %v", err)
 	}

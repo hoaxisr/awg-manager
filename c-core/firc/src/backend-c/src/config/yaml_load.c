@@ -578,11 +578,12 @@ static firc_err_t load_resolve(yaml_document_t *doc, node_t *n, firc_group_resol
         return FIRC_ERR_INVAL;
     }
     GET_OR_FAIL(get_bool(map_get(doc, res, "tunnel"), &r->tunnel, &err));
+    GET_OR_FAIL(get_bool(map_get(doc, res, "fallback"), &r->fallback, &err));
     GET_OR_FAIL(get_string(map_get(doc, res, "server"), &r->server, &err));
     if (r->server != NULL && r->server[0] != '\0') {
         firc_resolver_list_t l;
         char why[256];
-        if (firc_resolver_list_parse(r->server, &l, why, sizeof(why)) != FIRC_RESOLVER_LIST_OK) {
+        if (firc_resolver_list_parse_for_log(r->server, &l, why, sizeof(why)) != FIRC_RESOLVER_LIST_OK) {
             FIRC_ERROR("config: group \"%s\": resolve.server %s", group_name != NULL ? group_name : "", why);
             return FIRC_ERR_INVAL;
         }
@@ -617,6 +618,15 @@ static firc_err_t load_cloudflare(yaml_document_t *doc, node_t *n, firc_group_t 
         return FIRC_ERR_INVAL;
     }
     return FIRC_OK;
+}
+
+static firc_err_t check_dns_group(const firc_group_t *g)
+{
+    const char *field = NULL;
+    const char *why = firc_group_dns_check(g, &field);
+    if (why == NULL) { return FIRC_OK; }
+    FIRC_ERROR("config: group \"%s\": %s", g->name != NULL ? g->name : "", why);
+    return FIRC_ERR_INVAL;
 }
 
 /* url is required: a list with nothing to fetch is refused at load, naming the group */
@@ -920,6 +930,11 @@ static firc_err_t load_group(yaml_document_t *doc, node_t *n, firc_group_t *g)
                 return err;
             }
         }
+    }
+
+    err = check_dns_group(g);
+    if (err != FIRC_OK) {
+        return err;
     }
 
     node_t *list = map_get(doc, n, "list");

@@ -448,6 +448,7 @@ func (c *Client) PutGroups(ctx context.Context, groups []Group, save bool) ([]Gr
 	if save {
 		path += "?save=true"
 	}
+	groups = normalizeGroupResolve(groups)
 	payload := map[string]interface{}{"groups": groups}
 	var out struct {
 		Groups []Group `json:"groups"`

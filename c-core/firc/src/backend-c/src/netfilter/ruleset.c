@@ -77,7 +77,7 @@ static const char *unusable_iface(const firc_ruleset_t *rs) {
 static bool iface_usable(const firc_ruleset_t *rs) { return unusable_iface(rs) == NULL; }
 
 static bool configured_enabled(const firc_ruleset_t *rs) {
-    return rs->group->enable && iface_usable(rs);
+    return rs->group->enable && !firc_group_is_dns(rs->group) && iface_usable(rs);
 }
 
 firc_ruleset_t *firc_ruleset_new(const firc_group_t *group, const firc_ruleset_deps_t *deps) {

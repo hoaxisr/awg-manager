@@ -32,6 +32,7 @@ typedef enum firc_dns_decision {
     FIRC_DNS_POOL_REFUSED,
     FIRC_DNS_PASSED,
     FIRC_DNS_BLOCKED,
+    FIRC_DNS_DNS_ONLY,
 } firc_dns_decision_t;
 
 typedef enum firc_dns_resolver {

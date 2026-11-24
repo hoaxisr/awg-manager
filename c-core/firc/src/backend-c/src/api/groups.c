@@ -256,19 +256,21 @@ static firc_err_t rule_from_req_strict(const cJSON *req, const rule_ids_t *known
 }
 
 /* absent keeps the group's own (new group: tunnel on, no server); null is the default; an object replaces it */
-static firc_err_t resolve_from_req(const cJSON *req, const firc_group_t *existing, const firc_fakeip_t *pool,
-                                   firc_group_resolve_t *out, const char **err_msg, const char **err_field,
+static firc_err_t resolve_from_req(const cJSON *req, const firc_group_t *existing, const firc_group_t *group,
+                                   const firc_fakeip_t *pool, firc_group_resolve_t *out, const char **err_msg, const char **err_field,
                                    char *msgbuf, size_t msgbuf_len) {
     const cJSON *r = cJSON_GetObjectItemCaseSensitive(req, "resolve");
     out->tunnel = true;
+    out->fallback = true;
     if (r == NULL) {
         if (existing == NULL) { return FIRC_OK; }
         out->tunnel = existing->resolve.tunnel;
+        out->fallback = firc_group_is_dns(group) ? existing->resolve.fallback : true;
         return firc_strset(&out->server, existing->resolve.server);
     }
     if (cJSON_IsNull(r)) { return FIRC_OK; }
     if (!cJSON_IsObject(r)) {
-        *err_msg = "resolve must be an object of tunnel and server";
+        *err_msg = "resolve must be an object of tunnel, server and fallback";
         *err_field = "resolve";
         return FIRC_ERR_INVAL;
     }
@@ -280,6 +282,16 @@ static firc_err_t resolve_from_req(const cJSON *req, const firc_group_t *existin
             return FIRC_ERR_INVAL;
         }
         out->tunnel = cJSON_IsTrue(t);
+    }
+    const cJSON *f = cJSON_GetObjectItemCaseSensitive(r, "fallback");
+    if (f == NULL || cJSON_IsNull(f)) {
+        out->fallback = existing != NULL && firc_group_is_dns(group) ? existing->resolve.fallback : true;
+    } else if (!cJSON_IsBool(f)) {
+        *err_msg = "resolve.fallback must be true or false";
+        *err_field = "resolve.fallback";
+        return FIRC_ERR_INVAL;
+    } else {
+        out->fallback = cJSON_IsTrue(f);
     }
     const cJSON *s = cJSON_GetObjectItemCaseSensitive(r, "server");
     if (s == NULL || cJSON_IsNull(s)) { return FIRC_OK; }
@@ -419,11 +431,17 @@ static firc_err_t cloudflare_from_req(const cJSON *req, const firc_group_t *exis
                                       const char **err_msg, const char **err_field) {
     const cJSON *c = cJSON_GetObjectItemCaseSensitive(req, "cloudflare");
     if (c == NULL) {
-        group->cloudflare = existing != NULL && existing->cloudflare && !firc_group_is_block(group);
+        group->cloudflare = existing != NULL && existing->cloudflare && !firc_group_is_block(group) &&
+                            !firc_group_is_dns(group);
         return FIRC_OK;
     }
     if (!cJSON_IsBool(c)) {
         *err_msg = "cloudflare must be a boolean";
+        *err_field = "cloudflare";
+        return FIRC_ERR_INVAL;
+    }
+    if (cJSON_IsTrue(c) && firc_group_is_dns(group)) {
+        *err_msg = "cloudflare is not for a group whose interface is dns";
         *err_field = "cloudflare";
         return FIRC_ERR_INVAL;
     }
@@ -551,7 +569,7 @@ static firc_err_t group_from_req(const cJSON *req, const firc_group_t *existing,
         return err;
     }
 
-    err = resolve_from_req(req, existing, pool, &group->resolve, err_msg, err_field, msgbuf, msgbuf_len);
+    err = resolve_from_req(req, existing, group, pool, &group->resolve, err_msg, err_field, msgbuf, msgbuf_len);
     if (err == FIRC_OK) {
         err = check_from_req(req, existing, &group->check, err_msg, err_field, msgbuf, msgbuf_len);
     }
@@ -645,6 +663,14 @@ static firc_err_t group_from_req(const cJSON *req, const firc_group_t *existing,
                 return e != FIRC_OK ? e : FIRC_ERR_NOMEM;
             }
         }
+    }
+    const char *dns_field = NULL;
+    const char *dns_why = firc_group_dns_check(group, &dns_field);
+    if (dns_why != NULL) {
+        *err_msg = dns_why;
+        *err_field = dns_field;
+        firc_group_free(group);
+        return FIRC_ERR_INVAL;
     }
     *out = group;
     return FIRC_OK;
@@ -771,8 +797,9 @@ cJSON *firc_groups_group_json(firc_app_t *app, const firc_group_t *g, bool with_
         cJSON_Delete(obj);
         return NULL;
     }
-    cJSON_AddBoolToObject(resolve, "tunnel", g->resolve.tunnel);
+    if (!firc_group_is_dns(g)) { cJSON_AddBoolToObject(resolve, "tunnel", g->resolve.tunnel); }
     cJSON_AddStringToObject(resolve, "server", g->resolve.server != NULL ? g->resolve.server : "");
+    cJSON_AddBoolToObject(resolve, "fallback", g->resolve.fallback);
     cJSON *check = cJSON_AddObjectToObject(obj, "check");
     if (check == NULL ||
         cJSON_AddStringToObject(check, "mode", firc_group_check_mode_name(g->check.mode)) == NULL ||
@@ -796,7 +823,9 @@ cJSON *firc_groups_group_json(firc_app_t *app, const firc_group_t *g, bool with_
         cJSON_AddStringToObject(rv, "source", firc_resolve_source_name(info.source));
         for (size_t i = 0; i < info.n_servers; i++) {
             char s[FIRC_RESOLVER_ADDR_STRLEN];
-            if (firc_resolver_addr_format(&info.servers[i], s, sizeof(s)) > 0) {
+            if (info.servers[i].doh) {
+                cJSON_AddItemToArray(servers, cJSON_CreateString(info.urls[i]));
+            } else if (firc_resolver_addr_format(&info.servers[i], s, sizeof(s)) > 0) {
                 cJSON_AddItemToArray(servers, cJSON_CreateString(s));
             }
         }
@@ -847,6 +876,11 @@ static bool hand_rules_set(firc_groups_ctx_t *ctx, firc_ruleset_t *rs, firc_grou
     firc_err_t err = firc_app_set_hand_rules(ctx->app, rs, next, path, ctx->config_version, &unsaved);
     if (err == FIRC_OK) { return true; }
     if (!unsaved) {
+        const firc_group_t *cur = firc_ruleset_group(rs);
+        if (err == FIRC_ERR_INVAL && firc_group_is_dns(cur)) {
+            write_group_error(res, "a dns group cannot hold subnet rules", "rules", "");
+            return false;
+        }
         firc_http_res_write_error(res, 500, firc_err_str(err));
         return false;
     }

@@ -146,6 +146,7 @@ struct firc_app {
     firc_fakeip_t *pool;                /* borrowed, nullable; loop thread only */
     firc_loop_t *loop;                  /* borrowed, nullable */
     firc_dnsproxy_t *proxy;             /* borrowed, nullable */
+    firc_doh_t *doh;
     /* a pass copies pool_snap into pass_snap at its start, so a mid-pass refresh never changes its view */
     pthread_mutex_t snap_mu;
     firc_fakeip_snapshot_t *pool_snap;      /* owned */
@@ -606,6 +607,10 @@ static void waits_rearm(firc_app_t *app) {
     app->wait_timer_at = earliest;
 }
 
+static bool field_owner_gone(const firc_ruleset_t *rs) {
+    return rs == NULL || firc_group_is_dns(firc_ruleset_group(rs));
+}
+
 static void wait_pay_at(firc_app_t *app, size_t i) {
     ct_wait_t w = app->waits[i];
     memmove(&app->waits[i], &app->waits[i + 1], (app->n_waits - i - 1) * sizeof(*app->waits));
@@ -618,7 +623,7 @@ static void wait_pay_at(firc_app_t *app, size_t i) {
         if (w.sweep_lost) { sweep_stale_field(app, w.value, w.owner_s); }
         return;
     }
-    pay_ct(app, w.value, w.owner_s, w.kind == WD_SWEEP, w.forget && rs == NULL && !flush_queued_for(app, w.owner));
+    pay_ct(app, w.value, w.owner_s, w.kind == WD_SWEEP, w.forget && field_owner_gone(rs) && !flush_queued_for(app, w.owner));
 }
 
 static bool wait_takes_forget(firc_app_t *app, firc_id_t owner) {
@@ -807,7 +812,7 @@ static void pay_flushes(firc_app_t *app, uint64_t ticket) {
             continue;
         }
         bool joined = prefixes_add_v4(&e.close, e.lost.v, e.lost.n);
-        withdraw(app, e.iface, e.dev, e.value, e.owner, e.owner_s, e.narrowed ? WD_UNCOND : WD_FLUSH, e.sweep, rs == NULL,
+        withdraw(app, e.iface, e.dev, e.value, e.owner, e.owner_s, e.narrowed ? WD_UNCOND : WD_FLUSH, e.sweep, field_owner_gone(rs),
                  &e.close, joined ? NULL : &e.lost);
         flush_entry_clear(&e);
     }
@@ -1073,7 +1078,7 @@ static size_t drop_pool_addrs(firc_resolver_addr_t *arr, size_t n, const firc_fa
 
 static bool cf_eligible(const firc_app_t *app, const firc_ruleset_t *rs) {
     const firc_group_t *g = firc_ruleset_group(rs);
-    return g->cloudflare && !firc_group_is_block(g) && firc_ruleset_routed(rs) &&
+    return g->cloudflare && !firc_group_is_block(g) && !firc_group_is_dns(g) && firc_ruleset_routed(rs) &&
            !ktcp_redirected(app, group_tunnel(app, rs));
 }
 
@@ -1173,6 +1178,17 @@ static cf_group_t *cf_group_add(firc_app_t *app, const firc_ruleset_t *rs) {
     return e;
 }
 
+static uint16_t doh_intern(void *ud, const char *url) { return firc_doh_intern(ud, url); }
+
+static void forget_stale_marks(firc_app_t *app, const firc_resolve_table_t *prev, const firc_id_t *stale,
+                               size_t n_stale) {
+    if (app->doh == NULL) { return; }
+    for (size_t i = 0; i < n_stale; i++) {
+        const firc_resolve_route_t *was = firc_resolve_table_find(prev, stale[i]);
+        if (was != NULL && was->mark != 0) { firc_doh_forget_mark(app->doh, was->mark); }
+    }
+}
+
 void firc_app_republish_resolve_routes(firc_app_t *app) {
     if (app == NULL) { return; }
     cf_reconcile(app);
@@ -1197,11 +1213,13 @@ void firc_app_republish_resolve_routes(firc_app_t *app) {
         bool blocked = false;
         (void)firc_ruleset_active(rs, &blocked);
         in[i].blackhole = blocked || firc_iface_is_sink(active);
-        in[i].v6_route = firc_ruleset_has_iface_route(rs, AF_INET6);
+        in[i].v6_route = firc_group_is_dns(g) || firc_ruleset_has_iface_route(rs, AF_INET6);
         in[i].ktcp = ktcp_redirected(app, group_tunnel(app, rs)) && app->last_off == FIRC_KTCP_OFF_NONE;
         in[i].firmware = fw[i];
         in[i].n_firmware = firc_kn_resolvers_for(app->resolvers, active, fw[i], FIRC_RESOLVE_MAX_SERVERS);
         in[i].n_firmware = drop_pool_addrs(fw[i], in[i].n_firmware, app->pool);
+        in[i].intern = app->doh != NULL ? doh_intern : NULL;
+        in[i].intern_ud = app->doh;
     }
     firc_resolve_table_t t;
     firc_err_t err = firc_resolve_table_build(in, n, firc_resolve_router_table(app->router), &t);
@@ -1217,6 +1235,7 @@ void firc_app_republish_resolve_routes(firc_app_t *app) {
     firc_id_t *stale = n_prev ? calloc(2 * n_prev, sizeof(*stale)) : NULL;
     size_t n_stale = stale != NULL ? firc_resolve_table_stale(prev, &t, stale, n_prev) : 0;
     size_t n_gone = stale != NULL ? firc_resolve_table_gone(prev, &t, stale + n_prev, n_prev) : 0;
+    forget_stale_marks(app, prev, stale, n_stale);
     firc_resolve_router_publish(app->router, &t);
     for (size_t i = 0; app->proxy != NULL && i < n_stale; i++) {
         firc_dnsproxy_close_group_pools(app->proxy, stale[i]);
@@ -1240,6 +1259,7 @@ void firc_app_group_resolver(const firc_app_t *app, const firc_group_t *g, firc_
         if (firc_resolve_route_usable(&r)) { /* a route with no mark lists no servers: queries go to the common upstream */
             out->n_servers = r.n_servers;
             memcpy(out->servers, r.servers, sizeof(out->servers));
+            memcpy(out->urls, r.urls, sizeof(out->urls));
         }
     } else { /* no router: not published yet */
         out->source = g->resolve.tunnel ? FIRC_RESOLVE_SOURCE_NONE : FIRC_RESOLVE_SOURCE_OFF;
@@ -1299,6 +1319,7 @@ firc_app_t *firc_app_create(const firc_app_deps_t *deps) {
     app->mono_ms = deps->mono_ms != NULL ? deps->mono_ms : real_mono_ms;
     app->wall_s = deps->wall_s != NULL ? deps->wall_s : real_wall_s;
     app->proxy = deps->proxy;
+    app->doh = deps->doh;
     app->pool_snap = firc_fakeip_snapshot_take(deps->pool); /* so a pass before anything is issued still has a consistent view */
     pthread_mutex_init(&app->snap_mu, NULL);
     app->pipeline = deps->pipeline;
@@ -1537,6 +1558,11 @@ static bool iface_link_up(const firc_app_t *app, const char *iface) {
     return found && li.up;
 }
 
+static bool dns_servers_parse(const firc_group_t *g) {
+    firc_resolver_list_t list;
+    return g->resolve.server != NULL && firc_resolver_list_parse(g->resolve.server, &list, NULL, 0) == FIRC_RESOLVER_LIST_OK;
+}
+
 bool firc_app_group_live(const firc_app_t *app, firc_id_t id, const char **reason) {
     firc_ruleset_t *rs = firc_app_find_group_by_id(app, id);
     const char *why = NULL;
@@ -1552,6 +1578,8 @@ bool firc_app_group_live(const firc_app_t *app, firc_id_t id, const char **reaso
         why = "not-enabled";
     } else if (app->dns_down) {
         why = "dns-down";
+    } else if (firc_group_is_dns(firc_ruleset_group(rs))) {
+        if (!dns_servers_parse(firc_ruleset_group(rs))) { why = "not-enabled"; }
     } else if (!firc_ruleset_routed(rs)) {
         why = "no-interface";
     } else if (blocked) {
@@ -1688,11 +1716,20 @@ static void free_rules_not_in(firc_rule_t **loser, size_t n_loser, firc_rule_t *
     free(loser);
 }
 
+static bool dns_group_with_subnets(const firc_group_t *g, const firc_group_t *next) {
+    if (!firc_group_is_dns(g)) { return false; }
+    firc_group_t probe = *g;
+    probe.rules = next->rules;
+    probe.n_rules = next->n_rules;
+    const char *field = NULL;
+    return firc_group_dns_check(&probe, &field) != NULL;
+}
+
 firc_err_t firc_app_set_hand_rules(firc_app_t *app, firc_ruleset_t *rs, firc_group_t *next, const char *save_path,
                                    const char *version, bool *unsaved) {
     *unsaved = false;
     firc_group_t *g = firc_ruleset_group_mut(rs);
-    if (rules_listed_twice(next->rules, next->n_rules)) {
+    if (rules_listed_twice(next->rules, next->n_rules) || dns_group_with_subnets(g, next)) {
         free_rules_not_in(next->rules, next->n_rules, g->rules, g->n_rules, true);
         return FIRC_ERR_INVAL;
     }
@@ -3866,6 +3903,9 @@ static const char *autolist_target_off(const firc_app_t *app) {
     if (firc_group_is_block(firc_ruleset_group(rs))) {
         return "the group blocks by DNS: nothing to route its names into";
     }
+    if (firc_group_is_dns(firc_ruleset_group(rs))) {
+        return "the group only answers DNS: nothing to route its names into";
+    }
     return NULL;
 }
 
@@ -3883,7 +3923,7 @@ static int64_t autolist_now(const firc_app_t *app) { return app->wall_s(); }
 static bool autolist_eligible(void *ud, const firc_ip_t *client) {
     firc_app_t *app = ud;
     const firc_group_snapshot_t *g = autolist_target(app);
-    if (g == NULL || g->block >= 0) { return false; }
+    if (g == NULL || g->block >= 0 || g->dns_only) { return false; }
     if (g->devices == NULL) { return true; }
     return firc_devsel_allows(g->devices, client, app->tap_policy, app->tap_device, app->tap_resolver_ud);
 }
@@ -3982,7 +4022,9 @@ static firc_rule_t *autolist_rule_named(const firc_group_t *g, const char *domai
 
 static firc_err_t autolist_add_rule(firc_app_t *app, const char *domain, const char *host, firc_al_why_t why) {
     firc_ruleset_t *rs = autolist_target_rs(app);
-    if (rs == NULL || firc_group_is_block(firc_ruleset_group(rs))) { return FIRC_ERR_STATE; }
+    if (rs == NULL || firc_group_is_block(firc_ruleset_group(rs)) || firc_group_is_dns(firc_ruleset_group(rs))) {
+        return FIRC_ERR_STATE;
+    }
     firc_group_t *g = firc_ruleset_group_mut(rs);
     const char *gname = g->name != NULL ? g->name : "";
     const firc_al_cand_t *c = firc_al_cands_find(app->al_cands, domain);
@@ -4117,7 +4159,7 @@ static bool autolist_counts(const firc_app_t *app, const firc_ip_t *client, cons
     const firc_ruleset_snapshot_t *snap = firc_dns_pipeline_snapshot(app->pipeline);
     const firc_group_snapshot_t *owner = firc_ruleset_snapshot_owner(snap, name, client, app->tap_policy,
                                                                      app->tap_device, app->tap_resolver_ud, NULL);
-    if (owner == NULL || owner->block >= 0) { return false; }
+    if (owner == NULL || owner->block >= 0 || owner->dns_only) { return false; }
     firc_id_format(owner->id, group);
     return true;
 }
@@ -4722,7 +4764,7 @@ firc_err_t firc_app_autolist_apply(firc_app_t *app) {
 }
 
 static bool autolist_admits_all(const firc_app_t *app, const firc_group_snapshot_t *g, const firc_autolist_addr_t *a) {
-    if (g->block >= 0) { return false; }
+    if (g->block >= 0 || g->dns_only) { return false; }
     for (uint8_t i = 0; g->devices != NULL && i < a->n_clients; i++) {
         if (!firc_devsel_allows(g->devices, &a->clients[i], app->tap_policy, app->tap_device, app->tap_resolver_ud)) {
             return false;

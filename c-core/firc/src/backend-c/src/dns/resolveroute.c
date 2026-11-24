@@ -27,7 +27,7 @@ const char *firc_resolve_source_name(firc_resolve_source_t s)
 
 bool firc_resolve_route_usable(const firc_resolve_route_t *r)
 {
-    return r != NULL && r->mark != 0 && r->n_servers > 0;
+    return r != NULL && (r->mark != 0 || r->dns_only) && r->n_servers > 0;
 }
 
 static bool addr_equal(const firc_resolver_addr_t *a, const firc_resolver_addr_t *b)
@@ -37,9 +37,12 @@ static bool addr_equal(const firc_resolver_addr_t *a, const firc_resolver_addr_t
 
 static bool same_wiring(const firc_resolve_route_t *a, const firc_resolve_route_t *b)
 {
-    if (a->mark != b->mark || strcmp(a->iface, b->iface) != 0 || a->n_servers != b->n_servers) { return false; }
+    if (a->mark != b->mark || strcmp(a->iface, b->iface) != 0 || a->n_servers != b->n_servers ||
+        a->dns_only != b->dns_only || a->no_fallback != b->no_fallback) {
+        return false;
+    }
     for (size_t i = 0; i < a->n_servers; i++) {
-        if (!addr_equal(&a->servers[i], &b->servers[i])) { return false; }
+        if (!addr_equal(&a->servers[i], &b->servers[i]) || a->url_ids[i] != b->url_ids[i]) { return false; }
     }
     return true;
 }
@@ -47,7 +50,25 @@ static bool same_wiring(const firc_resolve_route_t *a, const firc_resolve_route_
 static void add_family(firc_resolve_route_t *r, const firc_resolver_addr_t *src, size_t n, uint8_t len)
 {
     for (size_t i = 0; i < n && r->n_servers < FIRC_RESOLVE_MAX_SERVERS; i++) {
-        if (src[i].ip.len == len) { r->servers[r->n_servers++] = src[i]; }
+        if (!src[i].doh && src[i].ip.len == len) { r->servers[r->n_servers++] = src[i]; }
+    }
+}
+
+static void add_doh(firc_resolve_route_t *r, const firc_resolver_list_t *own, const firc_resolve_input_t *in)
+{
+    for (size_t i = 0; i < own->n && r->n_servers < FIRC_RESOLVE_MAX_SERVERS; i++) {
+        if (!own->servers[i].doh) { continue; }
+        uint16_t id = in->intern != NULL ? in->intern(in->intern_ud, own->urls[i]) : 0;
+        if (id == 0) {
+            char shown[FIRC_RESOLVER_URL_MAX + 8];
+            (void)firc_resolver_url_show(own->urls[i], shown, sizeof(shown));
+            FIRC_WARN("group \"%s\": DoH server %s dropped, no room or no DoH client", r->group_name, shown);
+            continue;
+        }
+        size_t k = r->n_servers++;
+        r->servers[k] = own->servers[i];
+        r->url_ids[k] = id;
+        memcpy(r->urls[k], own->urls[i], sizeof(r->urls[k]));
     }
 }
 
@@ -60,26 +81,33 @@ static void route_fill(const firc_resolve_input_t *in, firc_resolve_route_t *r)
     snprintf(r->group_name, sizeof(r->group_name), "%.*s",
              firc_utf8_clamp(gn, (int)sizeof(r->group_name) - 1), gn);
     snprintf(r->iface, sizeof(r->iface), "%s", in->iface != NULL ? in->iface : (g->iface != NULL ? g->iface : ""));
-    r->blackhole = in->blackhole;
-    r->mark = in->mark;
+    r->dns_only = firc_group_is_dns(g);
+    r->no_fallback = r->dns_only && !g->resolve.fallback;
+    r->blackhole = in->blackhole && !r->dns_only;
+    r->mark = r->dns_only ? 0 : in->mark;
     r->v6 = in->v6_route;
     r->ktcp = in->ktcp;
-    if (!g->resolve.tunnel) {
+    if (!r->dns_only && !g->resolve.tunnel) {
         r->source = FIRC_RESOLVE_SOURCE_OFF;
         return;
     }
-    if (in->blackhole) {
+    if (r->blackhole) {
         r->source = FIRC_RESOLVE_SOURCE_NONE;
         return;
     }
     firc_resolver_list_t own;
     const firc_resolver_addr_t *src = NULL;
     size_t n = 0;
+    bool have_own = false;
     if (g->resolve.server != NULL && g->resolve.server[0] != '\0' &&
         firc_resolver_list_parse(g->resolve.server, &own, NULL, 0) == FIRC_RESOLVER_LIST_OK) {
         r->source = FIRC_RESOLVE_SOURCE_GROUP;
         src = own.servers;
         n = own.n;
+        have_own = true;
+    } else if (r->dns_only) {
+        r->source = FIRC_RESOLVE_SOURCE_GROUP;
+        return;
     } else if (in->n_firmware > 0) {
         r->source = FIRC_RESOLVE_SOURCE_FIRMWARE;
         src = in->firmware;
@@ -90,6 +118,7 @@ static void route_fill(const firc_resolve_input_t *in, firc_resolve_route_t *r)
     }
     add_family(r, src, n, 4);
     if (in->v6_route) { add_family(r, src, n, 16); }
+    if (have_own) { add_doh(r, &own, in); }
 }
 
 firc_err_t firc_resolve_table_build(const firc_resolve_input_t *in, size_t n, const firc_resolve_table_t *prev,
@@ -154,8 +183,10 @@ static size_t servers_text(const firc_resolve_route_t *r, char *buf, size_t cap)
     size_t off = 0;
     buf[0] = '\0';
     for (size_t i = 0; i < r->n_servers; i++) {
-        char one[FIRC_RESOLVER_ADDR_STRLEN];
-        if (firc_resolver_addr_format(&r->servers[i], one, sizeof(one)) == 0) { continue; }
+        char one[FIRC_RESOLVER_URL_MAX + 8];
+        size_t shown = r->servers[i].doh ? firc_resolver_url_show(r->urls[i], one, sizeof(one))
+                                         : firc_resolver_addr_format(&r->servers[i], one, sizeof(one));
+        if (shown == 0) { continue; }
         int w = snprintf(buf + off, cap - off, "%s%s", off ? ", " : "", one);
         if (w < 0 || (size_t)w >= cap - off) { break; }
         off += (size_t)w;
@@ -165,7 +196,7 @@ static size_t servers_text(const firc_resolve_route_t *r, char *buf, size_t cap)
 
 size_t firc_resolve_route_describe(const firc_resolve_route_t *r, char *buf, size_t cap)
 {
-    char servers[FIRC_RESOLVE_MAX_SERVERS * (FIRC_RESOLVER_ADDR_STRLEN + 2)];
+    char servers[FIRC_RESOLVE_MAX_SERVERS * (FIRC_RESOLVER_URL_MAX + 2) + 1];
     servers_text(r, servers, sizeof(servers));
     char from[48];
     if (r->source == FIRC_RESOLVE_SOURCE_GROUP) {
@@ -174,7 +205,10 @@ size_t firc_resolve_route_describe(const firc_resolve_route_t *r, char *buf, siz
         snprintf(from, sizeof(from), "the firmware's for %s", r->iface);
     }
     int w;
-    if (r->source == FIRC_RESOLVE_SOURCE_OFF) {
+    if (r->dns_only) {
+        w = snprintf(buf, cap, "answers its names from resolve.server: %s, %s", r->n_servers ? servers : "no usable server",
+                     r->no_fallback ? "never the common upstream" : "the common upstream answers when they fail");
+    } else if (r->source == FIRC_RESOLVE_SOURCE_OFF) {
         w = snprintf(buf, cap, "uses the common upstream: resolving through the tunnel is off");
     } else if (r->blackhole && strcmp(r->iface, FIRC_IFACE_BLOCK) == 0) {
         w = snprintf(buf, cap, "uses the common upstream: its names are answered by firc");
@@ -224,7 +258,7 @@ void firc_resolve_router_publish(firc_resolve_router_t *r, firc_resolve_table_t 
     memset(t, 0, sizeof(*t));
     for (size_t i = 0; i < r->table.n; i++) {
         const firc_resolve_route_t *now = &r->table.items[i];
-        char a[512], b[512];
+        char a[1400], b[1400];
         firc_resolve_route_describe(now, a, sizeof(a));
         const firc_resolve_route_t *was = firc_resolve_table_find(&old, now->group_id);
         if (was != NULL) {
@@ -281,16 +315,24 @@ bool firc_resolve_router_decide(void *ud, const firc_dns_msg_t *query, const fir
         return true;
     }
     const firc_resolve_route_t *rt = firc_resolve_table_find(&r->table, owner->id);
-    if (!firc_resolve_route_usable(rt)) { return false; }
+    if (!owner->dns_only && !firc_resolve_route_usable(rt)) { return false; }
     memset(out, 0, sizeof(*out));
     out->owner = owner->id;
-    out->group_id = rt->group_id;
-    snprintf(out->group_name, sizeof(out->group_name), "%s", rt->group_name);
+    out->group_id = owner->id;
+    if (owner->dns_only) {
+        const char *gn = rt != NULL ? rt->group_name : (owner->name != NULL ? owner->name : "");
+        snprintf(out->group_name, sizeof(out->group_name), "%.*s", firc_utf8_clamp(gn, (int)sizeof(out->group_name) - 1), gn);
+        out->dns_only = true;
+        out->no_fallback = rt != NULL ? rt->no_fallback : owner->no_fallback;
+    }
+    if (rt == NULL) { return true; }
+    if (!owner->dns_only) { snprintf(out->group_name, sizeof(out->group_name), "%s", rt->group_name); }
     out->mark = rt->mark;
     out->gen = rt->gen;
     out->n_servers = rt->n_servers;
     for (size_t i = 0; i < rt->n_servers; i++) {
-        firc_resolver_addr_sockaddr(&rt->servers[i], &out->servers[i], &out->server_lens[i]);
+        out->url_ids[i] = rt->url_ids[i];
+        if (!rt->servers[i].doh) { firc_resolver_addr_sockaddr(&rt->servers[i], &out->servers[i], &out->server_lens[i]); }
     }
     return true;
 }

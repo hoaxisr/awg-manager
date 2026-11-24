@@ -2,6 +2,8 @@
 
 #include "firc/resolver_addr.h"
 
+#include <string.h>
+
 bool firc_resolve_server_in_pool(const char *server, const firc_fakeip_t *pool, char *hit, size_t hit_cap)
 {
     if (hit != NULL && hit_cap > 0) { hit[0] = '\0'; }
@@ -9,8 +11,16 @@ bool firc_resolve_server_in_pool(const char *server, const firc_fakeip_t *pool, 
     firc_resolver_list_t l;
     if (firc_resolver_list_parse(server, &l, NULL, 0) != FIRC_RESOLVER_LIST_OK) { return false; }
     for (size_t i = 0; i < l.n; i++) {
-        if (firc_fakeip_overlaps(pool, &l.servers[i].ip, (uint8_t)(l.servers[i].ip.len * 8))) {
-            if (hit != NULL) { (void)firc_resolver_addr_format(&l.servers[i], hit, hit_cap); }
+        firc_resolver_addr_t shown;
+        memset(&shown, 0, sizeof(shown));
+        shown.port = FIRC_RESOLVER_DEFAULT_PORT;
+        if (l.servers[i].doh) {
+            if (!firc_resolver_url_literal(l.urls[i], &shown.ip)) { continue; }
+        } else {
+            shown = l.servers[i];
+        }
+        if (firc_fakeip_overlaps(pool, &shown.ip, (uint8_t)(shown.ip.len * 8))) {
+            if (hit != NULL) { (void)firc_resolver_addr_format(&shown, hit, hit_cap); }
             return true;
         }
     }

@@ -223,8 +223,12 @@ export interface FircGroupList {
 }
 
 export interface FircGroupResolve {
-	tunnel: boolean;
+	/** У группы «только DNS» отсутствует. */
+	tunnel?: boolean;
+	/** Адреса и DoH-URL через запятую. */
 	server: string;
+	/** При отказе серверов отвечает общий апстрим; выключается только у группы «только DNS». */
+	fallback?: boolean;
 }
 
 export interface FircGroupResolverHealth {
@@ -390,7 +394,8 @@ export type FircDnsDecision =
 	| 'no-match'
 	| 'pool-refused'
 	| 'passed'
-	| 'blocked';
+	| 'blocked'
+	| 'dns-only';
 
 export interface FircDnsEvent {
 	seq: number;

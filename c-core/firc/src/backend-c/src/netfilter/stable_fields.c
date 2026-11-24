@@ -12,7 +12,7 @@ static bool configured(const firc_config_t *cfg, const char *owner) {
         if (cfg->groups[i] == NULL) { continue; }
         char id[FIRC_ID_STR_LEN];
         firc_id_format(cfg->groups[i]->id, id);
-        if (strcmp(id, owner) == 0) { return true; }
+        if (strcmp(id, owner) == 0) { return !firc_group_is_dns(cfg->groups[i]); }
     }
     return false;
 }

@@ -1,5 +1,6 @@
 import type { FircDeviceSelector, FircGroup, FircGroupCheck, FircRule, FircRuleType } from '$lib/types/firc';
 import { extractRootDomain } from './domainUtils';
+import { fitGroupToOutbound } from './fircResolve';
 
 const TYPE_PREFIX_MAP: Record<string, FircRuleType> = {
 	namespace: 'namespace',
@@ -418,24 +419,14 @@ export function applyBulkGroupAction(
 		}
 		if (action.kind === 'setInterface') {
 			const nextIface = Array.isArray(action.iface) ? [...action.iface] : action.iface;
+			const next: FircGroup = { ...g, interface: nextIface, proxyGroupId: action.proxyGroupId };
 			if (action.check) {
-				return {
-					...g,
-					interface: nextIface,
-					proxyGroupId: action.proxyGroupId,
-					check: { ...action.check },
-				};
+				next.check = { ...action.check };
+			} else if (Array.isArray(action.iface) && action.iface.length > 1 && !g.check) {
+				next.check = { mode: 'none', url: '' };
 			}
-			const needsDefaultCheck =
-				Array.isArray(action.iface) && action.iface.length > 1 && !g.check;
-			return needsDefaultCheck
-				? {
-						...g,
-						interface: nextIface,
-						proxyGroupId: action.proxyGroupId,
-						check: { mode: 'none' as const, url: '' },
-					}
-				: { ...g, interface: nextIface, proxyGroupId: action.proxyGroupId };
+			fitGroupToOutbound(next);
+			return next;
 		}
 		return {
 			...g,

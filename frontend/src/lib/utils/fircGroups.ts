@@ -12,6 +12,15 @@ import {
 	resolveInterfaceHealth,
 	resolveProxyGroupRuntime,
 } from '$lib/utils/fircFallback';
+import {
+	DNS_ONLY_IFACE,
+	dnsOnlyBlocker,
+	fitGroupToOutbound,
+	isDnsOnlyGroup,
+	shortServer,
+	splitServers,
+	supportsDnsOnly,
+} from '$lib/utils/fircResolve';
 import type {
 	FircExtConfig,
 	FircExtractedDomains,
@@ -109,9 +118,9 @@ export function normalizeGroup(g: FircGroup): FircGroup {
 					sync: g.list.sync ?? { state: 'idle', error: '', lastCheck: 0 },
 				}
 			: null,
-		resolve: g.resolve
-			? { tunnel: g.resolve.tunnel ?? true, server: g.resolve.server ?? '' }
-			: { tunnel: true, server: '' },
+		resolve: isDnsOnlyGroup(g)
+			? { server: g.resolve?.server ?? '', fallback: g.resolve?.fallback ?? true }
+			: { tunnel: g.resolve?.tunnel ?? true, server: g.resolve?.server ?? '' },
 		...(g.check
 			? {
 					check: {
@@ -206,7 +215,7 @@ export function denormalizeIfaceList(list: string[]): string | string[] {
 }
 
 export function isSpecialIface(id: string): boolean {
-	return id === 'blackhole' || id === 'block';
+	return id === 'blackhole' || id === 'block' || id === DNS_ONLY_IFACE;
 }
 
 export function primaryIface(iface: string | string[]): string {
@@ -227,6 +236,7 @@ function setManualIface(group: FircGroup, iface: string | string[]) {
 		group.proxyGroupId = undefined;
 	}
 	group.interface = iface;
+	fitGroupToOutbound(group);
 }
 
 export function setPrimaryIface(group: FircGroup, id: string): boolean {
@@ -367,6 +377,7 @@ export function applyProxyGroupToGroup(group: FircGroup, pg: FircProxyGroup): bo
 	if (!pg.interfaces || pg.interfaces.length === 0) return false;
 	const wasChain = normalizeIfaceList(group.interface).length >= 2;
 	group.interface = denormalizeIfaceList(pg.interfaces);
+	fitGroupToOutbound(group);
 	group.proxyGroupId = pg.id;
 	const pgCheck = buildGroupCheckFromProxyGroup(pg);
 	if (pgCheck) {
@@ -543,6 +554,7 @@ export function formatIfaceButtonText(rt: FircGroupsRuntime, group: FircGroup): 
 	const first = list[0];
 	if (first === 'blackhole') return m.firc_groups_block();
 	if (first === 'block') return m.firc_groups_block_dns();
+	if (first === DNS_ONLY_IFACE) return m.firc_dns_only();
 	const tag = (id: string) => shortIfaceTag(rt.interfaces, id);
 	const matchedPg = matchingProxyGroup(rt.proxyGroups, group);
 	if (matchedPg) {
@@ -592,7 +604,7 @@ export function getPickerGroups(interfaces: FircInterfaceOption[], group: FircGr
 	const seen = new Set<string>();
 
 	for (const opt of interfaces) {
-		if (!opt.id || seen.has(opt.id)) continue;
+		if (!opt.id || seen.has(opt.id) || isSpecialIface(opt.id)) continue;
 		// Hide legacy Sing-box t2s* interfaces unless currently selected by this group
 		if (opt.id.startsWith('t2s') && !selectedSet.has(opt.id)) continue;
 		seen.add(opt.id);
@@ -627,7 +639,7 @@ export function getPickerGroups(interfaces: FircInterfaceOption[], group: FircGr
 	return { tunnels, wans, others };
 }
 
-/** Варианты выхода для формы группы; служебный интерфейс — только если он уже выбран. */
+/** Варианты выхода для формы группы; служебный интерфейс и «Только DNS» у старого демона — только если уже выбраны. */
 export function buildAvailableInterfaces(
 	interfaces: FircInterfaceOption[],
 	selectedIface: string,
@@ -635,7 +647,7 @@ export function buildAvailableInterfaces(
 	const list: { value: string; label: string; role: string }[] = [];
 	const seen = new Set<string>();
 	for (const opt of interfaces) {
-		if (!opt.id || opt.id === 'blackhole' || opt.id === 'block' || seen.has(opt.id) || opt.id.startsWith('t2s')) continue;
+		if (!opt.id || isSpecialIface(opt.id) || seen.has(opt.id) || opt.id.startsWith('t2s')) continue;
 		if (isInternalServerFircInterface(opt) && selectedIface !== opt.id) continue;
 		seen.add(opt.id);
 		const prefix = opt.role === 'wan' ? 'Direct: ' : '';
@@ -663,7 +675,26 @@ export function buildAvailableInterfaces(
 	}));
 	out.push({ value: 'blackhole', label: m.firc_groups_block_blackhole() });
 	out.push({ value: 'block', label: m.firc_groups_block_dns() });
+	if (supportsDnsOnly(interfaces) || selectedIface === DNS_ONLY_IFACE) {
+		out.push({ value: DNS_ONLY_IFACE, label: m.firc_dns_only() });
+	}
 	return out;
+}
+
+/** Варианты массовой смены выхода: «Только DNS» закрыт с пояснением, если подходит не всем выбранным. */
+export function buildBulkInterfaces(
+	interfaces: FircInterfaceOption[],
+	selected: FircGroup[],
+): { value: string; label: string; disabled?: boolean }[] {
+	const blocker = selected.map((g) => dnsOnlyBlocker(g, interfaces)).find(Boolean);
+	return [
+		...buildAvailableInterfaces(interfaces, '').filter((o) => o.value !== DNS_ONLY_IFACE),
+		{
+			value: DNS_ONLY_IFACE,
+			label: blocker ? m.firc_dns_only_blocked({ reason: blocker }) : m.firc_dns_only(),
+			disabled: Boolean(blocker),
+		},
+	];
 }
 
 export function buildCatalogTunnelOptions(interfaces: FircInterfaceOption[]): DropdownOption[] {
@@ -723,6 +754,7 @@ export function groupStatusTooltip(liveMap: Record<string, FircGroupLive>, group
 	const live = liveMap[group.id];
 	if (!live) return m.firc_groups_status_waiting();
 	const iface = live.active || primaryIface(group.interface);
+	if (live.live && isDnsOnlyGroup(group)) return m.firc_dns_only_live();
 	if (live.live) return m.firc_groups_status_live({ iface });
 	if (live.reason === 'waiting_iface') return m.firc_groups_status_waiting_iface({ iface });
 	if (live.reason === 'no_node') return m.firc_groups_status_no_node({ iface });
@@ -731,19 +763,30 @@ export function groupStatusTooltip(liveMap: Record<string, FircGroupLive>, group
 	return m.firc_groups_status_inactive();
 }
 
-export function resolverBadgeText(rt: FircGroupsRuntime, group: FircGroup): string {
+/** Серверы, отвечающие на имена группы; пусто — общий апстрим. */
+function resolverServers(rt: FircGroupsRuntime, group: FircGroup, iface: string): string[] {
+	if (!isDnsOnlyGroup(group) && !(group.resolve?.tunnel ?? true)) return [];
+	const own = splitServers(group.resolve?.server);
+	if (own.length > 0) return own;
+	const liveRes = rt.liveMap[group.id]?.resolver ?? group.resolver;
+	if (liveRes?.servers?.length) return liveRes.servers;
+	return rt.resolvers.find((r) => r.interface === iface)?.servers ?? [];
+}
+
+function resolverBadge(rt: FircGroupsRuntime, group: FircGroup, show: (server: string) => string): string {
 	const iface = rt.liveMap[group.id]?.active || primaryIface(group.interface);
 	if (iface === 'block') return m.firc_groups_dns_block();
-	const resolve = group.resolve ?? { tunnel: true, server: '' };
-	if (!resolve.tunnel) return m.firc_groups_dns_shared();
-	if (resolve.server) return `DNS: ${resolve.server}`;
-	const liveRes = rt.liveMap[group.id]?.resolver ?? group.resolver;
-	if (liveRes?.servers && liveRes.servers.length > 0) {
-		return `DNS: ${liveRes.servers.join(', ')}`;
-	}
-	const fw = rt.resolvers.find((r) => r.interface === iface);
-	if (fw?.servers?.length) return `DNS: ${fw.servers.join(', ')}`;
-	return m.firc_groups_dns_shared();
+	const servers = resolverServers(rt, group, iface);
+	return servers.length > 0 ? `DNS: ${servers.map(show).join(', ')}` : m.firc_groups_dns_shared();
+}
+
+export function resolverBadgeText(rt: FircGroupsRuntime, group: FircGroup): string {
+	return resolverBadge(rt, group, shortServer);
+}
+
+/** Подсказка к бейджу: адреса DoH целиком. */
+export function resolverBadgeTitle(rt: FircGroupsRuntime, group: FircGroup): string {
+	return resolverBadge(rt, group, (s) => s);
 }
 
 /** Подсети серверов под нашим управлением: в фильтре устройств их не показываем. */
@@ -932,7 +975,9 @@ export interface GroupForm {
 	name: string;
 	iface: string;
 	dnsMode: 'auto' | 'own' | 'off';
-	dnsServer: string;
+	dnsServers: string[];
+	/** Только у группы «только DNS»: при отказе серверов отвечает общий апстрим. */
+	dnsFallback: boolean;
 	checkMode: 'none' | 'url' | 'keendns';
 	checkUrl: string;
 	listEnabled: boolean;
@@ -945,7 +990,8 @@ export function emptyGroupForm(iface: string): GroupForm {
 		name: '',
 		iface,
 		dnsMode: 'auto',
-		dnsServer: '',
+		dnsServers: [''],
+		dnsFallback: true,
 		checkMode: 'none',
 		checkUrl: '',
 		listEnabled: false,
@@ -955,13 +1001,14 @@ export function emptyGroupForm(iface: string): GroupForm {
 }
 
 export function groupFormFrom(g: FircGroup): GroupForm {
-	const res = g.resolve ?? { tunnel: true, server: '' };
+	const servers = splitServers(g.resolve?.server);
 	const ifaceCount = normalizeIfaceList(g.interface).length;
 	return {
 		name: g.name,
 		iface: primaryIface(g.interface),
-		dnsMode: !res.tunnel ? 'off' : res.server ? 'own' : 'auto',
-		dnsServer: res.server ?? '',
+		dnsMode: !(g.resolve?.tunnel ?? true) ? 'off' : servers.length > 0 ? 'own' : 'auto',
+		dnsServers: servers.length > 0 ? servers : [''],
+		dnsFallback: g.resolve?.fallback ?? true,
 		checkMode: g.check?.mode ?? (ifaceCount >= 2 ? (g.id === 'c100d001' ? 'keendns' : 'url') : 'none'),
 		checkUrl: g.check?.url ?? '',
 		listEnabled: Boolean(g.list?.url),
@@ -977,12 +1024,11 @@ export function groupFromForm(
 	groupsCount: number,
 	proxyGroups: FircProxyGroup[] = [],
 ): FircGroup {
+	const server = form.dnsServers.map((s) => s.trim()).filter(Boolean).join(', ');
 	const resolve =
-		form.dnsMode === 'off'
-			? { tunnel: false, server: '' }
-			: form.dnsMode === 'own'
-				? { tunnel: true, server: form.dnsServer.trim() }
-				: { tunnel: true, server: '' };
+		form.iface === DNS_ONLY_IFACE
+			? { server, fallback: form.dnsFallback }
+			: { tunnel: form.dnsMode !== 'off', server: form.dnsMode === 'own' ? server : '' };
 
 	const listObj =
 		form.listEnabled && form.listUrl.trim()
@@ -1011,7 +1057,7 @@ export function groupFromForm(
 			: cur.check
 				? { ...cur.check, mode: 'none', url: '' }
 				: undefined;
-		return {
+		const next: FircGroup = {
 			...cur,
 			name: form.name.trim() || cur.name || 'group',
 			interface: nextIface,
@@ -1020,6 +1066,8 @@ export function groupFromForm(
 			...(nextCheck ? { check: nextCheck } : {}),
 			list: listObj,
 		};
+		fitGroupToOutbound(next);
+		return next;
 	}
 	return normalizeGroup({
 		id: randomHexId(),

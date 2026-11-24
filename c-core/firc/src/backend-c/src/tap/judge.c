@@ -26,7 +26,7 @@ static bool judge_name(const firc_tap_ctx_t *c, const firc_ip_t *client, uint8_t
                        firc_tap_find_t *out) {
     const firc_group_snapshot_t *g =
         firc_ruleset_snapshot_owner(c->snap, out->name, client, c->policy, c->device, c->ud, NULL);
-    if (g == NULL) { return false; }
+    if (g == NULL || g->dns_only) { return false; }
     out->group = g;
     out->how = how;
     return true;

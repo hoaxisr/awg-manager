@@ -2,6 +2,7 @@ package firc
 
 import (
 	"encoding/json"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -651,10 +652,56 @@ type GroupDevices struct {
 	Deny  []string `json:"deny,omitempty" yaml:"deny,omitempty"`
 }
 
-// GroupResolve configures DNS resolution behavior for a Group.
+// GroupResolve configures DNS resolution behavior for a Group. Server is a comma-separated
+// list of addresses and DoH URLs (see ValidateGroups).
 type GroupResolve struct {
-	Tunnel bool   `json:"tunnel" yaml:"tunnel"`
+	Tunnel *bool  `json:"tunnel,omitempty" yaml:"tunnel,omitempty"` // у группы «только DNS» отсутствует
 	Server string `json:"server,omitempty" yaml:"server,omitempty"`
+	// Fallback — при отказе серверов отвечает общий апстрим. Выключается только у группы «только DNS».
+	Fallback *bool `json:"fallback,omitempty" yaml:"fallback,omitempty"`
+}
+
+// MarshalYAML пишет fallback только выключенным, как fircd: старый демон ключа не знает.
+func (r GroupResolve) MarshalYAML() (interface{}, error) {
+	type plain GroupResolve
+	if r.Fallback != nil && *r.Fallback {
+		r.Fallback = nil
+	}
+	return plain(r), nil
+}
+
+// normalizeGroupResolve приводит resolve к виду fircd: у группы «только DNS» нет tunnel
+// и есть fallback, у остальных tunnel указан всегда; без значения — включён, как в config/models.c.
+func normalizeGroupResolve(groups []Group) []Group {
+	out := slices.Clone(groups)
+	for i := range out {
+		r := &out[i].Resolve
+		if out[i].IsDNSOnly() {
+			r.Tunnel = nil
+			if r.Fallback == nil {
+				on := true
+				r.Fallback = &on
+			}
+		} else if r.Tunnel == nil {
+			on := true
+			r.Tunnel = &on
+		}
+	}
+	return out
+}
+
+// keepOmittedFallback — группе «только DNS» без fallback в запросе остаётся прежний, как в fircd.
+func keepOmittedFallback(groups, prev []Group) []Group {
+	out := slices.Clone(groups)
+	for i := range out {
+		if !out[i].IsDNSOnly() || out[i].Resolve.Fallback != nil {
+			continue
+		}
+		if j := slices.IndexFunc(prev, func(p Group) bool { return p.ID == out[i].ID }); j >= 0 {
+			out[i].Resolve.Fallback = prev[j].Resolve.Fallback
+		}
+	}
+	return out
 }
 
 // GroupCheck configures per-group service availability probing for multi-interface groups.
@@ -764,6 +811,15 @@ func (gi *GroupInterface) UnmarshalYAML(value *yaml.Node) error {
 	}
 	*gi = GroupInterface(multi)
 	return nil
+}
+
+// DNSOnlyInterface — псевдо-интерфейс группы «только DNS»: туннеля нет, группа лишь
+// отвечает на свои имена из resolve.server.
+const DNSOnlyInterface = "dns"
+
+// IsDNSOnly reports whether the group answers DNS only and routes nothing.
+func (g Group) IsDNSOnly() bool {
+	return len(g.Interface) == 1 && g.Interface[0] == DNSOnlyInterface
 }
 
 // Group represents a routing group in groups.yaml / /api/v1/groups.

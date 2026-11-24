@@ -473,7 +473,7 @@ firc_dns_verdict_t firc_dns_pipeline_cross_answer(firc_dns_pipeline_t *p, firc_d
     }
     const firc_group_snapshot_t *owner =
         firc_ruleset_snapshot_owner(p->snapshot, qname, client, p->policy_fn, p->device_fn, p->policy_ud, NULL);
-    if (owner == NULL || owner->block >= 0) { return FIRC_DNS_PASS; }
+    if (owner == NULL || owner->block >= 0 || owner->dns_only) { return FIRC_DNS_PASS; }
 
     firc_event_t ev_store;
     firc_event_t *ev = covered(p, client) ? &ev_store : NULL;
@@ -513,9 +513,18 @@ firc_dns_verdict_t firc_dns_pipeline_handle_message_from(firc_dns_pipeline_t *p,
                                                          firc_dns_resolver_t resolver, bool *pool_changed)
 {
     if (pool_changed != NULL) { *pool_changed = false; }
+    char qname[FIRC_DNS_MAX_NAME * 4 + 2];
+    const firc_group_snapshot_t *owner = NULL, *matched = NULL;
+    if (firc_dns_msg_queried_name(msg, qname, sizeof(qname))) {
+        owner = firc_ruleset_snapshot_owner(p->snapshot, qname, client, p->policy_fn, p->device_fn, p->policy_ud,
+                                            &matched);
+    } else {
+        qname[0] = '\0';
+    }
     uint32_t rcode = msg->flags & 0x000fu;
     /* NXDOMAIN/NOTIMP stay at DEBUG: at WARN they wrap the firmware's syslog ring in minutes. */
-    bool common = resolver != FIRC_DNS_RESOLVER_GROUP && resolver != FIRC_DNS_RESOLVER_CACHE;
+    bool common = resolver != FIRC_DNS_RESOLVER_GROUP && resolver != FIRC_DNS_RESOLVER_CACHE &&
+        !(owner != NULL && owner->dns_only);
     bool failing = rcode == 2u || rcode == 5u;
     if (common && failing) {
         if (p->failing_count == 0) { p->failing_rcode = rcode; }
@@ -545,14 +554,6 @@ firc_dns_verdict_t firc_dns_pipeline_handle_message_from(firc_dns_pipeline_t *p,
             firc_logrep_reset(&p->outage);
         }
     }
-    char qname[FIRC_DNS_MAX_NAME * 4 + 2];
-    const firc_group_snapshot_t *owner = NULL, *matched = NULL;
-    if (firc_dns_msg_queried_name(msg, qname, sizeof(qname))) {
-        owner = firc_ruleset_snapshot_owner(p->snapshot, qname, client, p->policy_fn, p->device_fn, p->policy_ud,
-                                            &matched);
-    } else {
-        qname[0] = '\0';
-    }
     if (owner != NULL && owner->block >= 0 && firc_dns_blockable(msg)) {
         firc_block_answer_t answer = (firc_block_answer_t)owner->block;
         if (firc_dns_msg_block(msg, answer, p->clamp_secs) != FIRC_OK) { return FIRC_DNS_DROP; }
@@ -563,6 +564,14 @@ firc_dns_verdict_t firc_dns_pipeline_handle_message_from(firc_dns_pipeline_t *p,
     const bool journalled = covered(p, client);
     firc_event_t ev_store;
     firc_event_t *ev = journalled ? &ev_store : NULL;
+    if (owner != NULL && owner->dns_only) {
+        if (ev != NULL) {
+            journal_begin(ev, now, client, qname, msg, rcode, resolver);
+            journal_group(ev, owner);
+            journal_put(p, ev, FIRC_DNS_DNS_ONLY);
+        }
+        return FIRC_DNS_PASS;
+    }
     if (rcode != 0) {
         if (ev != NULL) {
             journal_begin(ev, now, client, qname, msg, rcode, resolver);

@@ -104,7 +104,7 @@ firc_err_t firc_rule_set_comment(firc_rule_t *r, const char *s, const char **why
 firc_group_t *firc_group_new(void)
 {
     firc_group_t *g = calloc(1, sizeof(firc_group_t));
-    if (g != NULL) { g->resolve.tunnel = true; } /* on unless said off */
+    if (g != NULL) { g->resolve.tunnel = true; g->resolve.fallback = true; }
     return g;
 }
 
@@ -926,6 +926,31 @@ bool firc_group_is_block(const firc_group_t *g)
     return g->n_iface_rest == 0 && g->iface != NULL && strcmp(g->iface, FIRC_IFACE_BLOCK) == 0;
 }
 
+bool firc_group_is_dns(const firc_group_t *g)
+{
+    return g->n_iface_rest == 0 && g->iface != NULL && strcmp(g->iface, FIRC_IFACE_DNS) == 0;
+}
+
+const char *firc_group_dns_check(const firc_group_t *g, const char **field)
+{
+    *field = "resolve.fallback";
+    if (!firc_group_is_dns(g)) {
+        return g->resolve.fallback ? NULL : "resolve.fallback can be off only on a dns group";
+    }
+    *field = "resolve.server";
+    if (g->resolve.server == NULL || g->resolve.server[0] == '\0') { return "a dns group needs resolve.server"; }
+    *field = "cloudflare";
+    if (g->cloudflare) { return "cloudflare is not for a group whose interface is dns"; }
+    *field = "rules";
+    for (size_t i = 0; i < g->n_rules; i++) {
+        const char *t = g->rules[i]->type;
+        if (t != NULL && (strcmp(t, FIRC_RULE_SUBNET) == 0 || strcmp(t, FIRC_RULE_SUBNET6) == 0)) {
+            return "a dns group cannot hold subnet rules";
+        }
+    }
+    return NULL;
+}
+
 const char *firc_block_answer_name(firc_block_answer_t a)
 {
     return a == FIRC_BLOCK_NXDOMAIN ? "nxdomain" : a == FIRC_BLOCK_REFUSED ? "refused" : "null";
@@ -953,6 +978,7 @@ const char *firc_group_ifaces_check(const char *const *names, size_t n, size_t *
         if (names[i] == NULL || !firc_is_interface_name(names[i])) { return "not an interface name"; }
         if (n > 1 && strcmp(names[i], FIRC_IPSET_TO_LINK_BLACKHOLE) == 0) { return "blackhole cannot be one of several"; }
         if (n > 1 && strcmp(names[i], FIRC_IFACE_BLOCK) == 0) { return "block cannot be one of several"; }
+        if (n > 1 && strcmp(names[i], FIRC_IFACE_DNS) == 0) { return "dns cannot be one of several"; }
         for (size_t k = 0; k < i; k++) {
             if (strcmp(names[k], names[i]) == 0) { return "named twice"; }
         }

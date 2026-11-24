@@ -24,6 +24,7 @@
 		groupStatusTooltip,
 		intervalOptions,
 		resolverBadgeText,
+		resolverBadgeTitle,
 		type FircGroupsRuntime,
 		type FircProbeOptions,
 	} from '$lib/utils/fircGroups';
@@ -150,7 +151,7 @@
 				{#if group.list?.url}
 					<span class="meta-chip chip-list">{m.firc_groups_chip_list()}</span>
 				{/if}
-				<span class="meta-chip chip-dns" title={m.firc_groups_chip_dns_tip()}>
+				<span class="meta-chip chip-dns" title={`${m.firc_groups_chip_dns_tip()} · ${resolverBadgeTitle(rt, group)}`}>
 					{resolverBadgeText(rt, group)}
 				</span>
 				{#if hasCustomDevices}

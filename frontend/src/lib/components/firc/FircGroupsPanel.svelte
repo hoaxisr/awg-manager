@@ -46,11 +46,13 @@
 		clearFircGroupsDraft,
 	} from '$lib/stores/fircDraft';
 	import { friendlyIfaceLabel } from '$lib/utils/fircFallback';
+	import { groupResolveError, isDnsOnlyGroup, isDohUrl, supportsDnsOnly } from '$lib/utils/fircResolve';
 	import {
 		MANAGED_SERVER_SUBNETS,
 		MAX_GROUP_IFACES,
 		allFallbackInterfaceIds,
 		buildAvailableInterfaces,
+		buildBulkInterfaces,
 		buildCatalogTunnelOptions,
 		domainCopyNotice,
 		emptyExtConfig,
@@ -465,6 +467,11 @@
 				expandedGroups = { ...expandedGroups, [g.id]: true };
 				return;
 			}
+			const resolveErr = groupResolveError(g);
+			if (resolveErr) {
+				notifications.error(`${g.name || m.firc_groups_unnamed()}: ${resolveErr}`);
+				return;
+			}
 		}
 		saving = true;
 		try {
@@ -556,6 +563,19 @@
 		gmHasChain && gmEditGroup ? managingProxyGroup(extConfig.proxyGroups, gmEditGroup) : undefined,
 	);
 	let gmShowCheck = $derived(gmHasChain && !gmManagedProxyGroup);
+	let dohSupported = $derived(supportsDnsOnly(interfaces));
+	// Старый демон DoH не прочтёт; уже заданный адрес при этом остаётся правимым.
+	let gmAllowDoh = $derived(
+		dohSupported || (gmEditGroup ? isDnsOnlyGroup(gmEditGroup) || isDohUrl(gmEditGroup.resolve?.server ?? '') : false),
+	);
+	let gmError = $derived(
+		groupForm.open
+			? groupResolveError(
+					groupFromForm(groupForm.form, gmEditGroup, groups.length, extConfig.proxyGroups),
+					gmAllowDoh,
+				)
+			: '',
+	);
 
 	function openCreateGroupModal() {
 		groupForm.openWith('create', null, emptyGroupForm(availableInterfaces[0]?.value ?? 'block'));
@@ -837,7 +857,7 @@
 		<FircBulkGroupsBar
 			selectedCount={selection.groupIds.size}
 			visibleCount={filteredGroups.length}
-			interfaces={availableInterfaces}
+			interfaces={buildBulkInterfaces(interfaces, groups.filter((g) => selection.groupIds.has(g.id)))}
 			proxyGroups={extConfig.proxyGroups}
 			onSelectAllVisible={() => selection.setGroups(filteredGroups.map((entry) => entry.group.id))}
 			onDeselectAll={() => selection.setGroups([])}
@@ -982,6 +1002,9 @@
 	mode={groupForm.mode}
 	bind:form={groupForm.form}
 	{availableInterfaces}
+	{dohSupported}
+	allowDoh={gmAllowDoh}
+	formError={gmError}
 	showCheck={gmShowCheck}
 	managedProxyGroupName={gmManagedProxyGroup?.name ?? ''}
 	catalog={groupForm.catalog}

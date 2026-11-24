@@ -213,19 +213,28 @@ static void emit_devices(emitter_ctx_t *ctx, const firc_devsel_spec_t *ds)
 }
 
 /* only when not the default, so a file without the key reads back unchanged */
-static void emit_resolve(emitter_ctx_t *ctx, const firc_group_resolve_t *r)
+static void emit_resolve(emitter_ctx_t *ctx, const firc_group_t *g)
 {
+    const firc_group_resolve_t *r = &g->resolve;
+    bool dns = firc_group_is_dns(g);
     bool has_server = r->server != NULL && r->server[0] != '\0';
-    if (r->tunnel && !has_server) {
+    bool tunnel_written = !dns && (!r->tunnel || has_server);
+    if (!tunnel_written && !has_server && r->fallback) {
         return;
     }
     emit_plain(ctx, "resolve");
     map_start(ctx);
-    emit_plain(ctx, "tunnel");
-    emit_bool(ctx, r->tunnel);
+    if (!dns) {
+        emit_plain(ctx, "tunnel");
+        emit_bool(ctx, r->tunnel);
+    }
     if (has_server) {
         emit_plain(ctx, "server");
         emit_string(ctx, r->server);
+    }
+    if (!r->fallback) {
+        emit_plain(ctx, "fallback");
+        emit_bool(ctx, false);
     }
     map_end(ctx);
 }
@@ -329,7 +338,7 @@ static void emit_group(emitter_ctx_t *ctx, const firc_group_t *g)
     emit_plain(ctx, "enable");
     emit_bool(ctx, g->enable);
     emit_devices(ctx, &g->devices);
-    emit_resolve(ctx, &g->resolve);
+    emit_resolve(ctx, g);
     emit_group_check(ctx, &g->check);
     if (firc_group_is_block(g) && g->block != FIRC_BLOCK_NULL) {
         emit_plain(ctx, "block");

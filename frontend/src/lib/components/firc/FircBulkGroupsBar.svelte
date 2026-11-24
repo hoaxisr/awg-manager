@@ -7,7 +7,7 @@
 	interface Props {
 		selectedCount: number;
 		visibleCount: number;
-		interfaces: { value: string; label: string }[];
+		interfaces: { value: string; label: string; disabled?: boolean }[];
 		proxyGroups: FircProxyGroup[];
 		onSelectAllVisible: () => void;
 		onDeselectAll: () => void;
@@ -109,7 +109,7 @@
 			{/if}
 			<optgroup label={m.firc_bulk_groups_interfaces_opt()}>
 				{#each uniqueInterfaces as opt (opt.value)}
-					<option value={`iface:${opt.value}`}>{opt.label}</option>
+					<option value={`iface:${opt.value}`} disabled={opt.disabled}>{opt.label}</option>
 				{/each}
 			</optgroup>
 		</select>

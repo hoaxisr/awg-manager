@@ -12,10 +12,12 @@
 #define FIRC_RESOLVER_ADDR_STRLEN 56
 
 #define FIRC_RESOLVE_MAX_SERVERS 4
+#define FIRC_RESOLVER_URL_MAX 255
 
 typedef struct firc_resolver_addr {
     firc_ip_t ip;
     uint16_t port; /* host order */
+    bool doh;
 } firc_resolver_addr_t;
 
 typedef enum {
@@ -41,10 +43,12 @@ typedef enum {
     FIRC_RESOLVER_LIST_TOO_MANY,
     FIRC_RESOLVER_LIST_DUPLICATE,
     FIRC_RESOLVER_LIST_ADDR,
+    FIRC_RESOLVER_LIST_URL,
 } firc_resolver_list_res_t;
 
 typedef struct firc_resolver_list {
     firc_resolver_addr_t servers[FIRC_RESOLVE_MAX_SERVERS];
+    char urls[FIRC_RESOLVE_MAX_SERVERS][FIRC_RESOLVER_URL_MAX + 1];
     size_t n;
 } firc_resolver_list_t;
 
@@ -52,6 +56,14 @@ typedef struct firc_resolver_list {
    On failure why (may be NULL) gets the quoted bad entry or value and the reason. */
 firc_resolver_list_res_t firc_resolver_list_parse(const char *s, firc_resolver_list_t *out, char *why,
                                                   size_t why_cap);
+/* The same, with why fit for the log: no user, path or query of an entry in it. */
+firc_resolver_list_res_t firc_resolver_list_parse_for_log(const char *s, firc_resolver_list_t *out, char *why,
+                                                          size_t why_cap);
+
+bool firc_resolver_url_literal(const char *url, firc_ip_t *ip);
+
+/* The URL for the log, its path left out: a provider puts the account's own id there. 0 if it does not fit. */
+size_t firc_resolver_url_show(const char *url, char *buf, size_t cap);
 
 void firc_resolver_addr_sockaddr(const firc_resolver_addr_t *a, struct sockaddr_storage *ss,
                                  socklen_t *len);
