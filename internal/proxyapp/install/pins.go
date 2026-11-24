@@ -28,8 +28,8 @@ func (s *ArchSpecs) serverSupported() bool { return s != nil && s.Server.URL != 
 
 // ── wdtt ─────────────────────────────────────────────────────────
 
-const WdttPinnedClientVersion = "1.4.0-3"
-const WdttPinnedServerVersion = "1.4.0-5"
+const WdttPinnedClientVersion = "1.4.0-5"
+const WdttPinnedServerVersion = "1.4.0-7"
 
 // Порядок выпуска обоих бинарей: тег в форке hoaxisr/proxy-turn-vk-android →
 // сборка в GitHub Actions → релиз с checksums.txt → зеркало repo.hoaxisr.ru
@@ -55,31 +55,31 @@ var WdttEmbeddedBinaries = map[string]ArchSpecs{
 	"aarch64-3.10": {
 		Client: BinarySpec{
 			Version: WdttPinnedClientVersion, URL: wdttReleaseBase + "wt-client-linux-arm64",
-			SHA256: "ed627553a8b970ab50edfdeb7a7fe35811387b6e19df901bb160f4db46d42367", Size: 15401122,
+			SHA256: "b530c357088526d498fa90c125bd5df1d7da013a5cf112815982dd495ef8a4cf", Size: 15597730,
 		},
 		Server: BinarySpec{
 			Version: WdttPinnedServerVersion, URL: wdttServerReleaseBase + "wdtt-server-linux-arm64",
-			SHA256: "ce9264b96c8b7d330dde5add7d1d4e9a43b22a56536b1720b2cfe519a5a24e90", Size: 7995576,
+			SHA256: "a455052aaeb9f50ab0933fcd3ace219158d6f8ab237f9e517599731e8da7acdc", Size: 8126648,
 		},
 	},
 	"mipsel-3.4": {
 		Client: BinarySpec{
 			Version: WdttPinnedClientVersion, URL: wdttReleaseBase + "wt-client-linux-mipsle-softfloat",
-			SHA256: "b98f366a8f669142cca64066a592a9fa2aa92adcbf42207b5f540ba5da659ce1", Size: 17694913,
+			SHA256: "e30e7391c5ba52a4fac9ea548b8bbffe81b06f6e36b2cf11d462a0bcfab70423", Size: 17891521,
 		},
 		Server: BinarySpec{
 			Version: WdttPinnedServerVersion, URL: wdttServerReleaseBase + "wdtt-server-linux-mipsle-softfloat",
-			SHA256: "a681e666e119507708668ef9381d51c22e92353dea733e433dec60771b81535f", Size: 9502935,
+			SHA256: "7ab4487f7472a763d523a8e6647233367540259fbb8ed3fba7d0e9b8863bc3b6", Size: 9502935,
 		},
 	},
 	"mips-3.4": {
 		Client: BinarySpec{
 			Version: WdttPinnedClientVersion, URL: wdttReleaseBase + "wt-client-linux-mips-softfloat",
-			SHA256: "af34a9ce0a7386878cc77b7855d555fb41ff1d99f521887efe21d5eb18f00250", Size: 17694913,
+			SHA256: "dd42e580bd82c3ed70a5fab062ee83d26815403d02d6114ec827ca7ad950d147", Size: 17891521,
 		},
 		Server: BinarySpec{
 			Version: WdttPinnedServerVersion, URL: wdttServerReleaseBase + "wdtt-server-linux-mips-softfloat",
-			SHA256: "9a53ba74051d1d1f060076ae179295e7fe57c1828771e00f1da95b334ecb9fcf", Size: 9502935,
+			SHA256: "d43ebd3e1b8c7491a16d0690d991f0f8a1be9105553c95549be80c1ad4c029df", Size: 9502935,
 		},
 	},
 }
