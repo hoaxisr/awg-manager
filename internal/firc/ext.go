@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/cloudagent"
 )
 
@@ -1315,7 +1316,14 @@ func (op *Operator) runExtWatchdogTick(loopCtx context.Context) {
 	}
 	ctx, cancel := context.WithTimeout(loopCtx, 10*time.Second)
 	defer cancel()
-	if !op.IsRunning(ctx) || op.ManuallyDisabled() {
+	running := op.IsRunning(ctx)
+	// Отменённый такт (остановка сторожа) — не наблюдение: «не запущен»
+	// здесь значит лишь, что пинг прервали.
+	if loopCtx.Err() == nil {
+		kdErr, _ := op.keenDNSCloudStatus()
+		op.noteRuntimeState(running, kdErr)
+	}
+	if !running || op.ManuallyDisabled() {
 		return
 	}
 
@@ -1340,6 +1348,9 @@ func (op *Operator) runExtWatchdogTick(loopCtx context.Context) {
 		return
 	}
 	_ = op.reconcileExtNetfilterLockedWithCfgGen(ctx, ext, groups, nfGen, cfgGen, true, false)
+	// Итог синхронизации KeenDNS этого такта — тоже наблюдение.
+	kdErr, _ := op.keenDNSCloudStatus()
+	op.noteRuntimeState(true, kdErr)
 	if !wantKeenDNS || groupsLive {
 		op.maybeResetCloudAgentOnKeenDNSSwitch(ctx, wantKeenDNS, groups)
 	}
@@ -1829,7 +1840,7 @@ func (op *Operator) EngageCutoverBarrier(ctx context.Context) error {
 		dir := filepath.Dir(cutoverGuardHookPath)
 		if st, err := os.Stat(dir); err == nil && st.IsDir() {
 			if cur, err := os.ReadFile(cutoverGuardHookPath); err != nil || string(cur) != cutoverGuardHookScript {
-				_ = os.WriteFile(cutoverGuardHookPath, []byte(cutoverGuardHookScript), 0o755)
+				_ = storage.AtomicWritePerm(cutoverGuardHookPath, []byte(cutoverGuardHookScript), 0o755)
 			}
 		}
 	}
@@ -1947,7 +1958,7 @@ func reconcileNDMNetfilterHook(needHook bool) {
 	if cur, err := os.ReadFile(ndmFircExtHookPath); err == nil && string(cur) == ndmFircExtHookScript {
 		return
 	}
-	_ = os.WriteFile(ndmFircExtHookPath, []byte(ndmFircExtHookScript), 0o755)
+	_ = storage.AtomicWritePerm(ndmFircExtHookPath, []byte(ndmFircExtHookScript), 0o755)
 }
 
 // ReconcileExtNetfilter ensures iptables hooks in nat FEXT_DNS, mangle FEXT_OUT, and nat FEXT_NOUT

@@ -135,14 +135,22 @@ func (d *WANDNS) put(u WANDNSUpdate) (WANDNSConfig, error) {
 
 // UpdateWANDNS serializes with switching. Current proxy paths are reapplied
 // through their adapter on the next tick, including after a failed save/retry.
+// Сериализация — замками ref всех политик, читающих DNS провайдера: иначе
+// сверка, начатая до правки, сняла бы флаг перепривязки за старый DNS.
 func (c *Controller) UpdateWANDNS(ctx context.Context, u WANDNSUpdate) (WANDNSConfig, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.paused {
-		return WANDNSConfig{}, fmt.Errorf("%w: uplink controller paused for backup", ErrConflict)
+	var refs []string
+	for _, p := range c.store.List() {
+		if p.Enabled && c.Capabilities(p.Target).ProviderDNS {
+			refs = append(refs, p.Target.Ref)
+		}
 	}
-	if err := ctx.Err(); err != nil {
+	unlock, err := c.lockRefs(ctx, refs...)
+	if err != nil {
 		return WANDNSConfig{}, err
+	}
+	defer unlock()
+	if c.paused.Load() {
+		return WANDNSConfig{}, fmt.Errorf("%w: uplink controller paused for backup", ErrConflict)
 	}
 	if c.WANDNS == nil {
 		return WANDNSConfig{}, ErrUnsupported
@@ -155,12 +163,15 @@ func (c *Controller) UpdateWANDNS(ctx context.Context, u WANDNSUpdate) (WANDNSCo
 	if e != nil {
 		return WANDNSConfig{}, e
 	}
-	if c.dnsDirty == nil {
-		c.dnsDirty = map[string]bool{}
+	locked := map[string]bool{}
+	for _, ref := range refs {
+		locked[ref] = true
 	}
 	c.stateMu.Lock()
 	for _, p := range c.store.List() {
-		if !p.Enabled || !c.Capabilities(p.Target).ProviderDNS {
+		// Политика, появившаяся после снимка refs, сверится по своему
+		// Activate: DNS берётся адаптером в момент применения.
+		if !p.Enabled || !c.Capabilities(p.Target).ProviderDNS || !locked[p.Target.Ref] {
 			continue
 		}
 		s := c.states[p.ID]

@@ -154,3 +154,6 @@ func TestList_IncludesWdttRawMirror(t *testing.T) {
 		t.Fatalf("iface names = %q / %q", got.InterfaceName, got.NDMSName)
 	}
 }
+func (s *listSvcStub) GuardUplinkMutation(context.Context, string, string) (func(), error) {
+	return func() {}, nil
+}

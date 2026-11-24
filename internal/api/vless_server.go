@@ -7,20 +7,14 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/serveringress"
 	"github.com/hoaxisr/awg-manager/internal/vlessserver"
 )
-
-// VlessMigrationStatusResponse describes legacy discovery and runtime decision state.
-type VlessMigrationStatusResponse struct {
-	Discovery *vlessserver.LegacyDiscoveryResult `json:"discovery,omitempty"`
-	Decision  *vlessserver.RuntimeDecision       `json:"decision,omitempty"`
-}
 
 type vlessActionRequest struct {
 	Action string `json:"action"`
@@ -34,31 +28,32 @@ type vlessToggleClientRequest struct {
 	Enabled bool `json:"enabled"`
 }
 
-type vlessResolveConflictRequest struct {
-	Action   string `json:"action"`
-	Strategy string `json:"strategy"`
-}
-
 // VlessServerHandler exposes management endpoints for the C-backed VLESS/XHTTP/FiniteProto server (awgm-xhttpd).
 // Primary routes live under /api/servers/vless/*; narrow compatibility aliases remain under /api/servers/xray/*.
 type VlessServerHandler struct {
-	svc             *vlessserver.Service
-	coord           *serveringress.Coordinator
-	legacyConfigRef string
+	svc   *vlessserver.Service
+	coord *serveringress.Coordinator
+	bus   *events.Bus
+}
+
+// SetEventBus wires the SSE event bus: успешные мутации публикуют
+// ResourceServersIngress, чтобы карточка и страница серверов перечитались
+// без таймера.
+func (h *VlessServerHandler) SetEventBus(bus *events.Bus) {
+	h.bus = bus
+}
+
+// publishIngress безопасна без шины: (*events.Bus)(nil) — no-op.
+func (h *VlessServerHandler) publishIngress(reason string) {
+	h.bus.PublishInvalidated(events.ResourceServersIngress, reason)
 }
 
 // NewVlessServerHandler creates a new VlessServerHandler.
 func NewVlessServerHandler(svc *vlessserver.Service, coord *serveringress.Coordinator) *VlessServerHandler {
 	return &VlessServerHandler{
-		svc:             svc,
-		coord:           coord,
-		legacyConfigRef: "/opt/etc/xray-cdn/config.json",
+		svc:   svc,
+		coord: coord,
 	}
-}
-
-// SetLegacyConfigPath overrides the legacy external config path (used by tests).
-func (h *VlessServerHandler) SetLegacyConfigPath(path string) {
-	h.legacyConfigRef = path
 }
 
 func (h *VlessServerHandler) withIngressLock(op string, fn func() error) error {
@@ -143,6 +138,7 @@ func (h *VlessServerHandler) UpdateConfig(w http.ResponseWriter, r *http.Request
 		WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.publishIngress("vless-config-updated")
 	WriteJSON(w, http.StatusOK, h.svc.GetConfig())
 }
 
@@ -158,12 +154,7 @@ func (h *VlessServerHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusServiceUnavailable, "vless server service unavailable")
 		return
 	}
-	st := h.svc.GetStatus()
-	if dec, err := vlessserver.GetRuntimeDecision(h.svc.DataDir()); err == nil {
-		st.ActiveGeneration = dec.ActiveGeneration
-		st.MigrationStatus = dec.MigrationStatus
-	}
-	WriteJSON(w, http.StatusOK, st)
+	WriteJSON(w, http.StatusOK, h.svc.GetStatus())
 }
 
 // Action handles POST /api/servers/vless/action (start | stop | restart).
@@ -226,6 +217,7 @@ func (h *VlessServerHandler) Action(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
+	h.publishIngress("vless-action")
 	WriteJSON(w, http.StatusOK, h.svc.GetStatus())
 }
 
@@ -253,6 +245,7 @@ func (h *VlessServerHandler) AddClient(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.publishIngress("vless-client-added")
 	WriteJSON(w, http.StatusOK, client)
 }
 
@@ -281,6 +274,7 @@ func (h *VlessServerHandler) DeleteClient(w http.ResponseWriter, r *http.Request
 		WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.publishIngress("vless-client-deleted")
 	WriteJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
@@ -314,6 +308,7 @@ func (h *VlessServerHandler) ToggleClient(w http.ResponseWriter, r *http.Request
 		WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.publishIngress("vless-client-toggled")
 	WriteJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
@@ -350,6 +345,7 @@ func (h *VlessServerHandler) RotateClientFP(w http.ResponseWriter, r *http.Reque
 		WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.publishIngress("vless-client-rotated")
 	WriteJSON(w, http.StatusOK, updated)
 }
 
@@ -379,136 +375,6 @@ func (h *VlessServerHandler) GetLinks(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, links)
 }
 
-func (h *VlessServerHandler) discoverLegacyCandidate() (*vlessserver.LegacyDiscoveryResult, error) {
-	candidates := []string{}
-	if h.legacyConfigRef != "" {
-		candidates = append(candidates, h.legacyConfigRef)
-	}
-	if h.svc != nil && h.svc.DataDir() != "" {
-		candidates = append(candidates, filepath.Join(h.svc.DataDir(), "xray", "config.json"))
-	}
-	for _, p := range candidates {
-		disc, err := vlessserver.DiscoverLegacy(p, "")
-		if err != nil {
-			return nil, err
-		}
-		if disc != nil && disc.Found {
-			return disc, nil
-		}
-	}
-	return &vlessserver.LegacyDiscoveryResult{Found: false}, nil
-}
-
-// GetMigrationStatus handles GET /api/servers/vless/migration.
-func (h *VlessServerHandler) GetMigrationStatus(w http.ResponseWriter, r *http.Request) {
-	if h.svc == nil {
-		WriteError(w, http.StatusServiceUnavailable, "vless server service unavailable")
-		return
-	}
-	disc, err := h.discoverLegacyCandidate()
-	if err != nil {
-		WriteError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	dec, _ := vlessserver.GetRuntimeDecision(h.svc.DataDir())
-	WriteJSON(w, http.StatusOK, VlessMigrationStatusResponse{
-		Discovery: disc,
-		Decision:  &dec,
-	})
-}
-
-// ResolveConflict handles POST /api/servers/vless/migration/resolve.
-// Note: keep_legacy (S99xray-cdn) has been permanently removed and returns 400 Bad Request.
-func (h *VlessServerHandler) ResolveConflict(w http.ResponseWriter, r *http.Request) {
-	if h.svc == nil {
-		WriteError(w, http.StatusServiceUnavailable, "vless server service unavailable")
-		return
-	}
-	if r.Method != http.MethodPost {
-		WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	var req vlessResolveConflictRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
-		return
-	}
-	strategy := strings.TrimSpace(req.Action)
-	if strategy == "" {
-		strategy = strings.TrimSpace(req.Strategy)
-	}
-
-	switch strategy {
-	case "keep_legacy":
-		WriteError(w, http.StatusBadRequest, vlessserver.ErrLegacyRuntimeRemoved.Error())
-		return
-
-	case "keep_new":
-		if h.coord != nil {
-			if err := h.coord.ResolveMigration(r.Context(), "keep_new", nil); err != nil {
-				WriteError(w, http.StatusInternalServerError, err.Error())
-				return
-			}
-		} else {
-			if err := vlessserver.SaveRuntimeDecision(h.svc.DataDir(), vlessserver.RuntimeDecision{
-				ActiveGeneration: "new",
-				MigrationStatus:  "migrated",
-				DecidedAt:        time.Now().UTC().Format(time.RFC3339),
-			}); err != nil {
-				WriteError(w, http.StatusInternalServerError, err.Error())
-				return
-			}
-		}
-		dec, _ := vlessserver.GetRuntimeDecision(h.svc.DataDir())
-		WriteJSON(w, http.StatusOK, map[string]any{"success": true, "decision": dec})
-		return
-
-	case "import_legacy_draft":
-		disc, err := h.discoverLegacyCandidate()
-		if err != nil {
-			WriteError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		if disc == nil || !disc.Found {
-			WriteError(w, http.StatusBadRequest, "no legacy configuration found to import")
-			return
-		}
-		if disc.Topology == vlessserver.TopologyC {
-			_ = vlessserver.BackupLegacyConfigFile(disc.ConfigPath, h.svc.DataDir())
-			WriteError(w, http.StatusBadRequest, vlessserver.ErrUnsupportedLegacyConfig.Error()+": "+disc.ConflictReason)
-			return
-		}
-		migrated, err := vlessserver.MigrateLegacy(r.Context(), disc, h.svc.DataDir(), 9008)
-		if err != nil && !errors.Is(err, vlessserver.ErrAlreadyMigrated) {
-			WriteError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		var draft vlessserver.Config
-		if migrated != nil {
-			draft = *migrated
-		} else {
-			draft = h.svc.GetConfig()
-		}
-		if h.coord != nil {
-			if err := h.coord.ResolveMigration(r.Context(), "import_legacy_draft", &draft); err != nil {
-				WriteError(w, http.StatusInternalServerError, err.Error())
-				return
-			}
-		} else {
-			if err := h.svc.UpdateConfig(draft); err != nil {
-				WriteError(w, http.StatusInternalServerError, err.Error())
-				return
-			}
-		}
-		dec, _ := vlessserver.GetRuntimeDecision(h.svc.DataDir())
-		WriteJSON(w, http.StatusOK, map[string]any{"success": true, "decision": dec})
-		return
-
-	default:
-		WriteError(w, http.StatusBadRequest, "unknown migration resolution strategy: "+strategy)
-	}
-}
-
 // ResolveRecovery handles POST /api/servers/vless/recovery/resolve.
 func (h *VlessServerHandler) ResolveRecovery(w http.ResponseWriter, r *http.Request) {
 	if h.svc == nil {
@@ -520,6 +386,7 @@ func (h *VlessServerHandler) ResolveRecovery(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	h.svc.ClearRecoveryRequired()
+	h.publishIngress("vless-recovery-resolved")
 	WriteJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
@@ -553,6 +420,7 @@ func (h *VlessServerHandler) FactoryReset(w http.ResponseWriter, r *http.Request
 		WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.publishIngress("vless-reset")
 	WriteJSON(w, http.StatusOK, res)
 }
 

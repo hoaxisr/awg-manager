@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/realityserver"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 // RealityEndpointID is the pseudo endpoint id used by share-link APIs to request
@@ -37,16 +38,16 @@ var realityReservedPorts = map[int]string{
 	22:    "SSH",
 	23:    "Telnet (NDMS)",
 	53:    "DNS",
-	80:    "РІРµР±-РёРЅС‚РµСЂС„РµР№СЃ NDMS",
+	80:    "веб-интерфейс NDMS",
 	443:   "HTTPS NDMS / KeenDNS",
 	1099:  "Mihomo mixed-port (Happ / Xray VLESS)",
-	3553:  "DNS-РїСЂРѕРєСЃРё",
+	3553:  "DNS-прокси",
 	8085:  "Telegram Web Proxy",
 	8443:  "telemt",
 	9007:  "VLESS compat inbound",
 	9008:  "VLESS XHTTP backend",
-	9009:  "CDN-РґРёСЃРїРµС‚С‡РµСЂ",
-	51820: "WireGuard (AWGM СЃРµСЂРІРµСЂ)",
+	9009:  "CDN-диспетчер",
+	51820: "WireGuard (AWGM сервер)",
 }
 
 // RealityDestPresets are well-known camouflage targets offered by the UI.
@@ -173,7 +174,7 @@ func (s *Service) saveRealitySettingsLocked() error {
 	if err := os.MkdirAll(filepath.Dir(s.realitySettingsPath()), 0700); err != nil {
 		return err
 	}
-	return atomicWriteFile(s.realitySettingsPath(), data, 0600)
+	return storage.AtomicWritePerm(s.realitySettingsPath(), data, 0600)
 }
 
 // ensureRealityMaterialLocked generates missing keys / short id / xhttp path.
@@ -210,20 +211,20 @@ func (s *Service) ensureRealityMaterialLocked(regenerate bool) error {
 // ValidateRealityPort checks a port against reserved/AWGM-owned ports.
 func (s *Service) validateRealityPortLocked(port int) error {
 	if port <= 0 || port > 65535 {
-		return fmt.Errorf("РїРѕСЂС‚ %d РІРЅРµ РґРёР°РїР°Р·РѕРЅР° 1-65535", port)
+		return fmt.Errorf("порт %d вне диапазона 1-65535", port)
 	}
 	if port < 1024 {
-		return fmt.Errorf("РїРѕСЂС‚ %d РёР· СЃРёСЃС‚РµРјРЅРѕРіРѕ РґРёР°РїР°Р·РѕРЅР° (<1024) Р·Р°СЂРµР·РµСЂРІРёСЂРѕРІР°РЅ", port)
+		return fmt.Errorf("порт %d из системного диапазона (<1024) зарезервирован", port)
 	}
 	if why, ok := realityReservedPorts[port]; ok {
-		return fmt.Errorf("РїРѕСЂС‚ %d Р·Р°РЅСЏС‚: %s", port, why)
+		return fmt.Errorf("порт %d занят: %s", port, why)
 	}
 	busy := map[int]string{
 		s.config.ListenPort:     "VLESS XHTTP backend",
-		s.config.DispatcherPort: "CDN-РґРёСЃРїРµС‚С‡РµСЂ",
+		s.config.DispatcherPort: "CDN-диспетчер",
 	}
 	if why, ok := busy[port]; ok && port > 0 {
-		return fmt.Errorf("РїРѕСЂС‚ %d Р·Р°РЅСЏС‚: %s", port, why)
+		return fmt.Errorf("порт %d занят: %s", port, why)
 	}
 	return nil
 }
@@ -244,11 +245,9 @@ func (s *Service) suggestRealityPortLocked() int {
 	return DefaultRealityPort
 }
 
+// realityRuntimeConfigLocked — вход REALITY отдаёт VLESS основному C-демону:
+// клиенты и выход в сеть у них общие (buildXHTTPServerConfig).
 func (s *Service) realityRuntimeConfigLocked() realityserver.Config {
-	backend := buildXHTTPServerConfig(s.config)
-	if s.fircRoutingOverride {
-		backend.Egress.Mode = "router"
-	}
 	return realityserver.Config{
 		ListenAddr:  net.JoinHostPort("0.0.0.0", strconv.Itoa(s.reality.Port)),
 		Transport:   s.reality.Transport,
@@ -257,8 +256,40 @@ func (s *Service) realityRuntimeConfigLocked() realityserver.Config {
 		PrivateKey:  s.reality.PrivateKey,
 		ShortIDs:    s.reality.ShortIDs,
 		XHTTPPath:   s.reality.XHTTPPath,
-		Backend:     backend,
+		Upstream:    loopbackDialAddr(buildXHTTPServerConfig(s.config).ListenAddr),
 	}
+}
+
+// loopbackDialAddr: демон на «любом» адресе достижим по 127.0.0.1 — с него
+// же C доверяет X-Forwarded-For. ponytail: демон на конкретном LAN-адресе
+// увидит пиром этот адрес и не поверит XFF (лимит на IP станет общим);
+// чинить, если кто-то так настроит.
+func loopbackDialAddr(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr
+	}
+	if ip := net.ParseIP(host); host == "" || (ip != nil && ip.IsUnspecified()) {
+		host = "127.0.0.1"
+	}
+	return net.JoinHostPort(host, port)
+}
+
+func (s *Service) realityDesiredLocked() bool {
+	return s.config.Enabled && s.reality.Enabled && s.reality.PrivateKey != "" && s.hasEnabledClientsLocked() && !s.recoveryRequired
+}
+
+// realityUpstreamPathLocked — путь, который C-демон должен обслуживать для
+// входа REALITY; "" — вход не нужен.
+func (s *Service) realityUpstreamPathLocked() string {
+	if !s.realityDesiredLocked() {
+		return ""
+	}
+	norm, err := s.realityRuntimeConfigLocked().Normalize()
+	if err != nil {
+		return ""
+	}
+	return norm.XHTTPPath
 }
 
 func (s *Service) hasEnabledClientsLocked() bool {
@@ -277,11 +308,22 @@ func (s *Service) syncRealityLocked() {
 	if s.realitySrv == nil {
 		s.realitySrv = realityserver.New()
 	}
-	desired := s.config.Enabled && s.reality.Enabled && s.reality.PrivateKey != "" && s.hasEnabledClientsLocked() && !s.recoveryRequired
-	if !desired {
+	if !s.realityDesiredLocked() {
 		s.realitySrv.Stop()
 		s.realityLastErr = ""
 		s.syncRealityFirewallLocked(0)
+		return
+	}
+	// VLESS за входом обслуживает C-демон: без него вход принимал бы
+	// рукопожатия и молча рвал их. Ошибку видно в состоянии и UpdateReality
+	// по ней откатывает настройки.
+	if s.testRuntimeHook == nil && (s.daemon == nil || !s.daemon.IsRunning()) {
+		s.realitySrv.Stop()
+		s.syncRealityFirewallLocked(0)
+		s.realityLastErr = "VLESS-демон не запущен"
+		if s.lastRuntimeErr != "" {
+			s.realityLastErr += ": " + s.lastRuntimeErr
+		}
 		return
 	}
 	if err := s.realitySrv.Apply(s.realityRuntimeConfigLocked()); err != nil {
@@ -397,7 +439,7 @@ func (s *Service) UpdateReality(upd RealityUpdate) (RealityState, error) {
 	}
 	if upd.Reset {
 		s.reality = defaultRealitySettings()
-		s.syncRealityLocked()
+		_ = s.syncDaemonLocked()
 		if err := s.saveRealitySettingsLocked(); err != nil {
 			return s.realityStateLocked(), err
 		}
@@ -415,7 +457,7 @@ func (s *Service) UpdateReality(upd RealityUpdate) (RealityState, error) {
 	if upd.Transport != nil {
 		t := strings.ToLower(strings.TrimSpace(*upd.Transport))
 		if t != realityserver.TransportTCP && t != realityserver.TransportXHTTP {
-			return s.realityStateLocked(), fmt.Errorf("РЅРµРїРѕРґРґРµСЂР¶РёРІР°РµРјС‹Р№ С‚СЂР°РЅСЃРїРѕСЂС‚ %q (tcp РёР»Рё xhttp)", t)
+			return s.realityStateLocked(), fmt.Errorf("неподдерживаемый транспорт %q (tcp или xhttp)", t)
 		}
 		next.Transport = t
 	}
@@ -450,7 +492,7 @@ func (s *Service) UpdateReality(upd RealityUpdate) (RealityState, error) {
 		switch fp {
 		case "", "chrome", "firefox", "safari", "ios", "edge", "random", "randomized":
 		default:
-			return s.realityStateLocked(), fmt.Errorf("РЅРµРёР·РІРµСЃС‚РЅС‹Р№ fingerprint %q", fp)
+			return s.realityStateLocked(), fmt.Errorf("неизвестный fingerprint %q", fp)
 		}
 		if fp == "" {
 			fp = DefaultRealityFP
@@ -460,7 +502,7 @@ func (s *Service) UpdateReality(upd RealityUpdate) (RealityState, error) {
 	if upd.PublicHost != nil {
 		h := strings.TrimSpace(*upd.PublicHost)
 		if strings.ContainsAny(h, " /\\:@?#") {
-			return s.realityStateLocked(), fmt.Errorf("РЅРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ РїСѓР±Р»РёС‡РЅС‹Р№ Р°РґСЂРµСЃ %q", h)
+			return s.realityStateLocked(), fmt.Errorf("некорректный публичный адрес %q", h)
 		}
 		next.PublicHost = h
 	}
@@ -487,20 +529,20 @@ func (s *Service) UpdateReality(upd RealityUpdate) (RealityState, error) {
 	portChanged := prev.Port != s.reality.Port
 	if portChanged && wasRunning && !realityserver.IsPortFree(s.reality.Port) {
 		s.reality = prev
-		return s.realityStateLocked(), fmt.Errorf("РїРѕСЂС‚ %d СѓР¶Рµ Р·Р°РЅСЏС‚ РґСЂСѓРіРёРј РїСЂРѕС†РµСЃСЃРѕРј", next.Port)
+		return s.realityStateLocked(), fmt.Errorf("порт %d уже занят другим процессом", next.Port)
 	}
 	if !wasRunning && s.reality.Enabled && s.config.Enabled && !realityserver.IsPortFree(s.reality.Port) {
 		s.reality = prev
-		return s.realityStateLocked(), fmt.Errorf("РїРѕСЂС‚ %d СѓР¶Рµ Р·Р°РЅСЏС‚ РґСЂСѓРіРёРј РїСЂРѕС†РµСЃСЃРѕРј", next.Port)
+		return s.realityStateLocked(), fmt.Errorf("порт %d уже занят другим процессом", next.Port)
 	}
 
 	s.reality.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	s.syncRealityLocked()
+	_ = s.syncDaemonLocked() // путь входа у демона, затем сам вход; ошибка демона — в lastRuntimeErr
 	if s.reality.Enabled && s.config.Enabled && s.realityLastErr != "" {
 		failErr := errors.New(s.realityLastErr)
 		s.reality = prev
-		s.syncRealityLocked()
-		return s.realityStateLocked(), fmt.Errorf("РЅРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РїСѓСЃС‚РёС‚СЊ Reality: %w", failErr)
+		_ = s.syncDaemonLocked()
+		return s.realityStateLocked(), fmt.Errorf("не удалось запустить Reality: %w", failErr)
 	}
 	if err := s.saveRealitySettingsLocked(); err != nil {
 		return s.realityStateLocked(), err
@@ -520,7 +562,7 @@ func (s *Service) realityPublicHost(ctx context.Context) (string, error) {
 	if info != nil && strings.TrimSpace(info.PublicHost) != "" {
 		return strings.TrimSpace(info.PublicHost), nil
 	}
-	return "", errors.New("РЅРµ СѓРґР°Р»РѕСЃСЊ РѕРїСЂРµРґРµР»РёС‚СЊ РїСѓР±Р»РёС‡РЅС‹Р№ Р°РґСЂРµСЃ СЂРѕСѓС‚РµСЂР°: СѓРєР°Р¶РёС‚Рµ РµРіРѕ РІСЂСѓС‡РЅСѓСЋ РІ РЅР°СЃС‚СЂРѕР№РєР°С… Reality")
+	return "", errors.New("не удалось определить публичный адрес роутера: укажите его вручную в настройках Reality")
 }
 
 // GenerateRealityLinks builds share links for the direct REALITY entry.
@@ -547,7 +589,7 @@ func (s *Service) GenerateRealityLinks(ctx context.Context, clientID string) (*S
 		return nil, errors.New("client not found")
 	}
 	if settings.PublicKey == "" || len(settings.ShortIDs) == 0 {
-		return nil, errors.New("Reality РµС‰С‘ РЅРµ РЅР°СЃС‚СЂРѕРµРЅ: РІРєР»СЋС‡РёС‚Рµ РїСЂСЏРјРѕР№ РІС…РѕРґ Reality")
+		return nil, errors.New("Reality ещё не настроен: включите прямой вход Reality")
 	}
 	host, err := s.realityPublicHost(ctx)
 	if err != nil {
@@ -600,7 +642,7 @@ func BuildRealityShareLinks(st RealitySettings, client Client, host string) (*Sh
 	if remark == "" {
 		remark = "VLESS"
 	}
-	label := remark + " В· Reality"
+	label := remark + " · Reality"
 	hostForURL := host
 	if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
 		hostForURL = "[" + host + "]"

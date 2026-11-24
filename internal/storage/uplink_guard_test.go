@@ -2,6 +2,9 @@ package storage
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -36,5 +39,36 @@ func TestAWGUplinkGuardBlocksDirectWritesAndDeepMutations(t *testing.T) {
 	}
 	if err := store.Delete("awg50"); !errors.Is(err, blocked) {
 		t.Fatal("delete bypassed guard", err)
+	}
+}
+
+// F813: с guard'ом битая запись удаляется, guard видит её ID, а отсутствующая
+// отвечает прежним «tunnel not found».
+func TestAWGUplinkGuardDeleteCorruptRecord(t *testing.T) {
+	store, dataDir := newTestAWGStore(t)
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "awg7.json"), []byte("{broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var seen string
+	store.SetUplinkGuard(func(old, next *AWGTunnel) error {
+		if old != nil {
+			seen = old.ID
+		}
+		return nil
+	})
+	if err := store.Delete("awg7"); err != nil {
+		t.Fatalf("delete corrupt record: %v", err)
+	}
+	if seen != "awg7" {
+		t.Fatalf("guard saw %q, want awg7", seen)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "awg7.json")); !os.IsNotExist(err) {
+		t.Fatalf("corrupt record still on disk: %v", err)
+	}
+	if err := store.Delete("missing"); err == nil || !strings.Contains(err.Error(), "tunnel not found: missing") {
+		t.Fatalf("missing record: %v", err)
 	}
 }

@@ -3,7 +3,7 @@ import type { GeoDownloadProgressEvent } from '$lib/api/events';
 
 /**
  * Live progress of in-flight geo .dat downloads keyed by URL. Updated from
- * SSE 'hydraroute:geo-progress' events. Entries are removed shortly after
+ * SSE 'geo:progress' events. Entries are removed shortly after
  * the terminal phase ('done' or 'error') to keep the store small.
  */
 function createGeoDownloadStore() {

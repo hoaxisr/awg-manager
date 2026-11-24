@@ -13,10 +13,10 @@ func (c *Controller) Pause(ctx context.Context) error {
 		return err
 	}
 	defer lease.Release()
-	if c.paused {
+	if c.paused.Load() {
 		return fmt.Errorf("%w: backup already holds uplink controller", ErrConflict)
 	}
-	c.paused = true
+	c.paused.Store(true)
 	c.backupPaused.Store(true)
 	for _, p := range c.store.List() {
 		c.publish(p.ID, State{Phase: "paused"})
@@ -24,14 +24,12 @@ func (c *Controller) Pause(ctx context.Context) error {
 	return nil
 }
 func (c *Controller) Resume() {
-	c.mu.Lock()
-	c.paused = false
+	c.paused.Store(false)
 	c.backupPaused.Store(false)
 	for _, p := range c.store.List() {
 		c.publish(p.ID, State{Phase: "pending"})
 	}
-	c.mu.Unlock()
-	c.NotifyWANChange()
+	c.NotifyWANChange("")
 }
 
 // BackupPaused can be inspected under a lifecycle lock without taking the
@@ -42,9 +40,7 @@ func (c *Controller) BackupPaused() bool { return c.backupPaused.Load() }
 // export while policy mutations and controller probes remain paused. Import
 // never enters this stage: it waits for daemon restart.
 func (c *Controller) BeginBackupResume() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.paused {
+	if c.paused.Load() {
 		c.backupPaused.Store(false)
 	}
 }

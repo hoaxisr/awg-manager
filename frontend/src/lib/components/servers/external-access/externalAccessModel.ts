@@ -7,6 +7,7 @@ import type {
 	CDNDispatcherConfig,
 } from '$lib/types';
 import type { EgressOption, WizardKind, WizardPlanRequest } from '$lib/types/serverWizard';
+import { m, type UiText } from '$lib/i18n';
 import {
 	formatTelegramCarrierLabel,
 	formatTelegramEgressLabel,
@@ -29,8 +30,9 @@ export interface ExternalAccessWizardDraft {
 	disableOtherService: boolean;
 	existingClientCount: number;
 	keepExistingConnectionScheme: boolean;
-	connectionSchemeSummary: string;
-	connectionSchemeWarning: string;
+	/** Текст для показа: в черновике ($state) лежит отложенным вызовом i18n. */
+	connectionSchemeSummary: UiText;
+	connectionSchemeWarning: UiText;
 	keendnsMode: 'manual' | 'existing' | 'create';
 	keendnsLabel: string;
 	selectedKind: WizardKind;
@@ -342,19 +344,19 @@ export function buildExternalAccessSummary(input: ExternalAccessInput): External
 			existing.source = 'merged';
 			existing.xrayPath = effectivePath;
 			if (!existing.routeXray || !existing.enabled) {
-				const w = `Домен ${dom} указан в VLESS (XHTTP), но маршрут выключен во Входящих подключениях (:9009)`;
+				const w = m.servers_ext_model_vless_route_off({ domain: dom });
 				existing.warning = w;
 				warnings.push(w);
 			}
 		} else {
 			const w = hasExplicitTable
-				? `Домен ${dom} (VLESS) не добавлен в таблицу Входящих подключений (:9009)`
+				? m.servers_ext_model_vless_route_missing({ domain: dom })
 				: undefined;
 			if (w) warnings.push(w);
 			routeMap.set(dom, {
 				id: `vless-${dom}`,
 				domain: dom,
-				description: 'Сервер VLESS (XHTTP)',
+				description: m.servers_ext_model_vless_desc(),
 				routeXray: true,
 				routeTelegram: tgWebDomains.includes(dom),
 				enabled: !hasExplicitTable,
@@ -374,19 +376,19 @@ export function buildExternalAccessSummary(input: ExternalAccessInput): External
 			existing.source = 'merged';
 			existing.tgCarrier = formatTelegramCarrierLabel(tgCarrierByDomain.get(dom) || primaryCarrier);
 			if (!existing.routeTelegram || !existing.enabled) {
-				const w = `Домен ${dom} указан в Telegram, но маршрут выключен во Входящих подключениях (:9009)`;
+				const w = m.servers_ext_model_tg_route_off({ domain: dom });
 				existing.warning = w;
 				warnings.push(w);
 			}
 		} else {
 			const w = hasExplicitTable
-				? `Домен ${dom} (Telegram) не добавлен в таблицу Входящих подключений (:9009)`
+				? m.servers_ext_model_tg_route_missing({ domain: dom })
 				: undefined;
 			if (w) warnings.push(w);
 			routeMap.set(dom, {
 				id: `tg-${dom}`,
 				domain: dom,
-				description: 'Telegram (веб-подключение)',
+				description: m.servers_ext_model_tg_desc(),
 				routeXray: false,
 				routeTelegram: true,
 				enabled: !hasExplicitTable,
@@ -552,7 +554,7 @@ export function createInitialWizardDraft(
 			originScheme: 'http',
 			originPort: 9009,
 			deviceType: 'phone',
-			clientRemark: 'Основное устройство',
+			clientRemark: m.servers_ext_default_device(),
 			existingClientUuid: '',
 			preserveExistingCredentials: false,
 			selectedMode: 'xhttp_get',
@@ -635,7 +637,7 @@ export function createInitialWizardDraft(
 	const customTlsDomain = isKnownTls ? '' : rawTls;
 
 	const firstClient = xClients.find((c) => c.enabled) || xClients[0];
-	const clientRemark = firstClient?.remark || 'Основное устройство';
+	const clientRemark = firstClient?.remark || m.servers_ext_default_device();
 	const existingClientUuid = firstClient?.id || '';
 
 	const rawTransport = xCfg?.transport || 'xhttp';
@@ -681,30 +683,34 @@ export function createInitialWizardDraft(
 		upstreamDevice = tgUpstreamDevice;
 	}
 
-	const schemeParts: string[] = [];
+	// Части схемы — отложенными вызовами: черновик живёт в $state мастера,
+	// и готовая строка застыла бы на языке момента открытия.
+	const schemeParts: (() => string)[] = [];
 	if (connectionWay === 'direct') {
-		schemeParts.push('Через домен роутера (HTTPS)');
+		schemeParts.push(() => m.servers_ext_model_scheme_router_domain());
 	} else {
-		schemeParts.push('Через свой внешний домен (HTTPS)');
+		schemeParts.push(() => m.servers_ext_model_scheme_own_domain());
 	}
 	if (publicDomain) {
-		schemeParts.push(`адрес для телефона: ${publicDomain}`);
+		schemeParts.push(() => m.servers_ext_model_scheme_phone_addr({ addr: publicDomain }));
 	}
 	if (originHost) {
-		schemeParts.push(`адрес роутера: ${originScheme}://${originHost}:${originPort}`);
+		const origin = `${originScheme}://${originHost}:${originPort}`;
+		schemeParts.push(() => m.servers_ext_model_scheme_router_addr({ addr: origin }));
 	} else if (directHost) {
-		schemeParts.push(`прямой адрес MTProto: ${directHost}:${directPort}`);
+		const direct = `${directHost}:${directPort}`;
+		schemeParts.push(() => m.servers_ext_model_scheme_mtproto_addr({ addr: direct }));
 	}
 
-	const schemeWarnings: string[] = [];
+	const schemeWarnings: (() => string)[] = [];
 	if (vlessConfigured && !vlessDomainStr) {
-		schemeWarnings.push('Не указан домен подключения для VLESS');
+		schemeWarnings.push(() => m.servers_ext_model_warn_no_vless_domain());
 	}
 	if (connectionWay === 'external_https' && !originHost && vlessConfigured) {
-		schemeWarnings.push('Адрес роутера для внешнего сервиса ранее не был сохранён в конфигурации');
+		schemeWarnings.push(() => m.servers_ext_model_warn_no_origin());
 	}
 	if (rawTransport && !isSupportedTransport) {
-		schemeWarnings.push(`Устаревший транспорт (${rawTransport}) не поддерживается C-ядром и будет переключён на XHTTP`);
+		schemeWarnings.push(() => m.servers_ext_model_warn_legacy_transport({ transport: rawTransport }));
 	}
 
 	return {
@@ -714,8 +720,8 @@ export function createInitialWizardDraft(
 		disableOtherService: false,
 		existingClientCount: xClients.length,
 		keepExistingConnectionScheme: true,
-		connectionSchemeSummary: schemeParts.join(' · '),
-		connectionSchemeWarning: schemeWarnings.join('. '),
+		connectionSchemeSummary: () => schemeParts.map((t) => t()).join(' · '),
+		connectionSchemeWarning: schemeWarnings.length ? () => schemeWarnings.map((t) => t()).join('. ') : '',
 		keendnsMode: 'manual',
 		keendnsLabel: 'connect',
 		selectedKind,
@@ -769,7 +775,7 @@ export function isDraftEgressValid(
 		}
 		const found = egressOptions.find((o) => o.id === id || o.iface === id);
 		if (found && !found.available) {
-			return `Текущий выход для ${serviceLabel} (${found.name}) недоступен — выберите другой или восстановите туннель.`;
+			return m.servers_ext_model_egress_unavailable({ service: serviceLabel, name: found.name });
 		}
 		return undefined;
 	};
@@ -778,8 +784,7 @@ export function isDraftEgressValid(
 		if (!draft.upstreamDevice || isLegacySocksEgress(draft.upstreamDevice)) {
 			return {
 				valid: false,
-				reason:
-					'Устаревший выход через локальный прокси (:1099) больше не поддерживается. Выберите прямой выход (WAN), туннель или правила маршрутизации роутера (FIRC).',
+				reason: m.servers_ext_model_egress_legacy_xray(),
 			};
 		}
 		const unavail = checkOptionAvailability(draft.upstreamDevice, 'VLESS');
@@ -794,15 +799,13 @@ export function isDraftEgressValid(
 		if (!dev || isLegacySocksEgress(dev)) {
 			return {
 				valid: false,
-				reason:
-					'Устаревший выход через локальный прокси (:1099) больше не поддерживается. Выберите прямой выход (WAN) или туннельный интерфейс.',
+				reason: m.servers_ext_model_egress_legacy_tg(),
 			};
 		}
 		if (dev === 'firc:router') {
 			return {
 				valid: false,
-				reason:
-					'Прокси Telegram работает только с сетевым интерфейсом роутера (WAN или туннель).',
+				reason: m.servers_ext_model_egress_tg_iface_only(),
 			};
 		}
 		const unavail = checkOptionAvailability(dev, 'Telegram');
@@ -816,8 +819,7 @@ export function isDraftEgressValid(
 	if (!draft.upstreamDevice || isLegacySocksEgress(draft.upstreamDevice)) {
 		return {
 			valid: false,
-			reason:
-				'Для VLESS (XHTTP) выбран устаревший выход через локальный прокси (:1099). Выберите прямой выход (WAN), туннель или правила маршрутизации роутера (FIRC).',
+			reason: m.servers_ext_model_egress_legacy_both_xray(),
 		};
 	}
 	const xrayUnavail = checkOptionAvailability(draft.upstreamDevice, 'VLESS');
@@ -827,15 +829,13 @@ export function isDraftEgressValid(
 	if (!draft.tgUpstreamDevice || isLegacySocksEgress(draft.tgUpstreamDevice)) {
 		return {
 			valid: false,
-			reason:
-				'Для Прокси Telegram необходимо явно выбрать выход трафика (прямой выход WAN или туннельный интерфейс).',
+			reason: m.servers_ext_model_egress_tg_required(),
 		};
 	}
 	if (draft.tgUpstreamDevice === 'firc:router') {
 		return {
 			valid: false,
-			reason:
-				'Прокси Telegram не поддерживает выход по правилам FIRC — выберите для Telegram прямой выход (WAN) или конкретный туннельный интерфейс.',
+			reason: m.servers_ext_model_egress_tg_no_firc(),
 		};
 	}
 	const tgUnavail = checkOptionAvailability(draft.tgUpstreamDevice, 'Telegram');
@@ -871,30 +871,30 @@ export function validateKeenDNSLabelClient(rawLabel: string): {
 } {
 	const clean = (rawLabel || '').trim().toLowerCase();
 	if (!clean) {
-		return { valid: false, normalized: '', error: 'Введите короткое имя (например: connect)' };
+		return { valid: false, normalized: '', error: m.servers_ext_model_kd_empty() };
 	}
 	if (clean.includes('.')) {
 		return {
 			valid: false,
 			normalized: clean,
-			error: 'Укажите только имя 4-го уровня без точек (базовый домен роутера добавляется автоматически)',
+			error: m.servers_ext_model_kd_no_dots(),
 		};
 	}
 	if (clean.length > 63) {
-		return { valid: false, normalized: clean, error: 'Имя не может быть длиннее 63 символов' };
+		return { valid: false, normalized: clean, error: m.servers_ext_model_kd_too_long() };
 	}
 	if (!/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(clean)) {
 		return {
 			valid: false,
 			normalized: clean,
-			error: 'Используйте только строчные латинские буквы (a–z), цифры (0–9) и дефис',
+			error: m.servers_ext_model_kd_charset(),
 		};
 	}
 	if (RESERVED_KEENDNS_LABELS.has(clean)) {
 		return {
 			valid: false,
 			normalized: clean,
-			error: `Имя «${clean}» зарезервировано системой роутера — выберите другое`,
+			error: m.servers_ext_model_kd_reserved({ name: clean }),
 		};
 	}
 	return { valid: true, normalized: clean };
@@ -954,7 +954,7 @@ export function buildPlanRequestFromDraft(
 				: draft.upstreamDevice,
 		tg_upstream_device:
 			draft.selectedKind === 'both' ? draft.tgUpstreamDevice : undefined,
-		client_remark: draft.clientRemark.trim() || 'Основное устройство',
+		client_remark: draft.clientRemark.trim() || m.servers_ext_default_device(),
 		cdn_profile_id: effectiveCdnProfileId,
 		preserve_transport: draft.preserveTransport || undefined,
 		raw_transport: draft.preserveTransport ? draft.rawTransport : undefined,

@@ -12,8 +12,9 @@ func TestLoad_DropsLegacyHRRows(t *testing.T) {
 	path := filepath.Join(dir, "dns-routes.json")
 	raw := `{"lists":[
 		{"id":"list_1","name":"ndms-rule","backend":"ndms","manualDomains":["a.com"],"domains":["a.com"]},
-		{"id":"list_2","name":"hr-rule","backend":"hydraroute","manualDomains":["2ip.ru"],"domains":["2ip.ru"]}
-	]}`
+		{"id":"list_2","name":"hr-rule","backend":"hydraroute","manualDomains":["2ip.ru"],"domains":["2ip.ru"],
+			"hrRouteMode":"policy","hrPolicyName":"HydraRoute","hrPolicyInterfaces":["Wireguard0"]}
+	],"hrRuleIcons":{"HydraRoute\u0000hr-rule":"https://1.1.1.1/i.png"}}`
 	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
 		t.Fatal(err)
 	}

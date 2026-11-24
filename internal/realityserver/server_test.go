@@ -23,11 +23,14 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/xhttpserver"
+	"github.com/hoaxisr/awg-manager/internal/xhttpserver/xhttptest"
 	utls "github.com/refraction-networking/utls"
 	"github.com/xtls/reality"
 	"golang.org/x/crypto/hkdf"
@@ -42,6 +45,17 @@ const (
 // startFakeDest runs a TLS 1.3 server that plays the camouflage site.
 func startFakeDest(t *testing.T) (addr string, certDER []byte) {
 	t.Helper()
+	return startFakeDestNames(t, 0)
+}
+
+// startFakeDestNames: extra > 0 раздувает сертификат лишними SAN — как у
+// настоящих сайтов (www.microsoft.com: Certificate 8273 байта).
+func startFakeDestNames(t *testing.T, extra int) (addr string, certDER []byte) {
+	t.Helper()
+	names := []string{testSNI}
+	for i := 0; i < extra; i++ {
+		names = append(names, fmt.Sprintf("n%04d.%s", i, testSNI))
+	}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +63,7 @@ func startFakeDest(t *testing.T) (addr string, certDER []byte) {
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(42),
 		Subject:      pkix.Name{CommonName: testSNI},
-		DNSNames:     []string{testSNI},
+		DNSNames:     names,
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(time.Hour),
 	}
@@ -202,19 +216,32 @@ func vlessHeader(t *testing.T, target string) []byte {
 	t.Helper()
 	host, portStr, _ := net.SplitHostPort(target)
 	port, _ := strconv.Atoi(portStr)
-	u, err := xhttpserver.ParseUUID(testUUID)
-	if err != nil {
-		t.Fatal(err)
+	return xhttptest.BuildVLESSReq(t, testUUID, net.ParseIP(host), uint16(port), nil)
+}
+
+// startC поднимает awgm-xhttpd так же, как vlessserver для REALITY: путь
+// входа в PathPrefixes, loopback в TrustedProxies.
+func startC(t *testing.T) (*xhttpserver.Server, xhttpserver.Config) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("awgm-xhttpd integration needs linux")
 	}
-	var b bytes.Buffer
-	b.WriteByte(0)
-	b.Write(u[:])
-	b.WriteByte(0)                                       // addons
-	b.WriteByte(VLESSCmdTCP)                             // command
-	_ = binary.Write(&b, binary.BigEndian, uint16(port)) // port
-	b.WriteByte(VLESSAddrIPv4)
-	b.Write(net.ParseIP(host).To4())
-	return b.Bytes()
+	cfg := xhttpserver.Config{
+		ListenAddr:     "127.0.0.1:0",
+		BinaryPath:     xhttptest.RequireCXHTTPDBinary(t),
+		ConfigPath:     t.TempDir() + "/awgm-xhttpd.conf",
+		PathPrefix:     "/cdn-bridge",
+		PathPrefixes:   []string{DefaultXHTTPPath, "/rx-test"},
+		Clients:        []string{testUUID},
+		TrustedProxies: []string{"127.0.0.1/32"},
+		Egress:         xhttpserver.EgressConfig{Mode: "direct", AllowPrivateDestinations: true},
+	}
+	c := xhttpserver.New(cfg)
+	if err := c.Start(); err != nil {
+		t.Fatalf("awgm-xhttpd start: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Stop() })
+	return c, cfg
 }
 
 func newTestConfig(t *testing.T, dest, transport string) (Config, string, string) {
@@ -231,10 +258,7 @@ func newTestConfig(t *testing.T, dest, transport string) (Config, string, string
 		ServerNames: []string{testSNI},
 		PrivateKey:  priv,
 		ShortIDs:    []string{sid},
-		Backend: xhttpserver.Config{
-			Clients: []string{testUUID},
-			Egress:  xhttpserver.EgressConfig{Mode: "direct", AllowPrivateDestinations: true},
-		},
+		Upstream:    "127.0.0.1:1",
 	}, pub, sid
 }
 
@@ -283,7 +307,9 @@ func TestNormalize(t *testing.T) {
 func TestRealityTCPEndToEnd(t *testing.T) {
 	dest, _ := startFakeDest(t)
 	echo := startEcho(t)
+	c, cCfg := startC(t)
 	cfg, pub, sid := newTestConfig(t, dest, TransportTCP)
+	cfg.Upstream = c.Addr()
 
 	srv := New()
 	if err := srv.Apply(cfg); err != nil {
@@ -311,6 +337,19 @@ func TestRealityTCPEndToEnd(t *testing.T) {
 	}
 	if st := srv.Status(); !st.Running || st.ActiveConns < 1 {
 		t.Fatalf("status: %+v", st)
+	}
+
+	// Клиентов держит C: снятый клиент теряет и сырой поток через REALITY.
+	upd := cCfg
+	upd.Clients = []string{"11111111-2222-3333-4444-555555555555"}
+	if err := c.UpdateConfig(upd); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, err := conn.Read(make([]byte, 1)); err == nil {
+		t.Fatal("stream of a removed client stayed open")
+	} else if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		t.Fatal("stream of a removed client was not closed")
 	}
 }
 
@@ -359,7 +398,7 @@ func TestRealityWrongShortIDRejected(t *testing.T) {
 	}
 }
 
-func TestRealityApplyHotUpdateAndRevoke(t *testing.T) {
+func TestRealityApplyKeepsListener(t *testing.T) {
 	dest, _ := startFakeDest(t)
 	cfg, _, _ := newTestConfig(t, dest, TransportTCP)
 	srv := New()
@@ -368,19 +407,16 @@ func TestRealityApplyHotUpdateAndRevoke(t *testing.T) {
 	}
 	defer srv.Stop()
 	addr := srv.Addr()
-
-	// Changing only clients must not rebind.
-	cfg.Backend.Clients = []string{testUUID, "11111111-2222-3333-4444-555555555555"}
-	if err := srv.Apply(cfg); err != nil {
-		t.Fatal(err)
+	if err := srv.Apply(cfg); err != nil || srv.Addr() != addr {
+		t.Fatalf("same config must keep the listener (err=%v)", err)
 	}
-	if srv.Addr() != addr {
-		t.Fatal("client-only change must keep the listener")
+	cfg.Upstream = "127.0.0.1:2"
+	if err := srv.Apply(cfg); err != nil || srv.Addr() == addr {
+		t.Fatalf("upstream change must rebind (err=%v)", err)
 	}
-	// No clients -> refuse.
-	cfg.Backend.Clients = nil
+	cfg.Upstream = "nope"
 	if err := srv.Apply(cfg); err == nil {
-		t.Fatal("expected error without clients")
+		t.Fatal("invalid upstream must fail")
 	}
 	srv.Stop()
 	if srv.IsRunning() {
@@ -391,8 +427,10 @@ func TestRealityApplyHotUpdateAndRevoke(t *testing.T) {
 func TestRealityXHTTPStreamOne(t *testing.T) {
 	dest, _ := startFakeDest(t)
 	echo := startEcho(t)
+	c, _ := startC(t)
 	cfg, pub, sid := newTestConfig(t, dest, TransportXHTTP)
 	cfg.XHTTPPath = "/rx-test"
+	cfg.Upstream = c.Addr()
 	srv := New()
 	if err := srv.Apply(cfg); err != nil {
 		t.Fatal(err)
@@ -443,5 +481,85 @@ func TestIsPortFree(t *testing.T) {
 	port := ln.Addr().(*net.TCPAddr).Port
 	if IsPortFree(port) {
 		t.Fatal("bound port reported as free")
+	}
+}
+
+// F866: Vision (flow в addons VLESS) не реализован — C отказывает явно, а не
+// пропускает addons и ломает поток посередине.
+func TestRealityTCPRejectsVisionFlow(t *testing.T) {
+	dest, _ := startFakeDest(t)
+	echo := startEcho(t)
+	c, _ := startC(t)
+	cfg, pub, sid := newTestConfig(t, dest, TransportTCP)
+	cfg.Upstream = c.Addr()
+	srv := New()
+	if err := srv.Apply(cfg); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+	waitRecordDetection(t, dest)
+
+	conn, verified := realityDial(t, srv.Addr(), testSNI, pub, sid)
+	defer conn.Close()
+	if !verified {
+		t.Fatal("not REALITY-signed")
+	}
+	hdr := vlessHeader(t, echo)
+	flow := append([]byte{0x0a, byte(len("xtls-rprx-vision"))}, "xtls-rprx-vision"...)
+	vision := append(append(append([]byte{}, hdr[:17]...), byte(len(flow))), flow...)
+	vision = append(vision, hdr[18:]...)
+	if _, err := conn.Write(append(vision, []byte("ping")...)); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	n, err := conn.Read(make([]byte, 16))
+	if n > 0 {
+		t.Fatalf("Vision request got %d bytes of response", n)
+	}
+	if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		t.Fatal("Vision request was neither served nor closed")
+	}
+}
+
+// F872: хук грузит xt_comment до первого правила с -m comment — иначе на
+// прошивке без модуля порт REALITY с WAN не открывается.
+func TestWANHookLoadsCommentModuleFirst(t *testing.T) {
+	h := renderWANHook(2053)
+	load, use := strings.Index(h, "insmod"), strings.Index(h, "-m comment")
+	if load < 0 || use < 0 || load > use {
+		t.Fatalf("xt_comment must be loaded before the first -m comment rule:\n%s", h)
+	}
+}
+
+// Сертификат dest больше старого буфера записи REALITY (до xtls/reality #33)
+// рвал рукопожатие с любым клиентом: на www.microsoft.com вход не работал.
+func TestRealityLargeDestCertificate(t *testing.T) {
+	dest, der := startFakeDestNames(t, 600)
+	if len(der) < 9000 {
+		t.Fatalf("certificate only %d bytes", len(der))
+	}
+	echo := startEcho(t)
+	c, _ := startC(t)
+	cfg, pub, sid := newTestConfig(t, dest, TransportTCP)
+	cfg.Upstream = c.Addr()
+	srv := New()
+	if err := srv.Apply(cfg); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+	waitRecordDetection(t, dest)
+
+	conn, verified := realityDial(t, srv.Addr(), testSNI, pub, sid)
+	defer conn.Close()
+	if !verified {
+		t.Fatal("not REALITY-signed")
+	}
+	if _, err := conn.Write(append(vlessHeader(t, echo), []byte("big")...)); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	got := make([]byte, 5)
+	if _, err := io.ReadFull(conn, got); err != nil || string(got[2:]) != "big" {
+		t.Fatalf("echo through REALITY with a large dest certificate: %q %v", got, err)
 	}
 }

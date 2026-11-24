@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -12,8 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hoaxisr/awg-manager/internal/events"
-	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
@@ -90,45 +87,6 @@ type SystemInfoResponse struct {
 	Data    SystemInfoData `json:"data"`
 }
 
-// HydraRouteStatusData mirrors frontend HydraRouteStatus.
-type HydraRouteStatusData struct {
-	Installed    bool   `json:"installed" example:"true"`
-	Running      bool   `json:"running" example:"true"`
-	Version      string `json:"version,omitempty" example:"2.4.1"`
-	PID          int    `json:"pid,omitempty" example:"12345"`
-	StalePID     int    `json:"stalePid,omitempty" example:"12345"`
-	ProcessState string `json:"processState" example:"running" enums:"not_installed,stopped,running,dead"`
-	LastError    string `json:"lastError,omitempty" example:"neo restart: exit status 1"`
-}
-
-// HydraRouteStatusResponse is the envelope for GET /system/hydraroute-status.
-type HydraRouteStatusResponse struct {
-	Success bool                 `json:"success" example:"true"`
-	Data    HydraRouteStatusData `json:"data"`
-}
-
-func hydraRouteStatusData(s hydraroute.Status) HydraRouteStatusData {
-	state := s.ProcessState
-	if state == "" {
-		if !s.Installed {
-			state = hydraroute.StateNotInstalled
-		} else if s.Running {
-			state = hydraroute.StateRunning
-		} else {
-			state = hydraroute.StateStopped
-		}
-	}
-	return HydraRouteStatusData{
-		Installed:    s.Installed,
-		Running:      s.Running,
-		Version:      s.Version,
-		PID:          s.PID,
-		StalePID:     s.StalePID,
-		ProcessState: string(state),
-		LastError:    s.LastError,
-	}
-}
-
 // WANInterfaceDTO mirrors frontend WANInterface.
 type WANInterfaceDTO struct {
 	Name  string `json:"name" example:"ISP1"`
@@ -196,9 +154,7 @@ type SystemHandler struct {
 	restartFn              func()
 	bootStatusFn           func() bool // returns true if boot is still in progress
 	slowRequestThresholdMs int         // 0 = slow HTTP profiling disabled
-	hydra                  *hydraroute.Service
 	singboxOp              *singbox.Operator
-	bus                    *events.Bus
 
 	singboxInfoMu                sync.RWMutex
 	singboxVersionCached         string
@@ -218,10 +174,6 @@ const singboxVersionCacheTTL = 45 * time.Second
 // change; dynamic fields (temps, memory) are also polled every 30 s by the
 // frontend, so 15 s staleness is imperceptible.
 const routerDetailsCacheTTL = 15 * time.Second
-
-// SetEventBus wires the SSE bus so HR Neo control actions emit
-// `routing.hydrarouteStatus` resource:invalidated hints.
-func (h *SystemHandler) SetEventBus(bus *events.Bus) { h.bus = bus }
 
 // NewSystemHandler creates a new system handler.
 func NewSystemHandler(version string) *SystemHandler {
@@ -281,11 +233,6 @@ func (h *SystemHandler) SetSlowRequestThresholdMs(ms int) {
 	h.slowRequestThresholdMs = ms
 }
 
-// SetHydraRoute sets the HydraRoute Neo service for status/control endpoints.
-func (h *SystemHandler) SetHydraRoute(svc *hydraroute.Service) {
-	h.hydra = svc
-}
-
 // SetSingboxOperator provides access to the sing-box operator for
 // reporting install status in system info.
 func (h *SystemHandler) SetSingboxOperator(op *singbox.Operator) {
@@ -313,67 +260,6 @@ func (h *SystemHandler) RestartDaemon(w http.ResponseWriter, r *http.Request) {
 	}
 	response.Success(w, map[string]string{"status": "restarting"})
 	h.restartFn()
-}
-
-// HydraRouteStatus returns HydraRoute Neo detection status.
-//
-//	@Summary		HydraRoute status (system)
-//	@Tags			system
-//	@Produce		json
-//	@Security		CookieAuth
-//	@Success		200	{object}	HydraRouteStatusResponse
-//	@Failure		400	{object}	APIErrorEnvelope
-//	@Failure		500	{object}	APIErrorEnvelope
-//	@Router			/system/hydraroute-status [get]
-func (h *SystemHandler) HydraRouteStatus(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		response.MethodNotAllowed(w)
-		return
-	}
-	if h.hydra == nil {
-		response.Success(w, hydraRouteStatusData(hydraroute.Status{
-			Installed:    false,
-			Running:      false,
-			ProcessState: hydraroute.StateNotInstalled,
-		}))
-		return
-	}
-	response.Success(w, hydraRouteStatusData(h.hydra.RefreshStatus()))
-}
-
-// HydraRouteControl starts/stops/restarts the HydraRoute daemon.
-//
-//	@Summary		HydraRoute control (system)
-//	@Tags			system
-//	@Accept			json
-//	@Produce		json
-//	@Security		CookieAuth
-//	@Success		200	{object}	APIEnvelope
-//	@Failure		400	{object}	APIErrorEnvelope
-//	@Failure		500	{object}	APIErrorEnvelope
-//	@Router			/system/hydraroute-control [post]
-func (h *SystemHandler) HydraRouteControl(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		response.MethodNotAllowed(w)
-		return
-	}
-	if h.hydra == nil {
-		response.Error(w, "HydraRoute not available", "HYDRAROUTE_UNAVAILABLE")
-		return
-	}
-	var req struct {
-		Action string `json:"action"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.Error(w, "Invalid request", "INVALID_REQUEST")
-		return
-	}
-	if err := h.hydra.Control(req.Action); err != nil {
-		response.Error(w, err.Error(), "HYDRAROUTE_CONTROL_ERROR")
-		return
-	}
-	h.bus.PublishInvalidated(events.ResourceRoutingHydrarouteStatus, "control-"+req.Action)
-	response.Success(w, hydraRouteStatusData(h.hydra.RefreshStatus()))
 }
 
 // Info returns system information.

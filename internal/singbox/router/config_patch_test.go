@@ -416,16 +416,16 @@ func TestEnsureSystemRules(t *testing.T) {
 		t.Errorf("system rules duplicated: sniff=%d hijack=%d private=%d",
 			sniffCount, hijackCount, privateCount)
 	}
-	if cfg.Route.Rules[0].Action == "sniff" && cfg.Route.Rules[0].Timeout != DefaultSniffTimeout {
-		t.Errorf("system sniff timeout = %q, want %q", cfg.Route.Rules[0].Timeout, DefaultSniffTimeout)
+	// F810: таймаут sniff не навязываем — дефолт sing-box (300 мс); 3 с
+	// задерживали протоколы, где первым говорит сервер (FTP, VNC, MySQL).
+	if cfg.Route.Rules[0].Action == "sniff" && cfg.Route.Rules[0].Timeout != "" {
+		t.Errorf("system sniff timeout = %q, want empty (sing-box default)", cfg.Route.Rules[0].Timeout)
 	}
-
-	// Legacy sniff rule without timeout is upgraded in-place cleanly.
 	cfgLegacy := NewEmptyConfig()
 	cfgLegacy.Route.Rules = []Rule{{Action: "sniff"}, {Protocol: "dns", Action: "hijack-dns"}}
 	cfgLegacy.EnsureSystemRules(true)
-	if len(cfgLegacy.Route.Rules) == 0 || cfgLegacy.Route.Rules[0].Action != "sniff" || cfgLegacy.Route.Rules[0].Timeout != DefaultSniffTimeout {
-		t.Errorf("legacy system sniff not upgraded to %q: %+v", DefaultSniffTimeout, cfgLegacy.Route.Rules)
+	if len(cfgLegacy.Route.Rules) == 0 || cfgLegacy.Route.Rules[0].Action != "sniff" || cfgLegacy.Route.Rules[0].Timeout != "" {
+		t.Errorf("existing system sniff must stay untouched: %+v", cfgLegacy.Route.Rules)
 	}
 }
 

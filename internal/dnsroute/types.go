@@ -1,6 +1,7 @@
 package dnsroute
 
 import (
+	"errors"
 	"slices"
 
 	"github.com/hoaxisr/awg-manager/internal/ipfamily"
@@ -35,15 +36,8 @@ type DomainList struct {
 	CreatedAt        string         `json:"createdAt"`
 	UpdatedAt        string         `json:"updatedAt"`
 	LastDedupeReport *DedupeReport  `json:"lastDedupeReport,omitempty"`
-	Backend          string         `json:"backend,omitempty"`      // "" or "ndms" = NDMS, "hydraroute" = HydraRoute Neo
-	IconURL          string         `json:"iconUrl,omitempty"`      // optional URL of custom icon for this rule (e.g. Qure CDN PNG or user-supplied)
-	HRRouteMode      string         `json:"hrRouteMode,omitempty"`  // "interface" or "policy" (hydraroute only)
-	HRPolicyName     string         `json:"hrPolicyName,omitempty"` // policy name for policy mode
-	// HRPolicyInterfaces lists NDMS interface names (e.g. "Wireguard0",
-	// "PPPoE0") permitted in a newly-created HR policy, in priority order.
-	// Only honored when HRRouteMode == "policy" and HRPolicyName is set
-	// (new-policy flow). Ignored otherwise. Not persisted back to clients.
-	HRPolicyInterfaces []string `json:"hrPolicyInterfaces,omitempty"`
+	Backend          string         `json:"backend,omitempty"` // "" or "ndms"
+	IconURL          string         `json:"iconUrl,omitempty"` // optional URL of custom icon for this rule (e.g. Qure CDN PNG or user-supplied)
 	// SkipIPv6 keeps IPv6 entries (CIDRs and bare addresses) out of the
 	// router: each one takes an include slot in the NDMS object-group like
 	// a domain, and on a router without IPv6 they only eat the limit. The
@@ -70,7 +64,6 @@ func (l DomainList) clone() DomainList {
 	l.ManualDomains = slices.Clone(l.ManualDomains)
 	l.Subscriptions = slices.Clone(l.Subscriptions)
 	l.Routes = slices.Clone(l.Routes)
-	l.HRPolicyInterfaces = slices.Clone(l.HRPolicyInterfaces)
 	l.ExcludesText = clonePtr(l.ExcludesText)
 	l.ManualText = clonePtr(l.ManualText)
 	l.SkipIPv6 = clonePtr(l.SkipIPv6)
@@ -149,10 +142,11 @@ type DedupeItem struct {
 // StoreData is the top-level dns-routes.json structure.
 type StoreData struct {
 	Lists []DomainList `json:"lists"`
-	// HRRuleIcons keeps UI-only custom icons for HydraRoute Neo groups, keyed by hrIconKey(target, description).
-	// HR groups themselves live in domain.conf/ip.list and have no icon field.
-	HRRuleIcons map[string]string `json:"hrRuleIcons,omitempty"`
 }
+
+// ErrHydraRouteBackend — запись правила с бэкендом HydraRoute Neo: этот демон
+// панель больше не настраивает.
+var ErrHydraRouteBackend = errors.New("правила HydraRoute больше не поддерживаются")
 
 func isHydraRoute(backend string) bool {
 	return backend == "hydraroute"

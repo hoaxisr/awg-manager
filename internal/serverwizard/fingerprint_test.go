@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/cdndispatcher"
 	"github.com/hoaxisr/awg-manager/internal/tgwebproxy"
@@ -57,9 +56,6 @@ func TestFingerprintEngine_Determinism(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(procNetDir, "tcp"), []byte("  sl  local_address rem_address   st\n"), 0644)
 	_ = os.WriteFile(filepath.Join(procNetDir, "tcp6"), []byte("  sl  local_address rem_address   st\n"), 0644)
 
-	initScript := filepath.Join(tempDir, "S99test")
-	_ = os.WriteFile(initScript, []byte("#!/bin/sh\n"), 0755)
-
 	xray := &mockXrayReader{cfg: vlessserver.Config{Enabled: true, ListenPort: 9008}}
 	disp := &mockDispReader{cfg: cdndispatcher.Config{ListenAddr: ":9009"}, running: true}
 	tg := &mockTgReader{cfg: tgwebproxy.PublicConfig{Enabled: true, ListenPort: 8085}}
@@ -68,7 +64,6 @@ func TestFingerprintEngine_Determinism(t *testing.T) {
 
 	engine := NewFingerprintEngine(xray, disp, tg, rec, egress)
 	engine.SetProcDir(procDir)
-	engine.SetInitScripts([]string{initScript})
 	engine.SetTargetPorts([]int{9008, 9009})
 
 	ctx := context.Background()
@@ -88,9 +83,6 @@ func TestFingerprintEngine_DriftDetection(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(procNetDir, "tcp"), []byte("  sl  local_address rem_address   st\n"), 0644)
 	_ = os.WriteFile(filepath.Join(procNetDir, "tcp6"), []byte("  sl  local_address rem_address   st\n"), 0644)
 
-	initScript := filepath.Join(tempDir, "S99test")
-	_ = os.WriteFile(initScript, []byte("#!/bin/sh\n"), 0755)
-
 	xray := &mockXrayReader{cfg: vlessserver.Config{Enabled: true, ListenPort: 9008}}
 	disp := &mockDispReader{cfg: cdndispatcher.Config{ListenAddr: ":9009"}, running: true}
 	tg := &mockTgReader{cfg: tgwebproxy.PublicConfig{Enabled: true, ListenPort: 8085}}
@@ -99,7 +91,6 @@ func TestFingerprintEngine_DriftDetection(t *testing.T) {
 
 	engine := NewFingerprintEngine(xray, disp, tg, rec, egress)
 	engine.SetProcDir(procDir)
-	engine.SetInitScripts([]string{initScript})
 	engine.SetTargetPorts([]int{9008, 9009})
 
 	ctx := context.Background()
@@ -146,14 +137,6 @@ func TestFingerprintEngine_DriftDetection(t *testing.T) {
 		t.Fatalf("expected drift on egress change")
 	}
 	egress.summary = "wan:eth0|awgm0:up"
-
-	// 6. Init script drift
-	time.Sleep(10 * time.Millisecond)
-	_ = os.WriteFile(initScript, []byte("#!/bin/sh\n# modified\n"), 0755)
-	driftFP = engine.Compute(ctx)
-	if driftFP == baseFP {
-		t.Fatalf("expected drift on init script modification")
-	}
 }
 
 func TestFingerprintStrictProbeFailureBlocksTransaction(t *testing.T) {

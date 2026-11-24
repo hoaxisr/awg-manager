@@ -17,7 +17,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/diagnostics"
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
 	"github.com/hoaxisr/awg-manager/internal/events"
-	"github.com/hoaxisr/awg-manager/internal/hydraroute"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
 	"github.com/hoaxisr/awg-manager/internal/managed/peerip"
@@ -52,6 +51,9 @@ func (f *fakeTunnels) Get(_ context.Context, id string) (*service.TunnelWithStat
 		}
 	}
 	return nil, errNotFound(id)
+}
+func (f *fakeTunnels) GuardUplinkMutation(context.Context, string, string) (func(), error) {
+	return func() {}, nil
 }
 func (f *fakeTunnels) SetEnabled(_ context.Context, id string, v bool) error {
 	f.enabled[id] = v
@@ -136,13 +138,7 @@ type fakeDNSRoutes struct {
 	created dnsroute.DomainList
 	updated dnsroute.DomainList
 	enabled map[string]bool
-	// getKnowsHR mirrors the real service: dnsroute.Get scans only the
-	// JSON store and never finds an "hr:" list, while List merges them in.
-	getKnowsHR bool
-	deleted    []string
-	// afterSetEnabled runs after the flag is stored: lets a test model the
-	// HR revision change that renumbers every "hr:" id.
-	afterSetEnabled func(f *fakeDNSRoutes)
+	deleted []string
 	// beforeEdit runs inside UpdateWith before the stored list is read: a
 	// web-interface edit landing between the adapter's read and the write.
 	beforeEdit func(f *fakeDNSRoutes)
@@ -212,9 +208,6 @@ func (f *fakeDNSRoutes) List(context.Context) ([]dnsroute.DomainList, error) {
 func (f *fakeDNSRoutes) Get(_ context.Context, id string) (*dnsroute.DomainList, error) {
 	for i := range f.lists {
 		if f.lists[i].ID == id {
-			if strings.HasPrefix(id, "hr:") && !f.getKnowsHR {
-				return nil, errNotFound(id)
-			}
 			return &f.lists[i], nil
 		}
 	}
@@ -229,9 +222,6 @@ func (f *fakeDNSRoutes) SetEnabled(_ context.Context, id string, v bool) error {
 		if f.lists[i].ID == id {
 			f.lists[i].Enabled = v
 		}
-	}
-	if f.afterSetEnabled != nil {
-		f.afterSetEnabled(f)
 	}
 	return nil
 }
@@ -1557,8 +1547,8 @@ func TestLocal_UpdateDNSRouteSendsOnlyWhatChanged(t *testing.T) {
 	if sent.Domains != nil {
 		t.Errorf("Domains is derived by the service and must not be sent: %v", sent.Domains)
 	}
-	if sent.Name != "Видео" {
-		t.Errorf("an omitted name must be sent as the current one: %q", sent.Name)
+	if sent.Name != "" {
+		t.Errorf("an omitted name must not be sent, the service keeps it: %q", sent.Name)
 	}
 
 	if !h.bus.has(events.ResourceRoutingDnsRoutes) {
@@ -2810,146 +2800,6 @@ func TestLocal_PeerToolsRefuseAnUnmanagedServerWithTheReason(t *testing.T) {
 	}
 }
 
-// TestLocal_DNSRouteReadsResolveHydraRouteIDs — ревью нашло: списки
-// HydraRoute приходят из List с id «hr:…», а Get их не знает. Получить,
-// переключить или поправить такой список через MCP было нельзя, а
-// explain_route помечал каждый как «не удалось прочитать».
-func TestLocal_DNSRouteReadsResolveHydraRouteIDs(t *testing.T) {
-	ctx := context.Background()
-	h := newHarness(t)
-	h.dns.lists = []dnsroute.DomainList{
-		{ID: "dl-1", Name: "Video", Enabled: true, Domains: []string{"youtube.com"}},
-		{ID: "hr:youtube", Name: "YouTube (HR)", Enabled: true, Backend: "hydraroute", Domains: []string{"youtube.com"}, Routes: []dnsroute.RouteTarget{{TunnelID: "tn-1"}}},
-	}
-	h.dns.getKnowsHR = false
-
-	got, err := h.l.GetDNSRoute(ctx, "hr:youtube")
-	if err != nil {
-		t.Fatalf("GetDNSRoute(hr:…) = %v; the list is in List and must be readable", err)
-	}
-	if got.Name != "YouTube (HR)" || got.Backend != "hydraroute" {
-		t.Fatalf("got %+v", got)
-	}
-
-	if _, err := h.l.SetDNSRouteEnabled(ctx, "hr:youtube", false); err != nil {
-		t.Fatalf("SetDNSRouteEnabled(hr:…) = %v", err)
-	}
-	if v, ok := h.dns.enabled["hr:youtube"]; !ok || v {
-		t.Fatalf("SetEnabled was not called for the HR list: %v %v", v, ok)
-	}
-
-	if _, _, err := h.l.UpdateDNSRoute(ctx, mcpsrv.DNSRouteUpdate{RouteID: "hr:youtube", Name: "YT"}); err != nil {
-		t.Fatalf("UpdateDNSRoute(hr:…) = %v", err)
-	}
-	if h.dns.updated.ID != "hr:youtube" {
-		t.Fatalf("update went to %q", h.dns.updated.ID)
-	}
-
-	if _, err := h.l.GetDNSRoute(ctx, "nope"); err == nil {
-		t.Error("an unknown id must still be an error")
-	}
-}
-
-// TestLocal_UpdateDNSRouteKeepsHRDescription — у HR-группы имя = описание,
-// и HR-путь dnsroute.Update берёт его из записи как есть: пустое имя
-// стёрло бы описание, хотя схема MCP обещает «не прислал — осталось».
-func TestLocal_UpdateDNSRouteKeepsHRDescription(t *testing.T) {
-	ctx := context.Background()
-	h := newHarness(t)
-	h.dns.lists = []dnsroute.DomainList{{ID: "hr:r1:nwg0:0", Name: "YouTube", Backend: "hydraroute", ManualDomains: []string{"youtube.com"}}}
-
-	if _, _, err := h.l.UpdateDNSRoute(ctx, mcpsrv.DNSRouteUpdate{RouteID: "hr:r1:nwg0:0", ManualDomains: []string{"youtu.be"}}); err != nil {
-		t.Fatal(err)
-	}
-	if h.dns.updated.Name != "YouTube" {
-		t.Fatalf("sent name %q, want the current description kept", h.dns.updated.Name)
-	}
-}
-
-// TestLocal_UpdateDNSRouteHRStartsFromStored — HR-путь dnsroute.Update
-// переписывает группу целиком и ничего не берёт из сохранённой: разреженный
-// патч становился интерфейсной группой без туннеля, доменов и иконки (F632).
-func TestLocal_UpdateDNSRouteHRStartsFromStored(t *testing.T) {
-	ctx := context.Background()
-	h := newHarness(t)
-	h.dns.lists = []dnsroute.DomainList{{
-		ID: "hr:r1:opkgtun10:0", Name: "YouTube", Backend: "hydraroute", IconURL: "https://i/yt.png",
-		ManualDomains: []string{"youtube.com", "10.0.0.0/8"}, HRRouteMode: "interface",
-		Routes: []dnsroute.RouteTarget{{TunnelID: "opkgtun10", Interface: "opkgtun10"}},
-	}}
-
-	if _, _, err := h.l.UpdateDNSRoute(ctx, mcpsrv.DNSRouteUpdate{RouteID: "hr:r1:opkgtun10:0", Name: "YT"}); err != nil {
-		t.Fatal(err)
-	}
-	u := h.dns.updated
-	if u.Name != "YT" || u.HRRouteMode != "interface" || u.IconURL != "https://i/yt.png" ||
-		len(u.ManualDomains) != 2 || len(u.Routes) != 1 || u.Routes[0].Interface != "opkgtun10" {
-		t.Fatalf("sent %+v, want the stored group with only the name changed", u)
-	}
-
-	// Новый туннель перекрывает сохранённую цель, остальное — как было.
-	if _, _, err := h.l.UpdateDNSRoute(ctx, mcpsrv.DNSRouteUpdate{RouteID: "hr:r1:opkgtun10:0", TunnelID: "awg10"}); err != nil {
-		t.Fatal(err)
-	}
-	if u := h.dns.updated; len(u.Routes) != 1 || u.Routes[0].TunnelID != "awg10" || u.Routes[0].Interface != "" || u.IconURL == "" {
-		t.Fatalf("sent %+v", u)
-	}
-}
-
-// У группы с политикой туннеля нет: tunnelId молча перевёл бы её в
-// интерфейсный режим — отказ, запись не тронута (F632).
-func TestLocal_UpdateDNSRouteHRPolicyRefusesTunnel(t *testing.T) {
-	ctx := context.Background()
-	h := newHarness(t)
-	h.dns.lists = []dnsroute.DomainList{{
-		ID: "hr:r1:Belka:0", Name: "B", Backend: "hydraroute", HRRouteMode: "policy", HRPolicyName: "Belka",
-		ManualDomains: []string{"b.com"},
-	}}
-
-	if _, _, err := h.l.UpdateDNSRoute(ctx, mcpsrv.DNSRouteUpdate{RouteID: "hr:r1:Belka:0", TunnelID: "awg10"}); err == nil {
-		t.Fatal("tunnelId on a policy group must be refused")
-	}
-	if h.dns.updated.ID != "" {
-		t.Fatalf("update sent anyway: %+v", h.dns.updated)
-	}
-	if _, _, err := h.l.UpdateDNSRoute(ctx, mcpsrv.DNSRouteUpdate{RouteID: "hr:r1:Belka:0", Name: "B2"}); err != nil {
-		t.Fatal(err)
-	}
-	if u := h.dns.updated; u.HRRouteMode != "policy" || u.HRPolicyName != "Belka" || len(u.ManualDomains) != 1 {
-		t.Fatalf("sent %+v, want the policy group kept", u)
-	}
-}
-
-// TestLocal_SetDNSRouteEnabledFindsHRGroupByPosition — переключение HR-
-// группы меняет ревизию файлов, а с ней id всех групп. Перечитывать по
-// старому id нельзя: вернулась бы запись до переключения. Ищем по позиции.
-func TestLocal_SetDNSRouteEnabledFindsHRGroupByPosition(t *testing.T) {
-	ctx := context.Background()
-	h := newHarness(t)
-	h.dns.lists = []dnsroute.DomainList{
-		{ID: "hr:r1:nwg0:0", Name: "A", Enabled: true, Backend: "hydraroute"},
-		{ID: "hr:r1:nwg0:1", Name: "B", Enabled: true, Backend: "hydraroute"},
-		{ID: "hr:r1:Belka:1", Name: "C", Enabled: true, Backend: "hydraroute"},
-	}
-	h.dns.afterSetEnabled = func(f *fakeDNSRoutes) {
-		for i := range f.lists {
-			f.lists[i].ID = strings.Replace(f.lists[i].ID, "hr:r1:", "hr:r2:", 1)
-		}
-	}
-
-	got, err := h.l.SetDNSRouteEnabled(ctx, "hr:r1:nwg0:1", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.ID != "hr:r2:nwg0:1" || got.Name != "B" || got.Enabled {
-		t.Fatalf("got %+v, want the fresh hr:r2:nwg0:1, disabled", got)
-	}
-	ref, err := hydraroute.ParseGroupRef(strings.TrimPrefix(got.ID, "hr:"))
-	if err != nil || ref.Target != "nwg0" || ref.Index != 1 {
-		t.Fatalf("ref = %+v, %v", ref, err)
-	}
-}
-
 // TestLocal_ListConnectionsFiltersByExactSourceIP — ревью нашло: clientIp
 // уходил в службу как подстрочный поиск по «src dst clientName». Фильтр
 // «только потоки этого устройства» захватывал соседей по подсети,
@@ -3025,13 +2875,13 @@ func TestLocal_ListDNSRouteDetailsIsOneListCall(t *testing.T) {
 	h := newHarness(t)
 	h.dns.lists = []dnsroute.DomainList{
 		{ID: "dl-1", Name: "A", Domains: []string{"a.example"}},
-		{ID: "hr:b", Name: "B", Backend: "hydraroute", Domains: []string{"b.example"}},
+		{ID: "dl-2", Name: "B", Domains: []string{"b.example"}},
 	}
 	got, err := h.l.ListDNSRouteDetails(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[1].ID != "hr:b" || got[1].Domains[0] != "b.example" {
+	if len(got) != 2 || got[1].ID != "dl-2" || got[1].Domains[0] != "b.example" {
 		t.Fatalf("got %+v", got)
 	}
 }

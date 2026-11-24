@@ -551,6 +551,12 @@ label {
 	to { transform: rotate(360deg); }
 }
 
+/* Вращающаяся иконка (lucide) на время операции: class="spin". Общий класс —
+   scoped-правило в компоненте до svg дочернего компонента не дотягивается. */
+.spin {
+	animation: spin 1s linear infinite;
+}
+
 /* Loading-centered wrapper (used by tab-loading panels and full-page loaders) */
 .loading-centered {
 	min-height: 220px;

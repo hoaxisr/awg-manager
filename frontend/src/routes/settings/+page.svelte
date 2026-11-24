@@ -76,7 +76,6 @@
 	let saving = $state(false);
 	const origin = $derived(typeof window !== "undefined" ? window.location.origin : "");
 	const showSingboxIntegration = $derived(isSectionVisible($usageLevel, "singboxTunnels"));
-	const showHydraIntegration = $derived(isRoutingSubTabVisible($usageLevel, "hrNeo"));
 	const showDnsRouteCard = $derived(isRoutingSubTabVisible($usageLevel, "dnsRoutes"));
 	const showDownloadRouteDetails = $derived(areDownloadRouteDetailsVisible($usageLevel));
 	const downloadRouteLabel = $derived(resolveDownloadRouteLabel(settings, $downloadOutbounds));
@@ -461,7 +460,6 @@ $effect(() => {
 
 				<IntegrationsSection
 					showSingbox={showSingboxIntegration}
-					showHydra={showHydraIntegration}
 					bootstrapDNS={settings.singboxBootstrapDNS ?? ''}
 					bootstrapSaving={savingBootstrapDNS}
 					onsaveBootstrapDNS={saveBootstrapDNS}
@@ -613,7 +611,6 @@ $effect(() => {
 
 		<ServiceActionsCard
 			showSingbox={showSingboxIntegration}
-			showHydra={showHydraIntegration}
 		/>
 
 		<div class="settings-doc-block" id="settings-footer-block">

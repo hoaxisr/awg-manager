@@ -11,14 +11,14 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
-	"github.com/hoaxisr/awg-manager/internal/hydraroute"
+	"github.com/hoaxisr/awg-manager/internal/geodata"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router/bypassset"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	sysexec "github.com/hoaxisr/awg-manager/internal/sys/exec"
 )
 
 // GeoIPTagCounter — узкий контракт geoip-bypass: бюджет-валидация тегов и
-// перечисление .dat, из которых наполняется набор. *hydraroute.GeoDataStore
+// перечисление .dat, из которых наполняется набор. *geodata.GeoDataStore
 // удовлетворяет обоим методам.
 type GeoIPTagCounter interface {
 	GeoIPTagCounts() map[string]int
@@ -59,14 +59,14 @@ func (s *ServiceImpl) validateBypassGeoIPTags(sr storage.SingboxRouterSettings) 
 type geoSourceAdapter struct {
 	files GeoIPTagCounter
 	// extract — шов разбора одного .dat для тестов (nil =
-	// hydraroute.ExtractGeoIPTagLines).
+	// geodata.ExtractGeoIPTagLines).
 	extract func(path, tag string) ([]string, error)
 }
 
 func (g geoSourceAdapter) GeoIPTagLines(tag string) ([]string, bool, error) {
 	extract := g.extract
 	if extract == nil {
-		extract = hydraroute.ExtractGeoIPTagLines
+		extract = geodata.ExtractGeoIPTagLines
 	}
 	geoIP, _ := g.files.GeoFilePaths()
 	var lines []string
@@ -74,7 +74,7 @@ func (g geoSourceAdapter) GeoIPTagLines(tag string) ([]string, bool, error) {
 	for _, path := range geoIP {
 		got, err := extract(path, tag)
 		if err != nil {
-			if errors.Is(err, hydraroute.ErrGeoTagNotFound) {
+			if errors.Is(err, geodata.ErrGeoTagNotFound) {
 				continue
 			}
 			return nil, false, err

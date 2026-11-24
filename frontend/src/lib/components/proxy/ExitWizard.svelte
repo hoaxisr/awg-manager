@@ -4,7 +4,7 @@
 	// ссылки он выводится схемой (WE-08). Решения шагов — в exitWizard.ts.
 	import { m } from '$lib/i18n';
 	import { untrack } from 'svelte';
-	import { Button, Card, Dropdown, FieldHint } from '$lib/components/ui';
+	import { Button, Card, Dropdown, FieldHint, WizardSteps } from '$lib/components/ui';
 	import { ExternalLink } from 'lucide-svelte';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
@@ -12,7 +12,6 @@
 	import { detectProxyLinkScheme } from '$lib/utils/proxyLinkScheme';
 	import { linkHasBundledWg } from '$lib/utils/serverPeerOptions';
 	import ConfPasteBox from './ConfPasteBox.svelte';
-	import WizardSteps from './WizardSteps.svelte';
 	import ExitWizardParams from './ExitWizardParams.svelte';
 	import ExitWizardSource from './ExitWizardSource.svelte';
 	import { cloneConfig } from './exitConfig';

@@ -17,12 +17,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/childproc"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/procnet"
 )
 
@@ -183,6 +186,7 @@ type runningInstance struct {
 	exitMu     sync.Mutex
 	exitErr    error
 	cancelFunc context.CancelFunc
+	ensuredAt  time.Time // последний EnsureEndpoint (или старт)
 }
 
 func (inst *runningInstance) recordExit(err error) {
@@ -220,8 +224,10 @@ func (inst *runningInstance) stop() {
 	if inst.bridgeLn != nil {
 		_ = inst.bridgeLn.Close()
 	}
-	if inst.cmd != nil && inst.cmd.Process != nil {
-		_ = inst.cmd.Process.Kill()
+	// После Wait pid уже может принадлежать чужому процессу: Process.Kill
+	// это отсекал сам, а KillGroup бьёт по номеру — поэтому только живому.
+	if inst.isAlive() {
+		_ = childproc.KillGroup(inst.cmd.Process.Pid)
 	}
 	if inst.doneCh != nil {
 		select {
@@ -234,6 +240,7 @@ func (inst *runningInstance) stop() {
 var (
 	globalMu        sync.Mutex
 	globalInstances = make(map[string]*runningInstance)
+	globalDormant   = make(map[string]EndpointSpec) // остановлены сверкой, ждут ссылки
 	customStorePath string
 )
 
@@ -617,10 +624,17 @@ func EnsureEndpoint(spec EndpointSpec) (int, error) {
 
 	if inst, ok := globalInstances[spec.Key]; ok {
 		if inst.isAlive() {
+			// Ссылку разобрали заново: слот с этим портом вот-вот сохранят,
+			// сверка не должна снять endpoint до этого.
+			inst.ensuredAt = time.Now()
 			return inst.spec.SocksPort, nil
 		}
 		delete(globalInstances, spec.Key)
 		inst.stop()
+	}
+	if d, ok := globalDormant[spec.Key]; ok {
+		spec.SocksPort = d.SocksPort // прежний порт уже записан в слоты
+		delete(globalDormant, spec.Key)
 	}
 
 	inst, err := startInstanceLocked(spec)
@@ -632,14 +646,126 @@ func EnsureEndpoint(spec EndpointSpec) (int, error) {
 	return inst.spec.SocksPort, nil
 }
 
-// StopAllEndpoints stops all running FiniteProto client daemon instances.
-func StopAllEndpoints() {
+// ReconcileReferenced сверяет endpoint'ы со ссылками на их socks-порт в
+// файлах под roots (слоты sing-box, конфиг FIRC). Неиспользуемый endpoint
+// старше minAge останавливается, но его описание остаётся «спящим»: если
+// ссылка вернётся (включили выключенный слот, восстановили снимок), следующая
+// сверка поднимет его на прежнем порту. minAge закрывает окно между
+// EnsureEndpoint и сохранением слота. Непарсящийся JSON отменяет сверку:
+// лишний процесс лучше оборванного туннеля.
+func ReconcileReferenced(roots []string, minAge time.Duration) error {
+	used, err := referencedSocksPorts(roots)
+	if err != nil {
+		return err
+	}
 	globalMu.Lock()
 	defer globalMu.Unlock()
+	changed := false
 	for k, inst := range globalInstances {
+		if used[inst.spec.SocksPort] || time.Since(inst.ensuredAt) < minAge {
+			continue
+		}
 		delete(globalInstances, k)
 		inst.stop()
+		globalDormant[k] = inst.spec
+		changed = true
 	}
+	var errs []error
+	for k, sp := range globalDormant {
+		if !used[sp.SocksPort] {
+			continue
+		}
+		inst, err := startInstanceLocked(sp)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("revive %s: %w", k, err))
+			continue
+		}
+		delete(globalDormant, k)
+		globalInstances[k] = inst
+		changed = true
+	}
+	if changed {
+		errs = append(errs, savePersistedLocked())
+	}
+	return errors.Join(errs...)
+}
+
+var loopbackPortRe = regexp.MustCompile(`127\.0\.0\.1:(\d+)`)
+
+// referencedSocksPorts: в *.json — socks-outbound на 127.0.0.1 на любой
+// глубине (слоты sing-box), в прочих файлах — «127.0.0.1:<порт>» (FIRC пишет
+// socks5://127.0.0.1:P). Каталог snapshots пропускается: там base64.
+func referencedSocksPorts(roots []string) (map[int]bool, error) {
+	used := map[int]bool{}
+	for _, root := range roots {
+		if root == "" {
+			continue
+		}
+		err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				if path == root && os.IsNotExist(err) {
+					return filepath.SkipDir
+				}
+				return err
+			}
+			if d.IsDir() {
+				if d.Name() == "snapshots" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !d.Type().IsRegular() {
+				return nil // сокет/FIFO: чтение повесило бы сверку
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			if !strings.HasSuffix(path, ".json") {
+				for _, m := range loopbackPortRe.FindAllSubmatch(data, -1) {
+					if p, err := strconv.Atoi(string(m[1])); err == nil {
+						used[p] = true
+					}
+				}
+				return nil
+			}
+			var doc any
+			if err := json.Unmarshal(data, &doc); err != nil {
+				return fmt.Errorf("fpclient: parse %s: %w", path, err)
+			}
+			collectSocksPorts(doc, used)
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	return used, nil
+}
+
+func collectSocksPorts(v any, used map[int]bool) {
+	switch t := v.(type) {
+	case map[string]any:
+		if t["type"] == "socks" && t["server"] == "127.0.0.1" {
+			if p, ok := t["server_port"].(float64); ok {
+				used[int(p)] = true
+			}
+		}
+		for _, c := range t {
+			collectSocksPorts(c, used)
+		}
+	case []any:
+		for _, c := range t {
+			collectSocksPorts(c, used)
+		}
+	}
+}
+
+// persistedEndpoint — запись fp-clients.json; старый формат (голый
+// EndpointSpec) читается как неспящий.
+type persistedEndpoint struct {
+	EndpointSpec
+	Dormant bool `json:"dormant,omitempty"`
 }
 
 // RestorePersistedEndpoints starts all persisted FiniteProto client endpoints on daemon startup.
@@ -651,30 +777,41 @@ func RestorePersistedEndpoints() {
 	if err != nil || len(data) == 0 {
 		return
 	}
-	var specs []EndpointSpec
+	var specs []persistedEndpoint
 	if json.Unmarshal(data, &specs) != nil {
 		return
 	}
-	for _, sp := range specs {
+	for _, pe := range specs {
+		sp := pe.EndpointSpec
 		if sp.Key == "" || sp.Server == "" {
 			continue
 		}
 		if _, err := validateSpecCredentials(sp.UUID, sp.FPClientID, sp.FPSecretHex); err != nil {
 			continue
 		}
+		if pe.Dormant {
+			globalDormant[sp.Key] = sp
+			continue
+		}
 		if inst, exists := globalInstances[sp.Key]; exists && inst.isAlive() {
 			continue
 		}
 		if inst, err := startInstanceLocked(sp); err == nil {
+			// Восстановленный на старте не «свежий»: слоты уже на диске, и
+			// первая сверка вправе его усыпить.
+			inst.ensuredAt = time.Time{}
 			globalInstances[sp.Key] = inst
 		}
 	}
 }
 
 func savePersistedLocked() error {
-	specs := make([]EndpointSpec, 0, len(globalInstances))
+	specs := make([]persistedEndpoint, 0, len(globalInstances)+len(globalDormant))
 	for _, inst := range globalInstances {
-		specs = append(specs, inst.spec)
+		specs = append(specs, persistedEndpoint{EndpointSpec: inst.spec})
+	}
+	for _, sp := range globalDormant {
+		specs = append(specs, persistedEndpoint{EndpointSpec: sp, Dormant: true})
 	}
 	data, err := json.MarshalIndent(specs, "", "  ")
 	if err != nil {
@@ -682,7 +819,7 @@ func savePersistedLocked() error {
 	}
 	p := activeStorePath()
 	_ = os.MkdirAll(filepath.Dir(p), 0o755)
-	return os.WriteFile(p, data, 0o600)
+	return storage.AtomicWritePerm(p, data, 0o600)
 }
 
 type boundedLogBuffer struct {
@@ -802,6 +939,10 @@ func startInstanceLocked(spec EndpointSpec) (*runningInstance, error) {
 		"-method", methodMode,
 	)
 	cmd.Stderr = stderrBuf
+	// Порядок важен: SetProcessGroup заменяет SysProcAttr целиком, а
+	// setParentDeath дописывает Pdeathsig в него.
+	childproc.SetProcessGroup(cmd)
+	setParentDeath(cmd)
 	cmd.Env = append(os.Environ(),
 		"FP_CLIENT_SECRET_HEX="+strings.ToLower(strings.TrimSpace(spec.FPSecretHex)),
 		"FP_CLIENT_METHOD="+methodMode,
@@ -812,6 +953,7 @@ func startInstanceLocked(spec EndpointSpec) (*runningInstance, error) {
 		return nil, fmt.Errorf("%w: start %s: %v", ErrCDaemonUnavailable, binPath, err)
 	}
 	inst.cmd = cmd
+	inst.ensuredAt = time.Now()
 	inst.doneCh = make(chan struct{})
 	go func() {
 		inst.recordExit(cmd.Wait())

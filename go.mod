@@ -18,7 +18,7 @@ require (
 	github.com/hoaxisr/awg-manager/awgmproto v0.1.2
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/refraction-networking/utls v1.8.2
-	github.com/xtls/reality v0.0.0-20260322125925-9234c772ba8f
+	github.com/xtls/reality v0.0.0-20260908045812-e1986a4d31ca
 	go.uber.org/goleak v1.3.0
 	golang.org/x/crypto v0.52.0
 	golang.org/x/net v0.55.0

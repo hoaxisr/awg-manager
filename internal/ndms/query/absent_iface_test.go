@@ -55,7 +55,7 @@ func TestResolveSystemName_AbsentInterface_NoResolver(t *testing.T) {
 	if got := q.Interfaces.ResolveSystemName(context.Background(), "Proxy2"); got != "" {
 		t.Fatalf("want empty, got %q", got)
 	}
-	_ = q.Interfaces.SystemNames(context.Background(), []string{"Proxy2", "OpkgTun12"})
+	_ = q.Interfaces.ResolveSystemName(context.Background(), "OpkgTun12")
 	if f.E != 0 {
 		t.Fatalf("E = %d, want 0", f.E)
 	}

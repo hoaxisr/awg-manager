@@ -74,6 +74,22 @@ type JobRunner struct {
 	limitsMu  sync.Mutex
 	limits    map[string][]time.Time // sessionID -> timestamps
 	clock     func() time.Time
+	// onFinished зовётся после перехода задания в конечную фазу, вне замков
+	// задания: применённая мастером конфигурация меняет то, что показывают
+	// карточки серверов.
+	onFinished func()
+}
+
+// SetOnFinished задаёт подписчика на завершение задания (успех, ошибка,
+// отмена, требуется восстановление). Вызывается до первого задания.
+func (jr *JobRunner) SetOnFinished(fn func()) {
+	jr.onFinished = fn
+}
+
+func (jr *JobRunner) notifyFinished() {
+	if jr.onFinished != nil {
+		jr.onFinished()
+	}
 }
 
 func NewJobRunner() *JobRunner {
@@ -99,6 +115,9 @@ func (jr *JobRunner) GenerateJobID() string {
 
 // CreateJobWithID registers a new wizard apply job with a predetermined ID.
 func (jr *JobRunner) CreateJobWithID(id, kind, sessionID string, cancelFn context.CancelFunc) *InternalJob {
+	// Чистка ленивая, на каждом новом задании: иначе завершённые задания и
+	// выданные учётные данные копились бы в памяти до перезапуска демона.
+	jr.PruneExpired()
 	now := jr.clock()
 
 	job := &InternalJob{
@@ -206,6 +225,7 @@ func (jr *JobRunner) FailJob(jobID, errCode, errMsg string) {
 		return
 	}
 
+	defer jr.notifyFinished() // LIFO: после снятия job.mu
 	job.mu.Lock()
 	defer job.mu.Unlock()
 
@@ -227,6 +247,7 @@ func (jr *JobRunner) MarkRecoveryRequired(jobID, reason string) {
 		return
 	}
 
+	defer jr.notifyFinished() // LIFO: после снятия job.mu
 	job.mu.Lock()
 	defer job.mu.Unlock()
 
@@ -269,6 +290,7 @@ func (jr *JobRunner) SucceedJob(jobID string, creds *RevealCredentials) {
 		}
 		jr.secretsMu.Unlock()
 	}
+	jr.notifyFinished()
 }
 
 // CancelJob attempts to cancel a job before the point of no return (committing).
@@ -331,6 +353,7 @@ func (jr *JobRunner) MarkCancelled(jobID string) {
 	if !ok {
 		return
 	}
+	defer jr.notifyFinished() // LIFO: после снятия job.mu
 	job.mu.Lock()
 	defer job.mu.Unlock()
 	job.Phase = JobPhaseCancelled
@@ -395,6 +418,14 @@ func (jr *JobRunner) PruneExpired() {
 		}
 	}
 	jr.secretsMu.Unlock()
+
+	jr.limitsMu.Lock()
+	for sid, ts := range jr.limits {
+		if len(ts) == 0 || !ts[len(ts)-1].After(now.Add(-RevealRateLimitWin)) {
+			delete(jr.limits, sid)
+		}
+	}
+	jr.limitsMu.Unlock()
 
 	jr.jobsMu.Lock()
 	for id, job := range jr.jobs {

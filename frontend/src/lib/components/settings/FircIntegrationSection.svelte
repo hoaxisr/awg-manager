@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api/client';
+	import { onResourceInvalidated } from '$lib/stores/storeRegistry';
+	import { startVisiblePoll } from '$lib/utils/visiblePoll';
 	import { m } from '$lib/i18n';
 	import { Button, ConfirmModal, StatusDot } from '$lib/components/ui';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
@@ -30,7 +32,6 @@
 				status?.installedVersion,
 		),
 	);
-	const legacyOwned = $derived(Boolean(status?.legacyBundledOwnership));
 	const externalPackage = $derived(status?.externalPackage?.trim() || '');
 	const externalOwned = $derived(Boolean(externalPackage));
 	const externalMigratable = $derived(externalOwned && Boolean(status?.externalMigratable));
@@ -41,7 +42,6 @@
 				availableVersion &&
 				installedVersion !== availableVersion &&
 				!externalOwned &&
-				!legacyOwned &&
 				(status?.state === 'installed' || status?.state === 'running'),
 		),
 	);
@@ -50,14 +50,12 @@
 			availableVersion &&
 				availableVersion !== installedVersion &&
 				!externalOwned &&
-				!legacyOwned &&
 				(updateAvailable || !installed),
 		),
 	);
 	const blocked = $derived(Boolean(status?.activeEngine || status?.state === 'running' || status?.dependentServices?.length));
 	const repairUnblocked = $derived(
 		!externalOwned &&
-			!legacyOwned &&
 			status?.state !== 'running' &&
 			(status?.state === 'not_installed' || status?.state === 'recovery_required'),
 	);
@@ -68,12 +66,10 @@
 			Boolean(fetchError) ||
 			(externalOwned
 				? !externalMigratable || Boolean(status?.dependentServices?.length)
-				: legacyOwned
-					? Boolean(status?.dependentServices?.length)
-					: !repairUnblocked && blocked),
+				: !repairUnblocked && blocked),
 	);
 	const upgradeDisabled = $derived(loading || busy || !status?.available || Boolean(fetchError) || !updateAvailable);
-	const removeDisabled = $derived(busy || externalOwned || blocked || legacyOwned || Boolean(fetchError));
+	const removeDisabled = $derived(busy || externalOwned || blocked || Boolean(fetchError));
 	const upgradeConfirmSecondary = $derived.by(() => {
 		const baseMsg =
 			status?.activeEngine || status?.state === 'running'
@@ -120,10 +116,21 @@
 	onMount(() => {
 		alive = true;
 		void refresh();
-		const timer = setInterval(refresh, 2000);
-		return () => { alive = false; clearInterval(timer); };
+		// Состояние рантайма — по подсказке firc (установка/удаление запущены,
+		// смена движка, демон упал или поднялся).
+		const unsub = onResourceInvalidated('firc', () => void refresh());
+		return () => { alive = false; unsub(); };
 	});
-	async function act(action: 'install' | 'upgrade' | 'uninstall' | 'migrate' | 'migrate-external') {
+	// Ход установки/обновления/удаления — короткий опрос только пока операция
+	// идёт (status.busy); с её концом опрос снимается сам.
+	// Через $derived: эффект перезапускается на смене флага, а не на каждом
+	// новом объекте status (иначе каждый ответ перезапускал бы опрос).
+	const operationRunning = $derived(status?.busy === true);
+	$effect(() => {
+		if (!operationRunning) return;
+		return startVisiblePoll(refresh, 2000);
+	});
+	async function act(action: 'install' | 'upgrade' | 'uninstall' | 'migrate-external') {
 		if (busy) return;
 		confirmRemoval = false;
 		confirmExternalMigration = false;
@@ -131,8 +138,7 @@
 		submitting = true;
 		actionError = '';
 		try {
-			if (action === 'migrate') await api.fircMigrateRuntime();
-			else if (action === 'migrate-external') await api.fircMigrateRuntime({ replaceExternalPackage: true });
+			if (action === 'migrate-external') await api.fircMigrateRuntime({ replaceExternalPackage: true });
 			else if (action === 'upgrade') await api.fircUpgrade();
 			else if (action === 'install') await api.fircInstall();
 			else await api.fircUninstall(false);
@@ -175,8 +181,8 @@
 						{m.firc_runtime_upgrade()}
 					</Button>
 				{:else}
-					<Button size="sm" onclick={() => (externalMigratable ? (confirmExternalMigration = true) : act(legacyOwned ? 'migrate' : 'install'))} disabled={installDisabled}>
-						{externalMigratable ? m.firc_runtime_migrate_external() : legacyOwned ? m.firc_runtime_migrate() : status?.state === 'recovery_required' ? m.firc_runtime_repair() : m.firc_runtime_install()}
+					<Button size="sm" onclick={() => (externalMigratable ? (confirmExternalMigration = true) : act('install'))} disabled={installDisabled}>
+						{externalMigratable ? m.firc_runtime_migrate_external() : status?.state === 'recovery_required' ? m.firc_runtime_repair() : m.firc_runtime_install()}
 					</Button>
 				{/if}
 				{#if installed}
@@ -190,13 +196,10 @@
 		{#if externalOwned}
 			<div class="setting-row text-secondary">{m.firc_runtime_external_notice({ pkg: externalPackage })}</div>
 		{/if}
-		{#if legacyOwned}
-			<div class="setting-row text-secondary">{m.firc_runtime_legacy_notice()}</div>
-		{/if}
 		{#if !status?.available && status && !externalOwned}
 			<div class="setting-row text-secondary">{m.firc_runtime_release_pending()}</div>
 		{/if}
-		{#if (!externalOwned && !legacyOwned && ((blocked && !repairUnblocked) || Boolean(status?.dependentServices?.length))) || ((legacyOwned || externalMigratable) && Boolean(status?.dependentServices?.length))}
+		{#if (!externalOwned && ((blocked && !repairUnblocked) || Boolean(status?.dependentServices?.length))) || (externalMigratable && Boolean(status?.dependentServices?.length))}
 			<div class="setting-row text-secondary">{m.firc_runtime_dependency_warning()} {status?.dependentServices?.join(', ')}</div>
 		{/if}
 		{#if fetchError || actionError || status?.error}

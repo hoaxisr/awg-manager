@@ -9,7 +9,7 @@ import (
 )
 
 // F570: имя ядра читается из памяти — таблица классов, хуки, резолвер вслед
-// за списком. Вызовы ResolveSystemName/SystemNames/ListAll/ListWAN в NDMS не
+// за списком. Вызовы ResolveSystemName/ListAll/ListWAN в NDMS не
 // ходят никогда: по снятому, но ещё числящемуся в кэше имени NDMS пишет E.
 
 // Wireguard — класс с детерминированным именем: эхо id в списке резолвер не
@@ -20,9 +20,6 @@ func TestResolve_DeterministicClass_NoRCI(t *testing.T) {
 	ctx := context.Background()
 	if got := q.Interfaces.ResolveSystemName(ctx, "Wireguard1"); got != "nwg1" {
 		t.Fatalf("ResolveSystemName = %q, want nwg1", got)
-	}
-	if got := q.Interfaces.SystemNames(ctx, []string{"Wireguard1"}); got["Wireguard1"] != "nwg1" {
-		t.Fatalf("SystemNames = %v, want nwg1", got)
 	}
 	if len(f.Posts) != 0 {
 		t.Fatalf("POST = %v, want 0", f.Posts)
@@ -51,7 +48,6 @@ func TestResolve_RemovedAfterList_NoRCI(t *testing.T) {
 	for _, id := range ids {
 		_ = q.Interfaces.ResolveSystemName(ctx, id)
 	}
-	_ = q.Interfaces.SystemNames(ctx, ids)
 	_, _ = q.Interfaces.ListAll(ctx)
 	_, _ = q.Interfaces.ListWAN(ctx)
 	if got := len(f.Posts) - posts; got != 0 {

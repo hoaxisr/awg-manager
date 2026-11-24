@@ -99,6 +99,10 @@ type Orchestrator struct {
 	// transitions remain unaffected.
 	shouldRun func() bool
 
+	// afterReload, when set, runs in its own goroutine after every
+	// successful Reload (outside heavyop and o.mu).
+	afterReload func()
+
 	// procGateMu serializes process Start/Reload calls in Reload (after
 	// shouldRun returns) against deliberate stops via SuppressAndStop.
 	// Lock ordering invariant: heavyop.Default -> procGateMu -> o.mu.
@@ -139,6 +143,15 @@ func (o *Orchestrator) SetShouldRun(fn func() bool) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.shouldRun = fn
+}
+
+// SetAfterReload registers a hook run asynchronously after each successful
+// Reload — for producers that must reconcile resources against the applied
+// slot files (fpclient garbage-collects unreferenced FiniteProto endpoints).
+func (o *Orchestrator) SetAfterReload(fn func()) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.afterReload = fn
 }
 
 // LastReloadValidation returns a copy of the validation result that made

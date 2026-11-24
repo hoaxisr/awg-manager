@@ -3,14 +3,13 @@
 	// первый абонент → ссылка. Решения шагов — в `shareWizard.ts`, экраны здесь.
 	import { m } from '$lib/i18n';
 	import { untrack } from 'svelte';
-	import { Badge, Button, Card, FieldHint, Input, Toggle } from '$lib/components/ui';
+	import { Badge, Button, Card, FieldHint, Input, Toggle, WizardSteps } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { errText } from '$lib/utils/errorMessage';
 	import { listenPortNumber } from '$lib/utils/listenPortUtils';
 	import LinkBox from './LinkBox.svelte';
 	import ShareWizardParams from './ShareWizardParams.svelte';
-	import WizardSteps from './WizardSteps.svelte';
 	import { cloneConfig } from './exitConfig';
 	import { CLIENT_TEXT, addErrorText, apiErrorCode } from './serverClients';
 	import {

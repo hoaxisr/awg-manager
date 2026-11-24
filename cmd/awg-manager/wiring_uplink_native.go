@@ -44,6 +44,13 @@ func (a unavailableNativeUplink) Activate(context.Context, uplink.Target, string
 	return a.err
 }
 func (a unavailableNativeUplink) Probe(context.Context, uplink.Target, string) error { return a.err }
+
+// OwnsTarget совпадает с условием отказа ReleaseUplink: такой туннель
+// страж обязан провести медленным путём, чтобы отказ дошёл до правки.
+func (a unavailableNativeUplink) OwnsTarget(ref string) bool {
+	return a.applies == nil || a.applies(ref)
+}
+
 func (a unavailableNativeUplink) ReleaseUplink(_ context.Context, t uplink.Target) error {
 	if a.applies != nil && !a.applies(t.Ref) {
 		return nil

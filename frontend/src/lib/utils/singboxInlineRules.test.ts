@@ -10,6 +10,7 @@ import {
 	stringifyInlineRuleList,
 	toAsciiHostname,
 	validateRuleSetTag,
+	AUTOLIST_RULESET_TAG,
 } from '$lib/utils/singboxInlineRules';
 
 describe('toAsciiHostname', () => {
@@ -469,6 +470,15 @@ describe('normalizeRuleSetsForUI', () => {
 		const out = normalizeRuleSetsForUI([
 			{ tag: 'geosite-samsung', type: 'inline', rules: [] },
 			{ tag: 'geosite-samsung-srs', type: 'local', path: '/tmp/x.srs' },
+		]);
+		expect(out.map((rs) => rs.tag)).toEqual(['geosite-samsung']);
+	});
+
+	it('hides the autolist service rule-set', () => {
+		const out = normalizeRuleSetsForUI([
+			{ tag: 'geosite-samsung', type: 'inline', rules: [] },
+			{ tag: AUTOLIST_RULESET_TAG, type: 'inline', rules: [] },
+			{ tag: `${AUTOLIST_RULESET_TAG}-srs`, type: 'local', path: '/tmp/x.srs' },
 		]);
 		expect(out.map((rs) => rs.tag)).toEqual(['geosite-samsung']);
 	});

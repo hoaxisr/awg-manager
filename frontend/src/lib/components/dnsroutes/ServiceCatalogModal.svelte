@@ -43,16 +43,16 @@
         tunnels?: RoutingTunnel[];
         tunnelOptions?: DropdownOption[];
         hideDownloadRouteNote?: boolean;
-        /** When false, only one preset can be selected (HR Neo). */
+        /** When false, only one preset can be selected. */
         multiple?: boolean;
         /** Pre-select when opening (e.g. sing-box router wizard). */
         initialSelectedIds?: string[];
-        /** NDMS / HR Neo: red warning on presets with large DNS lists. */
+        /** NDMS: red warning on presets with large DNS lists. */
         warnLargeDnsLists?: boolean;
         confirmLabel?: string;
         submitting?: boolean;
         onclose: () => void;
-        /** Picker footer — return selected presets (HR Neo / inline pick). */
+        /** Picker footer — return selected presets (inline pick). */
         onconfirm?: (presets: CatalogPreset[]) => void;
         /** Tunnel footer — batch create (NDMS). */
         oncreate?: (presets: CatalogPreset[], tunnelId: string) => void;

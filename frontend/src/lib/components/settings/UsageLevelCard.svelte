@@ -61,7 +61,6 @@
 			summary: m.settings_level_expert_summary(),
 			includes: [
 				m.settings_level_expert_include_advanced(),
-				'HydraRoute Neo',
 				'Sing-box Router',
 				m.settings_level_expert_include_awg_check(),
 				m.settings_level_expert_include_api_key(),

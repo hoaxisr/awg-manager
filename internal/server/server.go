@@ -31,7 +31,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/dnscheck"
 	"github.com/hoaxisr/awg-manager/internal/downloader"
 	"github.com/hoaxisr/awg-manager/internal/events"
-	"github.com/hoaxisr/awg-manager/internal/hydraroute"
+	"github.com/hoaxisr/awg-manager/internal/geodata"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/presets"
 	"github.com/hoaxisr/awg-manager/internal/routing"
@@ -109,7 +109,7 @@ type Server struct {
 	accessPolicyService        accesspolicy.Service
 	clientRouteService         clientroute.Service
 	catalog                    routing.Catalog
-	hydraService               *hydraroute.Service
+	geoData                    *geodata.GeoDataStore
 	zapretService              *zapret.Service
 	autolistService            *autolistdetect.Service
 	autolistRemovedBackupProbe func(ctx context.Context) (bool, time.Time, error)
@@ -120,7 +120,6 @@ type Server struct {
 	singboxHandler             *api.SingboxHandler
 	fircHandler                *api.FircHandler
 	uplinkHandler              *api.UplinkHandler
-	telemtHandler              *api.TelemtHandler
 	vlessServerService         *vlessserver.Service
 	tgWebProxyService          *tgwebproxy.Service
 	cdnDispatcher              *cdndispatcher.Dispatcher
@@ -236,7 +235,7 @@ type Deps struct {
 	Catalog             routing.Catalog
 	Orch                *orchestrator.Orchestrator
 	Bus                 *events.Bus
-	HydraService        *hydraroute.Service
+	GeoData             *geodata.GeoDataStore
 	ZapretService       *zapret.Service
 	AutolistService     *autolistdetect.Service
 	// AutolistRemovedBackupProbe — «у панели есть снимок объектов Autolist,
@@ -248,7 +247,6 @@ type Deps struct {
 	AutolistRemovedBackupProbe func(ctx context.Context) (bool, time.Time, error)
 	SingboxHandler             *api.SingboxHandler
 	FircHandler                *api.FircHandler
-	TelemtHandler              *api.TelemtHandler
 	VlessServerService         *vlessserver.Service
 	TgWebProxyService          *tgwebproxy.Service
 	CDNDispatcher              *cdndispatcher.Dispatcher
@@ -329,7 +327,7 @@ func New(cfg Config, deps Deps) *Server {
 		accessPolicyService:        deps.AccessPolicySvc,
 		clientRouteService:         deps.ClientRouteSvc,
 		catalog:                    deps.Catalog,
-		hydraService:               deps.HydraService,
+		geoData:                    deps.GeoData,
 		zapretService:              deps.ZapretService,
 		autolistService:            deps.AutolistService,
 		autolistRemovedBackupProbe: deps.AutolistRemovedBackupProbe,
@@ -337,7 +335,6 @@ func New(cfg Config, deps Deps) *Server {
 		bus:                        deps.Bus,
 		singboxHandler:             deps.SingboxHandler,
 		fircHandler:                deps.FircHandler,
-		telemtHandler:              deps.TelemtHandler,
 		vlessServerService:         deps.VlessServerService,
 		tgWebProxyService:          deps.TgWebProxyService,
 		cdnDispatcher:              deps.CDNDispatcher,

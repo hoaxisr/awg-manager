@@ -319,6 +319,11 @@ func (a *Adapter) Probe(ctx context.Context, t uplink.Target, dev string) error 
 	}
 	return a.manager.Probe(ctx, t, dev)
 }
+
+// OwnsTarget — для быстрого пути стража: туннель без привязки не ждёт
+// контроллер. Без блокировок, как и у Managed.
+func (a *Adapter) OwnsTarget(ref string) bool { return a.manager.OwnsTarget(ref) }
+
 func (a *Adapter) ReleaseUplink(ctx context.Context, t uplink.Target) error {
 	t, e := convert(t)
 	if e != nil {

@@ -249,6 +249,7 @@ func (e *Engine) PatchConfig(data []byte) (config.Config, error) {
 	// обновление, текущее состояние описано в lastError.
 	if old.TargetInterface != cfg.TargetInterface && e.deps.Writer != nil {
 		if _, err := e.deps.Writer.RefreshTargetOutbound(e.baseCtx, cfg.TargetInterface); err != nil {
+			e.logf("target interface %q: route objects not re-pointed: %v", cfg.TargetInterface, err)
 			e.setLastError(fmt.Sprintf("target interface %q: %v", cfg.TargetInterface, err))
 		} else {
 			e.logf("target interface %q: route objects re-pointed", cfg.TargetInterface)

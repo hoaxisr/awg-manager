@@ -3,20 +3,11 @@
 	import { m } from '$lib/i18n';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
-	import { Button, Modal } from '$lib/components/ui';
+	import { Button } from '$lib/components/ui';
 	import type { CDNDispatcherConfig, CDNRouteRule } from '$lib/types';
-	import {
-		Network,
-		Plus,
-		Trash2,
-		Save,
-		Edit2,
-		CheckCircle2,
-		XCircle,
-		ShieldAlert,
-		RefreshCw,
-		ExternalLink,
-	} from 'lucide-svelte';
+	import CDNRoutesTable from './CDNRoutesTable.svelte';
+	import CDNRouteEditModal, { type DomainError } from './CDNRouteEditModal.svelte';
+	import { Network, Plus, Save, RefreshCw } from 'lucide-svelte';
 
 	interface Props {
 		onStatusChange?: (running: boolean) => void;
@@ -34,6 +25,7 @@
 		return idx >= 0 ? raw.slice(idx + 1) || '9009' : raw;
 	});
 	let isRunning = $derived(Boolean(config?.running));
+	let xrayPathPrefix = $derived(config?.xray_path_prefix || '/cdn-bridge');
 
 	// Modal states
 	let editModalOpen = $state(false);
@@ -46,7 +38,7 @@
 		route_telegram: true,
 		enabled: true,
 	});
-	let domainError = $state('');
+	let domainError = $state<DomainError>('');
 
 	onMount(() => {
 		void loadConfig();
@@ -58,7 +50,7 @@
 			config = await api.getDispatcherConfig();
 			onStatusChange?.(Boolean(config.running));
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Не удалось загрузить настройки Диспетчера');
+			notifications.error(e instanceof Error ? e.message : m.servers_cdn_load_error());
 		} finally {
 			loading = false;
 		}
@@ -67,16 +59,16 @@
 	function validateDomain(domain: string): boolean {
 		const clean = domain.trim().toLowerCase();
 		if (!clean) {
-			domainError = 'Укажите доменное имя';
+			domainError = 'empty';
 			return false;
 		}
 		if (clean.includes('/') || clean.includes(':') || clean.startsWith('http')) {
-			domainError = 'Укажите только FQDN (например: cdn.example.com)';
+			domainError = 'fqdn';
 			return false;
 		}
 		const fqdnRegex = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
 		if (!fqdnRegex.test(clean)) {
-			domainError = 'Некорректный формат доменного имени';
+			domainError = 'format';
 			return false;
 		}
 		domainError = '';
@@ -117,7 +109,7 @@
 		if (isNewRoute) {
 			// Check duplicate
 			if (routes.some((r) => r.domain.toLowerCase() === normDomain)) {
-				domainError = 'Узел с таким доменом уже существует';
+				domainError = 'duplicate';
 				return;
 			}
 			routes.push({ ...editingRoute });
@@ -154,21 +146,12 @@
 			const updated = await api.updateDispatcherConfig(config);
 			config = updated;
 			onStatusChange?.(Boolean(updated.running));
-			notifications.success('Настройки Диспетчера сохранены');
+			notifications.success(m.servers_cdn_saved());
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Ошибка сохранения Диспетчера');
+			notifications.error(e instanceof Error ? e.message : m.servers_cdn_save_error());
 		} finally {
 			saving = false;
 		}
-	}
-
-	function pluralizeDomains(count: number): string {
-		const mod100 = Math.abs(count) % 100;
-		const mod10 = mod100 % 10;
-		if (mod100 >= 11 && mod100 <= 19) return `${count} доменов`;
-		if (mod10 === 1) return `${count} домен`;
-		if (mod10 >= 2 && mod10 <= 4) return `${count} домена`;
-		return `${count} доменов`;
 	}
 </script>
 
@@ -180,7 +163,7 @@
 			</div>
 			<div>
 				<div class="title-row">
-					<h2 class="title">Входящие подключения (:{listenPort})</h2>
+					<h2 class="title">{m.servers_cdn_title({ port: listenPort })}</h2>
 					{#if config}
 						<span
 							class="badge"
@@ -195,7 +178,7 @@
 					{/if}
 				</div>
 				<p class="subtitle">
-					Маршрутизация входящего трафика на порту :9009 между VLESS (XHTTP) и Прокси Telegram
+					{m.servers_cdn_subtitle()}
 				</p>
 			</div>
 		</div>
@@ -203,11 +186,11 @@
 		<div class="header-actions">
 			<Button variant="secondary" size="sm" onclick={loadConfig} disabled={loading}>
 				<RefreshCw size={14} class={loading ? 'animate-spin' : ''} />
-				Обновить
+				{m.common_refresh()}
 			</Button>
 			<Button variant="primary" size="sm" onclick={openAddModal} disabled={loading}>
 				<Plus size={14} />
-				Добавить узел
+				{m.servers_cdn_add_route()}
 			</Button>
 		</div>
 	</header>
@@ -215,15 +198,15 @@
 	{#if loading && !config}
 		<div class="loading-state">
 			<RefreshCw size={24} class="animate-spin text-muted" />
-			<span>Загрузка маршрутов...</span>
+			<span>{m.servers_cdn_loading()}</span>
 		</div>
 	{:else if config}
 		<!-- Info Hint -->
 		<div class="info-box">
 			<p class="text-sm">
-				<strong>Как работает маршрутизация на :9009:</strong> Входящий трафик от клиентов приходит на порт 9009.
-				Шлюз разделяет его по путям: запросы к <strong>VLESS (XHTTP)</strong> идут по пути <code>{config.xray_path_prefix || '/cdn-bridge'}/*</code>,
-				а запросы к <strong>Прокси Telegram</strong> — по путям <code>/</code> и <code>/api/*</code>.
+				<strong>{m.servers_cdn_info_title()}</strong> {m.servers_cdn_info_intro()}
+				{m.servers_cdn_info_xray_before()} <strong>VLESS (XHTTP)</strong> {m.servers_cdn_info_xray_path()} <code>{xrayPathPrefix}/*</code>,
+				{m.servers_cdn_info_tg_before()} <strong>{m.servers_cdn_tg_proxy()}</strong> — {m.servers_cdn_info_tg_paths()} <code>/</code> {m.servers_cdn_info_and()} <code>/api/*</code>.
 			</p>
 		</div>
 
@@ -243,112 +226,45 @@
 		<!-- Routes Table -->
 		<section class="section">
 			<div class="section-header">
-				<h3 class="section-title">Таблица входящих доменов</h3>
-				<span class="count-badge">{pluralizeDomains((config.routes ?? []).length)}</span>
+				<h3 class="section-title">{m.servers_cdn_routes_title()}</h3>
+				<span class="count-badge">{m.servers_cdn_domains_count({ count: (config.routes ?? []).length })}</span>
 			</div>
 
 			{#if (config.routes ?? []).length === 0}
 				<div class="empty-routes">
-					<p>Нет зарегистрированных доменов.</p>
+					<p>{m.servers_cdn_routes_empty()}</p>
 					<Button variant="secondary" size="sm" onclick={openAddModal}>
 						<Plus size={14} />
-						Добавить первый узел
+						{m.servers_cdn_add_first_route()}
 					</Button>
 				</div>
 			{:else}
-				<div class="cdn-table-wrap">
-					<table class="routes-table">
-						<thead>
-							<tr>
-								<th>FQDN Домен</th>
-								<th>Название / Описание</th>
-								<th class="text-center">VLESS (XHTTP)<br><small class="text-xs text-muted">{config.xray_path_prefix || '/cdn-bridge'}/*</small></th>
-								<th class="text-center">Прокси Telegram<br><small class="text-xs text-muted">/, /api/*</small></th>
-								<th class="text-center">Статус</th>
-								<th class="text-right">Действия</th>
-							</tr>
-						</thead>
-						<tbody>
-							{#each config.routes as route (route.id)}
-								<tr class:row-disabled={!route.enabled}>
-									<td class="font-mono font-medium">
-										{route.domain}
-									</td>
-									<td class="text-muted">
-										{route.description || '—'}
-									</td>
-									<td class="text-center">
-										{#if route.route_xray}
-											<span class="badge badge-route-xray">VLESS (XHTTP)</span>
-										{:else}
-											<span class="text-muted">—</span>
-										{/if}
-									</td>
-									<td class="text-center">
-										{#if route.route_telegram}
-											<span class="badge badge-route-tg">Telegram</span>
-										{:else}
-											<span class="text-muted">—</span>
-										{/if}
-									</td>
-									<td class="text-center">
-										<button
-											type="button"
-											class="toggle-status-btn"
-											onclick={() => toggleRouteEnabled(route.id)}
-											title={route.enabled ? 'Отключить узел' : 'Включить узел'}
-										>
-											{#if route.enabled}
-												<CheckCircle2 size={18} class="text-success" />
-											{:else}
-												<XCircle size={18} class="text-muted" />
-											{/if}
-										</button>
-									</td>
-									<td class="text-right">
-										<div class="row-actions">
-											<button
-												type="button"
-												class="cdn-btn-icon"
-												onclick={() => openEditModal(route)}
-												title="Редактировать"
-											>
-												<Edit2 size={15} />
-											</button>
-											<button
-												type="button"
-												class="cdn-btn-icon text-danger"
-												onclick={() => deleteRoute(route.id)}
-												title="Удалить"
-											>
-												<Trash2 size={15} />
-											</button>
-										</div>
-									</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
+				<CDNRoutesTable
+					routes={config.routes ?? []}
+					{xrayPathPrefix}
+					ontoggle={toggleRouteEnabled}
+					onedit={openEditModal}
+					ondelete={deleteRoute}
+				/>
 			{/if}
 		</section>
 
 		<!-- General Settings -->
 		<section class="section border-top">
-			<h3 class="section-title">Параметры безопасности шлюза</h3>
+			<h3 class="section-title">{m.servers_cdn_security_title()}</h3>
 			<div class="settings-grid">
 				<div class="setting-item">
-					<label for="default-action-select" class="setting-label">Действие для неизвестных доменов:</label>
+					<label for="default-action-select" class="setting-label">{m.servers_cdn_default_action_label()}</label>
 					<select
 						id="default-action-select"
 						class="select-input"
 						bind:value={config.default_action}
 					>
-						<option value="404">404 — Страница не найдена (стандартный ответ)</option>
-						<option value="reject">403 — Сброс соединения (блокировка сканеров)</option>
+						<option value="404">{m.servers_cdn_default_action_404()}</option>
+						<option value="reject">{m.servers_cdn_default_action_reject()}</option>
 					</select>
 					<span class="hint">
-						Режим сброса немедленно возвращает 403 и закрывает соединение для защиты от неавторизованных сканеров.
+						{m.servers_cdn_default_action_hint()}
 					</span>
 				</div>
 			</div>
@@ -358,73 +274,20 @@
 		<footer class="footer">
 			<Button variant="primary" onclick={saveAllConfig} disabled={saving}>
 				<Save size={16} />
-				{saving ? 'Сохранение...' : 'Сохранить изменения'}
+				{saving ? m.common_saving() : m.servers_cdn_save_changes()}
 			</Button>
 		</footer>
 	{/if}
 </div>
 
-<Modal
+<CDNRouteEditModal
 	bind:open={editModalOpen}
-	title={isNewRoute ? 'Добавить узел в Диспетчер' : 'Редактировать узел'}
-	onclose={() => editModalOpen = false}
-	size="md"
->
-	<div class="modal-body">
-		<div class="form-group">
-			<label for="route-domain" class="form-label">FQDN Домен узла <span class="text-danger">*</span></label>
-			<input
-				id="route-domain"
-				type="text"
-				class="cdn-input font-mono"
-				placeholder="например: cdn.example.com"
-				bind:value={editingRoute.domain}
-				oninput={() => domainError = ''}
-			/>
-			{#if domainError}
-				<span class="form-error">{domainError}</span>
-			{/if}
-			<span class="hint">Указывайте только доменное имя без протокола http:// и без слэшей.</span>
-		</div>
-
-		<div class="form-group">
-			<label for="route-description" class="form-label">Описание (произвольная метка)</label>
-			<input
-				id="route-description"
-				type="text"
-				class="cdn-input"
-				placeholder="например: Основной узел CDN"
-				bind:value={editingRoute.description}
-			/>
-		</div>
-
-		<div class="form-group">
-			<span class="form-label">Маршрутизация сервисов:</span>
-			<label class="checkbox-label">
-				<input type="checkbox" bind:checked={editingRoute.route_xray} />
-				<span>Проксировать <strong>VLESS (XHTTP)</strong> <small class="text-xs text-muted">({config?.xray_path_prefix || '/cdn-bridge'}/*)</small></span>
-			</label>
-			<label class="checkbox-label">
-				<input type="checkbox" bind:checked={editingRoute.route_telegram} />
-				<span>Проксировать <strong>Прокси Telegram</strong> <small class="text-xs text-muted">(веб и API: /, /api/*)</small></span>
-			</label>
-		</div>
-
-		<div class="form-group">
-			<label class="checkbox-label">
-				<input type="checkbox" bind:checked={editingRoute.enabled} />
-				<span>Узел активен</span>
-			</label>
-		</div>
-	</div>
-
-	{#snippet actions()}
-		<Button variant="secondary" onclick={() => editModalOpen = false}>Отмена</Button>
-		<Button variant="primary" onclick={saveRouteModal}>
-			{isNewRoute ? 'Добавить' : 'Применить'}
-		</Button>
-	{/snippet}
-</Modal>
+	isNew={isNewRoute}
+	bind:route={editingRoute}
+	bind:domainError
+	{xrayPathPrefix}
+	onsave={saveRouteModal}
+/>
 
 <style>
 	.card-root {
@@ -567,18 +430,6 @@
 		color: var(--color-text-primary);
 	}
 
-	.badge-route-xray {
-		background: var(--color-accent-tint);
-		color: var(--color-accent);
-		border: 1px solid var(--color-accent-border);
-	}
-
-	.badge-route-tg {
-		background: var(--color-info-tint);
-		color: var(--color-info);
-		border: 1px solid var(--color-info-border);
-	}
-
 	.section {
 		margin-top: 1.25rem;
 	}
@@ -607,90 +458,6 @@
 	.count-badge {
 		font-size: 0.75rem;
 		color: var(--color-text-muted);
-	}
-
-	.cdn-table-wrap {
-		overflow-x: auto;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-sm);
-		background: var(--color-bg-primary);
-	}
-
-	.routes-table {
-		width: 100%;
-		border-collapse: collapse;
-		font-size: 0.875rem;
-	}
-
-	.routes-table th {
-		background: var(--color-bg-tertiary);
-		padding: 0.625rem 0.75rem;
-		text-align: left;
-		font-weight: 500;
-		color: var(--color-text-secondary);
-		border-bottom: 1px solid var(--color-border);
-	}
-
-	.routes-table td {
-		padding: 0.625rem 0.75rem;
-		color: var(--color-text-primary);
-		border-bottom: 1px solid var(--color-border);
-		vertical-align: middle;
-	}
-
-	.row-disabled {
-		opacity: 0.55;
-		background: var(--color-bg-tertiary);
-	}
-
-	.text-center { text-align: center; }
-	.text-right { text-align: right; }
-	.text-muted { color: var(--color-text-muted); }
-	.text-danger { color: var(--color-error); }
-
-	.toggle-status-btn {
-		background: none;
-		border: none;
-		cursor: pointer;
-		padding: 0.25rem;
-		display: inline-flex;
-	}
-
-	.toggle-status-btn :global(.text-success) {
-		color: var(--color-success);
-	}
-
-	.toggle-status-btn :global(.text-muted) {
-		color: var(--color-text-muted);
-	}
-
-	.row-actions {
-		display: flex;
-		justify-content: flex-end;
-		gap: 0.35rem;
-	}
-
-	.cdn-btn-icon {
-		background: none;
-		border: none;
-		cursor: pointer;
-		padding: 0.3rem;
-		border-radius: 0.25rem;
-		color: var(--color-text-muted);
-	}
-
-	.cdn-btn-icon:hover {
-		background: var(--color-bg-hover);
-		color: var(--color-text-primary);
-	}
-
-	.cdn-btn-icon.text-danger {
-		color: var(--color-error);
-	}
-
-	.cdn-btn-icon.text-danger:hover {
-		background: var(--color-error-tint);
-		color: var(--color-error);
 	}
 
 	.empty-routes {
@@ -754,55 +521,6 @@
 		margin-top: 1.5rem;
 		display: flex;
 		justify-content: flex-end;
-	}
-
-	.modal-body {
-		display: flex;
-		flex-direction: column;
-		gap: 1rem;
-		padding: 0.5rem 0;
-	}
-
-	.form-group {
-		display: flex;
-		flex-direction: column;
-		gap: 0.35rem;
-	}
-
-	.form-label {
-		font-size: 0.875rem;
-		font-weight: 500;
-		color: var(--color-text-primary);
-	}
-
-	.cdn-input {
-		width: 100%;
-		box-sizing: border-box;
-		padding: 0.5rem 0.75rem;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-sm);
-		background: var(--color-bg-primary);
-		color: var(--color-text-primary);
-		font-size: 0.875rem;
-	}
-
-	.cdn-input:focus {
-		outline: none;
-		border-color: var(--color-accent);
-	}
-
-	.checkbox-label {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		font-size: 0.875rem;
-		color: var(--color-text-primary);
-		cursor: pointer;
-	}
-
-	.form-error {
-		font-size: 0.75rem;
-		color: var(--color-error);
 	}
 
 	.loading-state {

@@ -1,20 +1,22 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { m } from '$lib/i18n';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
 	import { fircStatus, fircGroups, fircTunnels, fircTunnelsState, reloadFircAll } from '$lib/stores/firc';
-	import { Button, StatusDot, Badge, SideDrawer, ConfirmModal } from '$lib/components/ui';
+	import { Button, IconButton, StatusDot, Badge, SideDrawer, ConfirmModal } from '$lib/components/ui';
 	import StatStrip, { type StatCellData } from '$lib/components/sb-router/StatStrip.svelte';
 	import FircGroupsPanel from '$lib/components/firc/FircGroupsPanel.svelte';
 	import FircSettingsPanel from '$lib/components/firc/FircSettingsPanel.svelte';
 	import FircMonitorPanel from '$lib/components/firc/FircMonitorPanel.svelte';
+	import FircJournalPanel from '$lib/components/firc/FircJournalPanel.svelte';
 	import { Settings, RotateCw, Power, AlertTriangle } from 'lucide-svelte';
 
 	let settingsDrawerOpen = $state(false);
 	let settingsHasUnsaved = $state(false);
 	let confirmCloseSettingsOpen = $state(false);
-	let activeView = $state<'rules' | 'monitor'>('rules');
+	let activeView = $state<'rules' | 'monitor' | 'journal'>('rules');
 	let busy = $state(false);
 
 	function requestCloseSettingsDrawer() {
@@ -27,7 +29,7 @@
 
 	onMount(() => {
 		void reloadFircAll().catch((e) => {
-			notifications.error(`Не удалось загрузить статус FIRC: ${(e as Error).message}`);
+			notifications.error(m.firc_router_load_failed({ error: (e as Error).message }));
 		});
 	});
 
@@ -37,9 +39,9 @@
 		try {
 			await api.fircUpdateSettings({ routingEngine: 'firc' });
 			await Promise.all([reloadFircAll(), singboxRouterStore.reloadSettings()]);
-			notifications.success('Активное ядро маршрутизации переключено на FIRC');
+			notifications.success(m.firc_router_engine_switched());
 		} catch (e) {
-			notifications.error(`Ошибка переключения на FIRC: ${(e as Error).message}`);
+			notifications.error(m.firc_router_engine_switch_failed({ error: (e as Error).message }));
 		} finally {
 			busy = false;
 		}
@@ -51,14 +53,14 @@
 		try {
 			if ($fircStatus?.running) {
 				await api.fircStop();
-				notifications.success('Демон fircd остановлен');
+				notifications.success(m.firc_router_daemon_stopped());
 			} else {
 				await api.fircStart();
-				notifications.success('Демон fircd запущен');
+				notifications.success(m.firc_router_daemon_started());
 			}
 			await reloadFircAll();
 		} catch (e) {
-			notifications.error((e as Error).message || 'Ошибка управления fircd');
+			notifications.error((e as Error).message || m.firc_router_daemon_control_failed());
 		} finally {
 			busy = false;
 		}
@@ -71,14 +73,14 @@
 			if ($fircStatus?.recoveryRequired) {
 				await api.fircReconcileRecovery('firc');
 				await reloadFircAll();
-				notifications.success('FIRC успешно восстановлен и синхронизирован');
+				notifications.success(m.firc_router_recovered_synced());
 			} else {
 				await api.fircRestart();
 				await reloadFircAll();
-				notifications.success('Конфигурация fircd перезагружена');
+				notifications.success(m.firc_router_config_reloaded());
 			}
 		} catch (e) {
-			notifications.error((e as Error).message || 'Ошибка перезапуска fircd');
+			notifications.error((e as Error).message || m.firc_router_restart_failed());
 		} finally {
 			busy = false;
 		}
@@ -90,9 +92,9 @@
 		try {
 			await api.fircReconcileRecovery('firc');
 			await reloadFircAll();
-			notifications.success('FIRC успешно восстановлен: цепочки и правила синхронизированы');
+			notifications.success(m.firc_router_recovered_chains());
 		} catch (e) {
-			notifications.error((e as Error).message || 'Ошибка восстановления FIRC');
+			notifications.error((e as Error).message || m.firc_router_recovery_failed());
 		} finally {
 			busy = false;
 		}
@@ -109,44 +111,47 @@
 			$fircTunnels.filter((t) => t.enable !== false).length,
 	);
 
+	let restartLabel = $derived($fircStatus?.recoveryRequired ? m.firc_router_restart_recover() : m.firc_router_restart());
+	let powerLabel = $derived($fircStatus?.running ? m.firc_router_stop() : m.firc_router_start());
+
 	let statCells = $derived<StatCellData[]>([
 		{
-			label: 'Движок FIRC',
-			value: $fircStatus?.recoveryRequired ? 'Авария (Recovery)' : ($fircStatus?.running ? 'Активен' : 'Остановлен'),
+			label: m.firc_router_stat_engine(),
+			value: $fircStatus?.recoveryRequired ? m.firc_router_stat_engine_recovery() : ($fircStatus?.running ? m.firc_router_stat_engine_active() : m.firc_daemon_stopped()),
 			tone: $fircStatus?.recoveryRequired ? 'error' : ($fircStatus?.running ? 'success' : 'error'),
-			helpTitle: 'Состояние ядра fircd',
+			helpTitle: m.firc_router_stat_engine_help_title(),
 			helpText: $fircStatus?.recoveryRequired
-				? 'Включена fail-closed защита. Требуется восстановление FIRC.'
-				: 'Высокопроизводительный C-демон маршрутизации с FakeIP DNS и ipset/iptables.',
+				? m.firc_router_stat_engine_help_recovery()
+				: m.firc_router_stat_engine_help(),
 		},
 		{
-			label: 'Групп правил',
+			label: m.firc_router_stat_groups(),
 			value: `${enabledGroups}/${totalGroups}`,
 			tone: enabledGroups > 0 ? 'default' : 'muted',
-			helpTitle: 'Группы маршрутизации',
-			helpText: 'Активные группы правил из общего числа настроенных групп.',
+			helpTitle: m.firc_router_stat_groups_help_title(),
+			helpText: m.firc_router_stat_groups_help(),
 		},
 		{
-			label: 'Доменов и правил',
+			label: m.firc_router_stat_rules(),
 			value: String(totalRules),
 			tone: totalRules > 0 ? 'default' : 'muted',
-			helpTitle: 'Суммарная база правил',
-			helpText: 'Общее количество доменов, масок, подсетей и записей из удалённых списков.',
+			helpTitle: m.firc_router_stat_rules_help_title(),
+			helpText: m.firc_router_stat_rules_help(),
 		},
 		{
-			label: 'Туннелей VLESS',
+			label: m.firc_router_stat_tunnels(),
 			value: `${runningTunnels}/${totalTunnels}`,
 			tone: runningTunnels > 0 ? 'success' : 'muted',
-			helpTitle: 'Туннели tunvless',
-			helpText: 'Активные интерфейсы tunvless для выхода трафика групп.',
+			helpTitle: m.firc_router_stat_tunnels_help_title(),
+			helpText: m.firc_router_stat_tunnels_help(),
 		},
 		{
-			label: 'DNS / Прокси',
+			label: m.firc_router_stat_ports(),
 			value: `:${$fircStatus?.dnsPort || 3553} · :${$fircStatus?.inboundPort || 1099}`,
 			compact: true,
 			tone: 'default',
-			helpTitle: 'Локальные порты FIRC',
-			helpText: 'Порт DNS FakeIP (198.18.0.0/15) и локальный входной порт SOCKS5/HTTP.',
+			helpTitle: m.firc_router_stat_ports_help_title(),
+			helpText: m.firc_router_stat_ports_help(),
 		},
 	]);
 </script>
@@ -155,62 +160,55 @@
 	<header class="sb-header">
 		<div class="title-block">
 			<div class="title-row">
-				<h1 class="title">Маршрутизация · FIRC</h1>
+				<h1 class="title">{m.firc_router_title()}</h1>
 				<span
 					class="status-pill"
 					class:is-running={$fircStatus?.running && !$fircStatus?.recoveryRequired}
 					class:is-recovery={$fircStatus?.recoveryRequired}
 				>
 					<StatusDot variant={$fircStatus?.recoveryRequired ? 'error' : ($fircStatus?.running ? 'success' : 'muted')} size="sm" />
-					<span>{$fircStatus?.recoveryRequired ? 'Требуется восстановление' : ($fircStatus?.running ? 'fircd активен' : 'fircd остановлен')}</span>
+					<span>{$fircStatus?.recoveryRequired ? m.firc_router_pill_recovery() : ($fircStatus?.running ? m.firc_router_pill_running() : m.firc_router_pill_stopped())}</span>
 				</span>
 				{#if $fircStatus?.selected}
-					<Badge variant="accent" size="xs">Активное ядро</Badge>
+					<Badge variant="accent" size="xs">{m.firc_router_active_engine()}</Badge>
 				{/if}
 			</div>
 			<div class="subtitle">
-				Групповая маршрутизация доменов, удалённых списков и подсетей через FakeIP и туннели
+				{m.firc_router_subtitle()}
 			</div>
 		</div>
 
 		<div class="header-tools">
 			{#if !$fircStatus?.selected}
 				<Button variant="primary" size="sm" onclick={handleSelectFircEngine} disabled={busy}>
-					Сделать активным ядром
+					{m.firc_router_make_active()}
 				</Button>
 			{/if}
 
-			<button
-				type="button"
-				class="icon-btn"
+			<IconButton
+				size="md"
 				onclick={handleRestartFircDaemon}
 				disabled={busy}
-				title={$fircStatus?.recoveryRequired ? 'Восстановить и перезагрузить fircd' : 'Перезагрузить fircd'}
-				aria-label={$fircStatus?.recoveryRequired ? 'Восстановить и перезагрузить fircd' : 'Перезагрузить fircd'}
+				title={restartLabel}
+				ariaLabel={restartLabel}
 			>
 				<RotateCw size={15} />
-			</button>
+			</IconButton>
 
-			<button
-				type="button"
-				class="icon-btn"
+			<IconButton
+				size="md"
 				onclick={handleToggleFircDaemon}
 				disabled={busy}
-				title={$fircStatus?.running ? 'Остановить fircd' : 'Запустить fircd'}
-				aria-label={$fircStatus?.running ? 'Остановить fircd' : 'Запустить fircd'}
+				title={powerLabel}
+				ariaLabel={powerLabel}
 			>
 				<Power size={15} />
-			</button>
+			</IconButton>
 
-			<button
-				type="button"
-				class="params-btn"
-				onclick={() => (settingsDrawerOpen = true)}
-				aria-label="Параметры FIRC"
-			>
-				<Settings size={16} aria-hidden="true" />
-				<span class="params-text">Параметры FIRC</span>
-			</button>
+			<Button variant="outline-primary" size="sm" onclick={() => (settingsDrawerOpen = true)}>
+				{#snippet iconBefore()}<Settings size={16} />{/snippet}
+				{m.firc_router_params()}
+			</Button>
 		</div>
 	</header>
 
@@ -221,15 +219,15 @@
 			<div class="recovery-content">
 				<div class="recovery-title">
 					<AlertTriangle size={16} />
-					<span>Требуется восстановление FIRC (аварийный режим защиты)</span>
+					<span>{m.firc_router_recovery_title()}</span>
 				</div>
 				<div class="recovery-text">
-					{$fircStatus.recoveryReason || 'Операции маршрутизации заблокированы после сбоя netfilter. Нажмите «Восстановить FIRC» для автоматической сверки конфигурации и воссоздания цепочек.'}
+					{$fircStatus.recoveryReason || m.firc_router_recovery_text()}
 				</div>
 			</div>
 			<div class="recovery-actions">
 				<Button variant="danger" size="sm" onclick={handleReconcileRecovery} disabled={busy}>
-					Восстановить FIRC
+					{m.firc_runtime_repair()}
 				</Button>
 			</div>
 		</div>
@@ -239,12 +237,15 @@
 		</div>
 	{/if}
 
-	<nav class="firc-views" aria-label="Разделы FIRC">
-		<button type="button" class:active={activeView === 'rules'} aria-pressed={activeView === 'rules'} onclick={() => (activeView = 'rules')}>Правила</button>
-		<button type="button" class:active={activeView === 'monitor'} aria-pressed={activeView === 'monitor'} onclick={() => (activeView = 'monitor')}>Мониторинг</button>
+	<nav class="firc-views" aria-label={m.firc_router_views()}>
+		<button type="button" class:active={activeView === 'rules'} aria-pressed={activeView === 'rules'} onclick={() => (activeView = 'rules')}>{m.firc_global_mode_rules()}</button>
+		<button type="button" class:active={activeView === 'monitor'} aria-pressed={activeView === 'monitor'} onclick={() => (activeView = 'monitor')}>{m.firc_router_view_monitor()}</button>
+		<button type="button" class:active={activeView === 'journal'} aria-pressed={activeView === 'journal'} onclick={() => (activeView = 'journal')}>{m.firc_router_view_journal()}</button>
 	</nav>
 	{#if activeView === 'monitor'}
 		<FircMonitorPanel />
+	{:else if activeView === 'journal'}
+		<FircJournalPanel />
 	{/if}
 
 	<!-- Keep the editor mounted: changing the view must not discard unsaved rules. -->
@@ -255,7 +256,7 @@
 
 <SideDrawer
 	open={settingsDrawerOpen}
-	title="Параметры FIRC"
+	title={m.firc_router_params()}
 	width={460}
 	onClose={requestCloseSettingsDrawer}
 >
@@ -264,10 +265,10 @@
 
 <ConfirmModal
 	open={confirmCloseSettingsOpen}
-	title="Несохранённые параметры FIRC"
-	message="В параметрах FIRC есть несохранённые изменения. Если закрыть панель сейчас, изменения не будут применены."
-	confirmLabel="Закрыть без сохранения"
-	cancelLabel="Остаться и сохранить"
+	title={m.firc_router_unsaved_title()}
+	message={m.firc_router_unsaved_message()}
+	confirmLabel={m.firc_router_unsaved_discard()}
+	cancelLabel={m.firc_router_unsaved_stay()}
 	variant="danger"
 	onConfirm={() => {
 		confirmCloseSettingsOpen = false;
@@ -359,65 +360,6 @@
 		flex-wrap: wrap;
 		min-width: 0;
 		max-width: 100%;
-	}
-
-	.params-btn,
-	.icon-btn {
-		height: 32px;
-		box-sizing: border-box;
-	}
-
-	.params-btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		padding: 0 12px;
-		border-radius: var(--radius-sm, 6px);
-		background: color-mix(in srgb, var(--accent) 12%, var(--bg-secondary));
-		border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border));
-		color: var(--text-primary);
-		font-size: 12px;
-		font-weight: 600;
-		font-family: inherit;
-		cursor: pointer;
-		white-space: nowrap;
-		flex-shrink: 0;
-		transition:
-			background 0.15s ease,
-			border-color 0.15s ease;
-	}
-
-	.params-btn:hover {
-		background: color-mix(in srgb, var(--accent) 20%, var(--bg-tertiary));
-		border-color: var(--accent);
-	}
-
-	.icon-btn {
-		background: var(--bg-secondary);
-		border: 1px solid var(--border);
-		color: var(--text-secondary);
-		padding: 0 8px;
-		border-radius: var(--radius-sm, 6px);
-		cursor: pointer;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		flex-shrink: 0;
-		transition:
-			color 0.15s ease,
-			border-color 0.15s ease,
-			background 0.15s ease;
-	}
-
-	.icon-btn:hover:not(:disabled) {
-		color: var(--text-primary);
-		background: var(--bg-tertiary);
-		border-color: var(--border-hover, var(--accent));
-	}
-
-	.icon-btn:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
 	}
 
 	.firc-error-banner {

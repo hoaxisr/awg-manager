@@ -49,14 +49,6 @@ type Service struct {
 	// restoring сообщает, идёт ли восстановление; nil — backup.Restoring.
 	// В тестах подменяется.
 	restoring func() bool
-	// preUpgrade проверяет готовность рантаймов (например, миграцию владения
-	// legacy FIRC) ДО скачивания и запуска opkg, чтобы не останавливать демон зря.
-	preUpgrade func(ctx context.Context) error
-}
-
-// SetPreUpgradeHook регистрирует проверку/миграцию перед установкой обновления.
-func (s *Service) SetPreUpgradeHook(fn func(ctx context.Context) error) {
-	s.preUpgrade = fn
 }
 
 // isRestoring — идёт восстановление из резервной копии или снимка.
@@ -257,16 +249,7 @@ func (s *Service) ApplyUpgrade(ctx context.Context) error {
 		return fmt.Errorf("no download URL available, run check first")
 	}
 	s.upgrading = true
-	preUpgrade := s.preUpgrade
 	s.mu.Unlock()
-	if preUpgrade != nil {
-		if err := preUpgrade(ctx); err != nil {
-			s.mu.Lock()
-			s.upgrading = false
-			s.mu.Unlock()
-			return err
-		}
-	}
 	if err := upgradeWithDownloader(ctx, downloadURL, wantSHA256, s.downloader, s.snapshotBeforeInstall); err != nil {
 		s.mu.Lock()
 		s.upgrading = false

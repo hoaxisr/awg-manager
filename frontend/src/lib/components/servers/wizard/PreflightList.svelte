@@ -1,5 +1,7 @@
 <script lang="ts">
 	import type { PreflightCheck } from '$lib/types/serverWizard';
+	import { m } from '$lib/i18n';
+	import { IconButton } from '$lib/components/ui';
 	import { CheckCircle2, AlertTriangle, XCircle, ChevronDown, ChevronUp } from 'lucide-svelte';
 
 	interface Props {
@@ -18,7 +20,7 @@
 <div class="check-list">
 	{#if checks.length === 0}
 		<div class="empty-box">
-			Выполняется проверка готовности системы...
+			{m.servers_wizard_preflight_running()}
 		</div>
 	{:else}
 		{#each checks as check}
@@ -38,28 +40,27 @@
 							<span class="check-title">{check.title}</span>
 							<span class="status-badge badge-{check.status}">
 								{check.status === 'blocked'
-									? 'Блокирует'
+									? m.servers_wizard_preflight_blocked()
 									: check.status === 'warning'
-										? 'Предупреждение'
-										: 'Готово'}
+										? m.servers_wizard_preflight_warning()
+										: m.common_done()}
 							</span>
 						</div>
 						<p class="check-msg">{check.message}</p>
 					</div>
 
 					{#if check.details || check.remediation}
-						<button
-							type="button"
-							class="btn-expand"
+						<IconButton
+							ariaLabel={m.servers_wizard_preflight_details()}
+							title={m.servers_wizard_preflight_details()}
 							onclick={() => toggleExpand(check.id)}
-							title="Подробнее"
 						>
 							{#if expanded[check.id]}
 								<ChevronUp size={16} />
 							{:else}
 								<ChevronDown size={16} />
 							{/if}
-						</button>
+						</IconButton>
 					{/if}
 				</div>
 
@@ -67,13 +68,13 @@
 					<div class="check-extra">
 						{#if check.details}
 							<div class="detail-block">
-								<span class="detail-label">Детали:</span>
+								<span class="detail-label">{m.servers_wizard_preflight_details_label()}</span>
 								<pre class="detail-code">{check.details}</pre>
 							</div>
 						{/if}
 						{#if check.remediation}
 							<div class="remediation-block">
-								<span class="remediation-label">Как исправить:</span>
+								<span class="remediation-label">{m.servers_wizard_preflight_remediation()}</span>
 								<p class="remediation-text">{check.remediation}</p>
 							</div>
 						{/if}
@@ -199,23 +200,6 @@
 		color: var(--color-text-secondary);
 		margin: 0;
 		line-height: 1.4;
-	}
-
-	.btn-expand {
-		padding: 4px;
-		border: none;
-		background: transparent;
-		color: var(--color-text-muted);
-		border-radius: var(--radius-sm);
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		transition: color var(--t-fast) ease;
-	}
-
-	.btn-expand:hover {
-		color: var(--color-text-primary);
 	}
 
 	.check-extra {

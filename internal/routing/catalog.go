@@ -63,7 +63,7 @@ type Catalog interface {
 	SnapshotAll(ctx context.Context) *RoutingSnapshot
 
 	// GetKernelIfaceName resolves tunnelID to the kernel-level interface name
-	// for HydraRoute DirectRoute (not NDMS name).
+	// (not NDMS name).
 	GetKernelIfaceName(ctx context.Context, tunnelID string) (string, error)
 }
 
@@ -90,11 +90,10 @@ type TunnelProvider interface {
 // Narrow interface — easy to mock, insulates catalog from query store details.
 type interfaceQueries interface {
 	List(ctx context.Context) ([]ndms.Interface, error)
-	// ResolveSystemName / SystemNames — имя ядра из памяти, RCI никогда (F570):
+	// ResolveSystemName — имя ядра из памяти, RCI никогда (F570):
 	// Wireguard→nwgN по таблице ndms.KernelName, прочие — из хуков и резолвера
 	// вслед за списком. Пусто — записи нет в кэше или имени не знает никто.
 	ResolveSystemName(ctx context.Context, ndmsName string) string
-	SystemNames(ctx context.Context, ids []string) map[string]string
 }
 
 // StoreClient is the subset of storage used by Catalog.
@@ -386,14 +385,12 @@ func (c *CatalogImpl) GetKernelIface(ctx context.Context, tunnelID string) (stri
 }
 
 // GetKernelIfaceName resolves tunnelID to the kernel-level interface name
-// for HydraRoute DirectRoute (not NDMS name).
+// (not NDMS name).
 //
 // Returns an error if tunnelID doesn't resolve to a kernel name — the
 // caller must handle it (skip the rule, surface to the user) rather than
-// silently write a garbage interface name into HydraRoute's domain.conf.
-// This includes a system: interface whose kernel name NDMS doesn't report:
-// HR Neo matches the target against /sys/class/net and treats anything else
-// as an ip policy name, so the NDMS id would be a broken route (F498).
+// silently use a garbage interface name. This includes a system: interface
+// whose kernel name NDMS doesn't report: the NDMS id is not a device (F498).
 func (c *CatalogImpl) GetKernelIfaceName(ctx context.Context, tunnelID string) (string, error) {
 	// WAN: "wan:ppp0" → "ppp0"
 	if strings.HasPrefix(tunnelID, "wan:") {
@@ -434,10 +431,10 @@ func (c *CatalogImpl) GetKernelIfaceName(ctx context.Context, tunnelID string) (
 
 // SetSnapshotProvider registers a named snapshot provider function.
 // Valid names: "dnsRoutes", "staticRoutes", "accessPolicies",
-// "policyDevices", "policyInterfaces", "clientRoutes". Статусы HR Neo и
-// Zapret сюда не входят: GetStatus не возвращает ошибок, в missing они не
-// попали бы никогда, а снимок refresh клиенту не отдаёт — стоило бы это
-// обхода /proc впустую. Свежесть их статуса даёт инвалидация стора.
+// "policyDevices", "policyInterfaces", "clientRoutes". Статус Zapret
+// сюда не входит: GetStatus не возвращает ошибок, в missing он не
+// попал бы никогда, а снимок refresh клиенту не отдаёт — стоило бы это
+// обхода /proc впустую. Свежесть статуса даёт инвалидация стора.
 func (c *CatalogImpl) SetSnapshotProvider(name string, fn SnapshotFunc) {
 	switch name {
 	case "dnsRoutes":
@@ -501,8 +498,7 @@ func (c *CatalogImpl) fillSection(ctx context.Context, key string, fn SnapshotFu
 }
 
 // systemEntries — системная секция ListAll: интерфейсы WireGuard/Proxy/OpkgTun
-// NDMS, кроме managed (по NDMS-имени) и наших собственных OpkgTun. Одна
-// функция на ListAll и SystemTunnelsByIface, чтобы фильтр у них не разошёлся.
+// NDMS, кроме managed (по NDMS-имени) и наших собственных OpkgTun.
 func (c *CatalogImpl) systemEntries(ctx context.Context, managed map[string]bool) []TunnelEntry {
 	if c.ifaces == nil {
 		return nil
@@ -564,45 +560,6 @@ func (c *CatalogImpl) systemEntries(ctx context.Context, managed map[string]bool
 		result = append(result, entry)
 	}
 	return result
-}
-
-// SystemTunnelsByIface maps HydraRoute targets back to system: tunnel IDs:
-// the kernel name of every system entry of ListAll, plus its NDMS id — files
-// written before F498 carry that instead, and must still show (and be
-// rewritten on next save) as the same system tunnel. Managed tunnels are not
-// system entries, so their targets are left alone.
-//
-// Зовётся на каждом List/Create/Update правил HR, поэтому ListAll не берётся:
-// managed-имена — из записей (ListStored, без опроса состояния туннелей), а
-// WAN здесь не нужен вовсе. Ошибка ListStored, как у ListAll, оставляет
-// managed-множество пустым. Имена ядра — одним SystemNames: резолвер на
-// каждую запись шёл бы в RCI всякий раз, когда устройства сейчас нет.
-func (c *CatalogImpl) SystemTunnelsByIface(ctx context.Context) map[string]string {
-	out := map[string]string{}
-	if c.ifaces == nil {
-		return out
-	}
-	managed := make(map[string]bool)
-	if stored, err := c.provider.ListStored(ctx); err == nil {
-		for _, t := range stored {
-			if n := c.resolveNDMSName(t); n != "" {
-				managed[n] = true
-			}
-		}
-	}
-	entries := c.systemEntries(ctx, managed)
-	ids := make([]string, len(entries))
-	for i, e := range entries {
-		ids[i] = tunnel.SystemTunnelName(e.ID)
-	}
-	kernel := c.ifaces.SystemNames(ctx, ids)
-	for i, e := range entries {
-		out[ids[i]] = e.ID
-		if k := kernel[ids[i]]; k != "" && k != ids[i] {
-			out[k] = e.ID
-		}
-	}
-	return out
 }
 
 // resolveNDMSName returns the NDMS or kernel interface name for a managed tunnel.

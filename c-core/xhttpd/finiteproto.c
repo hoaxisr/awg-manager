@@ -53,6 +53,7 @@ typedef struct {
     char     dns_proxy_host[64];
     uint16_t dns_proxy_port;
     bool     allow_private;
+    bool     ipv4_only;
     int      idle_timeout_sec;
 } fp_egress_snap_t;
 
@@ -66,6 +67,7 @@ static void fp_snapshot_egress(fp_egress_snap_t *dst, const xhttpd_config_t *src
     snprintf(dst->dns_proxy_host, sizeof(dst->dns_proxy_host), "%s", src->dns_proxy_host);
     dst->dns_proxy_port = src->dns_proxy_port;
     dst->allow_private = src->allow_private;
+    dst->ipv4_only = src->ipv4_only;
     dst->idle_timeout_sec = src->idle_timeout_sec;
 }
 
@@ -79,6 +81,7 @@ static void fp_populate_egress_cfg(xhttpd_config_t *dst, const fp_egress_snap_t 
     snprintf(dst->dns_proxy_host, sizeof(dst->dns_proxy_host), "%s", src->dns_proxy_host);
     dst->dns_proxy_port = src->dns_proxy_port;
     dst->allow_private = src->allow_private;
+    dst->ipv4_only = src->ipv4_only;
     dst->idle_timeout_sec = src->idle_timeout_sec;
 }
 
@@ -95,7 +98,7 @@ typedef struct fp_session {
     uint16_t        port;
     bool            vless_framed; /* true if opened with a VLESS stream header */
     bool            is_udp;
-    struct sockaddr_in udp_dest;
+    udp_egress_t    udp_eg; /* valid (socks_ctrl_fd included) only while is_udp */
     fp_egress_snap_t egress_cfg;
 
     pthread_mutex_t up_mu;
@@ -712,12 +715,19 @@ static void fp_session_trim_unused_down_cap_locked(fp_session_t *sess) {
     }
 }
 
+/* Closes the target socket and, for UDP over SOCKS, the UDP ASSOCIATE control
+ * connection whose lifetime bounds the association. */
+static void fp_close_target_locked(fp_session_t *sess) {
+    if (sess->target_fd >= 0) close(sess->target_fd);
+    sess->target_fd = -1;
+    if (sess->is_udp) udp_egress_close_ctrl(&sess->udp_eg);
+}
+
 static void fp_reader_finish_locked(fp_session_t *sess) {
     fp_session_trim_unused_down_cap_locked(sess);
     sess->reader_running = false;
     if (sess->closed && sess->ref_count == 0 && sess->target_fd >= 0) {
-        close(sess->target_fd);
-        sess->target_fd = -1;
+        fp_close_target_locked(sess);
     }
     pthread_cond_broadcast(&sess->cond);
 }
@@ -769,6 +779,7 @@ static void *fp_target_reader_thread(void *arg) {
             break;
         }
         int fd = sess->target_fd;
+        udp_egress_t ueg = sess->udp_eg;
         pthread_mutex_unlock(&sess->mu);
 
         struct pollfd pfd = { .fd = fd, .events = POLLIN };
@@ -785,7 +796,7 @@ static void *fp_target_reader_thread(void *arg) {
         }
 
         if (is_udp) {
-            ssize_t n = recv(fd, (char *)(udp_rx + 2), 65535, MSG_DONTWAIT);
+            ssize_t n = udp_egress_recv(fd, &ueg, udp_rx + 2, 65535, MSG_DONTWAIT);
             if (n > 0) {
                 udp_rx[0] = (uint8_t)(((size_t)n >> 8) & 0xFF);
                 udp_rx[1] = (uint8_t)((size_t)n & 0xFF);
@@ -889,7 +900,7 @@ static int spawn_fp_reader_locked(fp_session_t *sess) {
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-    pthread_attr_setstacksize(&attr, 262144);
+    pthread_attr_setstacksize(&attr, XHTTPD_HELPER_STACK);
     int rc = pthread_create(&tid, &attr, fp_target_reader_thread, sess);
     pthread_attr_destroy(&attr);
     if (rc != 0) {
@@ -908,8 +919,7 @@ static void close_fp_session_locked(fp_session_t *sess) {
             shutdown(sess->target_fd, SHUT_RDWR);
         }
         if (sess->ref_count == 0 && !sess->reader_running) {
-            close(sess->target_fd);
-            sess->target_fd = -1;
+            fp_close_target_locked(sess);
         }
     }
     for (int i = 0; i < FP_MAX_PENDING_UP; i++) {
@@ -947,8 +957,7 @@ static void release_fp_session(fp_session_t *sess) {
         sess->ref_count--;
     }
     if (sess->closed && sess->ref_count == 0 && !sess->reader_running && sess->target_fd >= 0) {
-        close(sess->target_fd);
-        sess->target_fd = -1;
+        fp_close_target_locked(sess);
     }
     pthread_cond_broadcast(&sess->cond);
     pthread_mutex_unlock(&sess->mu);
@@ -1216,16 +1225,10 @@ static int write_cancellable(fp_session_t *sess, uint64_t open_gen, int fd, cons
     return 0;
 }
 
-static int fp_udp_sendto_once(int tfd, const struct sockaddr_in *dest, const uint8_t *pkt, size_t dlen) {
+static int fp_udp_sendto_once(int tfd, const udp_egress_t *dest, const uint8_t *pkt, size_t dlen) {
     if (dlen == 0) return 0;
     for (int retries = 0; retries < 3; retries++) {
-        ssize_t n = sendto(tfd, (const char *)pkt,
-#ifdef _WIN32
-                           (int)dlen,
-#else
-                           dlen,
-#endif
-                           0, (const struct sockaddr *)dest, sizeof(*dest));
+        ssize_t n = udp_egress_send(tfd, dest, pkt, dlen);
         if (n >= 0) return 0;
         bool is_eintr = false;
         if (sock_err_is_retryable(&is_eintr) && is_eintr) continue;
@@ -1251,7 +1254,7 @@ static int fp_udp_feed_and_send(fp_session_t *sess, uint64_t expected_gen, int t
         pthread_mutex_unlock(&sess->mu);
         return -1;
     }
-    struct sockaddr_in dest = sess->udp_dest;
+    udp_egress_t dest = sess->udp_eg;
     size_t already_len = sess->udp_up_len;
     pthread_mutex_unlock(&sess->mu);
 
@@ -1387,8 +1390,9 @@ static int handle_fp_open(int client_fd, const http_req_t *http_req, const xhttp
     uint16_t port = 0;
     bool vless_framed = false;
     bool is_udp = false;
-    struct sockaddr_in udp_dest;
+    udp_egress_t udp_dest;
     memset(&udp_dest, 0, sizeof(udp_dest));
+    udp_dest.socks_ctrl_fd = -1;
     const uint8_t *initial_up = NULL;
     size_t initial_up_len = 0;
 
@@ -1522,7 +1526,7 @@ static int handle_fp_open(int client_fd, const http_req_t *http_req, const xhttp
     sess->port = port;
     sess->vless_framed = vless_framed;
     sess->is_udp = is_udp;
-    sess->udp_dest = udp_dest;
+    sess->udp_eg = udp_dest;
     sess->udp_up_buf = NULL;
     sess->udp_up_len = 0;
     sess->udp_up_cap = 0;
@@ -1621,6 +1625,7 @@ static int handle_fp_open(int client_fd, const http_req_t *http_req, const xhttp
 
         if (!post_dial_auth) {
             close(tfd);
+            udp_egress_close_ctrl(&udp_dest);
             if (sess->generation == open_gen) {
                 close_fp_session_locked(sess);
             }
@@ -1634,7 +1639,7 @@ static int handle_fp_open(int client_fd, const http_req_t *http_req, const xhttp
         /* Register pending socket in session for cancellation/shutdown if revoked during write */
         sess->target_fd = tfd;
         if (is_udp) {
-            sess->udp_dest = udp_dest;
+            sess->udp_eg = udp_dest;
         }
         pthread_mutex_unlock(&sess->mu);
         pthread_mutex_unlock(&g_fp_table_mu);
@@ -1676,6 +1681,7 @@ static int handle_fp_open(int client_fd, const http_req_t *http_req, const xhttp
             int sock_to_close = sess->target_fd >= 0 ? sess->target_fd : tfd;
             sess->target_fd = -1;
             if (sock_to_close >= 0) close(sock_to_close);
+            if (is_udp) udp_egress_close_ctrl(&sess->udp_eg);
             if (sess->generation == open_gen) {
                 close_fp_session_locked(sess);
             }
@@ -1693,6 +1699,7 @@ static int handle_fp_open(int client_fd, const http_req_t *http_req, const xhttp
         if (spawn_fp_reader_locked(sess) < 0) {
             sess->target_fd = -1;
             close(tfd);
+            if (is_udp) udp_egress_close_ctrl(&sess->udp_eg);
             close_fp_session_locked(sess);
             pthread_mutex_unlock(&sess->mu);
             pthread_mutex_unlock(&g_fp_table_mu);

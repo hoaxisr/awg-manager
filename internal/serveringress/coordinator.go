@@ -14,10 +14,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/cdndispatcher"
+	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tgwebproxy"
 	"github.com/hoaxisr/awg-manager/internal/vlessserver"
 )
@@ -72,7 +72,6 @@ type Coordinator struct {
 	xraySvc          XrayComponent
 	dispatcher       DispatcherComponent
 	tgSvc            TgWebProxyComponent
-	telemtSvc        TelemtResetComponent
 	fircRouting      FircRoutingComponent
 	keendns          KeenDNSOperator
 	lock             IngressLocker
@@ -84,10 +83,6 @@ type Coordinator struct {
 	seamsMu          sync.RWMutex
 	writeJournalFn   func(path string, j *TransactionJournal) error
 	archiveJournalFn func(srcPath, reason, txID string) error
-	inTx             atomic.Int32
-	txSeq            atomic.Uint64
-	watchersMu       sync.Mutex
-	watchers         []*ConfigWatcher
 }
 
 func New(dataDir string, xray XrayComponent, disp DispatcherComponent, tg TgWebProxyComponent) *Coordinator {
@@ -129,13 +124,6 @@ func (c *Coordinator) GetKeenDNS() KeenDNSOperator {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.keendns
-}
-
-// SetTelemt wires the standalone telemt service for config reset during Telegram factory reset.
-func (c *Coordinator) SetTelemt(t TelemtResetComponent) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.telemtSvc = t
 }
 
 // SetOnPhaseChange configures a hook callback before committing phase for testing.
@@ -206,6 +194,12 @@ func (c *Coordinator) setRecovery(needed bool, reason string) {
 	defer c.mu.Unlock()
 	c.recoveryNeeded = needed
 	c.recoveryReason = reason
+}
+
+// recoveryFlagged — тот же флаг одним значением, для условий.
+func (c *Coordinator) recoveryFlagged() bool {
+	needed, _ := c.isRecoveryNeeded()
+	return needed
 }
 
 func (c *Coordinator) isRecoveryNeeded() (bool, string) {
@@ -401,65 +395,14 @@ func (c *Coordinator) calculateAffected(prev, desired IngressTopology) []string 
 	return affected
 }
 
-func (c *Coordinator) registerWatcher(cw *ConfigWatcher) {
-	if cw == nil {
-		return
-	}
-	c.watchersMu.Lock()
-	defer c.watchersMu.Unlock()
-	for _, existing := range c.watchers {
-		if existing == cw {
-			return
-		}
-	}
-	c.watchers = append(c.watchers, cw)
-}
-
-func (c *Coordinator) unregisterWatcher(cw *ConfigWatcher) {
-	if cw == nil {
-		return
-	}
-	c.watchersMu.Lock()
-	defer c.watchersMu.Unlock()
-	for i, existing := range c.watchers {
-		if existing == cw {
-			c.watchers = append(c.watchers[:i], c.watchers[i+1:]...)
-			return
-		}
-	}
-}
-
-func (c *Coordinator) snapshotWatchers() {
-	c.watchersMu.Lock()
-	ws := make([]*ConfigWatcher, len(c.watchers))
-	copy(ws, c.watchers)
-	c.watchersMu.Unlock()
-	for _, cw := range ws {
-		cw.snapshotPaths(cw.watchedPaths()...)
-	}
-}
-
-func (c *Coordinator) withIngressLock(txID string, fn func() error) error {
-	_, err := c.withIngressLockSeq(txID, nil, fn)
-	return err
-}
-
-func (c *Coordinator) withIngressLockSeq(txID string, expectedSeq *uint64, fn func() error) (applied bool, retErr error) {
+func (c *Coordinator) withIngressLock(txID string, fn func() error) (retErr error) {
 	c.txMu.Lock()
 	defer c.txMu.Unlock()
 
-	if expectedSeq != nil && c.txSeq.Load() != *expectedSeq {
-		return false, nil
-	}
-
 	if err := c.lock.Lock(txID); err != nil {
-		return false, err
+		return err
 	}
-	c.inTx.Add(1)
-	c.txSeq.Add(1)
 	defer func() {
-		c.snapshotWatchers()
-		c.inTx.Add(-1)
 		if err := c.lock.Unlock(); err != nil {
 			c.setRecovery(true, fmt.Sprintf("unlock failed for tx %s: %v", txID, err))
 			unlockErr := fmt.Errorf("unlock ingress transaction %s: %w", txID, err)
@@ -471,8 +414,7 @@ func (c *Coordinator) withIngressLockSeq(txID string, expectedSeq *uint64, fn fu
 		}
 	}()
 
-	retErr = fn()
-	return true, retErr
+	return fn()
 }
 
 // WithIngressLock acquires the shared server ingress lock and executes fn.
@@ -606,14 +548,12 @@ func (c *Coordinator) recoverIngressJournalLocked(ctx context.Context) error {
 		j.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 		j.Checksum = computeJournalChecksum(j)
 		if err := c.writeJournal(jPath, j); err != nil {
-			c.recoveryNeeded = true
-			c.recoveryReason = fmt.Sprintf("write committed journal in recovery failed: %v", err)
+			c.setRecovery(true, fmt.Sprintf("write committed journal in recovery failed: %v", err))
 			return fmt.Errorf("%w: %v", ErrRecoveryRequired, err)
 		}
 
 		if err := c.archiveJournal(jPath, "committed", j.TransactionID); err != nil {
-			c.recoveryNeeded = true
-			c.recoveryReason = fmt.Sprintf("archive roll-forward committed journal failed: %v", err)
+			c.setRecovery(true, fmt.Sprintf("archive roll-forward committed journal failed: %v", err))
 			return fmt.Errorf("%w: %v", ErrRecoveryRequired, err)
 		}
 		return nil
@@ -621,7 +561,7 @@ func (c *Coordinator) recoverIngressJournalLocked(ctx context.Context) error {
 
 	// Prior to PhaseCommitting: reverse rollback Dispatcher -> Telegram -> Xray
 	if err := c.failAndRollback(j, errors.New("startup recovery rolled back uncommitted transaction")); err != nil {
-		if c.recoveryNeeded {
+		if c.recoveryFlagged() {
 			return err
 		}
 	}
@@ -632,7 +572,7 @@ func (c *Coordinator) recoverIngressJournalLocked(ctx context.Context) error {
 func (c *Coordinator) Apply(ctx context.Context, desired IngressTopology) error {
 	txID := fmt.Sprintf("ing-%d-%d", time.Now().UnixNano(), os.Getpid())
 	return c.withIngressLock(txID, func() error {
-		if c.recoveryNeeded {
+		if c.recoveryFlagged() {
 			return ErrRecoveryRequired
 		}
 		return c.applyLocked(ctx, txID, desired, nil, nil)
@@ -1051,8 +991,7 @@ func (c *Coordinator) applyLocked(ctx context.Context, txID string, desired Ingr
 		}
 	}
 	if len(finErrs) > 0 {
-		c.recoveryNeeded = true
-		c.recoveryReason = fmt.Sprintf("finalize components failed: %v", errors.Join(finErrs...))
+		c.setRecovery(true, fmt.Sprintf("finalize components failed: %v", errors.Join(finErrs...)))
 		return fmt.Errorf("%w: finalize components failed: %v", ErrRecoveryRequired, errors.Join(finErrs...))
 	}
 
@@ -1062,15 +1001,13 @@ func (c *Coordinator) applyLocked(ctx context.Context, txID string, desired Ingr
 	journal.Fingerprints = c.computeFingerprints()
 	journal.Checksum = computeJournalChecksum(journal)
 	if err := c.writeJournal(jPath, journal); err != nil {
-		c.recoveryNeeded = true
-		c.recoveryReason = fmt.Sprintf("write committed journal failed: %v", err)
+		c.setRecovery(true, fmt.Sprintf("write committed journal failed: %v", err))
 		return fmt.Errorf("%w: write committed journal: %v", ErrRecoveryRequired, err)
 	}
 
 	// Step 6: Archive committed journal
 	if err := c.archiveJournal(jPath, "committed", txID); err != nil {
-		c.recoveryNeeded = true
-		c.recoveryReason = fmt.Sprintf("archive committed journal failed: %v", err)
+		c.setRecovery(true, fmt.Sprintf("archive committed journal failed: %v", err))
 		return fmt.Errorf("%w: archive journal: %v", ErrRecoveryRequired, err)
 	}
 
@@ -1168,16 +1105,11 @@ func (c *Coordinator) failAndRollback(j *TransactionJournal, origErr error) erro
 	}
 
 	if len(persistErrs) > 0 {
-		c.recoveryNeeded = true
-		c.recoveryReason = fmt.Sprintf("rollback persistence failed: %v", errors.Join(persistErrs...))
+		c.setRecovery(true, fmt.Sprintf("rollback persistence failed: %v", errors.Join(persistErrs...)))
 		return errors.Join(append([]error{ErrRecoveryRequired, origErr}, persistErrs...)...)
 	}
 
 	return origErr
-}
-
-func (c *Coordinator) rollback(j *TransactionJournal, xrayTxID string, origErr error) error {
-	return c.failAndRollback(j, origErr)
 }
 
 func (c *Coordinator) topologyForXrayConfig(cfg vlessserver.Config) IngressTopology {
@@ -1277,18 +1209,14 @@ func (c *Coordinator) topologyForTelegramConfig(cfg tgwebproxy.Config) IngressTo
 }
 
 // ApplyXrayConfig translates a VLESS server configuration into a desired topology and atomically applies it.
-func (c *Coordinator) ApplyXrayConfig(ctx context.Context, cfg vlessserver.Config) error {
-	_, err := c.applyXrayConfigSeq(ctx, cfg, nil)
-	return err
-}
 
-func (c *Coordinator) applyXrayConfigSeq(ctx context.Context, cfg vlessserver.Config, expectedSeq *uint64) (bool, error) {
+func (c *Coordinator) ApplyXrayConfig(ctx context.Context, cfg vlessserver.Config) error {
 	if len(cfg.Endpoints) > 0 {
 		vlessserver.NormalizeEndpoints(&cfg)
 	}
 	txID := fmt.Sprintf("ing-%d-%d", time.Now().UnixNano(), os.Getpid())
-	return c.withIngressLockSeq(txID, expectedSeq, func() error {
-		if c.recoveryNeeded {
+	return c.withIngressLock(txID, func() error {
+		if c.recoveryFlagged() {
 			return ErrRecoveryRequired
 		}
 		desired := c.topologyForXrayConfig(cfg)
@@ -1297,15 +1225,11 @@ func (c *Coordinator) applyXrayConfigSeq(ctx context.Context, cfg vlessserver.Co
 }
 
 // ApplyTelegramConfig updates Telegram Web Proxy configuration and coordinates Dispatcher state.
-func (c *Coordinator) ApplyTelegramConfig(ctx context.Context, cfg tgwebproxy.Config) error {
-	_, err := c.applyTelegramConfigSeq(ctx, cfg, nil)
-	return err
-}
 
-func (c *Coordinator) applyTelegramConfigSeq(ctx context.Context, cfg tgwebproxy.Config, expectedSeq *uint64) (bool, error) {
+func (c *Coordinator) ApplyTelegramConfig(ctx context.Context, cfg tgwebproxy.Config) error {
 	txID := fmt.Sprintf("ing-tg-%d-%d", time.Now().UnixNano(), os.Getpid())
-	return c.withIngressLockSeq(txID, expectedSeq, func() error {
-		if c.recoveryNeeded {
+	return c.withIngressLock(txID, func() error {
+		if c.recoveryFlagged() {
 			return ErrRecoveryRequired
 		}
 		if c.tgSvc == nil {
@@ -1320,7 +1244,7 @@ func (c *Coordinator) applyTelegramConfigSeq(ctx context.Context, cfg tgwebproxy
 func (c *Coordinator) SetXrayEnabled(ctx context.Context, enabled bool) error {
 	txID := fmt.Sprintf("ing-xray-enable-%d-%d", time.Now().UnixNano(), os.Getpid())
 	return c.withIngressLock(txID, func() error {
-		if c.recoveryNeeded {
+		if c.recoveryFlagged() {
 			return ErrRecoveryRequired
 		}
 		if c.xraySvc == nil {
@@ -1340,7 +1264,7 @@ func (c *Coordinator) SetXrayEnabled(ctx context.Context, enabled bool) error {
 func (c *Coordinator) SetTelegramEnabled(ctx context.Context, enabled bool) error {
 	txID := fmt.Sprintf("ing-tg-enable-%d-%d", time.Now().UnixNano(), os.Getpid())
 	return c.withIngressLock(txID, func() error {
-		if c.recoveryNeeded {
+		if c.recoveryFlagged() {
 			return ErrRecoveryRequired
 		}
 		if c.tgSvc == nil {
@@ -1357,7 +1281,7 @@ func (c *Coordinator) SetTelegramEnabled(ctx context.Context, enabled bool) erro
 func (c *Coordinator) RestartXray(ctx context.Context) error {
 	txID := fmt.Sprintf("ing-restart-%d-%d", time.Now().UnixNano(), os.Getpid())
 	return c.withIngressLock(txID, func() error {
-		if c.recoveryNeeded {
+		if c.recoveryFlagged() {
 			return ErrRecoveryRequired
 		}
 		if c.xraySvc == nil {
@@ -1380,7 +1304,7 @@ func (c *Coordinator) saveDispatcherConfigLocked(cfg cdndispatcher.Config) error
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return fmt.Errorf("create dispatcher dir: %w", err)
 	}
-	return atomicWriteFile(path, data, 0600)
+	return storage.AtomicWritePerm(path, data, 0600)
 }
 
 // GetDispatcherConfig returns the current dispatcher configuration.
@@ -1589,15 +1513,11 @@ func (c *Coordinator) HydrateDispatcherRoutes(ctx context.Context) error {
 }
 
 // ApplyDispatcherConfig atomically updates dispatcher routing rules and persists them without restarting Xray.
-func (c *Coordinator) ApplyDispatcherConfig(ctx context.Context, cfg cdndispatcher.Config) error {
-	_, err := c.applyDispatcherConfigSeq(ctx, cfg, nil)
-	return err
-}
 
-func (c *Coordinator) applyDispatcherConfigSeq(ctx context.Context, cfg cdndispatcher.Config, expectedSeq *uint64) (bool, error) {
+func (c *Coordinator) ApplyDispatcherConfig(ctx context.Context, cfg cdndispatcher.Config) error {
 	txID := fmt.Sprintf("ing-disp-%d-%d", time.Now().UnixNano(), os.Getpid())
-	return c.withIngressLockSeq(txID, expectedSeq, func() error {
-		if c.recoveryNeeded {
+	return c.withIngressLock(txID, func() error {
+		if c.recoveryFlagged() {
 			return ErrRecoveryRequired
 		}
 		if c.dispatcher == nil {
@@ -1652,42 +1572,6 @@ func (c *Coordinator) applyDispatcherConfigSeq(ctx context.Context, cfg cdndispa
 		}
 
 		return nil
-	})
-}
-
-// ResolveMigration executes migration strategy under coordinator lock.
-func (c *Coordinator) ResolveMigration(ctx context.Context, strategy string, legacyCfg *vlessserver.Config) error {
-	txID := fmt.Sprintf("ing-mig-%d-%d", time.Now().UnixNano(), os.Getpid())
-	return c.withIngressLock(txID, func() error {
-		if c.recoveryNeeded {
-			return ErrRecoveryRequired
-		}
-
-		switch strategy {
-		case "keep_new":
-			return vlessserver.SaveRuntimeDecision(c.dataDir, vlessserver.RuntimeDecision{
-				ActiveGeneration: "new",
-				MigrationStatus:  "migrated",
-				DecidedAt:        time.Now().UTC().Format(time.RFC3339),
-			})
-		case "keep_legacy":
-			return vlessserver.ErrLegacyRuntimeRemoved
-		case "import_legacy_draft":
-			if legacyCfg == nil {
-				return errors.New("legacy config is nil")
-			}
-			desired := c.topologyForXrayConfig(*legacyCfg)
-			if err := c.applyLocked(ctx, txID, desired, legacyCfg, nil); err != nil {
-				return err
-			}
-			return vlessserver.SaveRuntimeDecision(c.dataDir, vlessserver.RuntimeDecision{
-				ActiveGeneration: "new",
-				MigrationStatus:  "migrated",
-				DecidedAt:        time.Now().UTC().Format(time.RFC3339),
-			})
-		default:
-			return fmt.Errorf("unknown strategy: %s", strategy)
-		}
 	})
 }
 
@@ -2078,7 +1962,7 @@ func (c *Coordinator) ExecuteIngressTransaction(ctx context.Context, params Ingr
 		if params.ReadinessProbe != nil {
 			if err := params.ReadinessProbe(ctx, desiredTopo); err != nil {
 				rbErr := c.failAndRollback(journal, err)
-				if c.recoveryNeeded || errors.Is(rbErr, ErrRecoveryRequired) {
+				if c.recoveryFlagged() || errors.Is(rbErr, ErrRecoveryRequired) {
 					return rbErr
 				}
 				return fmt.Errorf("readiness probe failed: %w", err)
@@ -2221,10 +2105,6 @@ func (c *Coordinator) ExecuteIngressTransaction(ctx context.Context, params Ingr
 
 		return nil
 	})
-}
-
-func (c *Coordinator) rollbackIngressTx(j *TransactionJournal, xrayTxID string, prevTg tgwebproxy.Config, prevDisp cdndispatcher.Config, origErr error) error {
-	return c.failAndRollback(j, origErr)
 }
 
 func xrayAdditionalPrefixes(cfg vlessserver.Config, primaryPrefix string) []string {
@@ -2931,8 +2811,7 @@ func (c *Coordinator) ResetVless(ctx context.Context, opts ResetOptions) (ResetR
 	return res, err
 }
 
-// ResetTelegram resets only the Telegram proxy (and standalone telemt config,
-// preserving the telemt binary) + Telegram routes in Dispatcher back to factory defaults
+// ResetTelegram resets only the Telegram proxy + Telegram routes in Dispatcher back to factory defaults
 // while keeping any active VLESS server running. If VLESS is inactive/unconfigured for CDN,
 // CDN Dispatcher and its Keenetic hooks are fully reset as well.
 func (c *Coordinator) ResetTelegram(ctx context.Context, opts ResetOptions) (ResetResult, error) {
@@ -2961,16 +2840,6 @@ func (c *Coordinator) ResetTelegram(ctx context.Context, opts ResetOptions) (Res
 
 		if err := resetter.FactoryReset(ctx); err != nil {
 			return err
-		}
-
-		c.mu.Lock()
-		telemtSvc := c.telemtSvc
-		c.mu.Unlock()
-
-		if telemtSvc != nil {
-			if err := telemtSvc.ResetConfig(ctx); err != nil {
-				res.Warnings = append(res.Warnings, fmt.Sprintf("ошибка сброса настроек telemt: %v", err))
-			}
 		}
 
 		xrayNeedsDisp := c.xraySvc != nil && xrayCfg.Enabled && hasVlessCDNDomains(xrayCfg)

@@ -58,8 +58,7 @@ type Status struct {
 	HasUserHostlist bool `json:"hasUserHostlist"`
 }
 
-// ProcessState — закрытый набор, тот же, что у hydraroute, чтобы фронт
-// мог переиспользовать те же ленты и бейджи.
+// ProcessState — закрытый набор состояний демона.
 type ProcessState string
 
 const (

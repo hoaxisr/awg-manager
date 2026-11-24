@@ -4,9 +4,9 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { servers } from '$lib/stores/servers';
+	import { onResourceInvalidated } from '$lib/stores/storeRegistry';
 	import { systemInfo } from '$lib/stores/system';
 	import { goto } from '$app/navigation';
-	import { browser } from '$app/environment';
 	import { PageContainer, PageHeader } from '$lib/components/layout';
 	import { EmptyState } from '$lib/components/layout';
 	import { StoreStatusBadge, Button } from '$lib/components/ui';
@@ -24,24 +24,24 @@
 		CDNDispatcherCard,
 		type RailItem,
 	} from '$lib/components/servers';
-	import { EXTERNAL_ACCESS_LABELS } from '$lib/components/servers/external-access/connectionLabels';
+	import {
+		MANAGED_PREFIX,
+		managedRailId,
+		isMarkedSystemServer,
+		buildRailItems,
+		readStoredActiveId,
+		persistActiveId,
+	} from '$lib/components/servers/serverRailItems';
 	import type { XrayStatus, TgWebProxyStatus, CDNDispatcherConfig } from '$lib/types';
 	import { extractFircEnabledServers, getFircEnabledServers, setFircServerRoutingEnabled, type FircInboundServerId } from '$lib/utils/fircServerRouting';
-	import { dedupBy } from '$lib/utils/dedupBy';
 	import { createIngressMutationLock } from '$lib/utils/ingressMutation';
-	import { countActiveManagedPeers, countActiveSystemPeers } from '$lib/utils/serverPeerActivity';
-	import { systemServerIsUp } from '$lib/utils/systemServerState';
 	import { serversSkeletonCount, clampSkeletonCount } from '$lib/stores/skeletonCounts';
 
 	const withIngressLock = createIngressMutationLock();
 
-	/** System servers in the rail are built-in VPN Server or user-marked interfaces only. */
-	function isMarkedSystemServer(server: { builtIn?: boolean; description: string }): boolean {
-		return !(server.builtIn ?? server.description === 'Wireguard VPN Server');
-	}
-
 	let unsub: (() => void) | undefined;
-	let pollTimer: ReturnType<typeof setInterval> | undefined;
+	let unsubIngress: (() => void) | undefined;
+	let unsubFirc: (() => void) | undefined;
 
 	let xrayStatus = $state<XrayStatus | null>(null);
 	let tgStatus = $state<TgWebProxyStatus | null>(null);
@@ -78,16 +78,21 @@
 		loadXrayStatus();
 		loadTgStatus();
 		loadDispatcherStatus();
-		pollTimer = setInterval(() => {
+		// Вместо таймера — подсказки: servers.ingress приходит на правки
+		// VLESS/Telegram/диспетчера и на смену их рантайма, firc — на правку
+		// маршрутизации серверов через FIRC.
+		unsubIngress = onResourceInvalidated('servers.ingress', () => {
 			loadXrayStatus();
 			loadTgStatus();
 			loadDispatcherStatus();
 			loadIngressRefs();
-		}, 6000);
+		});
+		unsubFirc = onResourceInvalidated('firc', () => loadIngressRefs());
 	});
 	onDestroy(() => {
 		unsub?.();
-		if (pollTimer) clearInterval(pollTimer);
+		unsubIngress?.();
+		unsubFirc?.();
 	});
 
 	let snap = $derived($servers);
@@ -182,109 +187,9 @@
 		});
 	}
 
-	// ─── Rail item ids for managed servers ─────────────────────────
-	// Format: '__managed__:Wireguard5'. Prefix lets us distinguish managed
-	// rail items from system server ids without an extra `kind` lookup.
-	const MANAGED_PREFIX = '__managed__:';
-
-	const ACTIVE_SERVER_STORAGE_KEY = 'awgm:servers:activeId';
-
-	function readStoredActiveId(): string {
-		if (!browser) return '';
-
-		try {
-			return localStorage.getItem(ACTIVE_SERVER_STORAGE_KEY) ?? '';
-		} catch {
-			return '';
-		}
-	}
-
-	function persistActiveId(id: string) {
-		if (!browser) return;
-
-		try {
-			if (id) {
-				localStorage.setItem(ACTIVE_SERVER_STORAGE_KEY, id);
-			} else {
-				localStorage.removeItem(ACTIVE_SERVER_STORAGE_KEY);
-			}
-		} catch {
-			// localStorage can be unavailable; ignore and keep in-memory selection.
-		}
-	}
-
-	function managedRailId(iface: string): string {
-		return MANAGED_PREFIX + iface;
-	}
-
-	let railItems = $derived.by<RailItem[]>(() => {
-		const items: RailItem[] = [];
-		for (const ms of managedServers) {
-			const stats = managedStatsMap[ms.interfaceName] ?? null;
-			const mPeers = ms.peers ?? [];
-			const statsPeers = stats?.peers ?? [];
-			items.push({
-				id: managedRailId(ms.interfaceName),
-				name: ms.description || ms.interfaceName,
-				iface: ms.interfaceName,
-				listenPort: ms.listenPort,
-				// Backend ManagedServerStats.Status mirrors NDMS interface state
-				// ("up"/"down"), not the layer-state word "running" that NDMS
-				// hooks emit. Comparing against "running" never matched and
-				// flagged the rail item as stopped even on healthy servers.
-				status: stats?.status === 'up' ? 'running' : 'stopped',
-				peerActive: countActiveManagedPeers(mPeers, statsPeers),
-				peerCount: mPeers.length,
-				kind: 'managed',
-			});
-		}
-		for (const s of serverList) {
-			const sPeers = s.peers ?? [];
-			items.push({
-				id: s.id,
-				name: s.description || s.interfaceName,
-				iface: s.interfaceName,
-				listenPort: s.listenPort,
-				status: systemServerIsUp(s) ? 'running' : 'stopped',
-				peerCount: sPeers.length,
-				peerActive: countActiveSystemPeers(sPeers),
-				kind: 'system',
-			});
-		}
-
-		const xrayClients = xrayStatus?.clients ?? [];
-		const activeClients = xrayClients.filter(c => c.enabled).length;
-		items.push({
-			id: '__xray_server__',
-			name: EXTERNAL_ACCESS_LABELS.vlessTitle,
-			iface: 'Внешний доступ',
-			listenPort: '',
-			status: xrayStatus?.running ? 'running' : 'stopped',
-			peerCount: xrayClients.length,
-			peerActive: activeClients,
-			kind: 'xray',
-		});
-
-		items.push({
-			id: '__tg_webproxy__',
-			name: EXTERNAL_ACCESS_LABELS.telegramTitle,
-			iface: 'Прокси и мост',
-			listenPort: '',
-			status: tgStatus?.running ? 'running' : 'stopped',
-			kind: 'tgwebproxy',
-		});
-
-		items.push({
-			id: '__dispatcher__',
-			name: EXTERNAL_ACCESS_LABELS.dispatcherRailTitle,
-			iface: 'Маршруты доменов',
-			listenPort: '',
-			status: dispatcherConfig?.running ? 'running' : 'stopped',
-			kind: 'dispatcher',
-		});
-
-		return dedupBy(items, (i) => i.id, { warnTag: 'server rail' });
-	});
+	let railItems = $derived<RailItem[]>(
+		buildRailItems(managedServers, managedStatsMap, serverList, xrayStatus, tgStatus, dispatcherConfig),
+	);
 
 	let hasServers = $derived(railItems.length > 0);
 	let occupiedListenPorts = $derived.by<number[]>(() => {

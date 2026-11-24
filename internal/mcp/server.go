@@ -52,7 +52,7 @@ func NewServer(deps Deps, version string) *mcp.Server {
 	registerServerTools(s, deps)
 	registerPeerTools(s, deps)
 	registerWireguardServerTools(s, deps)
-	registerHydraRouteTools(s, deps)
+	registerGeoDataTools(s, deps)
 	s.AddResource(&mcp.Resource{
 		URI:         ResourceOpenAPI,
 		Name:        "openapi",

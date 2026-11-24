@@ -17,7 +17,7 @@
 //   MOCK_AWG_TUNNELS rows with counts split from stats.tunneled so the tunnel chip
 //   row matches diagnostics UI (same as a real router).
 // - Diagnostics «Окружение: GET /dns-check/client (Test-Phone @ 192.168.1.42,
-//   policy Policy1), /system/hydraroute-status, plus existing /routing/*, /tunnels/all,
+//   policy Policy1), plus existing /routing/*, /tunnels/all,
 //   /proxy/*, /singbox/subscriptions.
 // Default upstream: http://127.0.0.1:8080 (Prism). Listen: 8081.
 /**
@@ -41,11 +41,6 @@
  * - POST /__mock/singbox-install-fail {"enabled": true|false};
  * - POST /__mock/singbox-running {"running": true|false} — живость sing-box в
  *   GET /singbox/status (env MOCK_SINGBOX_DOWN=1 выключает её на старте).
- * - POST /__mock/hydraroute-installed {"installed": true|false} — установлен ли
- *   HydraRoute в GET /system/hydraroute-status (env MOCK_HYDRAROUTE_ABSENT=1
- *   снимает на старте). Нужен, чтобы посмотреть карточку интеграций в
- *   состоянии «ничего не установлено»: там у HydraRoute вместо «Открыть»
- *   ссылка «Инструкция →».
  *
  * Default upstream: http://127.0.0.1:8080 (Prism). Listen: 8081.
  */
@@ -132,8 +127,8 @@ const MOCK_CAPABILITY_GROUPS = Object.freeze([
 	},
 	{
 		id: 'diagnostics',
-		label: 'DNS check, HydraRoute status, system tunnel tests',
-		endpoints: ['GET /dns-check/client', 'GET /system/hydraroute-status', 'GET /system-tunnels/test-*'],
+		label: 'DNS check, system tunnel tests',
+		endpoints: ['GET /dns-check/client', 'GET /system-tunnels/test-*'],
 	},
 	{
 		id: 'mock-control',
@@ -145,7 +140,6 @@ const MOCK_CAPABILITY_GROUPS = Object.freeze([
 			'POST /__mock/reset',
 			'POST /__mock/singbox-install-fail',
 			'POST /__mock/singbox-running',
-			'POST /__mock/hydraroute-installed',
 			'POST /__mock/download-faults',
 			'POST /__mock/keenetic-os',
 		],
@@ -191,7 +185,6 @@ function getRuntimeState() {
 		mcpKeys: mockMcpKeys.length,
 		singboxInstallShouldFail,
 		singboxRunning,
-		hydraRouteInstalled,
 		downloadFaultsEnabled,
 		downloadFaultProbability,
 		logsCleared: { ...bucketCleared },
@@ -211,7 +204,6 @@ function resetRuntimeControls() {
 	mockMcpKeySeq = 0;
 	singboxInstallShouldFail = process.env.MOCK_SINGBOX_INSTALL_FAIL === '1';
 	singboxRunning = process.env.MOCK_SINGBOX_DOWN !== '1';
-	hydraRouteInstalled = process.env.MOCK_HYDRAROUTE_ABSENT !== '1';
 	downloadFaultsEnabled = process.env.MOCK_DOWNLOAD_FAULTS !== '0';
 	downloadFaultProbability = parseProbability(process.env.MOCK_DOWNLOAD_FAULT_PROB, 0.4);
 	bucketCleared.app = false;
@@ -2241,11 +2233,11 @@ let mockSBSettings = {
 	ingressInterfaces: [],
 };
 
-// Теги geoip-файлов из мока /hydraroute/geo-files. Суммы подобраны так,
+// Теги geoip-файлов из мока /geo/files. Суммы подобраны так,
 // чтобы cn+us+ru перебирали предел набора (262144) — превышение бюджета
 // в UI обхода по geoip проверяемо без роутера.
 const MOCK_GEO_TAGS = {
-	'/opt/etc/HydraRoute/geoip_GA.dat': [
+	'/opt/etc/awg-manager/geo/geoip_GA.dat': [
 		{ name: 'ru', count: 48210 },
 		{ name: 'cn', count: 120340 },
 		{ name: 'us', count: 98765 },
@@ -2254,11 +2246,11 @@ const MOCK_GEO_TAGS = {
 		{ name: 'cloudflare', count: 1980 },
 		{ name: 'private', count: 32 },
 	],
-	'/opt/etc/HydraRoute/geoip_antifilter.dat': [
+	'/opt/etc/awg-manager/geo/geoip_antifilter.dat': [
 		{ name: 'ru', count: 3000 },
 		{ name: 'antifilter', count: 18400 },
 	],
-	'/opt/etc/HydraRoute/geosite_GA.dat': [],
+	'/opt/etc/awg-manager/geo/geosite_GA.dat': [],
 };
 
 // Состояние набора обхода AWGM-BYPASS (GET/POST /singbox/router/bypass-set/*).
@@ -2466,6 +2458,10 @@ let mockBoundDevices = new Set();
 // representative singbox-router:transition progress sequence to the FE.
 const sseSenders = new Set();
 let mockTransitionSeq = 0;
+// Cap on bytes queued in Node for one long-lived push stream (/events SSE,
+// clash WS). A healthy reader drains a tick in milliseconds; past this the
+// peer is gone or stuck and the connection is dropped (EventSource reconnects).
+const STREAM_MAX_BUFFERED = 1024 * 1024;
 
 // buildTransitionSequence returns a representative ordered list of
 // singbox-router:transition events for a from→to switch (the same shape the Go
@@ -2755,23 +2751,6 @@ const mockDnsProxyInfo = {
 	],
 };
 
-/** HydraRoute Neo в блоке AWGM (GET /system/hydraroute-status). */
-const mockHydraRouteStatusInstalled = {
-	installed: true,
-	running: true,
-	version: '2.4.1',
-	pid: 2345,
-	processState: 'running',
-};
-
-const mockHydraRouteStatusAbsent = {
-	installed: false,
-	running: false,
-	processState: 'not_installed',
-};
-
-let hydraRouteInstalled = process.env.MOCK_HYDRAROUTE_ABSENT !== '1';
-
 // Каталоги файлового менеджера: ключ — путь, значение — ответ /system/files/list.
 // Запись «..» ведёт себя как у бэкенда (internal/sys/files.List): она есть в
 // каждом каталоге, а прыжок за пределы корня отбивается уже на листинге.
@@ -2933,109 +2912,6 @@ const mockRoutingDnsRoutes = [
 		routes: [mockAwgRoute('awg-demo-2')],
 		enabled: true,
 		createdAt: '2026-05-06T14:00:00Z',
-		updatedAt: '2026-05-14T20:00:00Z',
-	},
-	// HydraRoute Neo — ids match production (`hr:RuleName`), files are SoT on device.
-	{
-		id: 'hr:Youtube',
-		name: 'Youtube',
-		domains: ['youtube.com', 'ytimg.com'],
-		manualDomains: ['youtube.com', 'ytimg.com'],
-		hrRouteMode: 'policy',
-		hrPolicyName: 'HydraRoute',
-		routes: [mockAwgRoute('awg-demo-1')],
-		enabled: true,
-		backend: 'hydraroute',
-		createdAt: '2026-05-07T10:00:00Z',
-		updatedAt: '2026-05-14T20:00:00Z',
-	},
-	{
-		id: 'hr:Netflix',
-		name: 'Netflix',
-		domains: ['netflix.com'],
-		manualDomains: ['netflix.com'],
-		hrRouteMode: 'policy',
-		hrPolicyName: 'HydraRoute',
-		routes: [mockAwgRoute('awg-demo-2')],
-		enabled: false,
-		backend: 'hydraroute',
-		createdAt: '2026-05-08T10:00:00Z',
-		updatedAt: '2026-05-14T20:00:00Z',
-	},
-	{
-		id: 'hr:Discord',
-		name: 'Discord',
-		domains: ['discord.com', 'discord.gg'],
-		manualDomains: ['discord.com', 'discord.gg'],
-		hrRouteMode: 'interface',
-		routes: [{ interface: 'opkgtun1', tunnelId: 'awg-demo-1', fallback: 'auto' }],
-		enabled: true,
-		backend: 'hydraroute',
-		createdAt: '2026-05-09T10:00:00Z',
-		updatedAt: '2026-05-14T20:00:00Z',
-	},
-	{
-		id: 'hr:OpenAI',
-		name: 'OpenAI',
-		domains: ['openai.com', 'chatgpt.com'],
-		manualDomains: ['openai.com', 'chatgpt.com'],
-		hrRouteMode: 'policy',
-		hrPolicyName: 'HydraRoute',
-		routes: [mockAwgRoute('awg-demo-2')],
-		enabled: true,
-		backend: 'hydraroute',
-		createdAt: '2026-05-10T10:00:00Z',
-		updatedAt: '2026-05-14T20:00:00Z',
-	},
-	{
-		id: 'hr:Константинопольские',
-		name: 'Константинопольские сервисы',
-		domains: ['example-long-name.local'],
-		manualDomains: ['example-long-name.local'],
-		hrRouteMode: 'policy',
-		hrPolicyName: 'HydraRoute',
-		routes: [mockAwgRoute('awg-demo-1')],
-		enabled: true,
-		backend: 'hydraroute',
-		createdAt: '2026-05-11T10:00:00Z',
-		updatedAt: '2026-05-14T20:00:00Z',
-	},
-	{
-		id: 'hr:Telegram',
-		name: 'Telegram',
-		domains: ['telegram.org', 't.me'],
-		subnets: ['91.108.4.0/22'],
-		manualDomains: ['telegram.org', 't.me', '91.108.4.0/22'],
-		hrRouteMode: 'interface',
-		routes: [{ interface: 'OpkgTun0', tunnelId: 'awg-demo-2', fallback: 'auto' }],
-		enabled: true,
-		backend: 'hydraroute',
-		createdAt: '2026-05-12T10:00:00Z',
-		updatedAt: '2026-05-14T20:00:00Z',
-	},
-	{
-		id: 'hr:GitHub',
-		name: 'GitHub',
-		domains: ['github.com'],
-		manualDomains: ['github.com'],
-		hrRouteMode: 'policy',
-		hrPolicyName: 'HydraRoute',
-		routes: [mockAwgRoute('awg-demo-1')],
-		enabled: true,
-		backend: 'hydraroute',
-		createdAt: '2026-05-13T10:00:00Z',
-		updatedAt: '2026-05-14T20:00:00Z',
-	},
-	{
-		id: 'hr:Twitch',
-		name: 'Twitch',
-		domains: ['twitch.tv'],
-		manualDomains: ['twitch.tv'],
-		hrRouteMode: 'interface',
-		routes: [{ interface: 'OpkgTun0', tunnelId: 'awg-demo-2', fallback: 'auto' }],
-		enabled: true,
-		backend: 'hydraroute',
-		createdAt: '2026-05-14T10:00:00Z',
 		updatedAt: '2026-05-14T20:00:00Z',
 	},
 ];
@@ -4520,8 +4396,8 @@ function wait(ms) {
 // `style: 'envelope'` → backend error shape {error, message, code} @ 400.
 // `style: 'updateInfo'` → /system/update/check returns 200 with data.error.
 const DOWNLOAD_FAULT_ROUTES = [
-	{ method: 'POST', path: '/hydraroute/geo-files/update', style: 'envelope', code: 'GEO_UPDATE_ERROR' },
-	{ method: 'POST', path: '/hydraroute/geo-files/add', style: 'envelope', code: 'GEO_DOWNLOAD_ERROR' },
+	{ method: 'POST', path: '/geo/files/update', style: 'envelope', code: 'GEO_UPDATE_ERROR' },
+	{ method: 'POST', path: '/geo/files/add', style: 'envelope', code: 'GEO_DOWNLOAD_ERROR' },
 	{ method: 'POST', path: '/dns-routes/refresh', style: 'envelope', code: 'DNS_ROUTE_REFRESH_ERROR' },
 	{ method: 'POST', path: '/singbox/install', style: 'envelope', code: 'SINGBOX_INSTALL_ERROR' },
 	{ method: 'POST', path: '/singbox/update', style: 'envelope', code: 'SINGBOX_UPDATE_ERROR' },
@@ -4635,9 +4511,6 @@ function mergeMockDnsRoute(route, patch) {
 	if (patch.routes != null) route.routes = patch.routes;
 	if (patch.enabled != null) route.enabled = patch.enabled !== false;
 	if (patch.backend != null) route.backend = patch.backend;
-	if (patch.hrRouteMode != null) route.hrRouteMode = patch.hrRouteMode;
-	if (patch.hrPolicyName != null) route.hrPolicyName = patch.hrPolicyName;
-	if (patch.hrPolicyInterfaces != null) route.hrPolicyInterfaces = patch.hrPolicyInterfaces;
 	if (patch.iconUrl != null) route.iconUrl = patch.iconUrl;
 	touchMockDnsRoute(route);
 	return route;
@@ -4886,9 +4759,8 @@ const APP_LOG_TEMPLATES = [
 	{ group: 'routing', subgroup: 'singbox-router',level:'info', action: 'reload',   target: '',        message: 'sing-box router config reloaded (12 rules)' },
 	{ group: 'routing', subgroup: 'deviceproxy', level: 'info',  action: 'enable',   target: 'vless-1', message: 'Device proxy enabled on :1099 via vless-1' },
 	{ group: 'routing', subgroup: 'deviceproxy', level: 'info',  action: 'change-outbound', target: 'vless-2', message: 'Device proxy outbound switched to vless-2' },
-	{ group: 'routing', subgroup: 'hrneo',       level: 'info',  action: 'restart',  target: '',        message: 'neo restarted' },
-	{ group: 'routing', subgroup: 'hrneo',       level: 'info',  action: 'sync-geo', target: '',        message: 'sync geo files: 3 geoip + 5 geosite' },
-	{ group: 'routing', subgroup: 'hrneo',       level: 'warn',  action: 'download', target: 'https://example.com/geoip.dat', message: 'geoip: read tcp: i/o timeout' },
+	{ group: 'routing', subgroup: 'geodata',     level: 'info',  action: 'download', target: '',        message: 'geoip downloaded' },
+	{ group: 'routing', subgroup: 'geodata',     level: 'warn',  action: 'download', target: 'https://example.com/geoip.dat', message: 'geoip: read tcp: i/o timeout' },
 	{ group: 'routing', subgroup: 'catalog',     level: 'warn',  action: 'snapshot-section', target: 'staticRoutes', message: 'failed to load static routes section' },
 	// server
 	{ group: 'server',  subgroup: 'managed',     level: 'info',  action: 'create',   target: 'wg-server-1', message: 'Managed WG server provisioned' },
@@ -4961,7 +4833,7 @@ function buildFakeSingboxEntries() {
 
 const KNOWN_SUBGROUPS_MOCK = {
 	tunnel: ['lifecycle', 'ops', 'state', 'firewall', 'pingcheck', 'connectivity', 'test', 'signature'],
-	routing: ['dns-route', 'static-route', 'access-policy', 'client-route', 'singbox-router', 'deviceproxy', 'hrneo', 'catalog', 'awg-outbounds'],
+	routing: ['dns-route', 'static-route', 'access-policy', 'client-route', 'singbox-router', 'deviceproxy', 'geodata', 'catalog', 'awg-outbounds'],
 	server: ['managed'],
 	system: ['boot', 'auth', 'settings', 'update', 'wan', 'system-tunnels', 'cleanup', 'dnscheck', 'connections', 'traffic', 'diagnostics', 'rci', 'ndms'],
 	singbox: ['process', 'inbound', 'outbound', 'dns', 'router', 'runtime'],
@@ -5237,7 +5109,7 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
-	if (req.method === 'GET' && path === '/hydraroute/geo-files') {
+	if (req.method === 'GET' && path === '/geo/files') {
 		const ago = (min) => new Date(Date.now() - min * 60_000).toISOString();
 		send(res, 200, {
 			success: true,
@@ -5245,7 +5117,7 @@ const server = http.createServer(async (req, res) => {
 				// Managed by AWGM (external !== true) — updatable through the route.
 				{
 					type: 'geoip',
-					path: '/opt/etc/HydraRoute/geoip_GA.dat',
+					path: '/opt/etc/awg-manager/geo/geoip_GA.dat',
 					url: 'https://raw.githubusercontent.com/Ground-Zerro/Geo-Aggregator/main/geodat/geoip_GA.dat',
 					size: 1_245_184,
 					tagCount: 312,
@@ -5253,7 +5125,7 @@ const server = http.createServer(async (req, res) => {
 				},
 				{
 					type: 'geosite',
-					path: '/opt/etc/HydraRoute/geosite_GA.dat',
+					path: '/opt/etc/awg-manager/geo/geosite_GA.dat',
 					url: 'https://raw.githubusercontent.com/Ground-Zerro/Geo-Aggregator/main/geodat/geosite_GA.dat',
 					size: 4_980_736,
 					tagCount: 868,
@@ -5262,16 +5134,16 @@ const server = http.createServer(async (req, res) => {
 				// Extra non-external geoip (managed by AWGM).
 				{
 					type: 'geoip',
-					path: '/opt/etc/HydraRoute/geoip_antifilter.dat',
+					path: '/opt/etc/awg-manager/geo/geoip_antifilter.dat',
 					url: 'https://cdn.example.com/geodat/geoip_antifilter.dat',
 					size: 786_432,
 					tagCount: 154,
 					updated: ago(45),
 				},
-				// External — discovered in hrneo.conf, not managed by AWGM.
+				// External — файл другой программы, только чтение.
 				{
 					type: 'geosite',
-					path: '/opt/etc/hrneo/geosite.db',
+					path: '/opt/etc/HydraRoute/geosite.db',
 					url: 'https://cdn.example.com/geosite.db',
 					size: 3_145_728,
 					tagCount: 420,
@@ -5283,7 +5155,7 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
-	if (req.method === 'GET' && path === '/hydraroute/geo-tags') {
+	if (req.method === 'GET' && path === '/geo/tags') {
 		send(res, 200, {
 			success: true,
 			data: MOCK_GEO_TAGS[url.searchParams.get('path') ?? ''] ?? [],
@@ -5524,6 +5396,13 @@ const server = http.createServer(async (req, res) => {
 		});
 
 		const sendEvent = (event, data) => {
+			// A client that stopped reading (frozen tab, stuck proxy hop) never
+			// closes, and res.write() would buffer every tick in the heap forever.
+			if (res.destroyed) return;
+			if (res.writableLength > STREAM_MAX_BUFFERED) {
+				res.destroy();
+				return;
+			}
 			res.write(`event: ${event}\n`);
 			res.write(`data: ${JSON.stringify(data)}\n\n`);
 		};
@@ -6128,14 +6007,6 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
-	if (req.method === 'GET' && path === '/system/hydraroute-status') {
-		send(res, 200, {
-			success: true,
-			data: hydraRouteInstalled ? mockHydraRouteStatusInstalled : mockHydraRouteStatusAbsent,
-		});
-		return;
-	}
-
 	// === Device Proxy mock overrides ===
 	if (req.method === 'GET' && path === '/proxy/instances') {
 		send(res, 200, { success: true, data: mockProxyInstances });
@@ -6380,18 +6251,6 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
-	if (req.method === 'POST' && path === '/__mock/hydraroute-installed') {
-		try {
-			const body = await readJsonBody(req);
-			hydraRouteInstalled = body.installed !== false;
-			send(res, 200, { ok: true, hydraRouteInstalled });
-			console.log(`[mock-proxy] hydraRouteInstalled → ${hydraRouteInstalled}`);
-		} catch (e) {
-			send(res, 400, { error: String(e) });
-		}
-		return;
-	}
-
 	if (req.method === 'POST' && path === '/__mock/singbox-install-fail') {
 		try {
 			const body = await readJsonBody(req);
@@ -6575,8 +6434,7 @@ const server = http.createServer(async (req, res) => {
 				sendInvalidRequest(res, 'name is required');
 				return;
 			}
-			const isHR = body.backend === 'hydraroute' || body.hrRouteMode;
-			const id = isHR ? `hr:${name}` : `dns-${name.toLowerCase().replace(/\s+/g, '-')}`;
+			const id = `dns-${name.toLowerCase().replace(/\s+/g, '-')}`;
 			if (findMockDnsRoute(id)) {
 				send(res, 400, {
 					success: false,
@@ -6593,10 +6451,7 @@ const server = http.createServer(async (req, res) => {
 				manualDomains: body.manualDomains ?? body.domains ?? [],
 				routes: body.routes ?? [],
 				enabled: body.enabled !== false,
-				backend: isHR ? 'hydraroute' : body.backend,
-				hrRouteMode: body.hrRouteMode,
-				hrPolicyName: body.hrPolicyName,
-				hrPolicyInterfaces: body.hrPolicyInterfaces,
+				backend: body.backend,
 				iconUrl: body.iconUrl,
 				createdAt: now,
 				updatedAt: now,
@@ -9230,12 +9085,17 @@ const server = http.createServer(async (req, res) => {
 			res.end();
 		}
 	});
+	// Клиент ушёл до ответа (вкладка закрыта, fetch отменён) — запрос к Prism
+	// больше не нужен: без destroy он висит, пока upstream не ответит.
+	res.on('close', () => {
+		if (!res.writableFinished) proxyReq.destroy();
+	});
 	req.pipe(proxyReq);
 });
 
 server.listen(PORT, '127.0.0.1', () => {
 	console.log(`mock-proxy on http://127.0.0.1:${PORT} → ${UPSTREAM} (usageLevel=${usageLevel})`);
-	console.log('[mock-proxy] controls: GET /__mock/capabilities, GET /__mock/tunnels, POST /__mock/reset-runtime, POST /__mock/singbox-install-fail, POST /__mock/singbox-running, POST /__mock/hydraroute-installed, POST /__mock/download-faults, POST /__mock/keenetic-os');
+	console.log('[mock-proxy] controls: GET /__mock/capabilities, GET /__mock/tunnels, POST /__mock/reset-runtime, POST /__mock/singbox-install-fail, POST /__mock/singbox-running, POST /__mock/download-faults, POST /__mock/keenetic-os');
 	console.log(`[mock-proxy] keenetic-os: ${mockKeeneticProfile.key} (supportsExtendedASC=${mockKeeneticProfile.extended}; default: 5.1, force: MOCK_KEENETIC_OS=5.0|5.1|5.2, switch: POST /__mock/keenetic-os)`);
 	console.log(`[mock-proxy] download faults: enabled=${downloadFaultsEnabled} p=${downloadFaultProbability} (disable: MOCK_DOWNLOAD_FAULTS=0)`);
 });
@@ -9333,6 +9193,11 @@ server.on('upgrade', (req, socket) => {
 		`Sec-WebSocket-Accept: ${wsAccept(key)}\r\n\r\n`,
 	);
 	const interval = setInterval(() => {
+		// Peer stopped reading: drop it instead of buffering frames forever.
+		if (socket.writableLength > STREAM_MAX_BUFFERED) {
+			socket.destroy();
+			return;
+		}
 		try {
 			socket.write(encodeWSFrame(JSON.stringify(makeMockSnapshot())));
 		} catch {
@@ -9341,6 +9206,11 @@ server.on('upgrade', (req, socket) => {
 	}, 1500);
 	socket.on('close', () => clearInterval(interval));
 	socket.on('error', () => clearInterval(interval));
+	// Incoming frames are ignored, but the socket must be read: a paused socket
+	// never emits 'end', so a peer that hung up (FIN) left this socket in
+	// CLOSE-WAIT with the interval writing into it forever.
+	socket.on('end', () => socket.destroy());
+	socket.resume();
 	// Initial frame so the UI flips to "Live" immediately.
 	try { socket.write(encodeWSFrame(JSON.stringify(makeMockSnapshot()))); } catch { /* ignore */ }
 });

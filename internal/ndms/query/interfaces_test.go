@@ -1281,14 +1281,13 @@ func TestInterfaceStore_ListAll_DedupDeterministic(t *testing.T) {
 	}
 }
 
-// SystemNames — имена ядра для обратной карты (SystemTunnelsByIface):
-// `interface-name` из списка (byID.SystemName) сам по себе резолвером не
+// Имена ядра из ResolveSystemName: `interface-name` из списка (byID.SystemName) сам по себе резолвером не
 // подтверждён, поэтому проходит ту же проверку kernelIfaceExists, что и
 // trustedSystemName — устройства нет ни у одного из трёх, все идут в один
 // пакетный запрос; итог резолвера (s.sysNames) кэшируется и трудится дальше
 // даже без живого устройства (карте нужно имя, а не живость) — повтор в
 // резолвер не ходит.
-func TestInterfaceStore_SystemNames_CachedOrOneBatch(t *testing.T) {
+func TestInterfaceStore_ResolveSystemName_CachedOrOneBatch(t *testing.T) {
 	orig := kernelIfaceExists
 	kernelIfaceExists = func(string) bool { return false } // устройств нет
 	defer func() { kernelIfaceExists = orig }()
@@ -1307,7 +1306,10 @@ func TestInterfaceStore_SystemNames_CachedOrOneBatch(t *testing.T) {
 	want := map[string]string{"UsbLte0": "usb0", "UsbLte1": "usb1", "UsbLte2": "usb2"}
 
 	for round := 1; round <= 2; round++ {
-		got := s.SystemNames(context.Background(), ids)
+		got := map[string]string{}
+		for _, id := range ids {
+			got[id] = s.ResolveSystemName(context.Background(), id)
+		}
 		if fmt.Sprint(got) != fmt.Sprint(want) {
 			t.Fatalf("круг %d: %v, want %v", round, got, want)
 		}
@@ -1325,10 +1327,10 @@ func TestInterfaceStore_SystemNames_CachedOrOneBatch(t *testing.T) {
 	}
 }
 
-// SystemNames: byID.SystemName, прошедший синтаксическую форму
+// ResolveSystemName: byID.SystemName, прошедший синтаксическую форму
 // (looksLikeKernelIfname), но не kernelIfaceExists — НЕ берётся из кэша, а
 // уходит в резолвер (защита от лейбла NDMS, похожего на имя ядра, на 5.02).
-func TestInterfaceStore_SystemNames_ByIDNameFailsExistenceCheck(t *testing.T) {
+func TestInterfaceStore_ResolveSystemName_ByIDNameFailsExistenceCheck(t *testing.T) {
 	orig := kernelIfaceExists
 	kernelIfaceExists = func(string) bool { return false }
 	defer func() { kernelIfaceExists = orig }()
@@ -1340,8 +1342,8 @@ func TestInterfaceStore_SystemNames_ByIDNameFailsExistenceCheck(t *testing.T) {
 	fg.SetPostSystemName("UsbLte0", `"usb0"`)
 	s := NewInterfaceStore(fg, NopLogger())
 
-	got := s.SystemNames(context.Background(), []string{"UsbLte0"})
-	if got["UsbLte0"] != "usb0" {
+	got := s.ResolveSystemName(context.Background(), "UsbLte0")
+	if got != "usb0" {
 		t.Fatalf("got %v, want usb0 через резолвер", got)
 	}
 	if n := fg.PostSystemNameCalls("UsbLte0"); n != 1 {

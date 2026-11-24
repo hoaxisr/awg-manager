@@ -63,15 +63,6 @@ func NewTproxyEngine(dir string) *TproxyEngine {
 	}
 }
 
-func (e *TproxyEngine) SetDir(dir string) {
-	if e == nil || strings.TrimSpace(dir) == "" {
-		return
-	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.dir = dir
-}
-
 func (e *TproxyEngine) getDirLocked() string {
 	if strings.TrimSpace(e.dir) != "" {
 		return e.dir

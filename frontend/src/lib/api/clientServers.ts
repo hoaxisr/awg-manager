@@ -17,7 +17,6 @@ import type {
 	XrayConfig,
 	XrayStatus,
 	XrayShareLinks,
-	XrayMigrationStatus,
 	XrayRealityState,
 	XrayRealityUpdate,
 	XrayRealityDestCheck,
@@ -507,17 +506,6 @@ export class ServersClient extends SystemClient {
 		return this.request<XrayShareLinks>(`/servers/vless/clients/${encodeURIComponent(id)}/link${qs ? `?${qs}` : ''}`);
 	}
 
-	async getXrayMigrationStatus(): Promise<XrayMigrationStatus> {
-		return this.request<XrayMigrationStatus>('/servers/vless/migration');
-	}
-
-	async resolveXrayConflict(action: 'keep_new' | 'import_legacy_draft'): Promise<{ success: boolean; decision?: unknown }> {
-		return this.request<{ success: boolean; decision?: unknown }>('/servers/vless/migration/resolve', {
-			method: 'POST',
-			body: JSON.stringify({ action }),
-		});
-	}
-
 	// Direct VLESS + REALITY entry (white-IP routers)
 	async getXrayReality(refreshNetwork = false): Promise<XrayRealityState> {
 		return this.request<XrayRealityState>(`/servers/vless/reality${refreshNetwork ? '?refresh=1' : ''}`);
@@ -735,7 +723,7 @@ export class ServersClient extends SystemClient {
 			domain,
 			mode,
 			cert_ok: certOk,
-			cert_info: str(kd.cert_info) || (certOk ? 'HTTPS-сертификат активен' : ''),
+			cert_info: str(kd.cert_info),
 			error_detail: str(kd.error_detail) || str(kd.status_message),
 			publications,
 			wan_ip: str(kd.wan_ip) || str(kd.wan_address),

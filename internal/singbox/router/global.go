@@ -3,9 +3,13 @@ package router
 import (
 	"bytes"
 	"encoding/json"
+	"time"
+
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
+
+const globalRetryAfter = 10 * time.Minute
 
 func (s *ServiceImpl) reconcileGlobal(sr storage.SingboxRouterSettings, stopped bool) error {
 	orch := s.deps.Orch
@@ -15,6 +19,7 @@ func (s *ServiceImpl) reconcileGlobal(sr storage.SingboxRouterSettings, stopped 
 	slot := orchestrator.SlotGlobal
 	active := s.slotEnabled(slot)
 	if stopped || !sr.Enabled || sr.GlobalOutbound == "" {
+		s.globalFailed = nil
 		if active {
 			return orch.SetEnabled(slot, false)
 		}
@@ -38,6 +43,12 @@ func (s *ServiceImpl) reconcileGlobal(sr storage.SingboxRouterSettings, stopped 
 	if active && bytes.Equal(old, data) {
 		return nil
 	}
+	// Тот же слот уже не взлетел: повтор на каждом тике давал бы запись на
+	// флеш и полный reload раз в 30 с. Повтор — раз в globalRetryAfter: ссылку
+	// мог починить другой слот (появился outbound), настройки при этом те же.
+	if bytes.Equal(data, s.globalFailed) && time.Since(s.globalFailedAt) < globalRetryAfter {
+		return nil
+	}
 	if err := orch.SaveSilent(slot, data); err != nil {
 		return err
 	}
@@ -45,6 +56,7 @@ func (s *ServiceImpl) reconcileGlobal(sr storage.SingboxRouterSettings, stopped 
 		return err
 	}
 	if err := orch.ReloadNow(); err != nil {
+		s.globalFailed, s.globalFailedAt = data, time.Now()
 		if active {
 			if restore := orch.Save(slot, old); restore != nil {
 				return restore
@@ -54,5 +66,6 @@ func (s *ServiceImpl) reconcileGlobal(sr storage.SingboxRouterSettings, stopped 
 		}
 		return err
 	}
+	s.globalFailed = nil
 	return nil
 }

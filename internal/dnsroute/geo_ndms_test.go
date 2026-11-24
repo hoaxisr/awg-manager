@@ -106,24 +106,6 @@ func TestNDMSList_GeoTagCommentAccepted(t *testing.T) {
 	}
 }
 
-// HydraRoute geo-теги понимает: его путь отказ не трогает.
-func TestHRList_GeoTagStillAccepted(t *testing.T) {
-	resolver := &stubResolver{kernelByTunnel: map[string]string{"awg10": "nwg0"}}
-	svc, _ := newHRTestSvc(t, resolver)
-	if _, err := svc.Create(context.Background(), DomainList{
-		Name: "hr", Backend: "hydraroute", ManualDomains: []string{"geosite:GOOGLE"},
-		HRRouteMode: "interface", Routes: []RouteTarget{{TunnelID: "awg10"}},
-	}); err != nil {
-		t.Fatalf("HR Create: %v", err)
-	}
-	if _, err := svc.CreateBatch(context.Background(), []DomainList{{
-		Name: "hr2", Backend: "hydraroute", ManualDomains: []string{"geoip:ru"},
-		HRRouteMode: "interface", Routes: []RouteTarget{{TunnelID: "awg10"}},
-	}}); err != nil {
-		t.Fatalf("HR CreateBatch: %v", err)
-	}
-}
-
 func TestParseDomainLine_GeoTagSkipped(t *testing.T) {
 	for _, in := range []string{"geosite:google", "geoip:ru", "GEOSITE:Google", " geoip:RU "} {
 		if got := parseDomainLine(in); got != "" {

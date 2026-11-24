@@ -50,9 +50,25 @@ typedef struct firc_fakeip_cfg {
 firc_err_t firc_fakeip_new(const firc_fakeip_cfg_t *cfg, firc_fakeip_t **out);
 void firc_fakeip_free(firc_fakeip_t *f);
 
-/* Allocates/returns qname's address pair in group_id (one mapping per name and group); LIMIT/NOMEM still write the blackhole address, INVAL none. */
+/* Allocates/returns qname's address pair in group_id (up to FIRC_FAKEIP_MAX_ENTRIES mappings per name and group); LIMIT/NOMEM still write the blackhole address, INVAL none. */
 firc_err_t firc_fakeip_get(firc_fakeip_t *f, const char *qname, const char *group_id, int64_t now,
                            firc_ip_t *v4_out, firc_ip_t *v6_out);
+
+#define FIRC_FAKEIP_KIND_PLAIN 0u
+#define FIRC_FAKEIP_KIND_CF 1u
+
+firc_err_t firc_fakeip_get_in(firc_fakeip_t *f, const char *qname, const char *group_id, int64_t now,
+                              unsigned kind, firc_ip_t *v4_out, firc_ip_t *v6_out);
+
+void firc_fakeip_set_cf_target(firc_fakeip_t *f, const char *group_id, unsigned family, const firc_ip_t *target);
+
+typedef struct {
+    firc_ip_t addr;
+    char name[254];
+} firc_fakeip_cf_cand_t;
+
+size_t firc_fakeip_cf_candidates(const firc_fakeip_t *f, const char *group_id, unsigned family,
+                                 firc_fakeip_cf_cand_t *out, size_t cap);
 
 /* True when prefix_len bits of addr overlap that family's pool prefix. */
 bool firc_fakeip_overlaps(const firc_fakeip_t *f, const firc_ip_t *addr, uint8_t prefix_len);
@@ -64,11 +80,26 @@ bool firc_fakeip_pool_prefix(const firc_fakeip_t *f, unsigned family, firc_ip_t 
 /* Records the real address behind qname's mapping in group_id (DNAT side); FIRC_ERR_NOENT if there is none. */
 firc_err_t firc_fakeip_set_real(firc_fakeip_t *f, const char *qname, const char *group_id, const firc_ip_t *real);
 
-/* Same, from a whole answer; per family keeps the stored address while still offered, else the first offered. */
-firc_err_t firc_fakeip_set_reals(firc_fakeip_t *f, const char *qname, const char *group_id,
-                                 const firc_ip_t *reals, size_t n);
+#define FIRC_FAKEIP_MAX_ENTRIES 8
 
-/* True when the mapping holding fake has an uncommitted real address in fake's family. */
+typedef struct {
+    firc_ip_t fake[2]; /* the entry's v4 and v6 fakes */
+    unsigned family;   /* family of the real that selected the entry */
+} firc_fakeip_hit_t;
+
+typedef struct {
+    firc_fakeip_hit_t hit[FIRC_FAKEIP_MAX_ENTRIES * 2];
+    size_t n;
+    bool capped; /* some real of the answer got no entry */
+} firc_fakeip_hits_t;
+
+/* Records a whole answer: each real keeps or takes an entry of the name (up to FIRC_FAKEIP_MAX_ENTRIES per family;
+   a slot unseen for over the clamp may be retaken); out lists the entries in answer order. FIRC_ERR_NOENT if none. */
+firc_err_t firc_fakeip_set_reals(firc_fakeip_t *f, const char *qname, const char *group_id, int64_t now,
+                                 const firc_ip_t *reals, size_t n, firc_fakeip_hits_t *out);
+
+/* True when the mapping holding fake has an uncommitted real address in fake's family;
+   false for a covered cf fake once its target, chunk and coverage are committed. */
 bool firc_fakeip_needs_commit(const firc_fakeip_t *f, const firc_ip_t *fake);
 
 /* Drops the real of the family len (4 or 16) of qname's mapping in group_id and advances that pair's generation; unknown mapping: no-op. */
@@ -80,7 +111,7 @@ uint64_t firc_fakeip_gen(const firc_fakeip_t *f);
 /* Marks generation gen committed; never moves backwards. Loop thread only (firc_loop_post). */
 void firc_fakeip_mark_committed(firc_fakeip_t *f, uint64_t gen);
 
-/* Marks group_id's resolved pairs as needing commit; returns the count marked. Loop thread. */
+/* Marks group_id's resolved pairs as needing commit and drops its cf targets; returns the count changed. Loop thread. */
 size_t firc_fakeip_uncommit_group(firc_fakeip_t *f, const char *group_id);
 
 const char *firc_fakeip_name_of(const firc_fakeip_t *f, const firc_ip_t *addr);
@@ -119,8 +150,14 @@ typedef void (*firc_fakeip_cross_fn)(void *ud, const char *group_id, const firc_
 void firc_fakeip_snapshot_cross_walk(const firc_fakeip_snapshot_t *s, firc_fakeip_cross_fn fn, void *ud);
 void firc_fakeip_snapshot_walk_chunks(const firc_fakeip_snapshot_t *s, const char *group_id,
                                       firc_fakeip_chunk_fn fn, void *ud);
+typedef void (*firc_fakeip_snap_map_kind_fn)(void *ud, const char *group_id, unsigned family,
+                                             const firc_ip_t *fake, const firc_ip_t *real, unsigned kind);
+void firc_fakeip_snapshot_walk_kind(const firc_fakeip_snapshot_t *s, firc_fakeip_snap_map_kind_fn fn, void *ud);
+void firc_fakeip_snapshot_walk_cf_chunks(const firc_fakeip_snapshot_t *s, firc_fakeip_chunk_fn fn, void *ud);
 bool firc_fakeip_snapshot_pool_prefix(const firc_fakeip_snapshot_t *s, unsigned family,
                                       firc_ip_t *base_out, uint8_t *prefix_out);
+bool firc_fakeip_snapshot_cf_target(const firc_fakeip_snapshot_t *s, const char *group_id, unsigned family,
+                                    firc_ip_t *out);
 
 /* Generation this snapshot was taken at; hand to firc_fakeip_mark_committed once its pass completes. */
 uint64_t firc_fakeip_snapshot_gen(const firc_fakeip_snapshot_t *s);

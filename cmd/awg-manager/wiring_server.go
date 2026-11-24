@@ -23,7 +23,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/diagnostics"
 	"github.com/hoaxisr/awg-manager/internal/dnscheck"
 	"github.com/hoaxisr/awg-manager/internal/downloader"
-	"github.com/hoaxisr/awg-manager/internal/hydraroute"
+	"github.com/hoaxisr/awg-manager/internal/geodata"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/monitoring"
 	"github.com/hoaxisr/awg-manager/internal/server"
@@ -37,7 +37,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/singbox/subscription"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
-	"github.com/hoaxisr/awg-manager/internal/telemt"
 	"github.com/hoaxisr/awg-manager/internal/tgwebproxy"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 	"github.com/hoaxisr/awg-manager/internal/vlessserver"
@@ -104,17 +103,8 @@ func (a *app) setupServer() {
 	}
 	a.tgWebProxyService = tgwebproxy.New(a.dataDir, onReload)
 
-	telemtArch := detectArch()
-	a.telemtService = telemt.New(a.dataDir, telemtArch)
-	a.deferOnExit(func() {
-		_ = a.telemtService.Close()
-	})
-	_ = a.telemtService.StartIfEnabled(context.Background())
-	a.telemtHandler = api.NewTelemtHandler(a.telemtService)
-
 	// Cross-Component Ingress Coordinator and Crash Recovery
 	a.ingressCoordinator = serveringress.New(a.dataDir, a.vlessServerService, a.cdnDispatcher, a.tgWebProxyService)
-	a.ingressCoordinator.SetTelemt(a.telemtService)
 	if a.fircOp != nil {
 		a.ingressCoordinator.SetFircRouting(a.fircOp)
 	}
@@ -184,14 +174,6 @@ func (a *app) setupServer() {
 	// Always ensure in-process Go Multiplexer for Telegram Web Proxy is active if enabled
 	a.tgWebProxyService.EnsureMuxRunning()
 
-	// Start background watcher for ingress configuration files (hot-reload without restart or rebuild)
-	a.ingressWatcher = a.ingressCoordinator.StartConfigWatcher(context.Background())
-	a.deferOnExit(func() {
-		if a.ingressWatcher != nil {
-			a.ingressWatcher.Stop()
-		}
-	})
-
 	a.deferOnExit(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -235,7 +217,7 @@ func (a *app) setupServer() {
 			Catalog:             a.catalog,
 			Orch:                a.orch,
 			Bus:                 a.eventBus,
-			HydraService:        a.hydraService,
+			GeoData:             a.geoDataStore,
 			ZapretService:       a.zapretService,
 			AutolistService:     a.autolistService,
 			// Снимок удалённых объектов Autolist знает router-сервис (его файл
@@ -249,7 +231,6 @@ func (a *app) setupServer() {
 			},
 			SingboxHandler:           a.singboxHandler,
 			FircHandler:              a.fircHandler,
-			TelemtHandler:            a.telemtHandler,
 			VlessServerService:       a.vlessServerService,
 			TgWebProxyService:        a.tgWebProxyService,
 			CDNDispatcher:            a.cdnDispatcher,
@@ -437,8 +418,8 @@ func (a *app) setupDeviceProxy() {
 		a.settingsStore,
 		a.awgStore,
 	)
-	a.geoRefreshScheduler = hydraroute.NewGeoRefreshScheduler(
-		a.hydraService, a.settingsStore, a.loggingService,
+	a.geoRefreshScheduler = geodata.NewGeoRefreshScheduler(
+		a.geoDataStore, a.settingsStore, a.loggingService,
 		func(ctx context.Context) (*http.Client, string, func(), error) {
 			lease, err := sharedDownloadSvc.ResolveClient(ctx, nil)
 			if err != nil {
@@ -692,6 +673,7 @@ func (a *app) setupRouter() {
 
 	singboxRouterHandler := api.NewSingboxRouterHandler(routerSvc, a.loggingService)
 	singboxRouterHandler.SetOutboundRefCheckers(a.deviceProxySvc, routerSvc)
+	singboxRouterHandler.SetEventBus(a.eventBus)
 	if a.autolistService != nil {
 		// Teardown объектов Autolist запрещён, пока сателлит отвечает: он
 		// воссоздаёт объекты следующей записью (проверка — HTTP /status).
@@ -920,6 +902,7 @@ func (a *app) setupShutdown() {
 
 	// Start the monitoring scheduler now that shutdownCtx exists.
 	a.monitoringService.Start(a.shutdownCtx)
+	a.startIngressRuntimeWatch(a.shutdownCtx)
 	a.setupUplink()
 	// Прокси-рантайм. Точка встраивания выбрана здесь, а не сразу за
 	// присвоением a.routerSvc: ingress-адаптер сервера действительно требует

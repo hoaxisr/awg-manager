@@ -3,7 +3,6 @@ import { render, screen } from '@testing-library/svelte';
 import { flushSync } from 'svelte';
 import DnsRouteDomainEditor from './DnsRouteDomainEditor.svelte';
 import NdmsDisclaimerBanner from './NdmsDisclaimerBanner.svelte';
-import HrNeoDisabledTagsView from '../hrneo/HrNeoDisabledTagsView.svelte';
 import { locale, m } from '$lib/i18n';
 
 vi.mock('$lib/api/client', () => ({ api: {} }));
@@ -13,7 +12,7 @@ afterEach(() => {
 	localStorage.clear();
 });
 
-describe('routing2 i18n (dnsroutes / hrneo)', () => {
+describe('routing2 i18n (dnsroutes)', () => {
 	it('DnsRouteDomainEditor: счётчик записей и подсказка переключаются на английский', () => {
 		render(DnsRouteDomainEditor, {
 			props: { domains: ['a.com', 'b.com'], onchange: vi.fn() },
@@ -45,30 +44,10 @@ describe('routing2 i18n (dnsroutes / hrneo)', () => {
 		).toBeTruthy();
 	});
 
-	it('HrNeoDisabledTagsView: плюрал в баннере и счётчик записей переключаются на английский', () => {
-		const { container } = render(HrNeoDisabledTagsView, {
-			props: {
-				tags: [{ name: 'GOOGLE', count: 2 }],
-				maxelem: 65536,
-			} as never,
-		});
-		expect(container.textContent).toContain('HR Neo исключил 1 тег из маршрутизации');
-		expect(container.textContent).toContain('2 записи');
-
-		locale.set('en');
-		flushSync();
-
-		expect(container.textContent).toContain('HR Neo excluded 1 tag from routing');
-		expect(container.textContent).toContain('2 entries');
-	});
-
 	it('plural-сообщения: русские формы грамматически верны, английские — one/other', () => {
 		expect(m.dns_routes_editor_entries_count({ count: 1 })).toBe('1 запись');
 		expect(m.dns_routes_editor_entries_count({ count: 3 })).toBe('3 записи');
 		expect(m.dns_routes_editor_entries_count({ count: 11 })).toBe('11 записей');
-		expect(m.hrneo_disabled_tags_banner({ count: 5 })).toBe(
-			'HR Neo исключил 5 тегов из маршрутизации — превышают',
-		);
 		expect(
 			m.dns_routes_edit_dedup_summary({ total: 21, exact: 1, wildcard: 3 }),
 		).toBe('Убрано 21 дубль (1 точный, 3 wildcard)');

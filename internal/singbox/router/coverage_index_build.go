@@ -38,6 +38,11 @@ const coveragePrefixSetBytes = 96
 // не строится, а сам набор в покрытии не учитывается.
 var errCoverageIndexTooLarge = errors.New("coverage index: rule-set exceeds the memory budget")
 
+// errCoverageIndexUnsupported — набор не удалось привести к виду, который умеет
+// считать индекс покрытия (например поле не того типа). Такой набор
+// пропускается, остальные наборы и правила считаются как обычно.
+var errCoverageIndexUnsupported = errors.New("rule-set is not supported by the coverage index")
+
 // coverageBudget — потолок памяти на сборку индекса покрытия.
 type coverageBudget struct {
 	remaining int64
@@ -249,8 +254,12 @@ func (s *ServiceImpl) buildCoverageIndex(ctx context.Context, extraTags []string
 			entry, err = compileCoverageIndexEntry(rules, budget)
 		}
 		if err != nil {
-			if errors.Is(err, errCoverageIndexTooLarge) {
+			// Набор, который не удалось разобрать, не должен ронять весь индекс:
+			// остальные наборы и правила считаются как обычно, а этот помечается
+			// пропущенным (в UI — «не учитывается в покрытии»).
+			if errors.Is(err, errCoverageIndexTooLarge) || errors.Is(err, errCoverageIndexUnsupported) {
 				snapshot.skipped[tag] = struct{}{}
+				s.appLog.Warn("coverage-index", tag, "rule-set skipped: "+err.Error())
 				continue
 			}
 			return nil, fmt.Errorf("coverage index rule-set %q: %w", tag, err)
@@ -464,7 +473,9 @@ func compileCoverageIndexEntry(rules []map[string]any, budget *coverageBudget) (
 	for index, raw := range rules {
 		rule, err := compileCoverageIndexRule(raw, budget)
 		if err != nil {
-			return nil, fmt.Errorf("rule %d: %w", index, err)
+			// Правило неприводимо к нашему виду — набор целиком пропускается
+			// (в UI — «не учитывается в покрытии»), а не роняет весь индекс.
+			return nil, fmt.Errorf("rule %d: %w: %v", index, errCoverageIndexUnsupported, err)
 		}
 		entry.rules = append(entry.rules, rule)
 	}
@@ -654,9 +665,16 @@ func compileCoverageDestination(dest *coverageDestination, raw map[string]any, b
 func validateCoverageContextFields(raw map[string]any) (bool, error) {
 	needsContext := false
 	if value, exists := raw["network"]; exists {
-		network, ok := value.(string)
-		if !ok || (network != "tcp" && network != "udp") {
-			return false, fmt.Errorf("network must be tcp or udp")
+		// network бывает и строкой ("udp"), и списком (["udp"]) — обе формы
+		// принимает sing-box, обе должны приниматься и здесь.
+		networks, err := coverageStringList(value)
+		if err != nil {
+			return false, fmt.Errorf("network: %w", err)
+		}
+		for _, network := range networks {
+			if network != "tcp" && network != "udp" {
+				return false, fmt.Errorf("network must be tcp or udp")
+			}
 		}
 		needsContext = true
 	}
