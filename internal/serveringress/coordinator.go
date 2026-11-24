@@ -2647,7 +2647,8 @@ func (c *Coordinator) resetDispatcherLocked() {
 
 func (c *Coordinator) cleanupKeenDNSForResetLocked(
 	ctx context.Context,
-	targetHosts, protectedHosts []string,
+	targetHosts, otherHosts []string,
+	otherEnabled bool,
 	dispPort int,
 	allowedPorts []int,
 	otherName string,
@@ -2666,10 +2667,12 @@ func (c *Coordinator) cleanupKeenDNSForResetLocked(
 		return nil, nil, nil
 	}
 
-	protectedSet := make(map[string]bool)
-	for _, h := range protectedHosts {
+	// Домен работающего соседа не трогаем. У выключенного он снимается вместе с
+	// нашим, но не молча: после включения сосед останется без публикации.
+	otherSet := make(map[string]bool)
+	for _, h := range otherHosts {
 		if label := extractKeenDNSLabel(h, disc.BaseFQDN); label != "" {
-			protectedSet[label] = true
+			otherSet[label] = true
 		}
 	}
 
@@ -2681,7 +2684,7 @@ func (c *Coordinator) cleanupKeenDNSForResetLocked(
 			continue
 		}
 		seen[label] = true
-		if protectedSet[label] {
+		if otherEnabled && otherSet[label] {
 			skipped = append(skipped, fmt.Sprintf("%s (используется %s)", label, otherName))
 			continue
 		}
@@ -2699,6 +2702,11 @@ func (c *Coordinator) cleanupKeenDNSForResetLocked(
 	deleted = append(deleted, del...)
 	skipped = append(skipped, sk...)
 	warnings = append(warnings, warn...)
+	for _, label := range del {
+		if otherSet[label] {
+			warnings = append(warnings, fmt.Sprintf("домен %s указан и в настройках выключенного %s — перед его включением опубликуйте домен заново", label, otherName))
+		}
+	}
 	return deleted, skipped, warnings
 }
 
@@ -2794,15 +2802,12 @@ func (c *Coordinator) ResetVless(ctx context.Context, opts ResetOptions) (ResetR
 
 		if opts.DeleteKeenDNS {
 			targetHosts := collectVlessHosts(prevXray, prevDisp.Routes)
-			var protectedHosts []string
-			if tgCfg.Enabled {
-				protectedHosts = collectTelegramHosts(tgCfg, prevDisp.Routes)
-			}
+			otherHosts := collectTelegramHosts(tgCfg, prevDisp.Routes)
 			allowedPorts := []int{dispPort}
 			if prevXray.ListenPort > 0 && prevXray.ListenPort != dispPort && prevXray.ListenPort != 2222 {
 				allowedPorts = append(allowedPorts, prevXray.ListenPort)
 			}
-			del, sk, warn := c.cleanupKeenDNSForResetLocked(ctx, targetHosts, protectedHosts, dispPort, allowedPorts, "Telegram")
+			del, sk, warn := c.cleanupKeenDNSForResetLocked(ctx, targetHosts, otherHosts, tgCfg.Enabled, dispPort, allowedPorts, "Telegram")
 			res.KeenDNSDeleted = del
 			res.KeenDNSSkipped = sk
 			res.Warnings = append(res.Warnings, warn...)
@@ -2893,15 +2898,12 @@ func (c *Coordinator) ResetTelegram(ctx context.Context, opts ResetOptions) (Res
 
 		if opts.DeleteKeenDNS {
 			targetHosts := collectTelegramHosts(prevTg, prevDisp.Routes)
-			var protectedHosts []string
-			if xrayCfg.Enabled {
-				protectedHosts = collectVlessHosts(xrayCfg, prevDisp.Routes)
-			}
+			otherHosts := collectVlessHosts(xrayCfg, prevDisp.Routes)
 			allowedPorts := []int{dispPort, tgwebproxy.DefaultListenPort}
 			if prevTg.ListenPort > 0 && prevTg.ListenPort != dispPort && prevTg.ListenPort != tgwebproxy.DefaultListenPort && prevTg.ListenPort != 2222 {
 				allowedPorts = append(allowedPorts, prevTg.ListenPort)
 			}
-			del, sk, warn := c.cleanupKeenDNSForResetLocked(ctx, targetHosts, protectedHosts, dispPort, allowedPorts, "VLESS")
+			del, sk, warn := c.cleanupKeenDNSForResetLocked(ctx, targetHosts, otherHosts, xrayCfg.Enabled, dispPort, allowedPorts, "VLESS")
 			res.KeenDNSDeleted = del
 			res.KeenDNSSkipped = sk
 			res.Warnings = append(res.Warnings, warn...)

@@ -3,8 +3,12 @@ package serveringress
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -433,6 +437,11 @@ func TestCoordinator_Reset_KeenDNSOptionalAndSharedProtection(t *testing.T) {
 		if _, stillThere := kdState.entries["vless"]; stillThere {
 			t.Fatal("expected 'vless' entry deleted from KeenDNS state")
 		}
+		if !slices.ContainsFunc(res.Warnings, func(w string) bool {
+			return strings.Contains(w, "домен vless указан") && strings.Contains(w, "Telegram")
+		}) {
+			t.Fatalf("удаление домена выключенного Telegram прошло без предупреждения: %v", res.Warnings)
+		}
 	})
 
 	t.Run("DeleteKeenDNS_never_allows_reserved_port_2222_on_vless_reset", func(t *testing.T) {
@@ -503,5 +512,49 @@ func TestCoordinator_Reset_KeenDNSOptionalAndSharedProtection(t *testing.T) {
 		if _, stillThere := kdState.entries["tg"]; stillThere {
 			t.Fatal("expected 'tg' entry deleted from KeenDNS state")
 		}
+		if !slices.ContainsFunc(res.Warnings, func(w string) bool {
+			return strings.Contains(w, "домен tg указан") && strings.Contains(w, "VLESS")
+		}) {
+			t.Fatalf("удаление домена выключенного VLESS прошло без предупреждения: %v", res.Warnings)
+		}
 	})
+
+	t.Run("DeleteKeenDNS_telegram_protects_enabled_vless", func(t *testing.T) {
+		kdState := newFakeKeenDNSState()
+		kdState.entries["shared"] = mkEntry("shared", "127.0.0.1", "9009", false)
+		xray := &resettableXray{mockXray: &mockXray{cfg: vlessserver.Config{Enabled: true, PublicDomain: "shared.example.keenetic.pro"}}}
+		tg := &resettableTg{mockTgWebProxy: &mockTgWebProxy{cfg: tgwebproxy.Config{
+			Enabled: true, ListenPort: 8085, PublicHostname: "shared.example.keenetic.pro",
+		}}}
+		coord := New(t.TempDir(), xray, &mockDispatcher{running: true, cfg: cdndispatcher.Config{ListenAddr: ":9009"}}, tg)
+		coord.SetKeenDNS(NewNDMSKeenDNSOperator(kdState, kdState, kdState))
+
+		res, err := coord.ResetTelegram(context.Background(), ResetOptions{DeleteKeenDNS: true})
+		if err != nil {
+			t.Fatalf("ResetTelegram failed: %v", err)
+		}
+		if len(res.KeenDNSDeleted) != 0 || len(res.KeenDNSSkipped) != 1 {
+			t.Fatalf("домен включённого VLESS не защищён: %+v", res)
+		}
+	})
+
+	for _, port := range []int{2222, 8090} {
+		t.Run(fmt.Sprintf("DeleteKeenDNS_telegram_listen_port_%d", port), func(t *testing.T) {
+			kdState := newFakeKeenDNSState()
+			kdState.entries["tg"] = mkEntry("tg", "127.0.0.1", strconv.Itoa(port), false)
+			tg := &resettableTg{mockTgWebProxy: &mockTgWebProxy{cfg: tgwebproxy.Config{
+				Enabled: true, ListenPort: port, PublicHostname: "tg.example.keenetic.pro",
+			}}}
+			coord := New(t.TempDir(), &resettableXray{mockXray: &mockXray{}}, &mockDispatcher{cfg: cdndispatcher.Config{ListenAddr: ":9009"}}, tg)
+			coord.SetKeenDNS(NewNDMSKeenDNSOperator(kdState, kdState, kdState))
+
+			res, err := coord.ResetTelegram(context.Background(), ResetOptions{DeleteKeenDNS: true})
+			if err != nil {
+				t.Fatalf("ResetTelegram failed: %v", err)
+			}
+			if deleted := len(res.KeenDNSDeleted) == 1; deleted != (port != 2222) {
+				t.Fatalf("порт %d: deleted=%v, res=%+v", port, deleted, res)
+			}
+		})
+	}
 }

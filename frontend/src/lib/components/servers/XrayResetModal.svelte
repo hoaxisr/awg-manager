@@ -81,9 +81,10 @@
 
 <style>
 	.checkbox-input {
-		width: 16px;
-		height: 16px;
+		width: 18px;
+		height: 18px;
 		flex-shrink: 0;
+		margin-top: 2px;
 		accent-color: var(--color-accent);
 		cursor: pointer;
 	}
@@ -115,14 +116,6 @@
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-sm);
 		cursor: pointer;
-	}
-
-	.reset-keendns-check input[type='checkbox'] {
-		width: 18px;
-		height: 18px;
-		min-width: 18px;
-		flex: 0 0 18px;
-		margin-top: 2px;
 	}
 
 	.reset-keendns-text {
