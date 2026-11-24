@@ -360,14 +360,15 @@ func (o *WarpTunnelOps) List(ctx context.Context) ([]warpscout.TunnelRef, error)
 	}
 	if o.System != nil {
 		sys, err := o.System.List(ctx)
-		if err == nil {
-			for i := range sys {
-				ref := o.systemRef(&sys[i])
-				if ref.Protected {
-					continue
-				}
-				out = append(out, ref)
+		if err != nil {
+			return nil, fmt.Errorf("список системных туннелей: %w", err)
+		}
+		for i := range sys {
+			ref := o.systemRef(&sys[i])
+			if ref.Protected {
+				continue
 			}
+			out = append(out, ref)
 		}
 	}
 	o.populateViaInfo(ctx, out)

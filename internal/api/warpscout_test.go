@@ -885,9 +885,13 @@ type stubSystemTunnelSvc struct {
 	cmds    *ndmscommand.Commands
 	tunnel  *ndms.SystemWireguardTunnel
 	curASC  json.RawMessage
+	listErr error
 }
 
 func (s *stubSystemTunnelSvc) List(context.Context) ([]ndms.SystemWireguardTunnel, error) {
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
 	return nil, nil
 }
 
@@ -1750,5 +1754,22 @@ func TestWarpClients_DialGuardBlocksResolvedDisallowedIPs(t *testing.T) {
 	}
 	if fbCalled {
 		t.Fatal("disallowed resolved relay must not invoke fallback clients")
+	}
+}
+
+func TestWarpTunnelOps_ListReturnsErrorOnSystemListFailure(t *testing.T) {
+	ops, _, store, _ := newWarpOpsHarness(t, map[string]tunnel.State{
+		"awg50": tunnel.StateRunning,
+	})
+	seedWarpTunnel(t, store, "awg50", "nativewg")
+	ops.System = &stubSystemTunnelSvc{
+		listErr: errors.New("rci list failure"),
+	}
+	refs, err := ops.List(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "rci list failure") {
+		t.Fatalf("expected WarpTunnelOps.List to fail closed on System.List error, got refs=%+v err=%v", refs, err)
+	}
+	if refs != nil {
+		t.Fatalf("expected nil partial slice on System.List error, got %+v", refs)
 	}
 }

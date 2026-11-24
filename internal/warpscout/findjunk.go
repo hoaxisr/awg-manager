@@ -298,8 +298,16 @@ func (s *Service) StartFindJunk(req FindJunkRequest) error {
 	}
 	scanIface := s.resolveScanIface(s.rootCtx, req.Ifname)
 	if outer := s.resolveRouteTunnel(s.rootCtx, scanIface); outer == nil || !outer.IsWarp {
-		if inUse, owner := s.accountKeyOwner(s.rootCtx, acct); inUse {
-			if free := s.existingFreeAccount(s.rootCtx, acct.PublicKey); free != nil {
+		inUse, owner, checkErr := s.accountKeyOwner(s.rootCtx, acct)
+		if checkErr != nil {
+			return checkErr
+		}
+		if inUse {
+			free, freeErr := s.existingFreeAccount(s.rootCtx, acct.PublicKey)
+			if freeErr != nil {
+				return freeErr
+			}
+			if free != nil {
 				acct = free
 			} else {
 				return fmt.Errorf("%w: ключ аккаунта WARP используется живым туннелем %q — подбор тем же ключом разорвёт его соединение; удалите туннель или импортируйте отдельный аккаунт для сканера", ErrInvalidInput, owner)

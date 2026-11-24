@@ -62,6 +62,7 @@ type fakeTunnels struct {
 	created     []string
 	createdOpts []CreateOptions
 	getErr      error
+	listErr     error
 	createErr   error
 	onSwap      func(r *TunnelRef)
 	onCreate    func(r *TunnelRef)
@@ -72,6 +73,9 @@ func key(m TargetMode, id string) string { return string(m) + "/" + id }
 func (f *fakeTunnels) List(context.Context) ([]TunnelRef, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
 	var out []TunnelRef
 	for _, r := range f.refs {
 		out = append(out, *r)
@@ -2014,9 +2018,9 @@ func TestWatchdog_HealthyCheckDoesNotRename(t *testing.T) {
 	}
 }
 
-// Автоподмена не сканирует через WARP-туннель его же ключом (Cloudflare
-// рвёт внешнюю сессию) и не регистрирует второй слот без пользователя:
-// без готового слота скан уходит на WAN.
+// Автоподмена не сканирует ключом работающего WARP-туннеля (ни через сам
+// туннель, ни в обход через WAN — Cloudflare рвёт сессию) и не регистрирует
+// второй слот без пользователя; при наличии свободного InnerAccount скан идёт через nwg5.
 func TestWatchdog_SwapDoesNotScanThroughWarpWithItsOwnKey(t *testing.T) {
 	s, r, tun, pr := newTestService(t)
 	tun.refs[key(TargetNative, "awg11")] = &TunnelRef{Mode: TargetNative, ID: "awg11", Name: "WARP HEL",
@@ -2032,14 +2036,42 @@ func TestWatchdog_SwapDoesNotScanThroughWarpWithItsOwnKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.checkOnce(context.Background(), p, &watcherState{})
-	if len(r.calls) != 1 {
-		t.Fatalf("ожидался один скан, calls=%d", len(r.calls))
-	}
-	if got := r.calls[0].Ifname; got != "eth3" {
-		t.Fatalf("скан ушёл через %q, ожидался WAN eth3", got)
+	if len(r.calls) != 0 || len(tun.swaps) != 0 {
+		t.Fatalf("без свободного слота скан/подмена занятым ключом недопустимы: calls=%d swaps=%d", len(r.calls), len(tun.swaps))
 	}
 	if s.d.Store.InnerAccount() != nil {
 		t.Fatal("второй слот зарегистрирован без пользователя")
+	}
+	if ws := s.State().Watch; len(ws) != 1 || !strings.Contains(ws[0].Message, "WARP HEL") {
+		t.Fatalf("ожидалось сообщение о занятости ключа туннелем WARP HEL, got %+v", ws)
+	}
+
+	privInner, pubInner, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.d.Store.SetInnerAccount(&Account{
+		ID: "in-free", Token: "tok-in", PrivateKey: privInner, PublicKey: pubInner,
+		PeerPublicKey: WarpPeerPublicKey, AddressV4: "172.16.0.5",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	pr.mu.Lock()
+	pr.queue = []TraceResult{
+		{Colo: "DME", Loc: "RU", Warp: "on"},
+		{Colo: "DME", Loc: "RU", Warp: "on"},
+		{Colo: "HEL", Loc: "FI", Warp: "on", LatencyMs: 40},
+	}
+	pr.mu.Unlock()
+	s.checkOnce(context.Background(), p, &watcherState{})
+	if len(r.calls) != 1 {
+		t.Fatalf("со свободным вторым слотом ожидался один скан, calls=%d", len(r.calls))
+	}
+	if r.calls[0].Ifname != "nwg5" || r.calls[0].PrivateKey != privInner {
+		t.Fatalf("ожидался скан через nwg5 ключом InnerAccount (%s), получили ifname=%q priv=%q", privInner, r.calls[0].Ifname, r.calls[0].PrivateKey)
+	}
+	if len(tun.swaps) != 1 {
+		t.Fatalf("ожидалась подмена endpoint после скана со свободным слотом, swaps=%v", tun.swaps)
 	}
 }
 
@@ -3461,5 +3493,144 @@ func TestImportAccount_DropsUnusedReplacedRegistration(t *testing.T) {
 	deleted := api.waitDeleted(t, 1)
 	if len(deleted) != 1 || deleted[0] != "old-unused-id" {
 		t.Fatalf("expected old unused account dropped via Cloudflare DELETE, got %v", deleted)
+	}
+}
+
+func TestWatchdog_SwapSkipsWhenPrimaryKeyUsedByUnrecordedSiblingTunnel(t *testing.T) {
+	ctx := context.Background()
+	s, runner, tun, prober := newTestService(t)
+
+	tun.mu.Lock()
+	tun.refs[key(TargetNative, "awg10")].LocalPublicKey = "pub-target"
+	// Соседний туннель настроен вне WarpScout (записи в Store.TunnelAccounts нет),
+	// но его живой LocalPublicKey совпадает с основным аккаунтом ("pub").
+	tun.refs[key(TargetNative, "awg11")] = &TunnelRef{
+		Mode: TargetNative, ID: "awg11", Name: "WARP External",
+		Iface: "nwg5", Endpoint: "162.159.193.7:2408",
+		IsWarp: true, Running: true, LocalPublicKey: "pub",
+	}
+	tun.mu.Unlock()
+
+	runner.hits = []Hit{{Endpoint: "188.114.96.9:2408", PingMs: 40, Colo: "HEL", Loc: "FI"}}
+	prober.queue = []TraceResult{{Colo: "DME", Loc: "RU", Warp: "on"}, {Colo: "DME", Loc: "RU", Warp: "on"}}
+	p := testProfile()
+	cfg := s.d.Store.Config()
+	cfg.Profiles = []Profile{p}
+	cfg.ActiveProfileID = p.ID
+	cfg.ScanInterface = ""
+	if err := s.d.Store.SetConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	s.checkOnce(ctx, p, &watcherState{})
+	if len(runner.calls) != 0 || len(tun.swaps) != 0 {
+		t.Fatalf("watchdog must not handshake with sibling tunnel's LocalPublicKey on WAN: calls=%d swaps=%d", len(runner.calls), len(tun.swaps))
+	}
+	if ws := s.State().Watch; len(ws) != 1 || !strings.Contains(ws[0].Message, "WARP External") {
+		t.Fatalf("expected watch error naming sibling tunnel WARP External, got %+v", ws)
+	}
+
+	// Когда появляется свободный второй слот, автоподмена переходит на него и срабатывает штатно.
+	privInner, pubInner, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.d.Store.SetInnerAccount(&Account{
+		ID: "in-spare", Token: "tok-in", PrivateKey: privInner, PublicKey: pubInner,
+		PeerPublicKey: WarpPeerPublicKey, AddressV4: "172.16.0.6",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	prober.mu.Lock()
+	prober.queue = []TraceResult{
+		{Colo: "DME", Loc: "RU", Warp: "on"},
+		{Colo: "DME", Loc: "RU", Warp: "on"},
+		{Colo: "HEL", Loc: "FI", Warp: "on", LatencyMs: 40},
+	}
+	prober.mu.Unlock()
+
+	s.checkOnce(ctx, p, &watcherState{})
+	if len(runner.calls) != 1 || len(tun.swaps) != 1 {
+		t.Fatalf("expected scan & swap using spare InnerAccount: calls=%d swaps=%d", len(runner.calls), len(tun.swaps))
+	}
+	if runner.calls[0].PrivateKey != privInner || runner.calls[0].Ifname != "eth3" {
+		t.Fatalf("expected WAN scan using InnerAccount private key, got ifname=%q priv=%q", runner.calls[0].Ifname, runner.calls[0].PrivateKey)
+	}
+}
+
+func TestAccountKeyGuard_FailsClosedOnTunnelListError(t *testing.T) {
+	ctx := context.Background()
+	s, runner, tun, prober := newTestService(t)
+	api := apiOf(t)
+
+	priv1, pub1, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.d.Store.SetAccount(&Account{
+		ID: "prim-1", Token: "tok-1", PrivateKey: priv1, PublicKey: pub1,
+		PeerPublicKey: WarpPeerPublicKey, AddressV4: "172.16.0.2", HasToken: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	listErr := errors.New("rci unavailable")
+	tun.mu.Lock()
+	tun.listErr = listErr
+	tun.mu.Unlock()
+
+	if _, err := s.RegisterWithOptions(ctx, RegisterOptions{}); err == nil || !strings.Contains(err.Error(), "rci unavailable") {
+		t.Fatalf("RegisterWithOptions must fail closed on Tunnels.List error, got %v", err)
+	}
+	if err := s.DeleteAccountLocal(ctx); err == nil || !strings.Contains(err.Error(), "rci unavailable") {
+		t.Fatalf("DeleteAccountLocal must fail closed on Tunnels.List error, got %v", err)
+	}
+	if s.d.Store.Account() == nil || len(api.deleted) != 0 {
+		t.Fatalf("account or Cloudflare state mutated despite inventory error: acct=%v deleted=%v", s.d.Store.Account(), api.deleted)
+	}
+
+	priv2, _, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherConf := fmt.Sprintf("[Interface]\nPrivateKey = %s\nAddress = 172.16.0.9/32\n[Peer]\nPublicKey = %s\n", priv2, WarpPeerPublicKey)
+	if _, err := s.ImportAccount(ctx, otherConf); err == nil || !strings.Contains(err.Error(), "rci unavailable") {
+		t.Fatalf("ImportAccount must fail closed on Tunnels.List error, got %v", err)
+	}
+	if _, err := s.Apply(ctx, ApplyRequest{
+		Action: "create", Mode: TargetNative, Name: "WARP Live", Endpoint: "162.159.193.1:2408", ReuseAccount: true,
+	}); err == nil || !strings.Contains(err.Error(), "rci unavailable") {
+		t.Fatalf("Apply(ReuseAccount) must fail closed on Tunnels.List error, got %v", err)
+	}
+	if err := s.StartScan(ScanRequest{Filters: Filters{Protocol: ProtocolWG}}); err == nil || !strings.Contains(err.Error(), "rci unavailable") {
+		t.Fatalf("StartScan must fail closed on Tunnels.List error, got %v", err)
+	}
+	if err := s.StartFindJunk(FindJunkRequest{I1Profile: "quic"}); err == nil || !strings.Contains(err.Error(), "rci unavailable") {
+		t.Fatalf("StartFindJunk must fail closed on Tunnels.List error, got %v", err)
+	}
+	if _, err := s.ensureDistinctAccount(ctx, "nwg3", "other-pub"); err == nil || !strings.Contains(err.Error(), "rci unavailable") {
+		t.Fatalf("ensureDistinctAccount must fail closed on Tunnels.List error, got %v", err)
+	}
+
+	prober.queue = []TraceResult{{Colo: "DME", Loc: "RU", Warp: "on"}, {Colo: "DME", Loc: "RU", Warp: "on"}}
+	p := testProfile()
+	if _, err := s.SaveConfig(ctx, Config{ProfileMode: ProfileModeSingle, ActiveProfileID: p.ID, Profiles: []Profile{p}, AWG: s.d.Store.Config().AWG}); err != nil {
+		t.Fatal(err)
+	}
+	s.checkOnce(ctx, p, &watcherState{})
+	if len(runner.calls) != 0 {
+		t.Fatalf("watchdog must not scan when tunnel inventory failed, calls=%d", len(runner.calls))
+	}
+	if ws := s.State().Watch; len(ws) != 1 || !strings.Contains(ws[0].Message, "rci unavailable") {
+		t.Fatalf("expected watch error reporting Tunnels.List failure, got %+v", ws)
+	}
+
+	// Первичная регистрация при отсутствии аккаунта остаётся доступной даже при сбое Tunnels.List.
+	if err := s.d.Store.SetAccount(nil); err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := s.RegisterWithOptions(ctx, RegisterOptions{})
+	if err != nil || fresh == nil {
+		t.Fatalf("initial registration with nil account must succeed even when Tunnels.List errors: fresh=%+v err=%v", fresh, err)
 	}
 }
