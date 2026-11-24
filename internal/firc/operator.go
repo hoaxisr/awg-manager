@@ -63,6 +63,7 @@ type Options struct {
 	DNSProxyPort   int
 	InboundPort    uint16
 	StartTimeout   time.Duration
+	ConntrackPath  string
 }
 
 // EngineSwitchHooks defines the callbacks used by SwitchEngine to coordinate
@@ -234,6 +235,7 @@ type Operator struct {
 	dnsProxyPort             int
 	inboundPort              uint16
 	startTimeout             time.Duration
+	conntrackPath            string
 	client                   *Client
 	cmd                      *exec.Cmd
 	startHook                func(ctx context.Context) error
@@ -247,9 +249,6 @@ type Operator struct {
 	openfluxStatusFn         func() (bool, string)
 	wgServersProvider        func(ctx context.Context) []DynamicWGServer
 	lastWGServers            []DynamicWGServer
-	monitorHostsCache        map[string]monitorHostMeta
-	monitorHostsCacheAt      time.Time
-	monitorHostsRetryAt      time.Time
 	singboxBinary            string
 	singboxCheckFn           func(ctx context.Context, stagedConfigDir string) error
 	singboxStageCopyHook     func(relPath string) error
@@ -308,6 +307,9 @@ func NewOperator(opts Options) *Operator {
 	if opts.StartTimeout <= 0 {
 		opts.StartTimeout = 30 * time.Second
 	}
+	if opts.ConntrackPath == "" {
+		opts.ConntrackPath = "/proc/net/nf_conntrack"
+	}
 	op := &Operator{
 		log:            log,
 		configDir:      opts.ConfigDir,
@@ -321,6 +323,7 @@ func NewOperator(opts Options) *Operator {
 		dnsProxyPort:   opts.DNSProxyPort,
 		inboundPort:    opts.InboundPort,
 		startTimeout:   opts.StartTimeout,
+		conntrackPath:  opts.ConntrackPath,
 		client:         NewClient(opts.SocketPath),
 		singboxBinary:  "/opt/bin/sing-box",
 		cloudEpoch:     1,

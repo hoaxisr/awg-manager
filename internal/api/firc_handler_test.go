@@ -2282,3 +2282,59 @@ func TestFircHandler_UpgradeRuntime_ActiveAndPreconditions(t *testing.T) {
 		t.Fatalf("expected rolled back running 0.8.0-awgm.5 with error surfaced, got %+v", stRollback)
 	}
 }
+
+// Списки клиентов монитора уходят только при ?clients=1; счётчики — всегда.
+func TestFircHandler_MonitorClientsOnDemand(t *testing.T) {
+	dir := t.TempDir()
+	// Метку группы демон узнаёт из mangle-цепочки.
+	iptables := "#!/bin/sh\ncase \"$*\" in *\"-L FIRC_tg \"*) echo '1 1 MARK all -- * * 0.0.0.0/0 198.18.5.0/24 MARK xset 0x40010000/0x40ff0000';; esac\n"
+	if err := os.WriteFile(filepath.Join(dir, "iptables"), []byte(iptables), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	conntrack := filepath.Join(dir, "conntrack")
+	line := "ipv4 2 tcp 6 300 ESTABLISHED src=192.168.1.50 dst=1.1.1.1 sport=1 dport=443 packets=1 bytes=10 src=1.1.1.1 dst=192.168.1.50 sport=443 dport=1 packets=1 bytes=20 [ASSURED] mark=1073807360 use=1\n"
+	if err := os.WriteFile(conntrack, []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sock := filepath.Join(dir, "firc.sock")
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/groups" {
+			_, _ = w.Write([]byte(`{"groups":[{"id":"tg","name":"Telegram","enable":true}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{}`))
+	})}
+	go func() { _ = srv.Serve(l) }()
+	t.Cleanup(func() { _ = srv.Close() })
+
+	h := NewFircHandler(firc.NewOperator(firc.Options{ConfigDir: dir, SocketPath: sock, ConntrackPath: conntrack}))
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, func(next http.HandlerFunc) http.HandlerFunc { return next })
+	get := func(path string) firc.MonitorSnapshot {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		var out struct {
+			Data firc.MonitorSnapshot `json:"data"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || rec.Code != http.StatusOK {
+			t.Fatalf("GET %s: code %d err %v: %s", path, rec.Code, err, rec.Body.String())
+		}
+		if out.Data.TotalClients != 1 || len(out.Data.Groups) != 1 || out.Data.Groups[0].ActiveClients != 1 {
+			t.Fatalf("GET %s counters: %+v", path, out.Data)
+		}
+		return out.Data
+	}
+
+	if snap := get("/api/firc/monitor"); snap.Clients != nil || snap.Groups[0].Clients != nil || snap.Servers[0].Clients != nil {
+		t.Fatalf("lists must be absent without ?clients=1: %+v", snap)
+	}
+	snap := get("/api/firc/monitor?clients=1")
+	if len(snap.Clients) != 1 || snap.Clients[0].IP != "192.168.1.50" || len(snap.Groups[0].Clients) != 1 || len(snap.Servers[0].Clients) != 1 {
+		t.Fatalf("lists missing with ?clients=1: %+v", snap)
+	}
+}

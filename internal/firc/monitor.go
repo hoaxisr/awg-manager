@@ -30,9 +30,6 @@ type MonitorDomainStat struct {
 // MonitorClientStat summarizes active conntrack sessions and traffic for a single client IP.
 type MonitorClientStat struct {
 	IP         string   `json:"ip"`
-	Name       string   `json:"name,omitempty"`
-	MAC        string   `json:"mac,omitempty"`
-	Policy     string   `json:"policy,omitempty"`
 	SourceID   string   `json:"sourceId,omitempty"`
 	SourceName string   `json:"sourceName,omitempty"`
 	Conns      int      `json:"conns"`
@@ -375,108 +372,17 @@ type fakeNetGroupEntry struct {
 	idx int
 }
 
-type monitorHostMeta struct {
-	Name   string
-	MAC    string
-	Policy string
-	active bool
-}
+// maxMonitorClients ограничивает каждый список клиентов в ответе; точное число —
+// в счётчиках TotalClients/ActiveClients.
+const maxMonitorClients = 128
 
-const (
-	monitorHostsCacheTTL      = 30 * time.Second
-	monitorHostsRetryBackoff  = 10 * time.Second
-	monitorHostsLookupTimeout = 800 * time.Millisecond
-	maxMonitorClients         = 128
-)
-
+// canonicalMonitorIP приводит адрес conntrack к каноническому виду: IPv6 там
+// записан без сжатия, а IPv4-mapped обязан совпасть с тем же клиентом по IPv4.
 func canonicalMonitorIP(raw string) string {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return ""
-	}
-	if addr, err := netip.ParseAddr(trimmed); err == nil {
+	if addr, err := netip.ParseAddr(raw); err == nil {
 		return addr.Unmap().String()
 	}
-	return strings.ToLower(trimmed)
-}
-
-func isHostOnlineOrActive(h SystemHost) bool {
-	if h.Online != nil {
-		return *h.Online || h.Active
-	}
-	return h.Active
-}
-
-func setMonitorHostMeta(dst map[string]monitorHostMeta, ip string, cand monitorHostMeta) {
-	if ip == "" || ip == "0.0.0.0" {
-		return
-	}
-	if prev, exists := dst[ip]; exists {
-		if prev.active && !cand.active {
-			return
-		}
-		if prev.active == cand.active && prev.Name != "" && cand.Name == "" {
-			return
-		}
-	}
-	dst[ip] = cand
-}
-
-func (op *Operator) resolveMonitorHostMap(ctx context.Context) map[string]monitorHostMeta {
-	if op == nil {
-		return nil
-	}
-	now := time.Now()
-	op.mu.Lock()
-	cached := op.monitorHostsCache
-	cacheFresh := cached != nil && now.Sub(op.monitorHostsCacheAt) < monitorHostsCacheTTL
-	retrySuppressed := !op.monitorHostsRetryAt.IsZero() && now.Before(op.monitorHostsRetryAt)
-	client := op.client
-	op.mu.Unlock()
-
-	if cacheFresh || retrySuppressed || client == nil {
-		return cached
-	}
-
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	lookupCtx, cancel := context.WithTimeout(ctx, monitorHostsLookupTimeout)
-	hosts, err := client.GetHosts(lookupCtx)
-	cancel()
-
-	if err != nil {
-		op.mu.Lock()
-		op.monitorHostsRetryAt = time.Now().Add(monitorHostsRetryBackoff)
-		out := op.monitorHostsCache
-		op.mu.Unlock()
-		return out
-	}
-
-	next := make(map[string]monitorHostMeta, len(hosts))
-	for _, h := range hosts {
-		meta := monitorHostMeta{
-			Name:   strings.TrimSpace(h.Name),
-			MAC:    strings.TrimSpace(h.MAC),
-			Policy: strings.TrimSpace(h.Policy),
-			active: isHostOnlineOrActive(h),
-		}
-		if ip := canonicalMonitorIP(h.IP); ip != "" && ip != "0.0.0.0" {
-			setMonitorHostMeta(next, ip, meta)
-		}
-		for _, raw6 := range h.IP6 {
-			if ip6 := canonicalMonitorIP(raw6); ip6 != "" {
-				setMonitorHostMeta(next, ip6, meta)
-			}
-		}
-	}
-
-	op.mu.Lock()
-	op.monitorHostsCache = next
-	op.monitorHostsCacheAt = time.Now()
-	op.monitorHostsRetryAt = time.Time{}
-	op.mu.Unlock()
-	return next
+	return raw
 }
 
 type monitorClientAcc struct {
@@ -496,42 +402,31 @@ func recordClientAcc(accMap map[string]*monitorClientAcc, ip, srvID, srvName, gr
 			ip:         ip,
 			sourceID:   srvID,
 			sourceName: srvName,
+			groups:     make(map[string]struct{}),
 		}
 		accMap[ip] = c
-	} else if c.sourceID == "" && srvID != "" {
-		c.sourceID = srvID
-		c.sourceName = srvName
 	}
 	c.conns++
 	c.txBytes += txBytes
 	c.rxBytes += rxBytes
-	if groupName != "" {
-		if c.groups == nil {
-			c.groups = make(map[string]struct{})
-		}
-		c.groups[groupName] = struct{}{}
-	}
+	c.groups[groupName] = struct{}{}
 }
 
-func materializeMonitorClients(accMap map[string]*monitorClientAcc, hostMap map[string]monitorHostMeta, includeGroups bool) []MonitorClientStat {
+func materializeMonitorClients(accMap map[string]*monitorClientAcc, includeGroups bool) []MonitorClientStat {
 	if len(accMap) == 0 {
 		return nil
 	}
 	out := make([]MonitorClientStat, 0, len(accMap))
 	for _, acc := range accMap {
-		meta := hostMap[acc.ip]
 		st := MonitorClientStat{
 			IP:         acc.ip,
-			Name:       meta.Name,
-			MAC:        meta.MAC,
-			Policy:     meta.Policy,
 			SourceID:   acc.sourceID,
 			SourceName: acc.sourceName,
 			Conns:      acc.conns,
 			TxBytes:    acc.txBytes,
 			RxBytes:    acc.rxBytes,
 		}
-		if includeGroups && len(acc.groups) > 0 {
+		if includeGroups {
 			grps := make([]string, 0, len(acc.groups))
 			for g := range acc.groups {
 				grps = append(grps, g)
@@ -551,17 +446,6 @@ func materializeMonitorClients(accMap map[string]*monitorClientAcc, hostMap map[
 		if aTotal != bTotal {
 			return aTotal > bTotal
 		}
-		aLabel := strings.ToLower(a.Name)
-		if aLabel == "" {
-			aLabel = a.IP
-		}
-		bLabel := strings.ToLower(b.Name)
-		if bLabel == "" {
-			bLabel = b.IP
-		}
-		if aLabel != bLabel {
-			return aLabel < bLabel
-		}
 		return a.IP < b.IP
 	})
 	if len(out) > maxMonitorClients {
@@ -570,6 +454,8 @@ func materializeMonitorClients(accMap map[string]*monitorClientAcc, hostMap map[
 	return out
 }
 
+// applyConntrackSnapshot разбирает таблицу conntrack и заполняет счётчики сессий
+// и клиентов; списки клиентов — только при withClients.
 func applyConntrackSnapshot(
 	r io.Reader,
 	snap *MonitorSnapshot,
@@ -578,9 +464,8 @@ func applyConntrackSnapshot(
 	serverIndex map[string]int,
 	serverNameMap map[string]string,
 	cidrs []parsedCIDRSource,
-	hostMap map[string]monitorHostMeta,
-	lazyHostMap func() map[string]monitorHostMeta,
-) {
+	withClients bool,
+) error {
 	globalAcc := make(map[string]*monitorClientAcc)
 	groupAcc := make([]map[string]*monitorClientAcc, len(snap.Groups))
 	for i := range groupAcc {
@@ -591,128 +476,130 @@ func applyConntrackSnapshot(
 		serverAcc[i] = make(map[string]*monitorClientAcc)
 	}
 
-	if r != nil {
-		scanner := bufio.NewScanner(r)
-		scanner.Buffer(make([]byte, 64*1024), 256*1024)
-		for scanner.Scan() {
-			line := scanner.Text()
-			if !strings.Contains(line, "mark=") {
-				continue
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 64*1024), 256*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.Contains(line, "mark=") {
+			continue
+		}
+		var markDec uint64
+		if mIdx := strings.Index(line, "mark="); mIdx >= 0 {
+			rest := line[mIdx+5:]
+			end := strings.IndexByte(rest, ' ')
+			if end > 0 {
+				rest = rest[:end]
 			}
-			var markDec uint64
-			if mIdx := strings.Index(line, "mark="); mIdx >= 0 {
-				rest := line[mIdx+5:]
-				end := strings.IndexByte(rest, ' ')
-				if end > 0 {
-					rest = rest[:end]
-				}
-				markDec, _ = strconv.ParseUint(rest, 10, 64)
-			}
-			mark32 := uint32(markDec)
-			grpIdx, matchedGrp := markToGroupIdx[mark32&0x40ff0000]
+			markDec, _ = strconv.ParseUint(rest, 10, 64)
+		}
+		mark32 := uint32(markDec)
+		grpIdx, matchedGrp := markToGroupIdx[mark32&0x40ff0000]
 
-			var firstSrc, firstDst string
-			var txBytes, rxBytes uint64
-			bytesCount := 0
-			for _, tok := range strings.Fields(line) {
-				if firstSrc == "" && strings.HasPrefix(tok, "src=") {
-					firstSrc = canonicalMonitorIP(strings.TrimPrefix(tok, "src="))
-				} else if firstDst == "" && strings.HasPrefix(tok, "dst=") {
-					firstDst = canonicalMonitorIP(strings.TrimPrefix(tok, "dst="))
-				} else if strings.HasPrefix(tok, "bytes=") {
-					val, _ := strconv.ParseUint(strings.TrimPrefix(tok, "bytes="), 10, 64)
-					if bytesCount == 0 {
-						txBytes = val
-					} else if bytesCount == 1 {
-						rxBytes = val
+		var firstSrc, firstDst string
+		var txBytes, rxBytes uint64
+		bytesCount := 0
+		for _, tok := range strings.Fields(line) {
+			if firstSrc == "" && strings.HasPrefix(tok, "src=") {
+				firstSrc = strings.TrimPrefix(tok, "src=")
+			} else if firstDst == "" && strings.HasPrefix(tok, "dst=") {
+				firstDst = strings.TrimPrefix(tok, "dst=")
+			} else if strings.HasPrefix(tok, "bytes=") {
+				val, _ := strconv.ParseUint(strings.TrimPrefix(tok, "bytes="), 10, 64)
+				if bytesCount == 0 {
+					txBytes = val
+				} else if bytesCount == 1 {
+					rxBytes = val
+				}
+				bytesCount++
+			}
+		}
+
+		if !matchedGrp && (strings.HasPrefix(firstDst, "198.18.") || strings.HasPrefix(firstDst, "198.19.")) {
+			if dstIP := net.ParseIP(firstDst); dstIP != nil {
+				for _, fg := range fakeNetGroups {
+					if fg.net.Contains(dstIP) {
+						grpIdx = fg.idx
+						matchedGrp = true
+						break
 					}
-					bytesCount++
-				}
-			}
-
-			if !matchedGrp && (strings.HasPrefix(firstDst, "198.18.") || strings.HasPrefix(firstDst, "198.19.")) {
-				if dstIP := net.ParseIP(firstDst); dstIP != nil {
-					for _, fg := range fakeNetGroups {
-						if fg.net.Contains(dstIP) {
-							grpIdx = fg.idx
-							matchedGrp = true
-							break
-						}
-					}
-				}
-			}
-
-			if !matchedGrp {
-				continue
-			}
-
-			snap.TotalConns++
-			snap.TotalTxBytes += txBytes
-			snap.TotalRxBytes += rxBytes
-			snap.Groups[grpIdx].ActiveConns++
-			snap.Groups[grpIdx].ConnTxBytes += txBytes
-			snap.Groups[grpIdx].ConnRxBytes += rxBytes
-
-			var srvID string
-			if (mark32&0xffff) == XHTTPServerFircMark || firstSrc == "127.0.0.1" {
-				srvID = "vless_xhttp_server"
-			} else {
-				srvID = classifyClientIP(firstSrc, cidrs)
-			}
-			srvName := serverNameMap[srvID]
-			if srvName == "" {
-				srvName = srvID
-			}
-			grpLabel := snap.Groups[grpIdx].Name
-			if grpLabel == "" {
-				grpLabel = snap.Groups[grpIdx].ID
-			}
-
-			if firstSrc != "" {
-				recordClientAcc(globalAcc, firstSrc, srvID, srvName, grpLabel, txBytes, rxBytes)
-				recordClientAcc(groupAcc[grpIdx], firstSrc, srvID, srvName, grpLabel, txBytes, rxBytes)
-			}
-
-			if sIdx, ok := serverIndex[srvID]; ok {
-				snap.Servers[sIdx].ActiveConns++
-				snap.Servers[sIdx].TxBytes += txBytes
-				snap.Servers[sIdx].RxBytes += rxBytes
-				if firstSrc != "" {
-					recordClientAcc(serverAcc[sIdx], firstSrc, srvID, srvName, grpLabel, txBytes, rxBytes)
 				}
 			}
 		}
-		_ = scanner.Err()
+
+		if !matchedGrp {
+			continue
+		}
+		firstSrc = canonicalMonitorIP(firstSrc)
+
+		snap.TotalConns++
+		snap.TotalTxBytes += txBytes
+		snap.TotalRxBytes += rxBytes
+		snap.Groups[grpIdx].ActiveConns++
+		snap.Groups[grpIdx].ConnTxBytes += txBytes
+		snap.Groups[grpIdx].ConnRxBytes += rxBytes
+
+		var srvID string
+		if (mark32&0xffff) == XHTTPServerFircMark || firstSrc == "127.0.0.1" {
+			srvID = "vless_xhttp_server"
+		} else {
+			srvID = classifyClientIP(firstSrc, cidrs)
+		}
+		srvName := serverNameMap[srvID]
+		if srvName == "" {
+			srvName = srvID
+		}
+		grpLabel := snap.Groups[grpIdx].Name
+		if grpLabel == "" {
+			grpLabel = snap.Groups[grpIdx].ID
+		}
+
+		if firstSrc != "" {
+			recordClientAcc(globalAcc, firstSrc, srvID, srvName, grpLabel, txBytes, rxBytes)
+			recordClientAcc(groupAcc[grpIdx], firstSrc, srvID, srvName, grpLabel, txBytes, rxBytes)
+		}
+
+		if sIdx, ok := serverIndex[srvID]; ok {
+			snap.Servers[sIdx].ActiveConns++
+			snap.Servers[sIdx].TxBytes += txBytes
+			snap.Servers[sIdx].RxBytes += rxBytes
+			if firstSrc != "" {
+				recordClientAcc(serverAcc[sIdx], firstSrc, srvID, srvName, grpLabel, txBytes, rxBytes)
+			}
+		}
 	}
 
-	if len(globalAcc) > 0 && hostMap == nil && lazyHostMap != nil {
-		hostMap = lazyHostMap()
-	}
-
-	snap.Clients = materializeMonitorClients(globalAcc, hostMap, true)
 	snap.TotalClients = len(globalAcc)
 	for i := range snap.Groups {
-		snap.Groups[i].Clients = materializeMonitorClients(groupAcc[i], hostMap, false)
 		snap.Groups[i].ActiveClients = len(groupAcc[i])
 	}
 	for i := range snap.Servers {
-		snap.Servers[i].Clients = materializeMonitorClients(serverAcc[i], hostMap, true)
 		snap.Servers[i].ActiveClients = len(serverAcc[i])
 	}
+	if withClients {
+		snap.Clients = materializeMonitorClients(globalAcc, true)
+		for i := range snap.Groups {
+			snap.Groups[i].Clients = materializeMonitorClients(groupAcc[i], false)
+		}
+		for i := range snap.Servers {
+			snap.Servers[i].Clients = materializeMonitorClients(serverAcc[i], true)
+		}
+	}
+	return scanner.Err()
 }
 
 // GetMonitorSnapshot collects real-time FIRC traffic counters, active conntrack sessions, and recent DNS matches.
-func (op *Operator) GetMonitorSnapshot(ctx context.Context) MonitorSnapshot {
-	return op.getMonitorSnapshot(ctx, op.IsRunning(ctx))
+// Per-client lists are included only when withClients is set.
+func (op *Operator) GetMonitorSnapshot(ctx context.Context, withClients bool) MonitorSnapshot {
+	return op.getMonitorSnapshot(ctx, op.IsRunning(ctx), withClients)
 }
 
 // GetOfflineMonitorSnapshot builds a disk/server-status monitor snapshot without
 // probing fircd IPC or invoking iptables. Used when FIRC is not selected.
 func (op *Operator) GetOfflineMonitorSnapshot(ctx context.Context) MonitorSnapshot {
-	return op.getMonitorSnapshot(ctx, false)
+	return op.getMonitorSnapshot(ctx, false, false)
 }
 
-func (op *Operator) getMonitorSnapshot(ctx context.Context, running bool) MonitorSnapshot {
+func (op *Operator) getMonitorSnapshot(ctx context.Context, running, withClients bool) MonitorSnapshot {
 	snap := MonitorSnapshot{
 		Timestamp:     time.Now().Unix(),
 		Running:       running,
@@ -910,27 +797,21 @@ func (op *Operator) getMonitorSnapshot(ctx context.Context, running bool) Monito
 	}
 
 	// Parse /proc/net/nf_conntrack for active FIRC sessions, per-device breakdown, and byte counters.
-	var ctReader io.Reader
-	var ctFile *os.File
-	if f, err := os.Open("/proc/net/nf_conntrack"); err == nil {
-		ctFile = f
-		ctReader = f
-	}
-	applyConntrackSnapshot(
-		ctReader,
-		&snap,
-		markToGroupIdx,
-		fakeNetGroups,
-		serverIndex,
-		serverNameMap,
-		cidrs,
-		nil,
-		func() map[string]monitorHostMeta {
-			return op.resolveMonitorHostMap(ctx)
-		},
-	)
-	if ctFile != nil {
+	if ctFile, err := os.Open(op.conntrackPath); err == nil {
+		err = applyConntrackSnapshot(
+			ctFile,
+			&snap,
+			markToGroupIdx,
+			fakeNetGroups,
+			serverIndex,
+			serverNameMap,
+			cidrs,
+			withClients,
+		)
 		_ = ctFile.Close()
+		if err != nil {
+			op.log.Warn("firc monitor: conntrack read interrupted", "error", err)
+		}
 	}
 
 	// Read all available pages of recent DNS events from fircd so timestamps are always up to the current second.
