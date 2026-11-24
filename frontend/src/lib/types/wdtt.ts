@@ -220,7 +220,6 @@ export type WdttDiagTransport = 'auto' | 'udp' | 'tcp';
 export interface WdttDiagRequest {
 	transport?: WdttDiagTransport;
 	diagKey?: string;
-	ports?: string;
 }
 
 export interface WdttDiagStep {

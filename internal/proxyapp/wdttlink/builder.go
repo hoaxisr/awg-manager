@@ -19,11 +19,12 @@ import (
 // Mode — единственное НОВОЕ поле (§11): режим ссылки wg|raw, независимый от
 // RelayMode записи. Пусто — режим записи.
 type LinkRequest struct {
-	Peer     string   `json:"peer,omitempty"`
-	VKHashes []string `json:"vkHashes,omitempty"`
-	Name     string   `json:"name,omitempty"`
-	Password string   `json:"password,omitempty"`
-	Mode     string   `json:"mode,omitempty"`
+	Peer           string   `json:"peer,omitempty"`
+	VKHashes       []string `json:"vkHashes,omitempty"`
+	Name           string   `json:"name,omitempty"`
+	Password       string   `json:"password,omitempty"`
+	Mode           string   `json:"mode,omitempty"`
+	IncludeDiagKey bool     `json:"includeDiagKey,omitempty"`
 
 	Provider       string `json:"provider,omitempty"`
 	MTU            int    `json:"mtu,omitempty"`
@@ -142,15 +143,12 @@ func (b *Builder) BuildLink(ctx context.Context, rec instancestore.Record, req L
 	if err != nil {
 		return nil, &LinkError{Code: "WDTT_LINK_ENCODE_FAILED", Msg: err.Error()}
 	}
-	rawPort, _ := listenPort(cfg.EffectiveRawListen())
-	directPort := 0
-	if d := strings.TrimSpace(cfg.DirectListen); d != "" && d != strings.TrimSpace(cfg.Listen) {
-		directPort, _ = listenPort(d)
+	var diagKey string
+	if req.IncludeDiagKey {
+		diagKey = ReadDiagToken(cfg.ConfigDir)
 	}
 	qLink, err := EncodeQwdttLinkWithOptions(peer, linkPassword, hashes, name, 0, 0, mode, QwdttLinkOptions{
-		DiagKey:    ReadDiagToken(cfg.ConfigDir),
-		RawPort:    rawPort,
-		DirectPort: directPort,
+		DiagKey: diagKey,
 	})
 	if err != nil {
 		return nil, &LinkError{Code: "WDTT_LINK_ENCODE_FAILED", Msg: err.Error()}

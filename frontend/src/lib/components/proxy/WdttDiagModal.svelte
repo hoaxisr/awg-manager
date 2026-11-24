@@ -42,8 +42,10 @@
 	let result = $state<WdttDiagResult | null>(null);
 	let errorText = $state('');
 
-	let wasOpen = false;
+	// Нереактивный внутренний учёт текущего HTTP-запроса: отсекает устаревшие
+	// ответы и отменяет висящий fetch через AbortController, не вызывая $effect.
 	let runToken = 0;
+	let activeController: AbortController | null = null;
 
 	const transportOptions = $derived([
 		{ value: 'auto' as const, label: m.proxy_wdtt_diag_transport_auto() },
@@ -111,8 +113,20 @@
 		}
 	}
 
+	function cancelDiag(): void {
+		runToken += 1;
+		if (activeController) {
+			activeController.abort();
+			activeController = null;
+		}
+		running = false;
+	}
+
 	async function runDiag(): Promise<void> {
+		cancelDiag();
 		const token = ++runToken;
+		const controller = new AbortController();
+		activeController = controller;
 		running = true;
 		errorText = '';
 		try {
@@ -124,14 +138,17 @@
 			if (dk) {
 				req.diagKey = dk;
 			}
-			const res = await api.runWdttClientDiag(instanceId, req);
+			const res = await api.runWdttClientDiag(instanceId, req, controller.signal);
 			if (token !== runToken) return;
 			result = res;
 		} catch (err) {
-			if (token !== runToken) return;
+			if (token !== runToken || (err instanceof Error && err.name === 'AbortError')) return;
 			result = null;
 			errorText = mapDiagError(err);
 		} finally {
+			if (activeController === controller) {
+				activeController = null;
+			}
 			if (token === runToken) {
 				running = false;
 			}
@@ -139,14 +156,10 @@
 	}
 
 	$effect(() => {
-		if (open && !wasOpen) {
-			wasOpen = true;
-			void runDiag();
-		} else if (!open && wasOpen) {
-			wasOpen = false;
-			runToken += 1;
-			running = false;
+		if (!open) {
+			cancelDiag();
 		}
+		return () => cancelDiag();
 	});
 </script>
 
@@ -187,6 +200,8 @@
 				<span class="spinner" aria-hidden="true"></span>
 				<span>{m.proxy_wdtt_diag_running()}</span>
 			</div>
+		{:else if !result && !errorText}
+			<p class="idle-hint">{m.proxy_wdtt_diag_idle_hint()}</p>
 		{/if}
 
 		{#if errorText}
@@ -253,8 +268,13 @@
 	</div>
 
 	{#snippet actions()}
-		<Button variant="secondary" size="sm" loading={running} onclick={() => runDiag()}>
-			{m.proxy_wdtt_diag_retry()}
+		<Button
+			variant={result || errorText ? 'secondary' : 'primary'}
+			size="sm"
+			loading={running}
+			onclick={() => runDiag()}
+		>
+			{result || errorText ? m.proxy_wdtt_diag_retry() : m.proxy_wdtt_diag_run()}
 		</Button>
 		<Button variant="ghost" size="sm" onclick={onclose}>
 			{m.proxy_wdtt_diag_close()}
@@ -303,6 +323,13 @@
 		background: var(--color-bg-secondary);
 		font-size: 0.8125rem;
 		color: var(--color-text-secondary);
+	}
+
+	.idle-hint {
+		margin: 0;
+		font-size: 0.8125rem;
+		color: var(--color-text-secondary);
+		line-height: 1.45;
 	}
 
 	.spinner {

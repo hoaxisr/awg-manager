@@ -1072,14 +1072,15 @@ func (a *app) wireProxyrt() {
 
 	a.srv.SetProxyRtSurface(server.ProxyRtSurface{
 		Instances: proxyrtDispatch{
-			instances: instances.Handle,
-			users:     users.Serve,
-			captcha:   captchaSvc.Serve,
-			allowlist: allowlist.Serve,
-			link:      linkHandler.Link,
-			ensureWG:  linkHandler.EnsureWGTunnel,
-			diag:      diagHandler.Serve,
-			refresh:   subs.Serve,
+			instances:     instances.Handle,
+			users:         users.Serve,
+			captcha:       captchaSvc.Serve,
+			allowlist:     allowlist.Serve,
+			link:          linkHandler.Link,
+			rotateDiagKey: linkHandler.RotateDiagKey,
+			ensureWG:      linkHandler.EnsureWGTunnel,
+			diag:          diagHandler.Serve,
+			refresh:       subs.Serve,
 		}.handler(),
 		ListenMoves:        instances.AckListenMoves,
 		WdttLinkDecode:     linkHandler.Decode,
@@ -1355,14 +1356,15 @@ func (a *app) proxyFactory(ref *proxyManagerRef, journal *logging.ScopedLogger,
 // владелец поддерева и отвечает 404 на неизвестном хвосте, то есть проглотил
 // бы users, link, captcha и allowlist целиком.
 type proxyrtDispatch struct {
-	instances http.HandlerFunc
-	users     func(w http.ResponseWriter, r *http.Request, key string, sub []string)
-	captcha   func(w http.ResponseWriter, r *http.Request, key string, sub []string)
-	allowlist func(w http.ResponseWriter, r *http.Request, key string, sub []string)
-	link      func(w http.ResponseWriter, r *http.Request, key string)
-	ensureWG  func(w http.ResponseWriter, r *http.Request, key string)
-	diag      func(w http.ResponseWriter, r *http.Request, key string)
-	refresh   func(w http.ResponseWriter, r *http.Request, key string)
+	instances     http.HandlerFunc
+	users         func(w http.ResponseWriter, r *http.Request, key string, sub []string)
+	captcha       func(w http.ResponseWriter, r *http.Request, key string, sub []string)
+	allowlist     func(w http.ResponseWriter, r *http.Request, key string, sub []string)
+	link          func(w http.ResponseWriter, r *http.Request, key string)
+	rotateDiagKey func(w http.ResponseWriter, r *http.Request, key string)
+	ensureWG      func(w http.ResponseWriter, r *http.Request, key string)
+	diag          func(w http.ResponseWriter, r *http.Request, key string)
+	refresh       func(w http.ResponseWriter, r *http.Request, key string)
 }
 
 func (d proxyrtDispatch) handler() http.HandlerFunc {
@@ -1388,6 +1390,12 @@ func (d proxyrtDispatch) handler() http.HandlerFunc {
 			d.allowlist(w, r, key, parts)
 		case "link":
 			d.link(w, r, key)
+		case "diag-key":
+			if sub == "rotate" && d.rotateDiagKey != nil {
+				d.rotateDiagKey(w, r, key)
+				return
+			}
+			d.instances(w, r)
 		case "ensure-wg-tunnel":
 			d.ensureWG(w, r, key)
 		case "diag":

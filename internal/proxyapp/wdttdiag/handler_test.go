@@ -101,7 +101,7 @@ func TestHandler_VerdictWithExitCode2Returns200AndSafeArgs(t *testing.T) {
 		},
 	})
 
-	rr := doPost(t, h, rec.Key(), `{"transport":"tcp","diagKey":"override-dk","ports":"raw=56003"}`)
+	rr := doPost(t, h, rec.Key(), `{"transport":"tcp","diagKey":"override-dk"}`)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body=%s)", rr.Code, rr.Body.String())
 	}
@@ -120,7 +120,7 @@ func TestHandler_VerdictWithExitCode2Returns200AndSafeArgs(t *testing.T) {
 		t.Fatalf("binary = %q", gotBinary)
 	}
 	joined := strings.Join(gotArgs, " ")
-	for _, banned := range []string{"--awgm-", "-listen", "-tun-name", "-diag-auto", "-diag-trigger"} {
+	for _, banned := range []string{"--awgm-", "-listen", "-tun-name", "-diag-auto", "-diag-trigger", "-diag-ports"} {
 		if strings.Contains(joined, banned) {
 			t.Fatalf("unexpected runtime flag %q in args: %v", banned, gotArgs)
 		}
@@ -133,7 +133,6 @@ func TestHandler_VerdictWithExitCode2Returns200AndSafeArgs(t *testing.T) {
 		{"-vk", "vkhash1,vkhash2"},
 		{"-diag-key", "override-dk"},
 		{"-turn-transport", "tcp"},
-		{"-diag-ports", "raw=56003"},
 		{"-vk-auth-mode", "vkcalls"},
 	}
 	for _, pair := range wantSubsets {
@@ -220,13 +219,10 @@ func TestHandler_ValidationAndBinaryErrors(t *testing.T) {
 		}
 	})
 
-	t.Run("invalid transport and ports", func(t *testing.T) {
+	t.Run("invalid transport", func(t *testing.T) {
 		h := New(Deps{Records: fakeRecords{recs: recs}})
 		if rr := doPost(t, h, rec.Key(), `{"transport":"quic"}`); rr.Code != http.StatusBadRequest {
 			t.Fatalf("bad transport status=%d", rr.Code)
-		}
-		if rr := doPost(t, h, rec.Key(), `{"ports":"raw=56003;rm -rf /"}`); rr.Code != http.StatusBadRequest {
-			t.Fatalf("bad ports status=%d", rr.Code)
 		}
 	})
 
@@ -300,14 +296,22 @@ func TestHandler_UnsupportedTimeoutBusyAndRedactedFailure(t *testing.T) {
 		}
 	})
 
-	t.Run("single flight returns 409 busy", func(t *testing.T) {
+	t.Run("global single flight returns 409 busy even across distinct instances", func(t *testing.T) {
+		secondRec := clientRec("wg")
+		secondRec.ID = "de"
+		multiRecs := fakeRecords{recs: map[string]instancestore.Record{
+			rec.Key():       rec,
+			secondRec.Key(): secondRec,
+		}}
+
 		started := make(chan struct{})
+		var startedOnce sync.Once
 		release := make(chan struct{})
 		h := New(Deps{
-			Records: recs,
+			Records: multiRecs,
 			Binary:  bin,
 			Runner: func(context.Context, string, []string) (string, string, int, error) {
-				close(started)
+				startedOnce.Do(func() { close(started) })
 				<-release
 				return `DIAG|{"ev":"verdict","run":1,"code":"path_ok","sev":"ok","title":"OK","text":"OK"}`, "", 0, nil
 			},
@@ -323,14 +327,23 @@ func TestHandler_UnsupportedTimeoutBusyAndRedactedFailure(t *testing.T) {
 		}()
 		<-started
 
-		second := doPost(t, h, rec.Key(), ``)
-		if second.Code != http.StatusConflict || decodeEnv(t, second).Code != "WDTT_DIAG_BUSY" {
-			t.Fatalf("second request status=%d body=%s", second.Code, second.Body.String())
+		sameInst := doPost(t, h, rec.Key(), ``)
+		if sameInst.Code != http.StatusConflict || decodeEnv(t, sameInst).Code != "WDTT_DIAG_BUSY" {
+			t.Fatalf("same instance request status=%d body=%s", sameInst.Code, sameInst.Body.String())
+		}
+		otherInst := doPost(t, h, secondRec.Key(), ``)
+		if otherInst.Code != http.StatusConflict || decodeEnv(t, otherInst).Code != "WDTT_DIAG_BUSY" {
+			t.Fatalf("other instance request status=%d body=%s", otherInst.Code, otherInst.Body.String())
 		}
 		close(release)
 		wg.Wait()
 		if firstCode != http.StatusOK {
 			t.Fatalf("first request status=%d", firstCode)
+		}
+
+		after := doPost(t, h, secondRec.Key(), ``)
+		if after.Code != http.StatusOK {
+			t.Fatalf("request after release status=%d body=%s", after.Code, after.Body.String())
 		}
 	})
 

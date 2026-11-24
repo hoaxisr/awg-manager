@@ -275,6 +275,19 @@
 		});
 	}
 
+	function rotateDiagKey() {
+		if (!wdttServer) return;
+		void locked(async () => {
+			await api.rotateWdttServerDiagKey(row.id);
+			if (running) {
+				await onrestart();
+				notifications.success(m.proxy_adv_diag_key_rotated_restarted());
+			} else {
+				notifications.success(m.proxy_adv_diag_key_rotated());
+			}
+		});
+	}
+
 	/** «Отменить» — возврат к тому, что лежит на сервере. */
 	function revert() {
 		if (wdttServer) wdttDraft = cloneConfig(wdttServer);
@@ -408,6 +421,8 @@
 		bind:ftServer={ftDraft}
 		ports={killPorts}
 		{wanOptions}
+		onrotatediagkey={rotateDiagKey}
+		rotatingDiagKey={mutating}
 	/>
 </SideDrawer>
 

@@ -72,6 +72,45 @@ function gatewayMessage(status: number): string | undefined {
 }
 
 
+/** Объединяет глобальный AbortSignal клиента с опциональным сигналом конкретного запроса. */
+export function combineAbortSignals(
+	globalSignal: AbortSignal,
+	requestSignal?: AbortSignal
+): { signal: AbortSignal; cleanup: () => void } {
+	if (!requestSignal) {
+		return { signal: globalSignal, cleanup: () => {} };
+	}
+	const anyFn = (AbortSignal as unknown as { any?: (signals: AbortSignal[]) => AbortSignal }).any;
+	if (typeof anyFn === 'function') {
+		return { signal: anyFn([globalSignal, requestSignal]), cleanup: () => {} };
+	}
+	const controller = new AbortController();
+	const forward = (source: AbortSignal) => {
+		if (!controller.signal.aborted) {
+			controller.abort(source.reason);
+		}
+	};
+	if (globalSignal.aborted) {
+		forward(globalSignal);
+		return { signal: controller.signal, cleanup: () => {} };
+	}
+	if (requestSignal.aborted) {
+		forward(requestSignal);
+		return { signal: controller.signal, cleanup: () => {} };
+	}
+	const onGlobal = () => forward(globalSignal);
+	const onRequest = () => forward(requestSignal);
+	globalSignal.addEventListener('abort', onGlobal, { once: true });
+	requestSignal.addEventListener('abort', onRequest, { once: true });
+	return {
+		signal: controller.signal,
+		cleanup: () => {
+			globalSignal.removeEventListener('abort', onGlobal);
+			requestSignal.removeEventListener('abort', onRequest);
+		}
+	};
+}
+
 export class CoreClient {
 	protected baseUrl = '/api';
 	protected onUnauthorized?: () => void;
@@ -96,88 +135,99 @@ export class CoreClient {
 		options: RequestInit = {}
 	): Promise<T> {
 		const url = `${this.baseUrl}${endpoint}`;
+		const { signal, cleanup } = combineAbortSignals(
+			this.abortController.signal,
+			options.signal ?? undefined
+		);
 
-		let response: Response;
 		try {
-			response = await fetch(url, {
-				...options,
-				credentials: 'same-origin',
-				signal: this.abortController.signal,
-				headers: {
-					'Content-Type': 'application/json',
-					...options.headers
+			let response: Response;
+			try {
+				response = await fetch(url, {
+					...options,
+					credentials: 'same-origin',
+					signal,
+					headers: {
+						'Content-Type': 'application/json',
+						...options.headers
+					}
+				});
+			} catch (e) {
+				if ((e instanceof Error && e.name === 'AbortError') || signal.aborted) {
+					throw e;
 				}
-			});
-		} catch (e) {
-			if (e instanceof DOMException && e.name === 'AbortError') {
-				throw e;
+				this.onConnectionLost?.();
+				throw new ApiNetworkError();
 			}
-			this.onConnectionLost?.();
-			throw new ApiNetworkError();
-		}
 
-		// Handle 401 Unauthorized
-		if (response.status === 401) {
-			this.onUnauthorized?.();
-			throw new Error(m.api_session_expired());
-		}
+			// Handle 401 Unauthorized
+			if (response.status === 401) {
+				this.onUnauthorized?.();
+				throw new Error(m.api_session_expired());
+			}
 
-		const contentType = response.headers.get('content-type') || '';
+			const contentType = response.headers.get('content-type') || '';
 
-		// Handle 503 Service Unavailable — preserve server message when present.
-		if (response.status === 503) {
-			if (contentType.includes('application/json')) {
-				let message: string = m.api_service_unavailable();
-				try {
-					const body = (await response.json()) as ApiResponse<unknown>;
-					if (body.message) message = body.message;
-				} catch {
-					// keep default
+			// Handle 503 Service Unavailable — preserve server message when present.
+			if (response.status === 503) {
+				if (contentType.includes('application/json')) {
+					let message: string = m.api_service_unavailable();
+					try {
+						const body = (await response.json()) as ApiResponse<unknown>;
+						if (body.message) message = body.message;
+					} catch {
+						// keep default
+					}
+					throw new Error(message);
 				}
-				throw new Error(message);
+				// Non-JSON 503 — страница шлюза (nginx), разметку не показываем.
+				throw new ApiGatewayError(m.api_gateway_503(), 503);
 			}
-			// Non-JSON 503 — страница шлюза (nginx), разметку не показываем.
-			throw new ApiGatewayError(m.api_gateway_503(), 503);
-		}
 
-		if (!contentType.includes('application/json')) {
-			const text = await response.text();
-			// Gateway-ошибки (nginx перед awg-manager) отдают HTML-страницы —
-			// классифицируем по статусу и никогда не показываем разметку.
-			const gateway = gatewayMessage(response.status);
-			if (gateway) {
-				throw new ApiGatewayError(gateway, response.status);
+			if (!contentType.includes('application/json')) {
+				const text = await response.text();
+				// Gateway-ошибки (nginx перед awg-manager) отдают HTML-страницы —
+				// классифицируем по статусу и никогда не показываем разметку.
+				const gateway = gatewayMessage(response.status);
+				if (gateway) {
+					throw new ApiGatewayError(gateway, response.status);
+				}
+				const looksLikeHtml =
+					contentType.includes('text/html') || text.trimStart().startsWith('<');
+				if (looksLikeHtml) {
+					throw new Error(m.api_server_error({ status: response.status }));
+				}
+				throw new Error(m.api_server_error_text({ status: response.status, text: text.substring(0, 100) }));
 			}
-			const looksLikeHtml =
-				contentType.includes('text/html') || text.trimStart().startsWith('<');
-			if (looksLikeHtml) {
-				throw new Error(m.api_server_error({ status: response.status }));
+
+			let data: ApiResponse<T>;
+			try {
+				data = await response.json();
+			} catch (e) {
+				if ((e instanceof Error && e.name === 'AbortError') || signal.aborted) {
+					throw e;
+				}
+				throw new Error(m.api_bad_response({ status: response.status }));
 			}
-			throw new Error(m.api_server_error_text({ status: response.status, text: text.substring(0, 100) }));
+
+			if (!response.ok || data.error) {
+				const rawError = typeof data.error === 'string' ? data.error : '';
+				const err: Error & { status?: number; body?: unknown } = new Error(
+					rawError || data.message || m.api_request_error({ status: response.status })
+				);
+				err.status = response.status;
+				err.body = data;
+				throw err;
+			}
+
+			// Runtime-проверка конверта по схеме из swagger: каст `as T` ниже
+			// подкреплён фактической валидацией, а не доверием.
+			validateApiResponse(options.method ?? 'GET', endpoint, data);
+
+			return data.data as T;
+		} finally {
+			cleanup();
 		}
-
-		let data: ApiResponse<T>;
-		try {
-			data = await response.json();
-		} catch {
-			throw new Error(m.api_bad_response({ status: response.status }));
-		}
-
-		if (!response.ok || data.error) {
-			const rawError = typeof data.error === 'string' ? data.error : '';
-			const err: Error & { status?: number; body?: unknown } = new Error(
-				rawError || data.message || m.api_request_error({ status: response.status })
-			);
-			err.status = response.status;
-			err.body = data;
-			throw err;
-		}
-
-		// Runtime-проверка конверта по схеме из swagger: каст `as T` ниже
-		// подкреплён фактической валидацией, а не доверием.
-		validateApiResponse(options.method ?? 'GET', endpoint, data);
-
-		return data.data as T;
 	}
 
 	protected isMockDevMode(): boolean {

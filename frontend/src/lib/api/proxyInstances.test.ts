@@ -1048,7 +1048,12 @@ describe('diagKey и POST /diag', () => {
 			})
 		);
 
-		const res = await api.runWdttClientDiag('nl', { transport: 'tcp', diagKey: 'dk-1' });
+		const controller = new AbortController();
+		const res = await api.runWdttClientDiag(
+			'nl',
+			{ transport: 'tcp', diagKey: 'dk-1' },
+			controller.signal
+		);
 		expect(calls).toEqual([
 			{
 				url: '/api/proxyrt/instances/wdtt-client%3Anl/diag',
@@ -1058,5 +1063,76 @@ describe('diagKey и POST /diag', () => {
 		]);
 		expect(res.verdict?.code).toBe('path_ok');
 		expect(res.steps[0]?.state).toBe('ok');
+	});
+
+	it('api.runWdttClientDiag пробрасывает AbortSignal запроса и отменяет fetch', async () => {
+		let seenSignal: AbortSignal | null | undefined;
+		vi.stubGlobal(
+			'fetch',
+			vi.fn((_url: string, init?: RequestInit) => {
+				seenSignal = init?.signal;
+				return new Promise((_resolve, reject) => {
+					init?.signal?.addEventListener('abort', () => {
+						reject(new DOMException('Aborted', 'AbortError'));
+					});
+				});
+			})
+		);
+
+		const controller = new AbortController();
+		const pending = api.runWdttClientDiag('nl', {}, controller.signal);
+		expect(seenSignal).toBeTruthy();
+		expect(seenSignal?.aborted).toBe(false);
+		controller.abort();
+		await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+		expect(seenSignal?.aborted).toBe(true);
+	});
+
+	it('api.generateWdttServerLink передаёт includeDiagKey и rotateWdttServerDiagKey шлёт POST /diag-key/rotate', async () => {
+		const calls: Array<{ url: string; method: string; body: unknown }> = [];
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string, init?: RequestInit) => {
+				calls.push({
+					url,
+					method: init?.method ?? 'GET',
+					body: init?.body ? JSON.parse(String(init.body)) : undefined
+				});
+				if (url.endsWith('/diag-key/rotate')) {
+					return {
+						ok: true,
+						status: 200,
+						headers: new Headers({ 'content-type': 'application/json' }),
+						json: async () => ({ success: true, data: { rotated: true } })
+					} as unknown as Response;
+				}
+				return {
+					ok: true,
+					status: 200,
+					headers: new Headers({ 'content-type': 'application/json' }),
+					json: async () => ({
+						success: true,
+						data: { link: 'wdtt://x', linkQwdtt: 'qwdtt://x', peer: '1.2.3.4:56002' }
+					})
+				} as unknown as Response;
+			})
+		);
+
+		await api.generateWdttServerLink('default', { password: 'p', includeDiagKey: true });
+		const rotated = await api.rotateWdttServerDiagKey('default');
+
+		expect(rotated).toEqual({ rotated: true });
+		expect(calls).toEqual([
+			{
+				url: '/api/proxyrt/instances/wdtt-server%3Adefault/link',
+				method: 'POST',
+				body: { password: 'p', includeDiagKey: true }
+			},
+			{
+				url: '/api/proxyrt/instances/wdtt-server%3Adefault/diag-key/rotate',
+				method: 'POST',
+				body: undefined
+			}
+		]);
 	});
 });

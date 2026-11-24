@@ -10,6 +10,7 @@
 package wdttlink
 
 import (
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -162,11 +163,9 @@ func EncodeLinkWithClientPort(peer string, wgPort int, password string, vkHashes
 	return link, nil
 }
 
-// QwdttLinkOptions — дополнительные параметры qwdtt:// (диагностический токен и порты режимов сервера).
+// QwdttLinkOptions — дополнительные параметры qwdtt:// (диагностический токен).
 type QwdttLinkOptions struct {
-	DiagKey    string
-	RawPort    int
-	DirectPort int
+	DiagKey string
 }
 
 // ReadDiagToken читает diag.key (32 случайных байта в hex) из configDir сервера и
@@ -187,12 +186,63 @@ func ReadDiagToken(configDir string) string {
 	return base64.RawURLEncoding.EncodeToString(secret)
 }
 
+// RotateDiagKey генерирует новый 32-байтовый ключ диагностики и атомарно
+// перезаписывает diag.key в configDir сервера (права 0600).
+func RotateDiagKey(configDir string) error {
+	dir := strings.TrimSpace(configDir)
+	if dir == "" {
+		return fmt.Errorf("configDir сервера не задан")
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("создание %s: %w", dir, err)
+	}
+	var secret [32]byte
+	if _, err := rand.Read(secret[:]); err != nil {
+		return fmt.Errorf("генерация diag.key: %w", err)
+	}
+	payload := []byte(hex.EncodeToString(secret[:]) + "\n")
+
+	tmp, err := os.CreateTemp(dir, ".diag.key.*")
+	if err != nil {
+		return fmt.Errorf("создание временного diag.key: %w", err)
+	}
+	tmpPath := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("права временного diag.key: %w", err)
+	}
+	if _, err := tmp.Write(payload); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("запись временного diag.key: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("сброс diag.key на диск: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("закрытие временного diag.key: %w", err)
+	}
+	target := filepath.Join(dir, "diag.key")
+	if err := os.Rename(tmpPath, target); err != nil {
+		return fmt.Errorf("переименование diag.key: %w", err)
+	}
+	cleanup = false
+	return nil
+}
+
 // EncodeQwdttLink builds qwdtt:// for qWDTT/Android — явный port=9000 в query.
 func EncodeQwdttLink(peer, password string, vkHashes []string, name string, clientListenPort, workers int, connMode string) (string, error) {
 	return EncodeQwdttLinkWithOptions(peer, password, vkHashes, name, clientListenPort, workers, connMode, QwdttLinkOptions{})
 }
 
-// EncodeQwdttLinkWithOptions собирает qwdtt:// с опциональными dk=, raw=, direct=.
+// EncodeQwdttLinkWithOptions собирает qwdtt:// с опциональным dk=.
 func EncodeQwdttLinkWithOptions(peer, password string, vkHashes []string, name string, clientListenPort, workers int, connMode string, opts QwdttLinkOptions) (string, error) {
 	peer = normalizePeer(strings.TrimSpace(peer))
 	password = strings.TrimSpace(password)
@@ -224,12 +274,6 @@ func EncodeQwdttLinkWithOptions(peer, password string, vkHashes []string, name s
 	}
 	if dk := strings.TrimSpace(opts.DiagKey); dk != "" {
 		q.Set("dk", dk)
-	}
-	if opts.RawPort > 0 {
-		q.Set("raw", strconv.Itoa(opts.RawPort))
-	}
-	if opts.DirectPort > 0 {
-		q.Set("direct", strconv.Itoa(opts.DirectPort))
 	}
 	return SchemeQwdtt + "config?" + q.Encode(), nil
 }

@@ -4,7 +4,6 @@ package wdttdiag
 type Request struct {
 	Transport string `json:"transport,omitempty" enums:",auto,udp,tcp"`
 	DiagKey   string `json:"diagKey,omitempty"`
-	Ports     string `json:"ports,omitempty"`
 }
 
 // Step — шаг диагностики из события DIAG|{"ev":"step",...}.

@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -322,12 +323,41 @@ func TestReadDiagToken_Formats(t *testing.T) {
 	}
 }
 
-func TestQwdttLink_DiagKeyAndPortsRoundtrip(t *testing.T) {
+func TestRotateDiagKey_CreatesAndRotatesFile(t *testing.T) {
+	if err := RotateDiagKey("   "); err == nil {
+		t.Fatal("empty dir must fail")
+	}
+
+	dir := t.TempDir()
+	if err := RotateDiagKey(dir); err != nil {
+		t.Fatalf("first RotateDiagKey: %v", err)
+	}
+	path := filepath.Join(dir, "diag.key")
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+		t.Fatalf("diag.key perm = %v, want 0600", info.Mode().Perm())
+	}
+	firstTok := ReadDiagToken(dir)
+	if len(firstTok) == 0 {
+		t.Fatal("ReadDiagToken returned empty after RotateDiagKey")
+	}
+
+	if err := RotateDiagKey(dir); err != nil {
+		t.Fatalf("second RotateDiagKey: %v", err)
+	}
+	secondTok := ReadDiagToken(dir)
+	if len(secondTok) == 0 || secondTok == firstTok {
+		t.Fatalf("expected distinct non-empty rotated token, first=%q second=%q", firstTok, secondTok)
+	}
+}
+
+func TestQwdttLink_DiagKeyRoundtrip(t *testing.T) {
 	dk := "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY"
 	link, err := EncodeQwdttLinkWithOptions("203.0.113.10:56002", "secret", []string{"h1"}, "Srv", 0, 18, "wg", QwdttLinkOptions{
-		DiagKey:    dk,
-		RawPort:    56003,
-		DirectPort: 56004,
+		DiagKey: dk,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -337,8 +367,11 @@ func TestQwdttLink_DiagKeyAndPortsRoundtrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	q := u.Query()
-	if q.Get("dk") != dk || q.Get("raw") != "56003" || q.Get("direct") != "56004" {
-		t.Fatalf("query params mismatch: %v", q)
+	if q.Get("dk") != dk {
+		t.Fatalf("query dk=%q, want %q (%v)", q.Get("dk"), dk, q)
+	}
+	if q.Has("raw") || q.Has("direct") {
+		t.Fatalf("unexpected raw/direct query params in %v", q)
 	}
 	got, err := DecodeImport(link)
 	if err != nil {

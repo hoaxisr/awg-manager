@@ -9996,8 +9996,6 @@ definitions:
     properties:
       diagKey:
         type: string
-      ports:
-        type: string
       transport:
         enum:
         - ""
@@ -10133,6 +10131,8 @@ definitions:
     properties:
       clientId:
         type: string
+      includeDiagKey:
+        type: boolean
       mode:
         type: string
       mtu:
@@ -10181,6 +10181,20 @@ definitions:
       peer:
         example: 1.2.3.4:56002
         type: string
+    type: object
+  wdttlink.RotateDiagKeyResponse:
+    properties:
+      data:
+        $ref: '#/definitions/wdttlink.RotateDiagKeyResult'
+      success:
+        example: true
+        type: boolean
+    type: object
+  wdttlink.RotateDiagKeyResult:
+    properties:
+      rotated:
+        example: true
+        type: boolean
     type: object
   wdttlink.SubscriptionPreview:
     properties:
@@ -14968,7 +14982,7 @@ paths:
       description: |-
         Одноразовый прогон `wt-client -diag` через TURN VK без запуска туннеля.
         409 WDTT_DIAG_UNSUPPORTED — установлен старый `wt-client` без флага `-diag`.
-        409 WDTT_DIAG_BUSY — диагностика этого инстанса уже идёт.
+        409 WDTT_DIAG_BUSY — диагностика уже запущена.
         504 WDTT_DIAG_TIMEOUT — превышен лимит времени ожидания ответа.
       parameters:
       - description: Ключ инстанса (роль:id)
@@ -14976,7 +14990,7 @@ paths:
         name: key
         required: true
         type: string
-      - description: Опции диагностики (транспорт, одноразовый ключ, порты)
+      - description: Опции диагностики (транспорт, одноразовый ключ)
         in: body
         name: body
         schema:
@@ -15011,6 +15025,40 @@ paths:
       security:
       - CookieAuth: []
       summary: Диагностика подключения wdtt-клиента
+      tags:
+      - proxyrt
+  /proxyrt/instances/{key}/diag-key/rotate:
+    post:
+      description: Генерирует новый diag.key в configDir сервера (права 0600). Запущенный
+        сервер нужно перезапустить.
+      parameters:
+      - description: Ключ инстанса (роль:id)
+        in: path
+        name: key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/wdttlink.RotateDiagKeyResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Сменить ключ диагностики wdtt-сервера
       tags:
       - proxyrt
   /proxyrt/instances/{key}/ensure-wg-tunnel:

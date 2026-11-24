@@ -21,7 +21,6 @@ import (
 const (
 	defaultDiagTimeout = 45 * time.Second
 	maxRequestBody     = 16 << 10
-	maxPortsLen        = 128
 	maxTailChars       = 400
 )
 
@@ -45,7 +44,7 @@ type Deps struct {
 type Handler struct {
 	deps    Deps
 	mu      sync.Mutex
-	running map[string]struct{}
+	running bool
 }
 
 // New создаёт обработчик диагностики wdtt-клиента.
@@ -54,8 +53,7 @@ func New(deps Deps) *Handler {
 		deps.Timeout = defaultDiagTimeout
 	}
 	return &Handler{
-		deps:    deps,
-		running: make(map[string]struct{}),
+		deps: deps,
 	}
 }
 
@@ -67,14 +65,14 @@ func New(deps Deps) *Handler {
 //	@Summary		Диагностика подключения wdtt-клиента
 //	@Description	Одноразовый прогон `wt-client -diag` через TURN VK без запуска туннеля.
 //	@Description	409 WDTT_DIAG_UNSUPPORTED — установлен старый `wt-client` без флага `-diag`.
-//	@Description	409 WDTT_DIAG_BUSY — диагностика этого инстанса уже идёт.
+//	@Description	409 WDTT_DIAG_BUSY — диагностика уже запущена.
 //	@Description	504 WDTT_DIAG_TIMEOUT — превышен лимит времени ожидания ответа.
 //	@Tags			proxyrt
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			key		path		string	true	"Ключ инстанса (роль:id)"
-//	@Param			body	body		Request	false	"Опции диагностики (транспорт, одноразовый ключ, порты)"
+//	@Param			body	body		Request	false	"Опции диагностики (транспорт, одноразовый ключ)"
 //	@Success		200		{object}	DiagResponse
 //	@Failure		400		{object}	api.APIErrorEnvelope
 //	@Failure		404		{object}	api.APIErrorEnvelope
@@ -132,11 +130,11 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, key string) {
 		runner = execRunner
 	}
 
-	if !h.acquire(key) {
-		response.ErrorWithStatus(w, http.StatusConflict, "диагностика для этого инстанса уже запущена", "WDTT_DIAG_BUSY")
+	if !h.acquire() {
+		response.ErrorWithStatus(w, http.StatusConflict, "диагностика уже запущена", "WDTT_DIAG_BUSY")
 		return
 	}
-	defer h.release(key)
+	defer h.release()
 
 	args, effectiveKey := buildDiagArgs(cfg, req)
 
@@ -202,19 +200,19 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, key string) {
 	response.ErrorWithStatus(w, http.StatusBadGateway, msg, "WDTT_DIAG_FAILED")
 }
 
-func (h *Handler) acquire(key string) bool {
+func (h *Handler) acquire() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if _, exists := h.running[key]; exists {
+	if h.running {
 		return false
 	}
-	h.running[key] = struct{}{}
+	h.running = true
 	return true
 }
 
-func (h *Handler) release(key string) {
+func (h *Handler) release() {
 	h.mu.Lock()
-	delete(h.running, key)
+	h.running = false
 	h.mu.Unlock()
 }
 
@@ -244,19 +242,6 @@ func decodeRequest(r *http.Request) (Request, error) {
 		return req, fmt.Errorf("transport %q: ожидали auto, udp или tcp", req.Transport)
 	}
 	req.DiagKey = strings.TrimSpace(req.DiagKey)
-	req.Ports = strings.TrimSpace(req.Ports)
-	if len(req.Ports) > maxPortsLen {
-		return req, fmt.Errorf("слишком длинное значение ports (макс. %d)", maxPortsLen)
-	}
-	for i := 0; i < len(req.Ports); i++ {
-		c := req.Ports[i]
-		isLower := c >= 'a' && c <= 'z'
-		isDigit := c >= '0' && c <= '9'
-		isPunct := c == ':' || c == ',' || c == '='
-		if !isLower && !isDigit && !isPunct {
-			return req, fmt.Errorf("недопустимые символы в ports %q", req.Ports)
-		}
-	}
 	return req, nil
 }
 
@@ -293,7 +278,6 @@ func buildDiagArgs(cfg roles.WdttClientConfig, req Request) ([]string, string) {
 	}
 	str("-diag-key", effectiveKey)
 	str("-turn-transport", req.Transport)
-	str("-diag-ports", req.Ports)
 	return args, effectiveKey
 }
 

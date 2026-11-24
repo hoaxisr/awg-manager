@@ -74,9 +74,9 @@ describe('WdttDiagModal', () => {
 		vi.clearAllMocks();
 	});
 
-	it('автоматически запускает диагностику при открытии и отображает OK вердикт, шаги и факты', async () => {
+	it('не запускает диагностику автоматически при открытии и отображает вердикт по нажатию «Проверить»', async () => {
 		apiMock.runWdttClientDiag.mockResolvedValueOnce(okResult);
-		const { findByText } = render(WdttDiagModal, {
+		const { findByRole, findByText } = render(WdttDiagModal, {
 			props: {
 				open: true,
 				instanceId: 'nl',
@@ -86,7 +86,15 @@ describe('WdttDiagModal', () => {
 			},
 		});
 
-		await waitFor(() => expect(apiMock.runWdttClientDiag).toHaveBeenCalledWith('nl', {}));
+		await new Promise((r) => setTimeout(r, 15));
+		expect(apiMock.runWdttClientDiag).not.toHaveBeenCalled();
+		expect(await findByText('Нажмите «Проверить», чтобы выполнить разовый тест через VK TURN без запуска туннеля.')).toBeTruthy();
+
+		await fireEvent.click(await findByRole('button', { name: 'Проверить' }));
+
+		await waitFor(() =>
+			expect(apiMock.runWdttClientDiag).toHaveBeenCalledWith('nl', {}, expect.any(AbortSignal)),
+		);
 		expect(await findByText('Путь через VK TURN работает')).toBeTruthy();
 		expect(await findByText('Перезапустите клиент')).toBeTruthy();
 		expect(await findByText('TURN VK')).toBeTruthy();
@@ -108,6 +116,7 @@ describe('WdttDiagModal', () => {
 			},
 		});
 
+		await fireEvent.click(await findByRole('button', { name: 'Проверить' }));
 		expect(await findByText('Сервер не принял пароль')).toBeTruthy();
 		expect(await findByText('Перевыпустите ссылку на сервере')).toBeTruthy();
 
@@ -115,7 +124,12 @@ describe('WdttDiagModal', () => {
 		await fireEvent.click(await findByRole('button', { name: 'Повторить' }));
 
 		await waitFor(() =>
-			expect(apiMock.runWdttClientDiag).toHaveBeenNthCalledWith(2, 'nl', { transport: 'tcp' }),
+			expect(apiMock.runWdttClientDiag).toHaveBeenNthCalledWith(
+				2,
+				'nl',
+				{ transport: 'tcp' },
+				expect.any(AbortSignal),
+			),
 		);
 		expect(await findByText('Путь через VK TURN работает')).toBeTruthy();
 	});
@@ -125,6 +139,7 @@ describe('WdttDiagModal', () => {
 		const first = render(WdttDiagModal, {
 			props: { open: true, instanceId: 'nl', instanceName: 'Нидерланды', onclose: () => {} },
 		});
+		await fireEvent.click(await first.findByRole('button', { name: 'Проверить' }));
 		expect(
 			await first.findByText('Установленный wt-client не поддерживает диагностику (-diag). Обновите бинарник WDTT.'),
 		).toBeTruthy();
@@ -134,24 +149,30 @@ describe('WdttDiagModal', () => {
 		const second = render(WdttDiagModal, {
 			props: { open: true, instanceId: 'nl', instanceName: 'Нидерланды', onclose: () => {} },
 		});
+		await fireEvent.click(await second.findByRole('button', { name: 'Проверить' }));
 		expect(
-			await second.findByText('Диагностика для этого инстанса уже выполняется. Дождитесь завершения.'),
+			await second.findByText('Диагностика уже выполняется. Дождитесь завершения.'),
 		).toBeTruthy();
 	});
 
-	it('игнорирует устаревший ответ после закрытия модалки', async () => {
+	it('отменяет AbortSignal и игнорирует устаревший ответ при закрытии модалки', async () => {
 		let resolveStale!: (v: WdttDiagResult) => void;
+		let capturedSignal: AbortSignal | undefined;
 		apiMock.runWdttClientDiag.mockImplementationOnce(
-			() =>
-				new Promise<WdttDiagResult>((resolve) => {
+			(_id: string, _req: unknown, signal?: AbortSignal) => {
+				capturedSignal = signal;
+				return new Promise<WdttDiagResult>((resolve) => {
 					resolveStale = resolve;
-				}),
+				});
+			},
 		);
 
 		const view = render(WdttDiagModal, {
 			props: { open: true, instanceId: 'nl', instanceName: 'Нидерланды', onclose: () => {} },
 		});
+		await fireEvent.click(await view.findByRole('button', { name: 'Проверить' }));
 		await waitFor(() => expect(apiMock.runWdttClientDiag).toHaveBeenCalledTimes(1));
+		expect(capturedSignal?.aborted).toBe(false);
 
 		await view.rerender({
 			open: false,
@@ -159,6 +180,7 @@ describe('WdttDiagModal', () => {
 			instanceName: 'Нидерланды',
 			onclose: () => {},
 		});
+		expect(capturedSignal?.aborted).toBe(true);
 
 		resolveStale(okResult);
 		await new Promise((r) => setTimeout(r, 10));
@@ -170,7 +192,10 @@ describe('WdttDiagModal', () => {
 			instanceName: 'Нидерланды',
 			onclose: () => {},
 		});
+		expect(apiMock.runWdttClientDiag).toHaveBeenCalledTimes(1);
+		expect(view.queryByText('Путь через VK TURN работает')).toBeNull();
 
+		await fireEvent.click(await view.findByRole('button', { name: 'Проверить' }));
 		expect(await view.findByText('Сервер не принял пароль')).toBeTruthy();
 	});
 });

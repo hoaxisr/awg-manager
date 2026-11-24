@@ -4,7 +4,7 @@
 	// server.log и освобождение портов. Свёрнута: глобального режима «Эксперт»
 	// больше нет (решение Q7 ИА).
 	import { m } from '$lib/i18n';
-	import { Dropdown, FieldHint, Input, SegmentedControl } from '$lib/components/ui';
+	import { Button, Dropdown, FieldHint, Input, SegmentedControl } from '$lib/components/ui';
 	import { modeOptions } from '../freeturn/options';
 	import { listenPortNumber } from '$lib/utils/listenPortUtils';
 	import { effectiveStaticWan } from '$lib/api/proxyInstances';
@@ -27,6 +27,9 @@
 		 * не приехал либо не отдался: поле остаётся, но выбирать не из чего.
 		 */
 		wanOptions?: { value: string; label: string }[];
+		/** Смена diag.key сервера (только WDTT). */
+		onrotatediagkey?: () => Promise<void> | void;
+		rotatingDiagKey?: boolean;
 	}
 
 	let {
@@ -34,6 +37,8 @@
 		ftServer = $bindable(),
 		ports,
 		wanOptions = [],
+		onrotatediagkey,
+		rotatingDiagKey = false,
 	}: Props = $props();
 
 	// Внутренний WG-порт: наружу на него не приходят, снаружи не виден.
@@ -124,6 +129,25 @@
 				ariaLabel={m.proxy_adv_log_mode_aria()}
 			/>
 		</div>
+
+		{#if onrotatediagkey}
+			<div class="log-mode">
+				<span class="row-label">{m.proxy_adv_diag_key()}</span>
+				<Button
+					variant="secondary"
+					size="sm"
+					loading={rotatingDiagKey}
+					disabled={rotatingDiagKey}
+					onclick={() => onrotatediagkey?.()}
+				>
+					{m.proxy_adv_diag_key_rotate()}
+				</Button>
+				<FieldHint
+					text={m.proxy_adv_diag_key_hint()}
+					ariaLabel={m.proxy_adv_diag_key_aria()}
+				/>
+			</div>
+		{/if}
 	{:else if ftServer}
 		<div class="grid">
 			<Input label={m.proxy_adv_backend()} bind:value={ftServer.connect} fullWidth />

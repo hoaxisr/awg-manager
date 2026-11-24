@@ -211,12 +211,26 @@ export class WdttClient extends FreeturnClient {
 	/** `mode` — режим ссылки (§11); пусто — режим записи (`relayMode`). */
 	async generateWdttServerLink(
 		id: string,
-		opts?: { peer?: string; vkHashes?: string[]; name?: string; password?: string; mode?: 'wg' | 'raw' }
+		opts?: {
+			peer?: string;
+			vkHashes?: string[];
+			name?: string;
+			password?: string;
+			mode?: 'wg' | 'raw';
+			includeDiagKey?: boolean;
+		}
 	): Promise<WdttGenerateLinkResult> {
 		return this.request<WdttGenerateLinkResult>(instancePath('wdtt-server', id, '/link'), {
 			method: 'POST',
 			body: JSON.stringify(opts ?? {})
 		});
+	}
+
+	async rotateWdttServerDiagKey(id: string): Promise<{ rotated: boolean }> {
+		return this.request<{ rotated: boolean }>(
+			instancePath('wdtt-server', id, '/diag-key/rotate'),
+			{ method: 'POST' }
+		);
 	}
 
 	async getWdttServerPanelUsers(serverId: string): Promise<WdttPanelUsersStatus> {
@@ -255,10 +269,15 @@ export class WdttClient extends FreeturnClient {
 		);
 	}
 
-	async runWdttClientDiag(id: string, opts?: WdttDiagRequest): Promise<WdttDiagResult> {
+	async runWdttClientDiag(
+		id: string,
+		opts?: WdttDiagRequest,
+		signal?: AbortSignal
+	): Promise<WdttDiagResult> {
 		return this.request<WdttDiagResult>(instancePath('wdtt-client', id, '/diag'), {
 			method: 'POST',
-			body: JSON.stringify(opts ?? {})
+			body: JSON.stringify(opts ?? {}),
+			signal
 		});
 	}
 }

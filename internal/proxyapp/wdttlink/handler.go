@@ -151,6 +151,17 @@ type EnsureWGResponse struct {
 	Data    EnsureWGTunnelResponse `json:"data"`
 }
 
+// RotateDiagKeyResult — тело ответа смены ключа диагностики.
+type RotateDiagKeyResult struct {
+	Rotated bool `json:"rotated" example:"true"`
+}
+
+// RotateDiagKeyResponse — конверт смены ключа диагностики для OpenAPI/Swagger.
+type RotateDiagKeyResponse struct {
+	Success bool                `json:"success" example:"true"`
+	Data    RotateDiagKeyResult `json:"data"`
+}
+
 // Decode — POST /api/proxyrt/wdtt/link/decode.
 //
 //	@Summary	Разобрать ссылку wdtt:// или адрес подписки
@@ -320,6 +331,46 @@ func (h *Handler) Link(w http.ResponseWriter, r *http.Request, key string) {
 		return
 	}
 	response.Success(w, data)
+}
+
+// RotateDiagKey — POST /api/proxyrt/instances/{key}/diag-key/rotate:
+// генерирует новый diag.key в configDir wdtt-сервера (старые dk= перестают
+// работать после перезапуска процесса).
+//
+//	@Summary		Сменить ключ диагностики wdtt-сервера
+//	@Description	Генерирует новый diag.key в configDir сервера (права 0600). Запущенный сервер нужно перезапустить.
+//	@Tags			proxyrt
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			key	path		string	true	"Ключ инстанса (роль:id)"
+//	@Success		200	{object}	RotateDiagKeyResponse
+//	@Failure		400	{object}	api.APIErrorEnvelope
+//	@Failure		404	{object}	api.APIErrorEnvelope
+//	@Failure		500	{object}	api.APIErrorEnvelope
+//	@Router			/proxyrt/instances/{key}/diag-key/rotate [post]
+func (h *Handler) RotateDiagKey(w http.ResponseWriter, r *http.Request, key string) {
+	if r.Method != http.MethodPost {
+		response.ErrorWithStatus(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
+		return
+	}
+	rec, ok := h.record(w, key)
+	if !ok {
+		return
+	}
+	cfg, err := rec.WdttServerConfig()
+	if err != nil {
+		response.Error(w, err.Error(), "BAD_REQUEST")
+		return
+	}
+	if strings.TrimSpace(cfg.ConfigDir) == "" {
+		response.Error(w, "у сервера не задан каталог конфигурации (configDir)", "WDTT_DIAG_KEY_NO_DIR")
+		return
+	}
+	if err := RotateDiagKey(cfg.ConfigDir); err != nil {
+		response.InternalError(w, err.Error())
+		return
+	}
+	response.Success(w, RotateDiagKeyResult{Rotated: true})
 }
 
 // ── ensure-wg ────────────────────────────────────────────────────

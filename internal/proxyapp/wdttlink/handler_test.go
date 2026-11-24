@@ -1178,7 +1178,7 @@ func TestLink_IPv6PeerGetsModePort(t *testing.T) {
 	}
 }
 
-func TestLink_IncludesDiagKeyRawAndDirectPorts(t *testing.T) {
+func TestLink_DiagKeyOptInAndNoPorts(t *testing.T) {
 	cfgDir := t.TempDir()
 	secret := make([]byte, 32)
 	for i := range secret {
@@ -1199,8 +1199,29 @@ func TestLink_IncludesDiagKeyRawAndDirectPorts(t *testing.T) {
 	}, instancestore.ServerUser{Password: "abonent"})
 	h, _, _, _ := newTestHandler(t, rec)
 
+	for _, body := range []string{
+		`{"peer":"1.2.3.4","password":"abonent"}`,
+		`{"peer":"1.2.3.4","password":"abonent","includeDiagKey":false}`,
+	} {
+		rr := httptest.NewRecorder()
+		h.Link(rr, post(t, body), rec.Key())
+		data, msg, code := decodeEnvelope(t, rr)
+		if code != "" {
+			t.Fatalf("отказ %s: %s", code, msg)
+		}
+		qLink, _ := data["linkQwdtt"].(string)
+		u, err := url.Parse(qLink)
+		if err != nil {
+			t.Fatal(err)
+		}
+		q := u.Query()
+		if q.Has("dk") || q.Has("raw") || q.Has("direct") {
+			t.Fatalf("expected dk, raw, direct omitted by default in %v", q)
+		}
+	}
+
 	rr := httptest.NewRecorder()
-	h.Link(rr, post(t, `{"peer":"1.2.3.4","password":"abonent"}`), rec.Key())
+	h.Link(rr, post(t, `{"peer":"1.2.3.4","password":"abonent","includeDiagKey":true}`), rec.Key())
 	data, msg, code := decodeEnvelope(t, rr)
 	if code != "" {
 		t.Fatalf("отказ %s: %s", code, msg)
@@ -1214,9 +1235,90 @@ func TestLink_IncludesDiagKeyRawAndDirectPorts(t *testing.T) {
 	if q.Get("dk") != wantDK {
 		t.Fatalf("dk = %q, want %q", q.Get("dk"), wantDK)
 	}
-	if q.Get("raw") != "56013" || q.Get("direct") != "56014" {
-		t.Fatalf("ports in qwdtt link: raw=%q direct=%q", q.Get("raw"), q.Get("direct"))
+	if q.Has("raw") || q.Has("direct") {
+		t.Fatalf("unexpected raw/direct in qwdtt link: %v", q)
 	}
+}
+
+func TestRotateDiagKey_Handler(t *testing.T) {
+	cfgDir := t.TempDir()
+	srvWithDir := serverRecord(roles.WdttServerConfig{
+		Listen:    "0.0.0.0:56002",
+		WgPort:    56001,
+		RelayMode: ConnModeWG,
+		ConfigDir: cfgDir,
+	}, instancestore.ServerUser{Password: "abonent"})
+
+	srvNoDir := serverRecord(roles.WdttServerConfig{
+		Listen:    "0.0.0.0:56012",
+		WgPort:    56011,
+		RelayMode: ConnModeWG,
+	})
+	srvNoDir.ID = "nodir"
+
+	clientRec := instancestore.Record{
+		ID:         "cl1",
+		Kind:       instancestore.KindWdttClient,
+		WdttClient: &roles.WdttClientConfig{Peer: "1.2.3.4:56002", Password: "x"},
+	}
+
+	h, _, _, _ := newTestHandler(t, srvWithDir, srvNoDir, clientRec)
+
+	t.Run("rotates diag.key on disk and generates new token", func(t *testing.T) {
+		rr1 := httptest.NewRecorder()
+		h.RotateDiagKey(rr1, post(t, `{}`), srvWithDir.Key())
+		if rr1.Code != http.StatusOK {
+			t.Fatalf("status=%d body=%s", rr1.Code, rr1.Body.String())
+		}
+		tok1 := ReadDiagToken(cfgDir)
+		if tok1 == "" {
+			t.Fatal("expected valid diag.key after first rotation")
+		}
+
+		rr2 := httptest.NewRecorder()
+		h.RotateDiagKey(rr2, post(t, `{}`), srvWithDir.Key())
+		if rr2.Code != http.StatusOK {
+			t.Fatalf("status=%d body=%s", rr2.Code, rr2.Body.String())
+		}
+		tok2 := ReadDiagToken(cfgDir)
+		if tok2 == "" || tok2 == tok1 {
+			t.Fatalf("expected distinct token after second rotation: tok1=%q tok2=%q", tok1, tok2)
+		}
+	})
+
+	t.Run("non-POST rejected", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		h.RotateDiagKey(rr, req, srvWithDir.Key())
+		if rr.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("status=%d, want 405", rr.Code)
+		}
+	})
+
+	t.Run("missing record returns 404", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		h.RotateDiagKey(rr, post(t, `{}`), "wdtt-server:missing")
+		if rr.Code != http.StatusNotFound {
+			t.Fatalf("status=%d, want 404", rr.Code)
+		}
+	})
+
+	t.Run("non-server rejected", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		h.RotateDiagKey(rr, post(t, `{}`), clientRec.Key())
+		if rr.Code != http.StatusBadRequest {
+			t.Fatalf("status=%d, want 400", rr.Code)
+		}
+	})
+
+	t.Run("empty configDir returns WDTT_DIAG_KEY_NO_DIR", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		h.RotateDiagKey(rr, post(t, `{}`), srvNoDir.Key())
+		_, _, code := decodeEnvelope(t, rr)
+		if rr.Code != http.StatusBadRequest || code != "WDTT_DIAG_KEY_NO_DIR" {
+			t.Fatalf("status=%d code=%q, want 400 WDTT_DIAG_KEY_NO_DIR", rr.Code, code)
+		}
+	})
 }
 
 func TestImport_StoresDiagKey(t *testing.T) {

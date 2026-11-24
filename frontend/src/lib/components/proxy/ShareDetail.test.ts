@@ -29,6 +29,7 @@ const apiMock = vi.hoisted(() => ({
   singboxRouterGetSettings: vi.fn(),
   singboxGetStatus: vi.fn().mockResolvedValue({ running: true }),
   getWdttServerPanelUsers: vi.fn().mockResolvedValue({ users: [] }),
+  rotateWdttServerDiagKey: vi.fn().mockResolvedValue({ rotated: true }),
 }));
 vi.mock("$lib/api/client", () => ({ api: apiMock }));
 
@@ -63,6 +64,7 @@ const row: ProxyInstanceRow = {
 const wdttServer: WdttServerConfig = {
   listen: "0.0.0.0:56002",
   wgPort: 56001,
+  configDir: "/opt/etc/awg-manager/wdtt/server/default",
   natMode: "full",
   relayMode: "wg",
   openFirewall: true,
@@ -149,5 +151,70 @@ describe("ShareDetail: подсказка тумблера ingress", () => {
       "sing-box не запущен — правило вступит в силу после его запуска",
     );
     expect(queryByText(/Режим устройств «все»/)).toBeNull();
+  });
+});
+
+describe("ShareDetail: смена ключа диагностики", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    apiMock.singboxRouterGetSettings.mockResolvedValue(settings());
+    apiMock.singboxGetStatus.mockResolvedValue({ running: true });
+    apiMock.rotateWdttServerDiagKey.mockResolvedValue({ rotated: true });
+  });
+
+  it("кнопка «Сменить ключ» вызывает rotateWdttServerDiagKey и перезапускает запущенный сервер", async () => {
+    const onrestart = vi.fn().mockResolvedValue(undefined);
+    const r = render(ShareDetail, {
+      props: {
+        row: { ...row, state: "running" },
+        wdttServer,
+        onstart: () => {},
+        onstop: () => {},
+        onrestart,
+        onsave: async () => null,
+        onreload: () => {},
+      },
+    });
+    await waitFor(() =>
+      expect(apiMock.singboxRouterGetSettings).toHaveBeenCalled(),
+    );
+    await fireEvent.click(r.getByRole("button", { name: "Настройки" }));
+    await fireEvent.click(r.getByRole("button", { name: "Дополнительно" }));
+    await fireEvent.click(await r.findByRole("button", { name: "Сменить ключ" }));
+
+    await waitFor(() =>
+      expect(apiMock.rotateWdttServerDiagKey).toHaveBeenCalledWith("default"),
+    );
+    await waitFor(() => expect(onrestart).toHaveBeenCalledTimes(1));
+    expect(notify.success).toHaveBeenCalledWith(
+      "Ключ диагностики обновлён, сервер перезапущен",
+    );
+  });
+
+  it("на остановленном сервере смена ключа не вызывает restart", async () => {
+    const onrestart = vi.fn().mockResolvedValue(undefined);
+    const r = render(ShareDetail, {
+      props: {
+        row,
+        wdttServer,
+        onstart: () => {},
+        onstop: () => {},
+        onrestart,
+        onsave: async () => null,
+        onreload: () => {},
+      },
+    });
+    await waitFor(() =>
+      expect(apiMock.singboxRouterGetSettings).toHaveBeenCalled(),
+    );
+    await fireEvent.click(r.getByRole("button", { name: "Настройки" }));
+    await fireEvent.click(r.getByRole("button", { name: "Дополнительно" }));
+    await fireEvent.click(await r.findByRole("button", { name: "Сменить ключ" }));
+
+    await waitFor(() =>
+      expect(apiMock.rotateWdttServerDiagKey).toHaveBeenCalledWith("default"),
+    );
+    expect(onrestart).not.toHaveBeenCalled();
+    expect(notify.success).toHaveBeenCalledWith("Ключ диагностики обновлён");
   });
 });

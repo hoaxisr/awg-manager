@@ -3714,6 +3714,15 @@ const wdttlink_LinkResult: v.GenericSchema = v.looseObject({
 	peer: v.optional(v.nullable(v.string())),
 });
 
+const wdttlink_RotateDiagKeyResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => wdttlink_RotateDiagKeyResult))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const wdttlink_RotateDiagKeyResult: v.GenericSchema = v.looseObject({
+	rotated: v.optional(v.nullable(v.boolean())),
+});
+
 const wdttlink_SubscriptionPreview: v.GenericSchema = v.looseObject({
 	description: v.optional(v.nullable(v.string())),
 	name: v.optional(v.nullable(v.string())),
@@ -4155,6 +4164,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /proxyrt/instances": v.lazy(() => api_ProxyRtInstanceResponse),
 	"POST /proxyrt/instances/{key}/apply": v.lazy(() => api_OkResponse),
 	"POST /proxyrt/instances/{key}/diag": v.lazy(() => wdttdiag_DiagResponse),
+	"POST /proxyrt/instances/{key}/diag-key/rotate": v.lazy(() => wdttlink_RotateDiagKeyResponse),
 	"POST /proxyrt/instances/{key}/ensure-wg-tunnel": v.lazy(() => wdttlink_EnsureWGResponse),
 	"POST /proxyrt/instances/{key}/link": v.lazy(() => wdttlink_LinkResponse),
 	"POST /proxyrt/instances/{key}/restart": v.lazy(() => api_OkResponse),
