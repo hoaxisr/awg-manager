@@ -143,3 +143,51 @@ func TestParseAccountImport_RejectsInvalidInputs(t *testing.T) {
 		})
 	}
 }
+
+// Декодер base64 пропускает переводы строк, а ключи ложатся строкой в .conf.
+func TestParseAccountImport_CanonicalizesKeys(t *testing.T) {
+	priv, pub, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	split := func(v string) string { return v[:2] + `\r\n` + v[2:] }
+	acct, err := ParseAccountImport(`{"private_key":"` + split(priv) + `","peer_public_key":"` + split(WarpPeerPublicKey) +
+		`","client_id":"` + split("AQID") + `","id":"t.0a1b2c3d-0000-4000-8000-0123456789ab","token":"tok","address_v6":"2606:4700:110:0::9/128"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acct.PrivateKey != priv || acct.PublicKey != pub || acct.PeerPublicKey != WarpPeerPublicKey || acct.ClientID != "AQID" {
+		t.Fatalf("значения не приведены к канонической записи: %+v", acct)
+	}
+	if acct.ID != "t.0a1b2c3d-0000-4000-8000-0123456789ab" || acct.AddressV6 != "2606:4700:110::9/128" {
+		t.Fatalf("id/address: %+v", acct)
+	}
+	if conf := BuildConf(acct, AWGParams{}, ProtocolWG, "162.159.192.1:2408"); strings.Contains(conf, "\r") {
+		t.Fatalf("перевод строки попал в .conf: %q", conf)
+	}
+}
+
+func TestParseAccountImport_RejectsHostileFields(t *testing.T) {
+	priv, _, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, extra := range map[string]string{
+		"id с путём":            `"id":"../reg/x"`,
+		"id с точками":          `"id":".."`,
+		"id с запросом":         `"id":"a?b=c"`,
+		"id с переводом строки": `"id":"a\nb"`,
+		"id длинный":            `"id":"` + strings.Repeat("a", 65) + `"`,
+		"ipv6 не адрес":         `"address_v6":"::1\nPostUp = x"`,
+		"ipv6 с зоной":          `"address_v6":"fe80::1%eth0"`,
+		"ipv4 вместо ipv6":      `"address_v6":"1.2.3.4"`,
+		"client_id не 3 байта":  `"client_id":"AQIDBA=="`,
+		"ключ пира не 32 байта": `"peer_public_key":"AQID"`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := ParseAccountImport(`{"private_key":"` + priv + `",` + extra + `}`); !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("ожидалась ErrInvalidInput, получили %v", err)
+			}
+		})
+	}
+}

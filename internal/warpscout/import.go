@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/netip"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -364,6 +366,35 @@ func parseReservedList(raw string) []int {
 	return out
 }
 
+// importedIDRe — id регистрации Cloudflare: UUID, у Zero Trust с префиксом "t.".
+// Он уходит в путь запроса /reg/{id}, поэтому разделители и обход каталога
+// отвергаются.
+var importedIDRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+
+// canonicalBase64 перекодирует значение заново: декодер пропускает \r и \n, а
+// ключ ложится строкой в .conf, где перевод строки дописал бы чужие параметры.
+func canonicalBase64(v string, size int) (string, bool) {
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(v))
+	if err != nil || len(raw) != size {
+		return "", false
+	}
+	return base64.StdEncoding.EncodeToString(raw), true
+}
+
+func normalizeImportedIPv6(v string) (string, error) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return "", nil
+	}
+	if pfx, err := netip.ParsePrefix(v); err == nil && pfx.Addr().Is6() {
+		return pfx.String(), nil
+	}
+	if addr, err := netip.ParseAddr(v); err == nil && addr.Is6() && addr.Zone() == "" {
+		return addr.String(), nil
+	}
+	return "", fmt.Errorf("%w: некорректный IPv6-адрес", ErrInvalidInput)
+}
+
 func buildImportedAccount(f importedFields) (*Account, error) {
 	if strings.TrimSpace(f.privateKey) == "" {
 		return nil, fmt.Errorf("%w: отсутствует PrivateKey", ErrInvalidInput)
@@ -372,14 +403,16 @@ func buildImportedAccount(f importedFields) (*Account, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidInput, err)
 	}
-	priv := strings.TrimSpace(f.privateKey)
+	priv, ok := canonicalBase64(f.privateKey, 32)
+	if !ok {
+		return nil, fmt.Errorf("%w: некорректный приватный ключ", ErrInvalidInput)
+	}
 
 	peerPub := strings.TrimSpace(f.peerPublicKey)
 	if peerPub == "" {
 		peerPub = WarpPeerPublicKey
 	} else {
-		rawPeer, decErr := base64.StdEncoding.DecodeString(peerPub)
-		if decErr != nil || len(rawPeer) != 32 {
+		if peerPub, ok = canonicalBase64(peerPub, 32); !ok {
 			return nil, fmt.Errorf("%w: некорректный PublicKey пира WARP", ErrInvalidInput)
 		}
 	}
@@ -407,13 +440,20 @@ func buildImportedAccount(f importedFields) (*Account, error) {
 		}
 		clientID = base64.StdEncoding.EncodeToString(rawRes[:])
 	} else if clientID != "" {
-		dec, decErr := base64.StdEncoding.DecodeString(clientID)
-		if decErr != nil || len(dec) == 0 {
+		if clientID, ok = canonicalBase64(clientID, 3); !ok {
 			return nil, fmt.Errorf("%w: некорректный client_id", ErrInvalidInput)
 		}
 	}
 
+	addrV6, err := normalizeImportedIPv6(f.addressV6)
+	if err != nil {
+		return nil, err
+	}
+
 	rawID := strings.TrimSpace(f.id)
+	if rawID != "" && !importedIDRe.MatchString(rawID) {
+		return nil, fmt.Errorf("%w: некорректный id устройства", ErrInvalidInput)
+	}
 	token := strings.TrimSpace(f.token)
 	hasToken := rawID != "" && token != ""
 	if !hasToken {
@@ -452,7 +492,7 @@ func buildImportedAccount(f importedFields) (*Account, error) {
 		PublicKey:     pub,
 		PeerPublicKey: peerPub,
 		AddressV4:     addrV4,
-		AddressV6:     strings.TrimSpace(f.addressV6),
+		AddressV6:     addrV6,
 		ClientID:      clientID,
 		AccountType:   acctType,
 		WarpPlus:      warpPlus,
