@@ -6,15 +6,12 @@
 		entryKey: string;
 		mode: 'all' | 'allow';
 		isOn: boolean;
-		disabled?: boolean;
 		label: string;
 		meta: string;
 		title: string;
 		online?: boolean;
-		policyName?: string;
 		policyLabel?: string;
-		policyBadge?: string;
-		policyBadgeVariant?: 'warn' | 'accent';
+		/** Непусто — состояние задаёт политика устройства, переключатель заблокирован. */
 		lockTitle?: string;
 		onset: (enabled: boolean) => void;
 	}
@@ -23,18 +20,16 @@
 		entryKey,
 		mode,
 		isOn,
-		disabled = false,
 		label,
 		meta,
 		title,
 		online,
-		policyName,
 		policyLabel,
-		policyBadge,
-		policyBadgeVariant,
-		lockTitle,
+		lockTitle = '',
 		onset,
 	}: Props = $props();
+
+	let locked = $derived(lockTitle !== '');
 </script>
 
 <div
@@ -42,18 +37,16 @@
 	class:dm-row-excluded={mode === 'all' && !isOn}
 	class:dm-row-selected={mode === 'allow' && isOn}
 	class:dm-row-muted={mode === 'allow' && !isOn}
-	class:dm-row-policy-locked={disabled}
+	class:dm-row-policy-locked={locked}
 	data-entry={entryKey}
 	data-enabled={isOn ? 'true' : 'false'}
-	data-policy-locked={disabled ? 'true' : undefined}
-	data-policy={policyName || undefined}
 	title={lockTitle || undefined}
 >
 	<button
 		type="button"
 		class="dm-row-trigger"
 		{title}
-		{disabled}
+		disabled={locked}
 		onclick={() => onset(!isOn)}
 	>
 		{#if online !== undefined}
@@ -78,10 +71,8 @@
 		</span>
 	</button>
 	<div class="dm-row-control">
-		{#if policyBadge && policyBadgeVariant === 'warn'}
-			<span class="dm-excl-pill" title={lockTitle || undefined}>{policyBadge}</span>
-		{:else if policyBadge && policyBadgeVariant === 'accent'}
-			<span class="dm-pol-pill-allow" title={lockTitle || undefined}>{policyBadge}</span>
+		{#if locked}
+			<span class={mode === 'all' ? 'dm-excl-pill' : 'dm-pol-pill-allow'}>{m.firc_devices_badge_by_policy()}</span>
 		{:else if mode === 'all' && !isOn}
 			<span class="dm-excl-pill">{m.firc_devices_badge_excluded()}</span>
 		{/if}
@@ -90,7 +81,7 @@
 			spinner="none"
 			controlled
 			checked={isOn}
-			{disabled}
+			disabled={locked}
 			ariaLabel={label}
 			onchange={(next) => onset(next)}
 		/>

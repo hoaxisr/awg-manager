@@ -1,9 +1,9 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, untrack } from 'svelte';
 	import { m, uiText, type UiText } from '$lib/i18n';
 	import { api } from '$lib/api/client';
 	import { startVisiblePoll } from '$lib/utils/visiblePoll';
-	import type { FircMonitorSnapshot } from '$lib/types/firc';
+	import type { FircHost, FircMonitorSnapshot, FircPolicy } from '$lib/types/firc';
 	import type { PageScanFetchMode, PageScanResult } from '$lib/types/diagnostics';
 	import { Button, Badge, StatusDot } from '$lib/components/ui';
 	import { QuickAddRouteModal } from '$lib/components/diagnostics';
@@ -20,9 +20,21 @@
 	let loadFailed = $state(false);
 	let updatedAt = $state<number | null>(null);
 	let inFlight = false;
+	let reloadAfter = false;
 	let disposed = false;
 	let sourceFilter = $state<string>('all');
 	let searchFilter = $state('');
+	let clientFilter = $state('');
+
+	let expandedClients = $state<Record<string, boolean>>({});
+	let hosts = $state<FircHost[]>([]);
+	let policies = $state<FircPolicy[]>([]);
+	// Списки клиентов велики, поэтому запрашиваются, только пока хоть один виден раскрытым.
+	let wantClients = $derived(
+		Object.keys(expandedClients).some(
+			(key) => expandedClients[key] && (key.startsWith('srv:') ? view === 'sources' : view === 'details'),
+		),
+	);
 
 	let testDomain = $state('');
 	let checkingDomain = $state(false);
@@ -38,7 +50,8 @@
 	let quickAddTarget = $state<{ ip?: string; domain?: string; prefix?: string }>({});
 
 	function openClientEvents(ip: string) {
-		searchFilter = ip;
+		clientFilter = ip;
+		searchFilter = '';
 		sourceFilter = 'all';
 		view = 'events';
 	}
@@ -48,14 +61,39 @@
 		quickAddOpen = true;
 	}
 
+	function toggleClients(key: string) {
+		expandedClients[key] = !expandedClients[key];
+		if (expandedClients[key]) void loadClientMeta();
+	}
+
+	// Имена и политики — один раз на раскрытие: на запрос устройств fircd заново
+	// опрашивает роутер, для опроса монитора это дорого.
+	async function loadClientMeta() {
+		const [nextHosts, nextPolicies] = await Promise.all([
+			api.fircGetHosts().catch(() => hosts),
+			api.fircGetPolicies().catch(() => policies),
+		]);
+		hosts = nextHosts;
+		policies = nextPolicies;
+	}
+
+	// Список раскрыли — снимок с клиентами нужен сразу, в том числе на паузе.
+	$effect(() => {
+		if (wantClients) untrack(() => void loadMonitor(false));
+	});
+
 	let stopPoll: (() => void) | null = null;
 
 	async function loadMonitor(silent = false) {
-		if (disposed || inFlight || (paused && silent)) return;
+		if (inFlight) {
+			reloadAfter ||= !silent;
+			return;
+		}
+		if (disposed || (paused && silent)) return;
 		inFlight = true;
 		if (!silent) loading = true;
 		try {
-			const next = await api.fircGetMonitor();
+			const next = await api.fircGetMonitor(wantClients);
 			if (disposed) return;
 			snapshot = next;
 			updatedAt = Date.now();
@@ -65,6 +103,10 @@
 		} finally {
 			inFlight = false;
 			if (!silent) loading = false;
+			if (reloadAfter) {
+				reloadAfter = false;
+				void loadMonitor(false);
+			}
 		}
 	}
 
@@ -203,11 +245,11 @@
 	/>
 
 	{#if view === 'sources' || view === 'details'}
-		<FircMonitorTables {view} {snapshot} onFilterClientEvents={openClientEvents} />
+		<FircMonitorTables {view} {snapshot} {expandedClients} {hosts} {policies} onToggleClients={toggleClients} onFilterClientEvents={openClientEvents} />
 	{/if}
 
 	{#if view === 'events'}
-		<FircMonitorEventsFeed {snapshot} bind:sourceFilter bind:searchFilter bind:inspectedEventSeq onOpenQuickAdd={openQuickAdd} />
+		<FircMonitorEventsFeed {snapshot} bind:sourceFilter bind:searchFilter bind:clientFilter bind:inspectedEventSeq onOpenQuickAdd={openQuickAdd} />
 	{/if}
 </div>
 

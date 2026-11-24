@@ -409,9 +409,42 @@ describe('FircGroupDevicesModal', () => {
 		await fireEvent.click(screen.getByRole('button', { name: m.common_apply() }));
 		expect(onapply).toHaveBeenLastCalledWith({ allow: [], deny: [] });
 
-		// Turn OFF again -> writes canonical 'policy:Policy1'.
+		// Снятая и возвращённая политика пишется как была: каноническую запись
+		// политики включённого сервера бэкенд снял бы с deny.
 		await fireEvent.click(policy1Toggle);
 		await fireEvent.click(screen.getByRole('button', { name: m.common_apply() }));
-		expect(onapply).toHaveBeenLastCalledWith({ allow: [], deny: ['policy:Policy1'] });
+		expect(onapply).toHaveBeenLastCalledWith({ allow: [], deny: ['policy:Main Policy'] });
+	});
+
+	it('gives a description shared by two policies to the first one only', () => {
+		renderModal({
+			policies: [
+				{ name: 'Policy1', description: 'Same', devices: 1 },
+				{ name: 'Policy2', description: 'Same', devices: 1 },
+			],
+			hosts: [
+				{ ...sampleHosts[0], policy: 'Policy1' },
+				{ ...sampleHosts[1], policy: 'Policy2' },
+			],
+			initialDevices: { allow: [], deny: ['policy:Same'] },
+		});
+
+		expect(document.body.querySelector('[data-entry="policy:Policy1"]')).toHaveAttribute('data-enabled', 'false');
+		expect(document.body.querySelector('[data-entry="policy:Policy2"]')).toHaveAttribute('data-enabled', 'true');
+		expect(screen.getByRole('checkbox', { name: 'Laptop' })).toBeDisabled();
+		expect(screen.getByRole('checkbox', { name: 'Phone' })).not.toBeDisabled();
+	});
+
+	it('does not lock devices when the policies list failed to load', async () => {
+		renderModal({
+			policies: [],
+			hosts: [{ ...sampleHosts[0], policy: 'Policy1' }],
+			initialDevices: { allow: [], deny: ['policy:Policy1'] },
+		});
+
+		const laptopToggle = screen.getByRole('checkbox', { name: 'Laptop' });
+		expect(laptopToggle).not.toBeDisabled();
+		await fireEvent.click(laptopToggle);
+		expect(laptopToggle).not.toBeChecked();
 	});
 });

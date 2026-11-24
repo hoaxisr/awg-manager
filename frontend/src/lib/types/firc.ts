@@ -347,7 +347,6 @@ export interface FircHost {
 	active?: boolean;
 	segment?: string;
 	policy?: string;
-	policyFromSegment?: boolean;
 }
 
 export interface FircPolicy {
@@ -775,9 +774,6 @@ export interface FircMonitorDomainStat {
 
 export interface FircMonitorClientStat {
 	ip: string;
-	name?: string;
-	mac?: string;
-	policy?: string;
 	sourceId?: string;
 	sourceName?: string;
 	conns: number;

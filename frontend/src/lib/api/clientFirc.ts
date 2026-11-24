@@ -702,8 +702,8 @@ export class FircClient extends WarpScoutClient {
 		});
 	}
 
-	async fircGetMonitor(): Promise<FircMonitorSnapshot> {
-		return this.request<FircMonitorSnapshot>('/firc/monitor');
+	async fircGetMonitor(withClients = false): Promise<FircMonitorSnapshot> {
+		return this.request<FircMonitorSnapshot>(withClients ? '/firc/monitor?clients=1' : '/firc/monitor');
 	}
 
 	async fircCheckDomain(domain: string): Promise<FircDomainCheckResult> {
