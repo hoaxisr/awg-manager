@@ -44,9 +44,7 @@ type Fake struct {
 	// tools use Servers and Peers); WGObfuscation the last ASC write.
 	WGServers     []mcpsrv.WireguardServer
 	WGObfuscation map[string]any
-	// Hydra is HydraRoute Neo's status; HydraGeo its geo files and
-	// HydraGeoTags their tags by path.
-	Hydra        mcpsrv.HydraRouteStatus
+	// HydraGeo is the geo files and HydraGeoTags their tags by path.
 	HydraGeo     []mcpsrv.HydraRouteGeoFile
 	HydraGeoTags map[string][]mcpsrv.HydraRouteGeoTag
 	ClientRoutes []mcpsrv.ClientRoute
@@ -258,9 +256,6 @@ func New() *Fake {
 		},
 		ServerAddresses: map[string]string{"Wireguard0": "10.0.0.1/24"},
 		WGServers:       []mcpsrv.WireguardServer{{ID: "Wireguard0", Description: "Home", Address: "10.0.0.1", Mask: "24", ListenPort: 51820, NATMode: "full", PeerCount: 2}},
-		Hydra: mcpsrv.HydraRouteStatus{Installed: true, Running: true, State: "running", Version: "2.3.1", IpsetMaxElem: 65536,
-			IpsetUsage: map[string]int{"nwg0": 1200}, DisabledTags: []mcpsrv.HydraRouteTag{{Name: "geoip:ru", Count: 90000}},
-			Settings: mcpsrv.HydraRouteSetting{AutoStart: true, IpsetTimeoutEnabled: true, IpsetTimeout: 21600, IpsetMaxElem: 65536}},
 		HydraGeo: []mcpsrv.HydraRouteGeoFile{
 			{Type: "geoip", Path: "/opt/etc/awg-manager/geo/geoip.dat", Host: "github.com", Size: 4096, TagCount: 3, Updated: "2026-09-01T00:00:00Z"},
 			{Type: "geosite", Path: "/opt/etc/HydraRoute/geosite.dat", Size: 2048, TagCount: 1, External: true},
@@ -2765,50 +2760,6 @@ func (f *Fake) SetWireguardServerObfuscation(_ context.Context, id string, param
 	return f.WGServers[i], nil
 }
 
-func (f *Fake) HydraRouteStatus(context.Context) (mcpsrv.HydraRouteStatus, error) {
-	if f.Err != nil {
-		return mcpsrv.HydraRouteStatus{}, f.Err
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.Hydra, nil
-}
-
-func (f *Fake) ControlHydraRoute(_ context.Context, action string) (mcpsrv.HydraRouteStatus, error) {
-	if f.Err != nil {
-		return mcpsrv.HydraRouteStatus{}, f.Err
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if !f.Hydra.Installed {
-		return mcpsrv.HydraRouteStatus{}, fmt.Errorf("HydraRoute Neo is not installed")
-	}
-	f.Hydra.Running = action != "stop"
-	f.Hydra.State = map[bool]string{true: "running", false: "stopped"}[f.Hydra.Running]
-	return f.Hydra, nil
-}
-
-func (f *Fake) UpdateHydraRouteSettings(_ context.Context, p mcpsrv.HydraRouteSettingsPatch) (mcpsrv.HydraRouteStatus, error) {
-	if f.Err != nil {
-		return mcpsrv.HydraRouteStatus{}, f.Err
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	st := &f.Hydra.Settings
-	for dst, src := range map[*bool]*bool{&st.AutoStart: p.AutoStart, &st.ClearIPSet: p.ClearIPSet, &st.IpsetTimeoutEnabled: p.IpsetTimeoutEnabled, &st.ConntrackFlush: p.ConntrackFlush} {
-		if src != nil {
-			*dst = *src
-		}
-	}
-	if p.IpsetTimeout != nil {
-		st.IpsetTimeout = *p.IpsetTimeout
-	}
-	if p.IpsetMaxElem != nil {
-		st.IpsetMaxElem = *p.IpsetMaxElem
-	}
-	return f.Hydra, nil
-}
-
 func (f *Fake) ListHydraRouteGeoFiles(context.Context) ([]mcpsrv.HydraRouteGeoFile, error) {
 	if f.Err != nil {
 		return nil, f.Err
@@ -2850,22 +2801,7 @@ func (f *Fake) UpdateHydraRouteGeoFiles(_ context.Context, path string) (mcpsrv.
 	if path != "" && n == 0 {
 		return mcpsrv.HydraRouteGeoUpdate{}, fmt.Errorf("%q is not a geo file awg-manager downloads", path)
 	}
-	return mcpsrv.HydraRouteGeoUpdate{Updated: n, ConfigSynced: true}, nil
-}
-
-func (f *Fake) RemoveHydraRouteDisabledTag(_ context.Context, name string) error {
-	if f.Err != nil {
-		return f.Err
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	full := "geoip:" + strings.TrimPrefix(strings.ToLower(name), "geoip:")
-	i := slices.IndexFunc(f.Hydra.DisabledTags, func(t mcpsrv.HydraRouteTag) bool { return t.Name == full })
-	if i < 0 {
-		return fmt.Errorf("%q is not a disabled tag (get_hydraroute_status lists them)", name)
-	}
-	f.Hydra.DisabledTags = slices.Delete(f.Hydra.DisabledTags, i, i+1)
-	return nil
+	return mcpsrv.HydraRouteGeoUpdate{Updated: n}, nil
 }
 
 func (f *Fake) OpenAPISpec() []byte { return f.Spec }

@@ -163,7 +163,6 @@ type app struct {
 	orch       *orchestrator.Orchestrator
 
 	// routing / aux services
-	hydraService        *hydraroute.Service
 	zapretService       *zapret.Service
 	autolistService     *autolistdetect.Service
 	geoDataStore        *hydraroute.GeoDataStore

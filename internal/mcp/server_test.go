@@ -108,7 +108,7 @@ func TestServer_ListsToolsWithAnnotations(t *testing.T) {
 		"list_policy_interfaces", "create_access_policy", "delete_access_policy", "update_access_policy", "set_access_policy_interface", "assign_device_policy",
 		"set_singbox_router_mode", "set_singbox_router_settings", "get_singbox_user_config", "save_singbox_user_config", "apply_singbox_user_config", "discard_singbox_user_config",
 		"list_wireguard_server_options", "get_wireguard_server", "create_wireguard_server", "update_wireguard_server", "set_wireguard_server_access", "set_wireguard_server_enabled", "set_wireguard_server_obfuscation",
-		"get_hydraroute_status", "control_hydraroute", "set_hydraroute_settings", "list_hydraroute_geo_files", "update_hydraroute_geo_files", "remove_hydraroute_disabled_tag",
+		"list_hydraroute_geo_files", "update_hydraroute_geo_files",
 	}
 	for _, n := range want {
 		if byName[n] == nil {

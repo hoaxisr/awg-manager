@@ -380,15 +380,6 @@ const api_DNSRouteSettingsDTO: v.GenericSchema = v.looseObject({
 	refreshMode: v.optional(v.nullable(v.string())),
 });
 
-const api_DeleteTargetData: v.GenericSchema = v.looseObject({
-	target: v.optional(v.nullable(v.string())),
-});
-
-const api_DeleteTargetResponse: v.GenericSchema = v.looseObject({
-	data: v.optional(v.nullable(v.lazy(() => api_DeleteTargetData))),
-	success: v.optional(v.nullable(v.boolean())),
-});
-
 const api_DetectHeadersResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_DetectedProfileDTO))),
 	success: v.optional(v.nullable(v.boolean())),
@@ -632,15 +623,6 @@ const api_GeoFileUpdatedResponse: v.GenericSchema = v.looseObject({
 	success: v.optional(v.nullable(v.boolean())),
 });
 
-const api_GeoFilesRescannedData: v.GenericSchema = v.looseObject({
-	adopted: v.optional(v.nullable(v.number())),
-});
-
-const api_GeoFilesRescannedResponse: v.GenericSchema = v.looseObject({
-	data: v.optional(v.nullable(v.lazy(() => api_GeoFilesRescannedData))),
-	success: v.optional(v.nullable(v.boolean())),
-});
-
 const api_GeoFilesResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.array(v.lazy(() => api_GeoFileEntryDTO)))),
 	success: v.optional(v.nullable(v.boolean())),
@@ -675,44 +657,6 @@ const api_HealthData: v.GenericSchema = v.looseObject({
 
 const api_HealthResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_HealthData))),
-	success: v.optional(v.nullable(v.boolean())),
-});
-
-const api_HydraRouteConfigData: v.GenericSchema = v.looseObject({
-	autoStart: v.optional(v.nullable(v.boolean())),
-	cidr: v.optional(v.nullable(v.boolean())),
-	clearIPSet: v.optional(v.nullable(v.boolean())),
-	conntrackFlush: v.optional(v.nullable(v.boolean())),
-	directRouteEnabled: v.optional(v.nullable(v.boolean())),
-	geoIPFiles: v.optional(v.nullable(v.array(v.string()))),
-	geoSiteFiles: v.optional(v.nullable(v.array(v.string()))),
-	globalRouting: v.optional(v.nullable(v.boolean())),
-	hrRevision: v.optional(v.nullable(v.string())),
-	ipsetEnableTimeout: v.optional(v.nullable(v.boolean())),
-	ipsetMaxElem: v.optional(v.nullable(v.number())),
-	ipsetTimeout: v.optional(v.nullable(v.number())),
-	log: v.optional(v.nullable(v.string())),
-	logFile: v.optional(v.nullable(v.string())),
-	policyOrder: v.optional(v.nullable(v.array(v.string()))),
-});
-
-const api_HydraRouteConfigResponse: v.GenericSchema = v.looseObject({
-	data: v.optional(v.nullable(v.lazy(() => api_HydraRouteConfigData))),
-	success: v.optional(v.nullable(v.boolean())),
-});
-
-const api_HydraRouteStatusData: v.GenericSchema = v.looseObject({
-	installed: v.optional(v.nullable(v.boolean())),
-	lastError: v.optional(v.nullable(v.string())),
-	pid: v.optional(v.nullable(v.number())),
-	processState: v.optional(v.nullable(v.string())),
-	running: v.optional(v.nullable(v.boolean())),
-	stalePid: v.optional(v.nullable(v.number())),
-	version: v.optional(v.nullable(v.string())),
-});
-
-const api_HydraRouteStatusResponse: v.GenericSchema = v.looseObject({
-	data: v.optional(v.nullable(v.lazy(() => api_HydraRouteStatusData))),
 	success: v.optional(v.nullable(v.boolean())),
 });
 
@@ -754,16 +698,6 @@ const api_IPResultResponse: v.GenericSchema = v.looseObject({
 
 const api_IPServicesResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.array(v.lazy(() => api_IPCheckServiceDTO)))),
-	success: v.optional(v.nullable(v.boolean())),
-});
-
-const api_IpsetUsageData: v.GenericSchema = v.looseObject({
-	maxElem: v.optional(v.nullable(v.number())),
-	usage: v.optional(v.nullable(v.record(v.string(), v.number()))),
-});
-
-const api_IpsetUsageResponse: v.GenericSchema = v.looseObject({
-	data: v.optional(v.nullable(v.lazy(() => api_IpsetUsageData))),
 	success: v.optional(v.nullable(v.boolean())),
 });
 
@@ -1081,23 +1015,6 @@ const api_OkResponse: v.GenericSchema = v.looseObject({
 	success: v.optional(v.nullable(v.boolean())),
 });
 
-const api_OversizedTagDTO: v.GenericSchema = v.looseObject({
-	count: v.optional(v.nullable(v.number())),
-	file: v.optional(v.nullable(v.string())),
-	name: v.optional(v.nullable(v.string())),
-});
-
-const api_OversizedTagsData: v.GenericSchema = v.looseObject({
-	installed: v.optional(v.nullable(v.boolean())),
-	maxelem: v.optional(v.nullable(v.number())),
-	tags: v.optional(v.nullable(v.array(v.lazy(() => api_OversizedTagDTO)))),
-});
-
-const api_OversizedTagsResponse: v.GenericSchema = v.looseObject({
-	data: v.optional(v.nullable(v.lazy(() => api_OversizedTagsData))),
-	success: v.optional(v.nullable(v.boolean())),
-});
-
 const api_PageScanEnvelope: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_PageScanResultDTO))),
 	success: v.optional(v.nullable(v.boolean())),
@@ -1224,15 +1141,6 @@ const api_PolicyInterfacesListResponse: v.GenericSchema = v.looseObject({
 const api_PolicyOptionDTO: v.GenericSchema = v.looseObject({
 	description: v.optional(v.nullable(v.string())),
 	id: v.optional(v.nullable(v.string())),
-});
-
-const api_PolicyOrderData: v.GenericSchema = v.looseObject({
-	order: v.optional(v.nullable(v.array(v.string()))),
-});
-
-const api_PolicyOrderResponse: v.GenericSchema = v.looseObject({
-	data: v.optional(v.nullable(v.lazy(() => api_PolicyOrderData))),
-	success: v.optional(v.nullable(v.boolean())),
 });
 
 const api_PresetsListResponse: v.GenericSchema = v.looseObject({
@@ -3231,12 +3139,7 @@ const presets_DNSEngine: v.GenericSchema = v.looseObject({
 
 const presets_Engines: v.GenericSchema = v.looseObject({
 	dns: v.optional(v.nullable(v.lazy(() => presets_DNSEngine))),
-	hydraroute: v.optional(v.nullable(v.lazy(() => presets_HydraRouteEngine))),
 	singbox: v.optional(v.nullable(v.lazy(() => presets_SingboxEngine))),
-});
-
-const presets_HydraRouteEngine: v.GenericSchema = v.looseObject({
-	geoTags: v.optional(v.nullable(v.array(v.string()))),
 });
 
 const presets_Origin: v.GenericSchema = v.string();
@@ -3782,7 +3685,6 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"DELETE /awg3-endpoints/{id}": v.lazy(() => api_Awg3ListResponse),
 	"DELETE /connections": v.lazy(() => api_ConnectionKillEnvelope),
 	"DELETE /hydraroute/geo-files/delete": v.lazy(() => api_OkResponse),
-	"DELETE /hydraroute/oversized-tags/delete": v.lazy(() => api_OkResponse),
 	"DELETE /managed-servers/{id}": v.lazy(() => api_ServersAllResponse),
 	"DELETE /managed-servers/{id}/peers/{pubkey}": v.lazy(() => api_ServersAllResponse),
 	"DELETE /proxy/instance": v.lazy(() => api_APIEnvelope),
@@ -3817,14 +3719,11 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /external-tunnels": v.lazy(() => api_ExternalTunnelsResponse),
 	"GET /firc/install-status": v.lazy(() => api_APIEnvelope),
 	"GET /health": v.lazy(() => api_HealthResponse),
-	"GET /hydraroute/config": v.lazy(() => api_HydraRouteConfigResponse),
 	"GET /hydraroute/geo-expand": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_GeoExpandData))),
 })]),
 	"GET /hydraroute/geo-files": v.lazy(() => api_GeoFilesResponse),
 	"GET /hydraroute/geo-tags": v.lazy(() => api_GeoTagsResponse),
-	"GET /hydraroute/ipset-usage": v.lazy(() => api_IpsetUsageResponse),
-	"GET /hydraroute/oversized-tags": v.lazy(() => api_OversizedTagsResponse),
 	"GET /interfaces/foreign/candidates": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
 	data: v.optional(v.nullable(v.array(v.lazy(() => api_ForeignIfaceCandidate)))),
 })]),
@@ -3962,7 +3861,6 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /system/files/read": v.lazy(() => api_SystemFileReadResponse),
 	"GET /system/files/roots": v.lazy(() => api_SystemFileRootsResponse),
 	"GET /system/files/script-status": v.lazy(() => api_SystemScriptStatusResponse),
-	"GET /system/hydraroute-status": v.lazy(() => api_HydraRouteStatusResponse),
 	"GET /system/info": v.lazy(() => api_SystemInfoResponse),
 	"GET /system/opkg/available": v.lazy(() => api_SystemOpkgAvailableResponse),
 	"GET /system/opkg/installed": v.lazy(() => api_SystemOpkgPackagesResponse),
@@ -4048,11 +3946,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /firc/uninstall": v.lazy(() => api_APIEnvelope),
 	"POST /firc/upgrade": v.lazy(() => api_APIEnvelope),
 	"POST /hydraroute/geo-files/add": v.lazy(() => api_GeoFileResponse),
-	"POST /hydraroute/geo-files/rescan": v.lazy(() => api_GeoFilesRescannedResponse),
-	"POST /hydraroute/geo-files/take-control": v.lazy(() => api_GeoFileResponse),
 	"POST /hydraroute/geo-files/update": v.lazy(() => api_GeoFileUpdatedResponse),
-	"POST /hydraroute/policy-order": v.lazy(() => api_PolicyOrderResponse),
-	"POST /hydraroute/targets/delete": v.lazy(() => api_DeleteTargetResponse),
 	"POST /import/conf": v.lazy(() => api_APIEnvelope),
 	"POST /interfaces/foreign/mark": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_ForeignIfaceMarkResponse))),
@@ -4238,7 +4132,6 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /system/files/script-action": v.lazy(() => api_SystemScriptActionResponse),
 	"POST /system/files/upload": v.lazy(() => api_SystemUploadResponse),
 	"POST /system/files/write": v.lazy(() => api_SystemOKResponse),
-	"POST /system/hydraroute-control": v.lazy(() => api_APIEnvelope),
 	"POST /system/opkg/install": v.lazy(() => api_SystemOutputResponse),
 	"POST /system/opkg/remove": v.lazy(() => api_SystemOutputResponse),
 	"POST /system/opkg/update": v.lazy(() => api_SystemOutputResponse),
@@ -4281,7 +4174,6 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /zapret/control": v.lazy(() => api_zapretStatusResponse),
 	"POST /zapret/hostlist/save": v.lazy(() => api_zapretHostlistResponse),
 	"POST /zapret/strategies/reorder": v.lazy(() => zapret_Strategies),
-	"PUT /hydraroute/config/update": v.lazy(() => api_HydraRouteConfigResponse),
 	"PUT /managed-servers/{id}": v.lazy(() => api_ServersAllResponse),
 	"PUT /managed-servers/{id}/asc": v.lazy(() => api_ASCParamsResponse),
 	"PUT /managed-servers/{id}/peers/{pubkey}": v.lazy(() => api_ServersAllResponse),

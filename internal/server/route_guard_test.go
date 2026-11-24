@@ -266,7 +266,7 @@ func newGuardServer(t *testing.T) (*Server, *auth.SessionStore) {
 		// Ниже — зависимости, за nil-гейтами которых прячутся целые секции
 		// маршрутов. Без них пути не регистрируются вовсе, и гард на них
 		// проверить нечем.
-		hydraService:       &hydraroute.Service{},
+		geoData:            &hydraroute.GeoDataStore{},
 		zapretService:      &zapret.Service{},
 		autolistService:    &autolistdetect.Service{},
 		dnsCheckService:    &dnscheck.Service{},

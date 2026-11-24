@@ -23,7 +23,7 @@ func schedFor(t *testing.T, gf storage.GeoFileSettings) *GeoRefreshScheduler {
 	resolve := func(_ context.Context) (*http.Client, string, func(), error) {
 		return &http.Client{}, "direct", func() {}, nil
 	}
-	// svc=nil and appLogger=nil are safe: shouldRefresh touches neither
+	// store=nil and appLogger=nil are safe: shouldRefresh touches neither
 	// (NewScopedLogger is nil-safe; the scheduler only reads settings).
 	return NewGeoRefreshScheduler(nil, st, nil, resolve)
 }

@@ -464,7 +464,7 @@ func (s *ServiceImpl) updateLocked(ctx context.Context, list DomainList) (*Domai
 
 		// Merge domains: manual domains + existing subscription domains + new
 		// subscriptions' domains, then classify into DNS-style domains vs CIDR
-		// subnets so HR Neo writes them into the correct file (domain.conf vs ip.list).
+		// subnets.
 		manual := deduplicateDomains(list.ManualDomains)
 		// Содержимое стоящих подписок — Domains и Subnets за вычетом ручных
 		// строк: подсети подписок лежат в Subnets и иначе терялись (F697).

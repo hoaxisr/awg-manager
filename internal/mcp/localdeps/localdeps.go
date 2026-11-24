@@ -237,10 +237,8 @@ type Config struct {
 	// Managed serves the peer tools. Servers this service does not know
 	// about cannot have peers managed through MCP, and the tools say so.
 	Managed ManagedServers
-	// Hydra, HydraGeo and Downloads serve the HydraRoute Neo tools; nil
-	// when it is not installed on this build.
-	Hydra     HydraRoute
-	HydraGeo  HydraGeo
+	// Geo and Downloads serve the geo file tools.
+	Geo       GeoData
 	Downloads Downloads
 	// Connections and Diagnostics back the observability tools; nil makes
 	// the matching tool report that it is unavailable on this build.

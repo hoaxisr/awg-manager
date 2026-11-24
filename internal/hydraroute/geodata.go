@@ -28,10 +28,7 @@ const geoDataFile = "hydraroute-geodata.json"
 
 // Ground-Zerro/Geo-Aggregator publishes the canonical .dat files that
 // HydraRoute ships by default (daily-refreshed aggregate of v2fly +
-// Russian blocklists). Any file the installer drops into hrneo.conf is
-// assumed to come from this source, so AdoptExternalFiles prefills the
-// URL and the "Обновить" button works without the user re-adding the
-// file by hand.
+// Russian blocklists).
 const (
 	GroundZerroGeoIPURL   = "https://raw.githubusercontent.com/Ground-Zerro/Geo-Aggregator/main/geodat/geoip_GA.dat"
 	GroundZerroGeoSiteURL = "https://raw.githubusercontent.com/Ground-Zerro/Geo-Aggregator/main/geodat/geosite_GA.dat"
@@ -333,57 +330,8 @@ func (s *GeoDataStore) DownloadWithClientVia(ctx context.Context, fileType, rawU
 	return &entry, nil
 }
 
-// TakeControl moves an external HydraRoute file into awg-manager/geo and
-// clears the External flag so awg-manager owns the on-disk copy.
-func (s *GeoDataStore) TakeControl(path string) (*GeoFileEntry, error) {
-	path = filepath.Clean(path)
-	if !s.isManagedPath(path) {
-		return nil, fmt.Errorf("path outside managed geo directories")
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	idx := s.findUnlocked(path)
-	if idx < 0 {
-		return nil, fmt.Errorf("geo file not found: %s", path)
-	}
-	if _, busy := s.busyPaths[path]; busy {
-		return nil, fmt.Errorf("geo file is already being updated")
-	}
-	entry := s.entries[idx]
-	if !entry.External {
-		return nil, fmt.Errorf("file is already managed by awg-manager")
-	}
-	if !s.isHRPath(path) {
-		return nil, fmt.Errorf("take control only applies to files in HydraRoute directory")
-	}
-
-	dest, err := s.relocateIntoGeoDirLocked(path)
-	if err != nil {
-		return nil, err
-	}
-	if tags, ok := s.tagCache[path]; ok {
-		s.tagCache[dest] = tags
-		delete(s.tagCache, path)
-	}
-
-	entry.Path = dest
-	entry.External = false
-	if entry.URL == "" {
-		entry.URL = defaultURLForType(entry.Type)
-	}
-	s.entries[idx] = entry
-
-	if err := s.saveUnlocked(); err != nil {
-		return nil, fmt.Errorf("save metadata: %w", err)
-	}
-	s.notifyChangeLocked() // s.mu удерживается до выхода (defer)
-	updated := entry
-	return &updated, nil
-}
-
-// Delete removes the tracked entry and its file from disk.
+// Delete removes the tracked entry and its file from disk. A file of another
+// program (isHRPath) stays on disk: only the entry goes.
 func (s *GeoDataStore) Delete(path string) error {
 	path = filepath.Clean(path)
 	if !s.isManagedPath(path) {
@@ -401,8 +349,10 @@ func (s *GeoDataStore) Delete(path string) error {
 		return fmt.Errorf("geo file is already being updated")
 	}
 
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove file: %w", err)
+	if !s.isHRPath(path) {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove file: %w", err)
+		}
 	}
 
 	s.entries = append(s.entries[:idx], s.entries[idx+1:]...)
@@ -462,7 +412,7 @@ func (s *GeoDataStore) updateWithClientVia(ctx context.Context, path string, cli
 	entry := s.entries[idx]
 	if entry.External {
 		s.mu.Unlock()
-		err := fmt.Errorf("cannot update external file managed by HydraRoute Neo — use «Взять под управление or update in HR Neo")
+		err := fmt.Errorf("файл принадлежит другой программе и не обновляется")
 		s.logGeoDataError("update-url", path, "Ошибка обновления geo-data", routeLabel, err)
 		return nil, err
 	}
@@ -779,7 +729,7 @@ func (s *GeoDataStore) GetTags(path string) ([]GeoTag, error) {
 	return result, nil
 }
 
-// GeoFilePaths returns tracked paths for hrneo.conf sync (deduped, stable order).
+// GeoFilePaths returns tracked paths (deduped, stable order).
 func (s *GeoDataStore) GeoFilePaths() (geoIP, geoSite []string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -811,89 +761,6 @@ func (s *GeoDataStore) GeoIPTagCounts() map[string]int {
 		}
 	}
 	return out
-}
-
-// AdoptExternalFiles scans the provided hrneo config for GeoSite/GeoIP file
-// paths not yet tracked by this store, and registers them as External entries.
-// Returns the number of files adopted.
-//
-// HR paths are marked External=true with a default Ground-Zerro URL when the
-// type is known, so "Обновить" can re-download in place. "Взять под управление"
-// moves the file into awg-manager/geo and clears External.
-//
-// Paths under awg-manager/geo or /opt/etc/HydraRoute are adopted in place
-// (HR-downloaded files stay in HydraRoute). Paths outside those dirs are skipped.
-//
-// Missing files (listed in config but not present on disk) are skipped.
-// Tag counts are read on a best-effort basis; failures leave TagCount=0.
-func (s *GeoDataStore) AdoptExternalFiles(cfg *Config) (int, error) {
-	if cfg == nil {
-		return 0, nil
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	known := make(map[string]struct{}, len(s.entries))
-	for _, e := range s.entries {
-		known[filepath.Clean(e.Path)] = struct{}{}
-	}
-
-	adopted := 0
-	paths := []struct {
-		path, fileType string
-	}{}
-	for _, p := range cfg.GeoIPFiles {
-		paths = append(paths, struct{ path, fileType string }{p, "geoip"})
-	}
-	for _, p := range cfg.GeoSiteFiles {
-		paths = append(paths, struct{ path, fileType string }{p, "geosite"})
-	}
-
-	for _, item := range paths {
-		clean := resolveGeoConfigPath(item.path)
-		if clean == "" {
-			continue
-		}
-		if _, ok := known[clean]; ok {
-			continue
-		}
-		if !hasPathPrefix(clean, s.geoDir) && !hasPathPrefix(clean, hrDir) {
-			continue
-		}
-		managed := clean
-		if _, ok := known[managed]; ok {
-			continue
-		}
-		info, err := os.Stat(managed)
-		if err != nil {
-			continue
-		}
-		// IMPORTANT: do not parse the file here. On routers with low RAM a
-		// 66 MB geosite.dat read at startup evicts the squashfs page cache
-		// and stalls NDM. TagCount is left at 0 and populated lazily on the
-		// first GetTags call. Size comes from stat — no I/O beyond metadata.
-		mtime := info.ModTime().UTC().Format(time.RFC3339)
-		s.entries = append(s.entries, GeoFileEntry{
-			Type:     item.fileType,
-			Path:     managed,
-			URL:      defaultURLForType(item.fileType),
-			Size:     info.Size(),
-			TagCount: 0,
-			Updated:  mtime,
-			External: s.isHRPath(managed),
-			Mtime:    mtime,
-		})
-		known[managed] = struct{}{}
-		adopted++
-	}
-
-	if s.reconcileUnlocked() || adopted > 0 {
-		if err := s.saveUnlocked(); err != nil {
-			return adopted, fmt.Errorf("save adopted entries: %w", err)
-		}
-	}
-	return adopted, nil
 }
 
 // load reads entries from the JSON storage file.
@@ -976,12 +843,6 @@ func (s *GeoDataStore) resolveConflictLocked(path string) string {
 		}
 		candidate = fmt.Sprintf("%s_%d%s", base, i, ext)
 	}
-}
-
-// resolveConflict returns a non-conflicting path.
-// Caller must hold s.mu (write lock).
-func (s *GeoDataStore) resolveConflict(path string) string {
-	return s.resolveConflictLocked(path)
 }
 
 func (s *GeoDataStore) logWarn(action, key, msg string) {

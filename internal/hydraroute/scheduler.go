@@ -22,7 +22,7 @@ type resolveClientFn func(ctx context.Context) (*http.Client, string, func(), er
 // GeoRefreshScheduler periodically re-downloads non-external geo files.
 // Mirrors internal/dnsroute.Scheduler; dnsroute is intentionally untouched.
 type GeoRefreshScheduler struct {
-	svc         *Service
+	store       *GeoDataStore
 	settings    *storage.SettingsStore
 	resolve     resolveClientFn
 	appLog      *logging.ScopedLogger
@@ -31,9 +31,9 @@ type GeoRefreshScheduler struct {
 	lastRefresh time.Time
 }
 
-func NewGeoRefreshScheduler(svc *Service, settings *storage.SettingsStore, appLogger logging.AppLogger, resolve resolveClientFn) *GeoRefreshScheduler {
+func NewGeoRefreshScheduler(store *GeoDataStore, settings *storage.SettingsStore, appLogger logging.AppLogger, resolve resolveClientFn) *GeoRefreshScheduler {
 	return &GeoRefreshScheduler{
-		svc:      svc,
+		store:    store,
 		settings: settings,
 		resolve:  resolve,
 		appLog:   logging.NewScopedLogger(appLogger, logging.GroupRouting, logging.SubHrNeo),
@@ -129,10 +129,6 @@ func (s *GeoRefreshScheduler) doRefresh(parent context.Context) bool {
 	ctx, cancel := context.WithTimeout(parent, geoRefreshTimeout)
 	defer cancel()
 
-	gds := s.svc.GetGeoData()
-	if gds == nil {
-		return false
-	}
 	client, label, closeFn, err := s.resolve(ctx)
 	if err != nil {
 		// Stale/removed route: log and skip — do NOT silently fall back to direct.
@@ -141,18 +137,10 @@ func (s *GeoRefreshScheduler) doRefresh(parent context.Context) bool {
 	}
 	defer closeFn()
 
-	ok := true
-	if _, err := gds.UpdateAllWithClientVia(ctx, client, label); err != nil {
+	if _, err := s.store.UpdateAllWithClientVia(ctx, client, label); err != nil {
 		s.appLog.Warn("geo-auto-refresh", "", "update via "+label+": "+err.Error())
-		ok = false
-		// fall through — still sync whatever succeeded
-	}
-	if err := s.svc.SyncGeoFilesToConfig(); err != nil {
-		s.appLog.Warn("geo-auto-refresh", "", "sync config: "+err.Error())
 		return false
 	}
-	if ok {
-		s.appLog.Info("geo-auto-refresh", "", "completed via "+label)
-	}
-	return ok
+	s.appLog.Info("geo-auto-refresh", "", "completed via "+label)
+	return true
 }

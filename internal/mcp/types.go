@@ -1079,58 +1079,12 @@ type LANSegment struct {
 	Subnet string `json:"subnet,omitempty"`
 }
 
-// HydraRouteStatus is the HydraRoute Neo daemon and the state it keeps.
-type HydraRouteStatus struct {
-	Installed    bool              `json:"installed"`
-	Running      bool              `json:"running"`
-	State        string            `json:"state" jsonschema:"not_installed, stopped, running or dead"`
-	Version      string            `json:"version,omitempty"`
-	IpsetMaxElem int               `json:"ipsetMaxElem,omitempty" jsonschema:"entries one ipset can hold; a geoip tag larger than this is disabled (disabledTags)"`
-	IpsetUsage   map[string]int    `json:"ipsetUsage,omitempty" jsonschema:"entries per target interface now"`
-	DisabledTags []HydraRouteTag   `json:"disabledTags,omitempty" jsonschema:"geoip tags HydraRoute could not use (\"impossible to use\") — too large for the ipset"`
-	Settings     HydraRouteSetting `json:"settings"`
-	// SettingsError keeps a failed read from passing for real values:
-	// every field of an unread Settings is zero.
-	SettingsError string `json:"settingsError,omitempty" jsonschema:"set when hrneo.conf could not be read; settings is then empty, not the daemon's values"`
-	// DisabledTagsError and IpsetUsageError keep a failed read from
-	// passing for "none": the list or the map is then absent, not empty.
-	DisabledTagsError string `json:"disabledTagsError,omitempty" jsonschema:"set when the disabled tags could not be read — disabledTags is then unknown, NOT empty"`
-	IpsetUsageError   string `json:"ipsetUsageError,omitempty" jsonschema:"set when the ipset fill could not be read — ipsetUsage and ipsetMaxElem are then unknown"`
-}
-
-// HydraRouteGeoUpdate is the outcome of update_hydraroute_geo_files: the
-// download and the hand-over to the daemon fail apart, and each says why.
+// HydraRouteGeoUpdate is the outcome of update_hydraroute_geo_files.
 type HydraRouteGeoUpdate struct {
 	Updated int `json:"updated" jsonschema:"geo files downloaded again"`
 	// DownloadError is set when some files were not downloaded; Updated
 	// counts the rest. The source addresses in it are cut to their host.
 	DownloadError string `json:"downloadError,omitempty" jsonschema:"set when some files failed to download — the reason, source addresses cut to their host; updated counts the ones that did"`
-	ConfigSynced  bool   `json:"configSynced" jsonschema:"true when hrneo.conf was updated to the files and neo restart was scheduled to read them; false means HR Neo still uses the old ones"`
-	SyncError     string `json:"syncError,omitempty" jsonschema:"why hrneo.conf was not updated (then no restart either)"`
-}
-
-// HydraRouteTag is one disabled geoip tag.
-type HydraRouteTag struct {
-	Name  string `json:"name"`
-	Count int    `json:"count" jsonschema:"addresses in it; -1 when no geo file has it any more"`
-}
-
-// HydraRouteSetting is the part of hrneo.conf the tools show and change.
-type HydraRouteSetting struct {
-	AutoStart           bool `json:"autoStart"`
-	ClearIPSet          bool `json:"clearIpset"`
-	IpsetTimeoutEnabled bool `json:"ipsetTimeoutEnabled"`
-	IpsetTimeout        int  `json:"ipsetTimeout" jsonschema:"seconds an address stays in an ipset when the timeout is on"`
-	IpsetMaxElem        int  `json:"ipsetMaxElem"`
-	ConntrackFlush      bool `json:"conntrackFlush"`
-	DirectRoute         bool `json:"directRoute" jsonschema:"shown only; changed in the web interface"`
-	GlobalRouting       bool `json:"globalRouting" jsonschema:"shown only: it overwrites the router's policies, so it is changed in the web interface"`
-}
-
-// HydraRouteSettingsPatch changes hrneo.conf; a nil field keeps its value.
-type HydraRouteSettingsPatch struct {
-	AutoStart, ClearIPSet, IpsetTimeoutEnabled, ConntrackFlush *bool
-	IpsetTimeout, IpsetMaxElem                                 *int
 }
 
 // HydraRouteGeoFile is one geo data file. Only the host of its URL is
@@ -1142,7 +1096,7 @@ type HydraRouteGeoFile struct {
 	Size     int64  `json:"size"`
 	TagCount int    `json:"tagCount"`
 	Updated  string `json:"updated,omitempty"`
-	External bool   `json:"external" jsonschema:"placed by hand, not downloaded by awg-manager; it is not updated"`
+	External bool   `json:"external" jsonschema:"a file of another program: read only, never updated"`
 }
 
 // HydraRouteGeoTags is one page of a geo file's tags.

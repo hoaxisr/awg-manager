@@ -27,9 +27,8 @@ type Preset struct {
 // Engines holds per-engine payloads. A nil pointer means the preset does not
 // support that engine (this is how the hybrid model is expressed).
 type Engines struct {
-	DNS        *DNSEngine        `json:"dns,omitempty"`
-	Singbox    *SingboxEngine    `json:"singbox,omitempty"`
-	HydraRoute *HydraRouteEngine `json:"hydraroute,omitempty"`
+	DNS     *DNSEngine     `json:"dns,omitempty"`
+	Singbox *SingboxEngine `json:"singbox,omitempty"`
 }
 
 // DNSEngine is self-sufficient without sing-box: inline domains/subnets, or a
@@ -48,8 +47,4 @@ type RuleRef struct {
 type SingboxEngine struct {
 	RuleSets []RuleRef `json:"ruleSets,omitempty"`
 	Action   string    `json:"action"` // tunnel|reject|direct
-}
-
-type HydraRouteEngine struct {
-	GeoTags []string `json:"geoTags,omitempty"`
 }

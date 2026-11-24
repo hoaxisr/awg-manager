@@ -737,9 +737,8 @@ func (o *Operator) QuiesceStop(_ context.Context) error {
 	return o.stopProc()
 }
 
-// Control starts/stops/restarts the sing-box daemon. Mirrors the shape of
-// hydraroute.Service.Control so the API handler can dispatch by action
-// name. "start" is a no-op for the process when already running; "stop" is
+// Control starts/stops/restarts the sing-box daemon; the API handler
+// dispatches by action name. "start" is a no-op for the process when already running; "stop" is
 // a no-op for the process when already stopped; "restart" is stop + start
 // regardless of current state. Errors only on actual transition failures.
 //

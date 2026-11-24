@@ -10,9 +10,8 @@ func TestPresetJSONRoundTrip(t *testing.T) {
 		ID: "youtube", Name: "YouTube", IconSlug: "youtube", Category: "social",
 		Origin: OriginBuiltin,
 		Engines: Engines{
-			DNS:        &DNSEngine{Domains: []string{"youtube.com"}},
-			Singbox:    &SingboxEngine{RuleSets: []RuleRef{{Tag: "geosite-youtube", URL: "https://x/youtube.srs"}}, Action: "tunnel"},
-			HydraRoute: &HydraRouteEngine{GeoTags: []string{"YOUTUBE"}},
+			DNS:     &DNSEngine{Domains: []string{"youtube.com"}},
+			Singbox: &SingboxEngine{RuleSets: []RuleRef{{Tag: "geosite-youtube", URL: "https://x/youtube.srs"}}, Action: "tunnel"},
 		},
 	}
 	raw, err := json.Marshal(in)
@@ -23,7 +22,7 @@ func TestPresetJSONRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(raw, &out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if out.ID != "youtube" || out.Engines.DNS == nil || out.Engines.Singbox.Action != "tunnel" || out.Engines.HydraRoute == nil {
+	if out.ID != "youtube" || out.Engines.DNS == nil || out.Engines.Singbox.Action != "tunnel" {
 		t.Fatalf("round-trip mismatch: %+v", out)
 	}
 }

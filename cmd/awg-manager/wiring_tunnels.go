@@ -41,7 +41,7 @@ import (
 
 // setupTunnels wires the tunnel core (wg/backend/state/firewall, NDMS
 // commands, operators, WAN model, tunnel service), the routing catalog and
-// the HydraRoute/geo-data integration.
+// the geo-data store.
 func (a *app) setupTunnels() {
 	// Create tunnel service components
 	a.wgClient = wg.New()
@@ -169,24 +169,8 @@ func (a *app) setupTunnels() {
 	a.autolistService = autolistdetect.NewService()
 	a.autolistService.SetInstaller(opkg.NewClient(), a.settingsStore, version)
 
-	// HydraRoute Neo integration (optional — detected at startup)
-	a.hydraService = hydraroute.NewService(a.catalog, a.loggingService)
 	a.geoDataStore = hydraroute.NewGeoDataStore(a.dataDir)
 	a.geoDataStore.SetAppLogger(a.loggingService)
-	a.hydraService.SetGeoDataStore(a.geoDataStore)
-	// Adopt any geo files already listed in hrneo.conf (e.g. added manually
-	// before awg-manager was installed) so they show up in the UI. Adoption
-	// is stat-only — TagCount is populated lazily in the background.
-	if cfg, err := hydraroute.ReadConfig(); err == nil {
-		if n, err := a.geoDataStore.AdoptExternalFiles(cfg); err != nil {
-			a.bootLog.Warn("hrneo-adopt-geo", "", err.Error())
-		} else if n > 0 {
-			a.bootLog.Info("hrneo-adopt-geo", "", fmt.Sprintf("adopted %d files from hrneo.conf", n))
-		}
-		if err := a.hydraService.SyncGeoFilesToConfig(); err != nil {
-			a.bootLog.Warn("hrneo-sync-geo", "", "failed after adopt: "+err.Error())
-		}
-	}
 	// Warm up tag cache for entries with TagCount=0 in a background goroutine.
 	// Runs sequentially (one file at a time) to keep I/O pressure low — the
 	// streaming parser holds ~64 KB RAM regardless of file size.
@@ -200,9 +184,6 @@ func (a *app) setupTunnels() {
 			}
 		}
 	}()
-	// NDMS wiring (SetQueries + SetPolicies) happens after ndmsCommands is
-	// constructed — see below.
-
 }
 
 // setupServices constructs the auxiliary services: dns-route/static-route

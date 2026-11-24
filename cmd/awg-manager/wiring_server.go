@@ -217,7 +217,7 @@ func (a *app) setupServer() {
 			Catalog:             a.catalog,
 			Orch:                a.orch,
 			Bus:                 a.eventBus,
-			HydraService:        a.hydraService,
+			GeoData:             a.geoDataStore,
 			ZapretService:       a.zapretService,
 			AutolistService:     a.autolistService,
 			// Снимок удалённых объектов Autolist знает router-сервис (его файл
@@ -419,7 +419,7 @@ func (a *app) setupDeviceProxy() {
 		a.awgStore,
 	)
 	a.geoRefreshScheduler = hydraroute.NewGeoRefreshScheduler(
-		a.hydraService, a.settingsStore, a.loggingService,
+		a.geoDataStore, a.settingsStore, a.loggingService,
 		func(ctx context.Context) (*http.Client, string, func(), error) {
 			lease, err := sharedDownloadSvc.ResolveClient(ctx, nil)
 			if err != nil {

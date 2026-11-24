@@ -140,9 +140,7 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 	if s.bootStatusFn != nil {
 		h.systemHandler.SetBootStatusFunc(s.bootStatusFn)
 	}
-	h.systemHandler.SetHydraRoute(s.hydraService)
 	h.systemHandler.SetSingboxOperator(s.singboxOp)
-	h.systemHandler.SetEventBus(s.bus)
 	if ms := int(s.config.SlowRequestThreshold / time.Millisecond); ms > 0 {
 		h.systemHandler.SetSlowRequestThresholdMs(ms)
 	}
@@ -450,7 +448,7 @@ func (s *Server) registerTunnelRoutes(mux *http.ServeMux, h *routeHandlers) {
 
 }
 
-// registerSystemRoutes — system info, HTTP-listen management, HydraRoute, updates.
+// registerSystemRoutes — system info, HTTP-listen management, geo data, updates.
 func (s *Server) registerSystemRoutes(mux *http.ServeMux, h *routeHandlers) {
 	// System (protected + boot guarded)
 	mux.HandleFunc("/api/system/info", h.guarded(h.systemHandler.Info))
@@ -475,8 +473,6 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux, h *routeHandlers) {
 	mux.HandleFunc("/api/system/backup/snapshots/delete", h.guarded(backupHandler.DeleteSnapshot))
 	mux.HandleFunc("/api/system/wan-interfaces", h.guarded(h.systemHandler.WANInterfaces))
 	mux.HandleFunc("/api/system/all-interfaces", h.guarded(h.systemHandler.AllInterfaces))
-	mux.HandleFunc("/api/system/hydraroute-status", h.guarded(h.systemHandler.HydraRouteStatus))
-	mux.HandleFunc("/api/system/hydraroute-control", h.guarded(h.systemHandler.HydraRouteControl))
 
 	// HTTP-listen management (live rebind + confirm-or-revert, listen.go).
 	// confirm нарочно БЕЗ session-гарда: его аутентифицирует одноразовый
@@ -489,25 +485,15 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux, h *routeHandlers) {
 	downloadHandler := api.NewDownloadHandler(s.downloadSvc)
 	mux.HandleFunc("/api/download/outbounds", h.guarded(downloadHandler.ListOutbounds))
 
-	// HydraRoute settings (protected + boot guarded)
-	if s.hydraService != nil {
-		hrHandler := api.NewHydraRouteHandler(s.hydraService, s.downloadSvc)
-		hrHandler.SetEventBus(s.bus)
-		mux.HandleFunc("/api/hydraroute/config", h.guarded(hrHandler.GetConfig))
-		mux.HandleFunc("/api/hydraroute/config/update", h.guarded(hrHandler.UpdateConfig))
-		mux.HandleFunc("/api/hydraroute/geo-files", h.guarded(hrHandler.ListGeoFiles))
-		mux.HandleFunc("/api/hydraroute/geo-files/add", h.guarded(hrHandler.AddGeoFile))
-		mux.HandleFunc("/api/hydraroute/geo-files/delete", h.guarded(hrHandler.DeleteGeoFile))
-		mux.HandleFunc("/api/hydraroute/geo-files/update", h.guarded(hrHandler.UpdateGeoFile))
-		mux.HandleFunc("/api/hydraroute/geo-files/take-control", h.guarded(hrHandler.TakeGeoFileControl))
-		mux.HandleFunc("/api/hydraroute/geo-files/rescan", h.guarded(hrHandler.RescanGeoFiles))
-		mux.HandleFunc("/api/hydraroute/geo-tags", h.guarded(hrHandler.GetGeoTags))
-		mux.HandleFunc("/api/hydraroute/geo-expand", h.guarded(hrHandler.ExpandGeoTag))
-		mux.HandleFunc("/api/hydraroute/ipset-usage", h.guarded(hrHandler.GetIpsetUsage))
-		mux.HandleFunc("/api/hydraroute/oversized-tags", h.guarded(hrHandler.GetOversizedTags))
-		mux.HandleFunc("/api/hydraroute/oversized-tags/delete", h.guarded(hrHandler.DeleteOversizedTag))
-		mux.HandleFunc("/api/hydraroute/policy-order", h.guarded(hrHandler.SetPolicyOrder))
-		mux.HandleFunc("/api/hydraroute/targets/delete", h.guarded(hrHandler.DeleteTarget))
+	// Geo data files (protected + boot guarded)
+	if s.geoData != nil {
+		geoHandler := api.NewGeoDataHandler(s.geoData, s.downloadSvc)
+		mux.HandleFunc("/api/hydraroute/geo-files", h.guarded(geoHandler.ListGeoFiles))
+		mux.HandleFunc("/api/hydraroute/geo-files/add", h.guarded(geoHandler.AddGeoFile))
+		mux.HandleFunc("/api/hydraroute/geo-files/delete", h.guarded(geoHandler.DeleteGeoFile))
+		mux.HandleFunc("/api/hydraroute/geo-files/update", h.guarded(geoHandler.UpdateGeoFile))
+		mux.HandleFunc("/api/hydraroute/geo-tags", h.guarded(geoHandler.GetGeoTags))
+		mux.HandleFunc("/api/hydraroute/geo-expand", h.guarded(geoHandler.ExpandGeoTag))
 	}
 
 	// Update endpoints (protected + boot guarded)
@@ -554,7 +540,7 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux, h *routeHandlers) {
 
 // registerRoutingRoutes — DNS routes, static routes, routing catalog/sections, resolve.
 func (s *Server) registerRoutingRoutes(mux *http.ServeMux, h *routeHandlers) {
-	// DNS routes (NDMS backend on OS5, HydraRoute on any OS)
+	// DNS routes (NDMS, OS5)
 	mux.HandleFunc("/api/dns-routes/list", h.guarded(h.dnsRouteHandler.List))
 	mux.HandleFunc("/api/dns-routes/get", h.guarded(h.dnsRouteHandler.Get))
 	mux.HandleFunc("/api/dns-routes/create", h.guarded(h.dnsRouteHandler.Create))
@@ -1505,15 +1491,11 @@ func (s *Server) registerMcpRoutes(mux *http.ServeMux, h *routeHandlers) {
 	}
 	// Интерфейсы, а не указатели: nil-указатель в интерфейсе — не nil.
 	var (
-		hydraForMcp     localdeps.HydraRoute
-		hydraGeoForMcp  localdeps.HydraGeo
+		geoForMcp       localdeps.GeoData
 		downloadsForMcp localdeps.Downloads
 	)
-	if s.hydraService != nil {
-		hydraForMcp = s.hydraService
-		if gds := s.hydraService.GetGeoData(); gds != nil {
-			hydraGeoForMcp = gds
-		}
+	if s.geoData != nil {
+		geoForMcp = s.geoData
 	}
 	if s.downloadSvc != nil {
 		downloadsForMcp = s.downloadSvc
@@ -1544,8 +1526,7 @@ func (s *Server) registerMcpRoutes(mux *http.ServeMux, h *routeHandlers) {
 		ListServers:     h.serverHandler.ListServers,
 		Managed:         managedForMcp,
 		Connections:     connsForMcp,
-		Hydra:           hydraForMcp,
-		HydraGeo:        hydraGeoForMcp,
+		Geo:             geoForMcp,
 		Downloads:       downloadsForMcp,
 		Router:          routerForMcp,
 		TunnelEdit:      h.tunnelsHandler.EditTunnelWith,

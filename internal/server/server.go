@@ -109,7 +109,7 @@ type Server struct {
 	accessPolicyService        accesspolicy.Service
 	clientRouteService         clientroute.Service
 	catalog                    routing.Catalog
-	hydraService               *hydraroute.Service
+	geoData                    *hydraroute.GeoDataStore
 	zapretService              *zapret.Service
 	autolistService            *autolistdetect.Service
 	autolistRemovedBackupProbe func(ctx context.Context) (bool, time.Time, error)
@@ -235,7 +235,7 @@ type Deps struct {
 	Catalog             routing.Catalog
 	Orch                *orchestrator.Orchestrator
 	Bus                 *events.Bus
-	HydraService        *hydraroute.Service
+	GeoData             *hydraroute.GeoDataStore
 	ZapretService       *zapret.Service
 	AutolistService     *autolistdetect.Service
 	// AutolistRemovedBackupProbe — «у панели есть снимок объектов Autolist,
@@ -327,7 +327,7 @@ func New(cfg Config, deps Deps) *Server {
 		accessPolicyService:        deps.AccessPolicySvc,
 		clientRouteService:         deps.ClientRouteSvc,
 		catalog:                    deps.Catalog,
-		hydraService:               deps.HydraService,
+		geoData:                    deps.GeoData,
 		zapretService:              deps.ZapretService,
 		autolistService:            deps.AutolistService,
 		autolistRemovedBackupProbe: deps.AutolistRemovedBackupProbe,

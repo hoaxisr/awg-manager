@@ -37,8 +37,7 @@ func TestGetKernelIfaceName_WANPrefix(t *testing.T) {
 func TestGetKernelIfaceName_UnknownIDReturnsError(t *testing.T) {
 	// Regression: previously, passing a non-tunnel string like a policy name
 	// silently returned "opkgtun0" (because extractTunnelNum falls back to "0"
-	// when no digit is found). That garbage interface name ended up in
-	// HydraRoute's domain.conf, breaking routing.
+	// when no digit is found). That garbage interface name broke routing.
 	provider := &mockTunnelProvider{}
 	store := &mockStoreClient{entries: map[string]StoreEntry{}}
 	cat := NewCatalog(provider, nil, store, noExits(), nil)
@@ -70,8 +69,7 @@ func TestGetKernelIfaceName_ManagedKernelFromStore(t *testing.T) {
 	}
 }
 
-// F498: HR Neo сверяет цель domain.conf с /sys/class/net, а несовпавшую строку
-// считает именем ip policy. Для system: в файл обязано уйти имя ядра.
+// F498: для system: отвечает имя ядра, а не id NDMS.
 func TestGetKernelIfaceName_SystemResolvesKernelName(t *testing.T) {
 	ifaces := &mockNDMSClient{sysNames: map[string]string{"Wireguard0": "nwg1"}}
 	cat := NewCatalog(&mockTunnelProvider{}, ifaces, &mockStoreClient{entries: map[string]StoreEntry{}}, noExits(), nil)
