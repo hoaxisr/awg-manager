@@ -770,7 +770,7 @@ export function isDraftEgressValid(
 	reason?: string;
 } {
 	const checkOptionAvailability = (id: string, serviceLabel: string): string | undefined => {
-		if (!id || id === 'direct' || id === 'firc:router' || egressOptions.length === 0) {
+		if (!id || id === 'direct' || egressOptions.length === 0) {
 			return undefined;
 		}
 		const found = egressOptions.find((o) => o.id === id || o.iface === id);

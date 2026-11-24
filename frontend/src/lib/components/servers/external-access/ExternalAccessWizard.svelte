@@ -204,6 +204,8 @@
 		)
 	);
 
+	let xrayRouterOption = $derived(allEgressOptions.find((o) => o.id === 'firc:router'));
+
 	let currentTgEgressOption = $derived(
 		allEgressOptions.find(
 			(o) => o.id === draft.tgUpstreamDevice || o.iface === draft.tgUpstreamDevice
@@ -804,6 +806,7 @@
 					{egressValidation}
 					{currentXrayEgressOption}
 					{currentTgEgressOption}
+					{xrayRouterOption}
 					{xrayEgressCategory}
 					{tgEgressCategory}
 					{xrayTunnelOptions}
@@ -925,6 +928,11 @@
 
 	:where(.ext-wizard) :global(.choice-card:hover) {
 		border-color: var(--color-accent);
+	}
+
+	:where(.ext-wizard) :global(.choice-card:disabled) {
+		opacity: 0.6;
+		cursor: not-allowed;
 	}
 
 	:where(.ext-wizard) :global(.choice-card.selected) {

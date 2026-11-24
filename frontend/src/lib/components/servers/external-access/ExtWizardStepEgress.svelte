@@ -13,6 +13,7 @@
 		egressValidation: ReturnType<typeof isDraftEgressValid>;
 		currentXrayEgressOption: EgressOption | undefined;
 		currentTgEgressOption: EgressOption | undefined;
+		xrayRouterOption: EgressOption | undefined;
 		xrayEgressCategory: 'direct' | 'router' | 'tunnel';
 		tgEgressCategory: 'direct' | 'tunnel';
 		xrayTunnelOptions: EgressOption[];
@@ -30,6 +31,7 @@
 		egressValidation,
 		currentXrayEgressOption,
 		currentTgEgressOption,
+		xrayRouterOption,
 		xrayEgressCategory,
 		tgEgressCategory,
 		xrayTunnelOptions,
@@ -73,7 +75,7 @@
 				<div class="legacy-egress-banner">
 					<AlertTriangle size={15} />
 					<span>
-						{m.servers_ext_wiz_s4_current_unavailable({ name: currentXrayEgressOption.name })}
+						{currentXrayEgressOption.unavailable_reason || m.servers_ext_wiz_s4_current_unavailable({ name: currentXrayEgressOption.name })}
 					</span>
 				</div>
 			{/if}
@@ -95,11 +97,12 @@
 					type="button"
 					class="choice-card compact"
 					class:selected={xrayEgressCategory === 'router'}
+					disabled={xrayRouterOption && !xrayRouterOption.available}
 					onclick={() => onselectxraycategory('router')}
 				>
 					<div class="choice-title">{EXTERNAL_ACCESS_LABELS.egressFirc}</div>
 					<div class="choice-text">
-						{m.servers_ext_wiz_s4_router_text()}
+						{(!xrayRouterOption?.available && xrayRouterOption?.unavailable_reason) || m.servers_ext_wiz_s4_router_text()}
 					</div>
 				</button>
 
@@ -180,7 +183,7 @@
 				<div class="legacy-egress-banner">
 					<AlertTriangle size={15} />
 					<span>
-						{m.servers_ext_wiz_s4_current_unavailable({ name: currentTgEgressOption.name })}
+						{currentTgEgressOption.unavailable_reason || m.servers_ext_wiz_s4_current_unavailable({ name: currentTgEgressOption.name })}
 					</span>
 				</div>
 			{/if}
