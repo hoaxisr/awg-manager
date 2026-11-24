@@ -13,6 +13,7 @@
 		egressValidation: ReturnType<typeof isDraftEgressValid>;
 		currentXrayEgressOption: EgressOption | undefined;
 		currentTgEgressOption: EgressOption | undefined;
+		xrayRouterOption: EgressOption | undefined;
 		xrayEgressCategory: 'direct' | 'router' | 'tunnel';
 		tgEgressCategory: 'direct' | 'tunnel';
 		xrayTunnelOptions: EgressOption[];
@@ -30,6 +31,7 @@
 		egressValidation,
 		currentXrayEgressOption,
 		currentTgEgressOption,
+		xrayRouterOption,
 		xrayEgressCategory,
 		tgEgressCategory,
 		xrayTunnelOptions,
@@ -69,11 +71,11 @@
 				{draft.selectedKind === 'both' ? m.servers_ext_wiz_s4_vless_both() : m.servers_ext_wiz_s4_vless_route()}
 			</div>
 
-			{#if currentXrayEgressOption && !currentXrayEgressOption.available}
+			{#if currentXrayEgressOption && !currentXrayEgressOption.available && currentXrayEgressOption.unavailable_reason !== egressValidation.reason}
 				<div class="legacy-egress-banner">
 					<AlertTriangle size={15} />
 					<span>
-						{m.servers_ext_wiz_s4_current_unavailable({ name: currentXrayEgressOption.name })}
+						{currentXrayEgressOption.unavailable_reason || m.servers_ext_wiz_s4_current_unavailable({ name: currentXrayEgressOption.name })}
 					</span>
 				</div>
 			{/if}
@@ -95,11 +97,12 @@
 					type="button"
 					class="choice-card compact"
 					class:selected={xrayEgressCategory === 'router'}
+					disabled={xrayRouterOption && !xrayRouterOption.available}
 					onclick={() => onselectxraycategory('router')}
 				>
 					<div class="choice-title">{EXTERNAL_ACCESS_LABELS.egressFirc}</div>
 					<div class="choice-text">
-						{m.servers_ext_wiz_s4_router_text()}
+						{(!xrayRouterOption?.available && xrayRouterOption?.unavailable_reason) || m.servers_ext_wiz_s4_router_text()}
 					</div>
 				</button>
 
@@ -180,7 +183,7 @@
 				<div class="legacy-egress-banner">
 					<AlertTriangle size={15} />
 					<span>
-						{m.servers_ext_wiz_s4_current_unavailable({ name: currentTgEgressOption.name })}
+						{currentTgEgressOption.unavailable_reason || m.servers_ext_wiz_s4_current_unavailable({ name: currentTgEgressOption.name })}
 					</span>
 				</div>
 			{/if}
@@ -301,7 +304,7 @@
 
 	.legacy-egress-banner {
 		display: flex;
-		align-items: center;
+		align-items: flex-start;
 		gap: 8px;
 		padding: 9px 12px;
 		border-radius: var(--radius-sm);
@@ -309,6 +312,12 @@
 		background: var(--color-warning-tint);
 		color: var(--color-warning);
 		font-size: 12px;
+	}
+
+	/* Причина бывает в три строки: иконка не сжимается и стоит у первой. */
+	.legacy-egress-banner :global(svg) {
+		flex-shrink: 0;
+		margin-top: 1px;
 	}
 
 	.egress-list {

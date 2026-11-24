@@ -9,6 +9,33 @@
 
 	let { plan }: Props = $props();
 
+	const ACTION_LABELS: Record<string, () => string> = {
+		create: m.servers_wizard_action_create,
+		enable: m.servers_wizard_action_enable,
+		modify: m.servers_wizard_action_modify,
+		keep: m.servers_wizard_action_keep,
+		publish: m.servers_wizard_action_publish,
+		disable: m.servers_wizard_action_disable,
+	};
+
+	const TARGET_LABELS: Record<string, () => string> = {
+		'awgm-xhttpd': m.servers_wizard_target_xhttpd,
+		'cdn-dispatcher': m.servers_wizard_target_dispatcher,
+		client: m.servers_wizard_target_client,
+		direct_host: m.servers_wizard_target_direct_host,
+		keendns_proxy: m.servers_wizard_target_keendns,
+		origin_source: m.servers_wizard_target_origin,
+		outbound_routing: m.servers_wizard_target_outbound,
+		public_domain: m.servers_wizard_target_public_domain,
+		telemt: m.servers_wizard_target_telemt,
+		tgwebproxy: m.servers_wizard_target_tgwebproxy,
+		'tproxy-server': m.servers_wizard_target_tproxy,
+		upstream_egress: m.servers_wizard_target_upstream,
+	};
+
+	// Неизвестное серверу-новее значение показываем как есть.
+	const label = (labels: Record<string, () => string>, key: string) => labels[key]?.() ?? key;
+
 	function formatFingerprint(fp: string): string {
 		if (!fp || fp.length < 12) return fp;
 		return fp.slice(0, 6) + '...' + fp.slice(-6);
@@ -55,12 +82,12 @@
 				<div class="item-row">
 					<div class="item-main">
 						<span class="action-badge action-{item.action}">
-							{item.action}
+							{label(ACTION_LABELS, item.action)}
 						</span>
 						<div class="item-desc-group">
 							<div class="item-desc">{item.description}</div>
 							<div class="item-target">
-								{m.servers_wizard_plan_target()} <span class="target-val">{item.target}</span>
+								{m.servers_wizard_plan_target()} <span class="target-val">{label(TARGET_LABELS, item.target)}</span>
 							</div>
 						</div>
 					</div>
@@ -196,7 +223,8 @@
 		display: flex;
 		align-items: flex-start;
 		gap: 0.625rem;
-		flex: 1;
+		/* Основа, а не 0: иначе строка не переносится и широкое значение сжимает описание до буквы. */
+		flex: 1 1 16rem;
 		min-width: 0;
 	}
 
@@ -226,6 +254,24 @@
 		background: var(--color-info-tint);
 		border: 1px solid var(--color-info-border);
 		color: var(--color-info);
+	}
+
+	.action-publish {
+		background: var(--color-accent-tint);
+		border: 1px solid var(--color-accent-border);
+		color: var(--color-accent);
+	}
+
+	.action-keep {
+		background: var(--color-bg-tertiary);
+		border: 1px solid var(--color-border);
+		color: var(--color-text-secondary);
+	}
+
+	.action-disable {
+		background: var(--color-warning-tint);
+		border: 1px solid var(--color-warning-border);
+		color: var(--color-warning);
 	}
 
 	.item-desc-group {

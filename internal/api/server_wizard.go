@@ -130,29 +130,8 @@ func (h *ServerWizardHandler) Route(kind string) http.HandlerFunc {
 }
 
 func (h *ServerWizardHandler) checkCSRF(r *http.Request) (string, bool) {
-	origin := r.Header.Get("Origin")
-	referer := r.Header.Get("Referer")
-
-	reqScheme := "http"
-	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
-		reqScheme = "https"
-	}
-
-	// Strict Same-Origin validation
-	if origin == "" && referer == "" {
+	if !sameOriginRequest(r) {
 		return "", false
-	}
-	if origin != "" {
-		u, err := url.Parse(origin)
-		if err != nil || u.Host == "" || !strings.EqualFold(u.Host, r.Host) || (u.Scheme != "" && u.Scheme != reqScheme) {
-			return "", false
-		}
-	}
-	if referer != "" {
-		u, err := url.Parse(referer)
-		if err != nil || u.Host == "" || !strings.EqualFold(u.Host, r.Host) || (u.Scheme != "" && u.Scheme != reqScheme) {
-			return "", false
-		}
 	}
 
 	token := r.Header.Get("X-CSRF-Token")

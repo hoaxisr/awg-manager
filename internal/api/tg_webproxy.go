@@ -11,7 +11,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -90,28 +89,9 @@ func (h *TgWebProxyHandler) GetCSRFToken(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Cache-Control", "no-store, private")
 	w.Header().Set("Pragma", "no-cache")
 
-	origin := r.Header.Get("Origin")
-	referer := r.Header.Get("Referer")
-
-	// Strict Same-Origin validation: require Origin or Referer
-	if origin == "" && referer == "" {
-		WriteError(w, http.StatusForbidden, "missing origin and referer")
+	if !sameOriginRequest(r) {
+		WriteError(w, http.StatusForbidden, "cross-origin request")
 		return
-	}
-
-	if origin != "" {
-		u, err := url.Parse(origin)
-		if err != nil || u.Host == "" || !strings.EqualFold(u.Host, r.Host) {
-			WriteError(w, http.StatusForbidden, "invalid origin")
-			return
-		}
-	}
-	if referer != "" {
-		u, err := url.Parse(referer)
-		if err != nil || u.Host == "" || !strings.EqualFold(u.Host, r.Host) {
-			WriteError(w, http.StatusForbidden, "invalid referer")
-			return
-		}
 	}
 
 	var csrfSubject string
@@ -154,25 +134,8 @@ func (h *TgWebProxyHandler) GetCSRFToken(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *TgWebProxyHandler) checkCSRF(r *http.Request) bool {
-	origin := r.Header.Get("Origin")
-	referer := r.Header.Get("Referer")
-
-	// Mutating endpoints strictly require Origin or Referer
-	if origin == "" && referer == "" {
+	if !sameOriginRequest(r) {
 		return false
-	}
-
-	if origin != "" {
-		u, err := url.Parse(origin)
-		if err != nil || u.Host == "" || !strings.EqualFold(u.Host, r.Host) {
-			return false
-		}
-	}
-	if referer != "" {
-		u, err := url.Parse(referer)
-		if err != nil || u.Host == "" || !strings.EqualFold(u.Host, r.Host) {
-			return false
-		}
 	}
 
 	token := r.Header.Get("X-CSRF-Token")

@@ -530,6 +530,25 @@ describe('externalAccessModel', () => {
 		expect(validity.valid).toBe(false);
 		expect(validity.reason).toContain('Удалённый туннель');
 
+		// «По правилам роутера» без FIRC сервер отвергнет — черновик тоже.
+		draft.upstreamDevice = 'firc:router';
+		const router = (available: boolean) => isDraftEgressValid(draft, [
+			{
+				id: 'firc:router',
+				kind: 'router_outbound',
+				owner: 'firc',
+				name: 'По правилам роутера',
+				iface: 'router',
+				available,
+				unavailable_reason: available ? undefined : 'Правила FIRC неактивны',
+				supports_tcp: true,
+				supports_udp: true,
+				generation: 1,
+			},
+		]).reason ?? '';
+		expect(router(false)).toBe('Правила FIRC неактивны');
+		expect(router(true)).not.toContain('FIRC неактивны');
+
 		// Switch to KeenDNS create mode and disable Telegram
 		draft.selectedKind = 'xray';
 		draft.disableOtherService = true;

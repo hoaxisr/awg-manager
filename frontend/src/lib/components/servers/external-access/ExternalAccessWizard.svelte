@@ -204,6 +204,8 @@
 		)
 	);
 
+	let xrayRouterOption = $derived(allEgressOptions.find((o) => o.id === 'firc:router'));
+
 	let currentTgEgressOption = $derived(
 		allEgressOptions.find(
 			(o) => o.id === draft.tgUpstreamDevice || o.iface === draft.tgUpstreamDevice
@@ -804,6 +806,7 @@
 					{egressValidation}
 					{currentXrayEgressOption}
 					{currentTgEgressOption}
+					{xrayRouterOption}
 					{xrayEgressCategory}
 					{tgEgressCategory}
 					{xrayTunnelOptions}
@@ -925,6 +928,21 @@
 
 	:where(.ext-wizard) :global(.choice-card:hover) {
 		border-color: var(--color-accent);
+	}
+
+	:where(.ext-wizard) :global(.choice-card:disabled) {
+		cursor: not-allowed;
+		/* Глобальное :disabled гасит карточку целиком вместе с причиной. */
+		opacity: 1;
+	}
+
+	/* Гасим только заголовок: текст карточки называет причину недоступности. */
+	:where(.ext-wizard) :global(.choice-card:disabled .choice-title) {
+		color: var(--color-text-muted);
+	}
+
+	:where(.ext-wizard) :global(.choice-card:disabled .choice-text) {
+		color: var(--color-text-secondary);
 	}
 
 	:where(.ext-wizard) :global(.choice-card.selected) {
