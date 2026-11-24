@@ -422,6 +422,7 @@ func (o *OperatorOS5Impl) ColdStart(ctx context.Context, cfg tunnel.Config) erro
 	o.logInfo("start", cfg.ID, fmt.Sprintf("Kernel interface configured (mtu=%d)", mtu))
 
 	if err := o.quiesceUplink(ctx, cfg.ID, names.IfaceName); err != nil {
+		o.rollbackStart(ctx, cfg, names, iface, justCreated, up, applied)
 		return err
 	}
 	if err := o.wg.SetConf(ctx, names.IfaceName, cfg.ConfPath); err != nil {

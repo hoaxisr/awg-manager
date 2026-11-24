@@ -391,17 +391,8 @@ type snapshotSettingsRouterSchema struct {
 	PolicyTunDescription    string   `json:"policyTunDescription"`
 	CacheFileLocation       string   `json:"cacheFileLocation"`
 	RoutingEngine           string   `json:"routingEngine"`
-	MihomoMixedPort         int      `json:"mihomoMixedPort"`
-	MihomoHTTPPort          int      `json:"mihomoHttpPort"`
-	MihomoSOCKSPort         int      `json:"mihomoSocksPort"`
-	MihomoTrafficMode       string   `json:"mihomoTrafficMode"`
-	MihomoGlobalTarget      string   `json:"mihomoGlobalTarget"`
-	ProxyGroups             []any    `json:"proxyGroups"`
-	KeeneticCloudTunnel     bool     `json:"keeneticCloudTunnel"`
-	KeeneticCloudOutbound   string   `json:"keeneticCloudOutbound"`
-	DynamicCloudCIDRs       []string `json:"dynamicCloudCIDRs"`
-	SusaninEnabled          bool     `json:"susaninEnabled"`
-	SusaninOutbound         string   `json:"susaninOutbound"`
+	GlobalOutbound          string   `json:"globalOutbound"`
+	KeenDNSCloudOutbound    string   `json:"keenDNSCloudOutbound"`
 }
 
 type snapshotSettingsSchema struct {
@@ -491,15 +482,8 @@ func validateSettingsJSONSemantics(data []byte) error {
 			return fmt.Errorf("invalid singboxRouter.deviceMode %q in settings.json", dm)
 		}
 	}
-	for _, p := range []int{
-		parsed.SingboxRouter.MihomoMixedPort,
-		parsed.SingboxRouter.MihomoHTTPPort,
-		parsed.SingboxRouter.MihomoSOCKSPort,
-		parsed.SingboxClashPort,
-	} {
-		if p < 0 || p > 65535 {
-			return fmt.Errorf("invalid port %d in settings.json", p)
-		}
+	if p := parsed.SingboxClashPort; p < 0 || p > 65535 {
+		return fmt.Errorf("invalid port %d in settings.json", p)
 	}
 	if p4 := strings.TrimSpace(parsed.SingboxRouter.FakeIPPool4); p4 != "" {
 		pfx, err := netip.ParsePrefix(p4)

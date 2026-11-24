@@ -622,9 +622,14 @@ func (h *TunnelsHandler) EditTunnelWith(ctx context.Context, id string, build fu
 	if routeChanged {
 		stateInfo := h.svc.GetState(ctx, id)
 		if stateInfo.State == tunnel.StateRunning {
-			if err := h.orch.HandleEvent(ctx, orchestrator.Event{
-				Type: orchestrator.EventRestart, Tunnel: id,
-			}); err != nil {
+			release, err := h.svc.GuardUplinkMutation(ctx, id, "lifecycle")
+			if err == nil {
+				err = h.orch.HandleEvent(ctx, orchestrator.Event{
+					Type: orchestrator.EventRestart, Tunnel: id,
+				})
+				release()
+			}
+			if err != nil {
 				h.log.Warn("update", merged.Name, "Restart for routing changes failed: "+err.Error())
 			} else {
 				restarted = true

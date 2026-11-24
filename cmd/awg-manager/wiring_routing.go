@@ -109,7 +109,7 @@ func (a *app) setupOrchestrator() {
 	// Route SetInterfaceUp for managed tunnels through the orchestrator
 	// lifecycle (NativeWG needs kmod proxy + endpoint rewrite, not a raw NDMS
 	// flip — issue #183). System interfaces keep the raw flip.
-	a.accessPolicySvc.SetTunnelLifecycle(orchLifecycleAdapter{a.orch}, storeManagedTunnelResolver{a.awgStore})
+	a.accessPolicySvc.SetTunnelLifecycle(orchLifecycleAdapter{a.orch, a.tunnelService.GuardUplinkMutation}, storeManagedTunnelResolver{a.awgStore})
 	// Больной туннель мониторинг уводит из политик снятием permit (F743).
 	a.pingCheckService.SetPolicies(pingcheckPolicies{a.accessPolicySvc, a.ndmsQueries.Policies})
 	a.accessPolicySvc.SetPolicyHolds(a.pingCheckService)

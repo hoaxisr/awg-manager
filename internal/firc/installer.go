@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 const (
@@ -375,18 +377,7 @@ func StageTargetPackageAssets(sourceRepoRoot, fircdSrcBin, tunvlessSrcBin, targe
 		if err != nil {
 			return fmt.Errorf("read %s: %w", src, err)
 		}
-		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-			return err
-		}
-		tmp := dst + ".tmp"
-		if err := os.WriteFile(tmp, data, mode); err != nil {
-			return err
-		}
-		if err := os.Chmod(tmp, mode); err != nil {
-			_ = os.Remove(tmp)
-			return err
-		}
-		return os.Rename(tmp, dst)
+		return storage.AtomicWritePerm(dst, data, mode)
 	}
 
 	fircFilesRoot := filepath.Join(sourceRepoRoot, "c-core", "firc", "files")

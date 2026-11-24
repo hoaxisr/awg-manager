@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { api } from '$lib/api/client';
+	import { m } from '$lib/i18n';
 	import { Button } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
 	import type { XrayRealityState, XrayRealityTransport, XrayRealityDestCheck } from '$lib/types/xray';
@@ -57,7 +58,7 @@
 		try {
 			destCheck = await api.checkXrayRealityDest(dest.trim(), serverName.trim() || undefined);
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Проверка не удалась');
+			notifications.error(e instanceof Error ? e.message : m.servers_xray_reality_check_failed());
 		} finally {
 			destChecking = false;
 		}
@@ -69,7 +70,7 @@
 			const fresh = await api.getXrayReality(true);
 			onrefreshed?.(fresh);
 		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : 'Не удалось проверить WAN');
+			notifications.error(e instanceof Error ? e.message : m.servers_xray_reality_wan_check_failed());
 		} finally {
 			netRefreshing = false;
 		}
@@ -80,32 +81,32 @@
 	<div class="rf-banner" class:ok={net?.white_ip} class:warn={!net?.white_ip}>
 		{#if !net}
 			<AlertTriangle size={15} class="rf-banner-icon" />
-			<span class="rf-banner-text">Внешний IP роутера ещё не проверялся.</span>
+			<span class="rf-banner-text">{m.servers_xray_reality_ip_unchecked()}</span>
 		{:else if net.white_ip}
 			<CheckCircle2 size={15} class="rf-banner-icon" />
 			<span class="rf-banner-text">
-				Белый IP: <b class="mono">{net.external_ip || net.wan_address}</b>{net.keendns_domain ? ` · ссылки на KeenDNS ${net.keendns_domain}` : ''}
+				{m.servers_xray_reality_white_ip()} <b class="mono">{net.external_ip || net.wan_address}</b>{net.keendns_domain ? m.servers_xray_reality_keendns_links({ domain: net.keendns_domain }) : ''}
 			</span>
 		{:else}
 			<AlertTriangle size={15} class="rf-banner-icon" />
-			<span class="rf-banner-text">Белый IP не обнаружен: {net.reason || 'адрес недоступен извне'}. Reality требует входящих подключений к роутеру.</span>
+			<span class="rf-banner-text">{m.servers_xray_reality_no_white_ip({ reason: net.reason || m.servers_xray_reality_unreachable() })}</span>
 		{/if}
 		<button type="button" class="rf-link" onclick={refreshNet} disabled={netRefreshing}>
-			<RefreshCw size={12} />{netRefreshing ? 'Проверка…' : 'Проверить'}
+			<RefreshCw size={12} />{netRefreshing ? m.servers_xray_checking() : m.common_check()}
 		</button>
 	</div>
 
 	{#if showTransport}
 		<div class="rf-field">
-			<span class="rf-label">Транспорт Reality</span>
+			<span class="rf-label">{m.servers_xray_reality_transport()}</span>
 			<div class="rf-seg">
 				<button type="button" class="rf-seg-btn" class:active={transport === 'tcp'} onclick={() => (transport = 'tcp')}>
-					<b>TCP (raw) · Рекомендуется</b>
-					<small>Максимальная скорость и минимум нагрузки на CPU роутера.</small>
+					<b>{m.servers_xray_reality_tcp_title()}</b>
+					<small>{m.servers_xray_reality_tcp_desc()}</small>
 				</button>
 				<button type="button" class="rf-seg-btn" class:active={transport === 'xhttp'} onclick={() => (transport = 'xhttp')}>
 					<b>XHTTP (stream-one)</b>
-					<small>HTTP/2-поток внутри Reality. Чуть медленнее, похож на обычный веб-трафик.</small>
+					<small>{m.servers_xray_reality_xhttp_desc()}</small>
 				</button>
 			</div>
 		</div>
@@ -113,28 +114,28 @@
 
 	<div class="rf-row">
 		<label class="rf-field">
-			<span class="rf-label">Внешний TCP-порт</span>
+			<span class="rf-label">{m.servers_xray_reality_port()}</span>
 			<input class="rf-input mono" type="number" min="1024" max="65535" bind:value={port} />
 			<span class="rf-hint">
-				Свободные: {(rs?.port_candidates ?? [2053, 2083, 2087, 2096]).slice(0, 6).join(', ')}. Заняты: 443, 1099, 8443, 9007–9009, 51820.
+				{m.servers_xray_reality_port_hint({ free: (rs?.port_candidates ?? [2053, 2083, 2087, 2096]).slice(0, 6).join(', ') })}
 			</span>
 		</label>
 		{#if showPublicHost}
 			<label class="rf-field">
-				<span class="rf-label">Адрес для ссылок (необязательно)</span>
-				<input class="rf-input mono" placeholder={net?.public_host || 'авто'} bind:value={publicHost} />
-				<span class="rf-hint">Пусто — KeenDNS (прямой доступ) или внешний IP.</span>
+				<span class="rf-label">{m.servers_xray_reality_public_host()}</span>
+				<input class="rf-input mono" placeholder={net?.public_host || m.servers_xray_auto()} bind:value={publicHost} />
+				<span class="rf-hint">{m.servers_xray_reality_public_host_hint()}</span>
 			</label>
 		{/if}
 	</div>
 
 	<div class="rf-field">
-		<span class="rf-label">Сайт-маскировка (dest)</span>
+		<span class="rf-label">{m.servers_xray_reality_dest()}</span>
 		<div class="rf-dest-row">
 			<input class="rf-input mono" bind:value={dest} oninput={() => (destCheck = null)} />
 			<Button variant="secondary" size="sm" onclick={checkDest} disabled={destChecking || !dest.trim()}>
 				<ShieldCheck size={14} class="rf-btn-icon" />
-				{destChecking ? 'Проверка…' : 'Проверить'}
+				{destChecking ? m.servers_xray_checking() : m.common_check()}
 			</Button>
 		</div>
 		<div class="rf-chips">
@@ -153,15 +154,15 @@
 				</button>
 			{/each}
 		</div>
-		<span class="rf-hint">Реальный сайт с TLS 1.3 + X25519. Сканеры и DPI, подключившись к порту, увидят именно его.</span>
+		<span class="rf-hint">{m.servers_xray_reality_dest_hint()}</span>
 		{#if destCheck}
 			<div class="rf-banner" class:ok={destCheck.ok} class:warn={!destCheck.ok}>
 				{#if destCheck.ok}
 					<CheckCircle2 size={15} class="rf-banner-icon" />
-					<span class="rf-banner-text">{destCheck.dest}: TLS 1.3 ✓ · X25519 ✓ · HTTP/2 {destCheck.h2 ? '✓' : '✗ (допустимо)'} · {destCheck.latency_ms} мс</span>
+					<span class="rf-banner-text">{m.servers_xray_reality_dest_ok({ dest: destCheck.dest, h2: destCheck.h2 ? '✓' : m.servers_xray_reality_h2_missing(), ms: destCheck.latency_ms })}</span>
 				{:else}
 					<AlertTriangle size={15} class="rf-banner-icon" />
-					<span class="rf-banner-text">{destCheck.dest}: не подходит — {destCheck.error || 'нет TLS 1.3/X25519'}</span>
+					<span class="rf-banner-text">{m.servers_xray_reality_dest_bad({ dest: destCheck.dest, error: destCheck.error || m.servers_xray_reality_dest_bad_default() })}</span>
 				{/if}
 			</div>
 		{/if}
@@ -170,7 +171,7 @@
 	<label class="rf-field">
 		<span class="rf-label">SNI (serverName)</span>
 		<input class="rf-input mono" placeholder={destHost(dest)} bind:value={serverName} />
-		<span class="rf-hint">Обычно совпадает с доменом сайта-маскировки.</span>
+		<span class="rf-hint">{m.servers_xray_reality_sni_hint()}</span>
 	</label>
 </div>
 

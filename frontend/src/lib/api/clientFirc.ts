@@ -1,4 +1,5 @@
-import { TelemtClient } from './clientTelemt';
+import { m } from '$lib/i18n';
+import { WarpScoutClient } from './clientWarpScout';
 import {
 	stripFircEmojis,
 	type FircCaptureRes,
@@ -43,7 +44,7 @@ import {
 	type FircInstallStatus,
 } from '$lib/types/firc';
 
-export class FircClient extends TelemtClient {
+export class FircClient extends WarpScoutClient {
 	protected async requestV1<T>(subPath: string, options: RequestInit = {}): Promise<T> {
 		const url = `${this.baseUrl}/firc/v1${subPath}`;
 		let response: Response;
@@ -58,12 +59,12 @@ export class FircClient extends TelemtClient {
 			});
 		} catch (e) {
 			if (e instanceof DOMException && e.name === 'AbortError') throw e;
-			throw new Error('Ошибка сети при обращении к fircd');
+			throw new Error(m.firc_api_network_error());
 		}
 
 		if (response.status === 401) {
 			this.onUnauthorized?.();
-			throw new Error('Сессия истекла');
+			throw new Error(m.api_session_expired());
 		}
 
 		if (response.status === 204) {
@@ -88,7 +89,7 @@ export class FircClient extends TelemtClient {
 				group?: string;
 				tunnel?: string;
 			};
-			const msg = obj.error || obj.message || text || `Ошибка fircd (${response.status})`;
+			const msg = obj.error || obj.message || text || m.firc_api_error({ status: response.status });
 			const err: Error & {
 				status?: number;
 				field?: string;

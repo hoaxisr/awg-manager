@@ -5,23 +5,59 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync"
 )
+
+// targetOwner — адаптер, который знает, держит ли он привязку цели.
+type targetOwner interface{ OwnsTarget(string) bool }
+
+// managesRef — туннель под политикой (любой, в том числе выключенной или
+// цели незавершённого переименования) либо во владении адаптера.
+func (c *Controller) managesRef(ref string) bool {
+	for _, p := range c.store.MaterializationPolicies() {
+		if p.Target.Ref == ref {
+			return true
+		}
+	}
+	for _, a := range c.adapters {
+		if o, ok := a.(targetOwner); ok && o.OwnsTarget(ref) {
+			return true
+		}
+	}
+	return false
+}
 
 // GuardNativeMutation takes the controller before service/operator locks. A
 // lifecycle change may stop/restart a tunnel; protected transport edits and
-// deletion require relinquishing its policy first.
+// deletion require relinquishing its policy first. Туннель вне политик и
+// без привязки не ждёт ни проб чужих ref, ни gate, ни паузы бэкапа, но
+// держит семафор своего ref всю операцию: Put политики на этот же ref
+// (Activate) не вклинится между решением «не управляется» и разрушающим
+// шагом. Решение принимается уже под семафором. Туннель политики ждёт
+// gate и замок своего ref.
 func (c *Controller) GuardNativeMutation(ctx context.Context, ref, operation string) (func(), error) {
-	lease, err := c.AcquireEngineTransition(ctx)
+	own := c.refLock(ref)
+	select {
+	case own <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	if !c.managesRef(ref) {
+		var once sync.Once
+		return func() { once.Do(func() { <-own }) }, nil
+	}
+	<-own
+	release, err := c.lockRefs(ctx, ref)
 	if err != nil {
 		return nil, err
 	}
-	if c.paused {
-		lease.Release()
+	if c.paused.Load() {
+		release()
 		return nil, fmt.Errorf("%w: uplink paused for backup", ErrConflict)
 	}
 	for _, p := range c.store.List() {
 		if p.Enabled && (p.Target.Engine == "wireguard" || p.Target.Engine == "system-wireguard" || p.Target.Engine == "kernel-amneziawg") && p.Target.Ref == ref && operation != "lifecycle" && operation != "metadata" {
-			lease.Release()
+			release()
 			return nil, fmt.Errorf("%w: disable uplink policy %q before changing or deleting its native tunnel", ErrConflict, p.ID)
 		}
 	}
@@ -30,13 +66,13 @@ func (c *Controller) GuardNativeMutation(ctx context.Context, ref, operation str
 		for _, engine := range []string{"wireguard", "system-wireguard", "kernel-amneziawg"} {
 			if a, ok := c.adapters[engine].(Releaser); ok {
 				if err := a.ReleaseUplink(ctx, Target{Engine: engine, Ref: ref}); err != nil {
-					lease.Release()
+					release()
 					return nil, err
 				}
 			}
 		}
 	}
-	return lease.Release, nil
+	return release, nil
 }
 
 func (c *Controller) Targets(ctx context.Context) ([]TargetInfo, error) {

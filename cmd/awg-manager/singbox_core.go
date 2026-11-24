@@ -6,9 +6,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/awg3endpoint"
 	"github.com/hoaxisr/awg-manager/internal/events"
+	"github.com/hoaxisr/awg-manager/internal/fpclient"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	ndmscommand "github.com/hoaxisr/awg-manager/internal/ndms/command"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
@@ -209,6 +211,15 @@ func (a *app) setupSingboxRuntime() {
 	})
 	a.singboxOp = core.op
 	a.sbOrch = core.orch
+	// Endpoint awgm-fpc создаётся при разборе ссылки, а сверяется здесь: после
+	// reload усыпляем те, на чей socks-порт не ссылается ни слот sing-box, ни
+	// конфиг FIRC, и будим вернувшиеся.
+	a.sbOrch.SetAfterReload(func() {
+		roots := []string{a.sbOrch.ConfigDir(), resolveFircConfigDir(a.dataDir)}
+		if err := fpclient.ReconcileReferenced(roots, 2*time.Minute); err != nil {
+			a.bootLog.Warn("fpclient-reconcile", "", err.Error())
+		}
+	})
 	a.awg3Store = core.awg3Store
 	singboxConfigDir := a.singboxOp.ConfigDir()
 	a.awg3Svc = awg3endpoint.NewService(a.awg3Store, a.sbOrch, a.loggingService)

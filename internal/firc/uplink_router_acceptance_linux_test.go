@@ -292,7 +292,7 @@ func TestRouterFIRCUplinkAcceptance(t *testing.T) {
 		unblock()
 		must(c.Switch(ctx, p.ID, "ethernet", p.Revision))
 		healthy("ethernet")
-		must(c.Delete(p.ID, p.Revision))
+		must(c.Delete(ctx, p.ID, p.Revision))
 	}
 	run("standalone")
 	var sub Tunnel

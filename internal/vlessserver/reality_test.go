@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -264,5 +265,69 @@ func TestUpdateRealityReset(t *testing.T) {
 	}
 	if disk.Enabled || disk.PrivateKey != "" || disk.PublicKey != "" || len(disk.ShortIDs) != 0 {
 		t.Fatalf("expected reset settings persisted on disk, got %+v", disk)
+	}
+}
+
+// F854: VLESS за входом REALITY обслуживает основной C-демон — его путь
+// попадает демону только пока вход нужен, а вход ходит к демону по loopback.
+func TestRealityPathServedByDaemon(t *testing.T) {
+	s := newRealityTestService(t)
+	var got xhttpserver.Config
+	s.SetTestRuntimeHook(func(cfg xhttpserver.Config) error { got = cfg; return nil })
+	ln, err := net.Listen("tcp", "0.0.0.0:0")
+	if err != nil {
+		t.Skip(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+	priv, _, _ := realityserver.GenerateKeyPair()
+	sid, _ := realityserver.GenerateShortID()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t.Cleanup(func() { s.realitySrv.Stop() })
+	s.config.Enabled = true
+	s.config.ListenAddress = "0.0.0.0"
+	s.config.Clients = []Client{{ID: "b831381d-6324-4d53-ad4f-8cda48b30811", Enabled: true}}
+	s.reality = RealitySettings{Enabled: true, Port: port, Transport: "xhttp", Dest: "www.example.com:443",
+		PrivateKey: priv, ShortIDs: []string{sid}, XHTTPPath: "/rx9"}
+
+	if err := s.syncDaemonLocked(); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(got.PathPrefixes, "/rx9") {
+		t.Fatalf("daemon prefixes %v lack the REALITY path", got.PathPrefixes)
+	}
+	if s.realityLastErr != "" || !s.realitySrv.IsRunning() {
+		t.Fatalf("reality not running: %q", s.realityLastErr)
+	}
+	if up := s.realityRuntimeConfigLocked().Upstream; !strings.HasPrefix(up, "127.0.0.1:") {
+		t.Fatalf("upstream %q is not loopback", up)
+	}
+
+	s.reality.Enabled = false
+	if err := s.syncDaemonLocked(); err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(got.PathPrefixes, "/rx9") || s.realitySrv.IsRunning() {
+		t.Fatalf("disabled REALITY still served: %v", got.PathPrefixes)
+	}
+}
+
+// Без запущенного C-демона вход REALITY не поднимается, а ошибка видна.
+func TestRealityNotStartedWithoutDaemon(t *testing.T) {
+	s := newRealityTestService(t)
+	s.SetTestRuntimeHook(nil)
+	priv, _, _ := realityserver.GenerateKeyPair()
+	sid, _ := realityserver.GenerateShortID()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.config.Enabled = true
+	s.config.Clients = []Client{{ID: "b831381d-6324-4d53-ad4f-8cda48b30811", Enabled: true}}
+	s.reality = RealitySettings{Enabled: true, Port: 20444, Transport: "tcp", Dest: "www.example.com:443",
+		PrivateKey: priv, ShortIDs: []string{sid}}
+	s.syncRealityLocked()
+	if s.realitySrv.IsRunning() || !strings.Contains(s.realityLastErr, "не запущен") {
+		t.Fatalf("running=%v err=%q", s.realitySrv.IsRunning(), s.realityLastErr)
 	}
 }

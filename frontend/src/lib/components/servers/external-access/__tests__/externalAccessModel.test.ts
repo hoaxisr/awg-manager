@@ -25,6 +25,7 @@ import type {
 	TgWebProxyStatus,
 	CDNDispatcherConfig,
 } from '$lib/types';
+import { uiText } from '$lib/i18n';
 
 describe('connectionLabels', () => {
 	it('formats Telegram carrier mode accurately without misleading WebSocket labels', () => {
@@ -595,7 +596,7 @@ describe('externalAccessModel', () => {
 		});
 		expect(draft.selectedMode).toBe('xhttp_get');
 		expect(draft.preserveTransport).toBe(false);
-		expect(draft.connectionSchemeWarning).toContain('C-ядром');
+		expect(uiText(draft.connectionSchemeWarning)).toContain('C-ядром');
 	});
 
 	it('treats embedded tgwebproxy runtime as unconfigured before user setup and serializes XHTTP/CDN contract fields', () => {

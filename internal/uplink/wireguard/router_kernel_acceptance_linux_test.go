@@ -256,7 +256,7 @@ func TestRouterKernelAWGUplinkAcceptance(t *testing.T) {
 		t.Fatal(err)
 	}
 	check("GigabitEthernet1")
-	if err = c.Delete(p.ID, p.Revision); err != nil {
+	if err = c.Delete(context.Background(), p.ID, p.Revision); err != nil {
 		t.Fatal(err)
 	}
 	t.Log("real kernel AmneziaWG selective transport fallback and manual return passed")

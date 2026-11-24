@@ -40,6 +40,7 @@ func (s *PlanStore) SavePlan(
 	fingerprint string,
 	ttl time.Duration,
 ) *ServerPlanRecord {
+	s.PruneExpired()
 	if ttl <= 0 {
 		ttl = DefaultPlanTTL
 	}
@@ -221,7 +222,9 @@ func (s *PlanStore) PruneExpired() {
 	defer s.mu.Unlock()
 
 	for id, rec := range s.plans {
-		if now.After(rec.ExpiresAt) {
+		// Зарезервированный план держит идущее задание: его MarkConsumed на
+		// точке невозврата не должен получить ErrPlanNotFound.
+		if now.After(rec.ExpiresAt) && rec.State != PlanStateReserved {
 			delete(s.plans, id)
 		}
 	}

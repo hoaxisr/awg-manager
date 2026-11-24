@@ -192,34 +192,29 @@ func isSystemSniffDraftMap(m map[string]any) bool {
 
 // syncDraftSniffRule приводит системное правило sniff (`{"action":"sniff", ...}`
 // без условий, см. isSystemSniffRule) в route.rules черновика к want: снимает
-// все такие правила или ставит одно первым (с DefaultSniffTimeout), как EnsureSystemRules.
+// все такие правила или ставит одно первым, как EnsureSystemRules.
 func syncDraftSniffRule(route map[string]any, want bool) bool {
 	rules, _ := route["rules"].([]any)
 	kept := make([]any, 0, len(rules))
 	has := false
-	changed := false
 	for _, v := range rules {
 		if m, ok := v.(map[string]any); ok && isSystemSniffDraftMap(m) {
 			has = true
 			if !want {
 				continue
 			}
-			if t, _ := m["timeout"].(string); t == "" {
-				m["timeout"] = DefaultSniffTimeout
-				changed = true
-			}
 		}
 		kept = append(kept, v)
 	}
 	switch {
 	case want && !has:
-		route["rules"] = append([]any{map[string]any{"action": "sniff", "timeout": DefaultSniffTimeout}}, kept...)
+		route["rules"] = append([]any{map[string]any{"action": "sniff"}}, kept...)
 		return true
 	case !want && has:
 		route["rules"] = kept
 		return true
 	}
-	return changed
+	return false
 }
 
 // syncDraftTunExternal переносит флаг external_configuration tun-in из

@@ -482,15 +482,6 @@
 	.badge + .mem-delay-spin {
 		margin-left: 0.5rem;
 	}
-
-	:global(.spin) {
-		animation: spin 1s linear infinite;
-	}
-	@keyframes spin {
-		from { transform: rotate(0deg); }
-		to { transform: rotate(360deg); }
-	}
-
 	.mem-label {
 		font-family: var(--font-mono);
 		overflow: hidden;

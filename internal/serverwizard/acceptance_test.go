@@ -237,7 +237,6 @@ func setupAcceptanceCoordinatorAndWizard(t *testing.T) (
 
 	fingerprint := NewFingerprintEngine(xray, disp, tg, recReader, egressAdp)
 	fingerprint.SetProcDir(procDir)
-	fingerprint.SetInitScripts([]string{})
 
 	planStore := NewPlanStore()
 	jobRunner := NewJobRunner()

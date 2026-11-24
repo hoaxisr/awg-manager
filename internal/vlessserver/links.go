@@ -157,6 +157,14 @@ func BuildShareLinks(cfg Config, client Client) (*ShareLinks, error) {
 	if domain == "" {
 		return nil, errors.New("public domain is required")
 	}
+	// TLS через роутер (KeenDNS / direct) снимает nginx прошивки, а он говорит
+	// только HTTP/1.1 — HTTP/2 мы ему не включаем (F868). Xray для XHTTP не
+	// согласует версию: при h2 в alpn сразу шлёт HTTP/2 и рвётся. Внешний CDN
+	// h2 держит — ему оставляем.
+	alpn := []string{"h2", "http/1.1"}
+	if cfg.ConnectionWay == "direct" || IsKeenDNSHost(domain) {
+		alpn = []string{"http/1.1"}
+	}
 	port := cfg.PublicPort
 	if port <= 0 {
 		port = 443
@@ -331,11 +339,12 @@ func BuildShareLinks(cfg Config, client Client) (*ShareLinks, error) {
 		extraQuery = "&extra=" + url.QueryEscape(string(xhttpExtra))
 	}
 	vlessURL := fmt.Sprintf(
-		"vless://%s@%s:%d?encryption=none&security=tls&sni=%s&alpn=h2,http/1.1&type=xhttp&host=%s&path=%s&mode=%s&packetEncoding=xudp%s#%s",
+		"vless://%s@%s:%d?encryption=none&security=tls&sni=%s&alpn=%s&type=xhttp&host=%s&path=%s&mode=%s&packetEncoding=xudp%s#%s",
 		client.ID,
 		domain,
 		port,
 		domain,
+		strings.Join(alpn, ","),
 		domain,
 		url.QueryEscape(effectivePath),
 		xhttpMode,
@@ -392,7 +401,7 @@ func BuildShareLinks(cfg Config, client Client) (*ShareLinks, error) {
 		"uuid":            client.ID,
 		"security":        "tls",
 		"sni":             domain,
-		"alpn":            []string{"h2", "http/1.1"},
+		"alpn":            alpn,
 		"packet_encoding": "xudp",
 		"packetEncoding":  "xudp",
 		"network":         "xhttp",
@@ -471,7 +480,7 @@ func BuildShareLinks(cfg Config, client Client) (*ShareLinks, error) {
 		"tls": map[string]interface{}{
 			"enabled":     true,
 			"server_name": domain,
-			"alpn":        []string{"h2", "http/1.1"},
+			"alpn":        alpn,
 		},
 		"transport": transportMap,
 	}
@@ -486,15 +495,14 @@ func BuildShareLinks(cfg Config, client Client) (*ShareLinks, error) {
   tls: true
   servername: %s
   alpn:
-    - h2
-    - http/1.1
+%s
   packet-encoding: xudp
   network: xhttp
   xhttp-opts:
     mode: %s
     path: "%s"
     headers:
-      Host: "%s"`, client.Remark, domain, port, client.ID, domain, xhttpMode, effectivePath, domain)
+      Host: "%s"`, client.Remark, domain, port, client.ID, domain, "    - "+strings.Join(alpn, "\n    - "), xhttpMode, effectivePath, domain)
 
 	return &ShareLinks{
 		VlessURL:       vlessURL,

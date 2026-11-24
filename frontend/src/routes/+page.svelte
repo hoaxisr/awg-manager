@@ -51,6 +51,7 @@
 		fircTunnels,
 		fircTunnelsState,
 		reloadFircAll,
+		acquireFircTunnelsStatePoll,
 	} from '$lib/stores/firc';
 	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import { fircMigrationAppliedNonce } from '$lib/stores/fircMigrationModal';
@@ -155,22 +156,18 @@
 	// the last unsubscribe stops polling. `$tunnels` yields a
 	// PollingState<TunnelsSnapshot> — unwrap below.
 	let unsubTunnels: (() => void) | undefined;
-	let fircPollTimer: ReturnType<typeof setInterval> | null = null;
 	onMount(() => {
 		unsubTunnels = tunnels.subscribe(() => {});
-		fircPollTimer = setInterval(async () => {
-			if (!isSectionVisible($usageLevel, 'singboxTunnels')) return;
-			try {
-				const st = await api.fircGetTunnelsState();
-				if (st) fircTunnelsState.set(st);
-			} catch {
-				// ignore poll error
-			}
-		}, 3000);
 	});
 	onDestroy(() => {
 		unsubTunnels?.();
-		if (fircPollTimer) clearInterval(fircPollTimer);
+	});
+	// Состояние туннелей FIRC опрашивает один общий владелец в сторе
+	// (его же держит FircTunnelsTabSection); здесь — только пока секция
+	// видна на этом уровне интерфейса.
+	$effect(() => {
+		if (!isSectionVisible($usageLevel, 'singboxTunnels')) return;
+		return acquireFircTunnelsStatePoll();
 	});
 
 	let trafficTick = $state(0);

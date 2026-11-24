@@ -2466,6 +2466,10 @@ let mockBoundDevices = new Set();
 // representative singbox-router:transition progress sequence to the FE.
 const sseSenders = new Set();
 let mockTransitionSeq = 0;
+// Cap on bytes queued in Node for one long-lived push stream (/events SSE,
+// clash WS). A healthy reader drains a tick in milliseconds; past this the
+// peer is gone or stuck and the connection is dropped (EventSource reconnects).
+const STREAM_MAX_BUFFERED = 1024 * 1024;
 
 // buildTransitionSequence returns a representative ordered list of
 // singbox-router:transition events for a from→to switch (the same shape the Go
@@ -5524,6 +5528,13 @@ const server = http.createServer(async (req, res) => {
 		});
 
 		const sendEvent = (event, data) => {
+			// A client that stopped reading (frozen tab, stuck proxy hop) never
+			// closes, and res.write() would buffer every tick in the heap forever.
+			if (res.destroyed) return;
+			if (res.writableLength > STREAM_MAX_BUFFERED) {
+				res.destroy();
+				return;
+			}
 			res.write(`event: ${event}\n`);
 			res.write(`data: ${JSON.stringify(data)}\n\n`);
 		};
@@ -9230,6 +9241,11 @@ const server = http.createServer(async (req, res) => {
 			res.end();
 		}
 	});
+	// Клиент ушёл до ответа (вкладка закрыта, fetch отменён) — запрос к Prism
+	// больше не нужен: без destroy он висит, пока upstream не ответит.
+	res.on('close', () => {
+		if (!res.writableFinished) proxyReq.destroy();
+	});
 	req.pipe(proxyReq);
 });
 
@@ -9333,6 +9349,11 @@ server.on('upgrade', (req, socket) => {
 		`Sec-WebSocket-Accept: ${wsAccept(key)}\r\n\r\n`,
 	);
 	const interval = setInterval(() => {
+		// Peer stopped reading: drop it instead of buffering frames forever.
+		if (socket.writableLength > STREAM_MAX_BUFFERED) {
+			socket.destroy();
+			return;
+		}
 		try {
 			socket.write(encodeWSFrame(JSON.stringify(makeMockSnapshot())));
 		} catch {
@@ -9341,6 +9362,11 @@ server.on('upgrade', (req, socket) => {
 	}, 1500);
 	socket.on('close', () => clearInterval(interval));
 	socket.on('error', () => clearInterval(interval));
+	// Incoming frames are ignored, but the socket must be read: a paused socket
+	// never emits 'end', so a peer that hung up (FIN) left this socket in
+	// CLOSE-WAIT with the interval writing into it forever.
+	socket.on('end', () => socket.destroy());
+	socket.resume();
 	// Initial frame so the UI flips to "Live" immediately.
 	try { socket.write(encodeWSFrame(JSON.stringify(makeMockSnapshot()))); } catch { /* ignore */ }
 });

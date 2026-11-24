@@ -329,7 +329,7 @@ func TestRouterProxyUplinkAcceptance(t *testing.T) {
 		unblock()
 		check(controller.Switch(ctx, p.ID, "ethernet", p.Revision))
 		assertHealthy("ethernet")
-		check(controller.Delete(p.ID, p.Revision))
+		check(controller.Delete(ctx, p.ID, p.Revision))
 	}
 	runScenario(uplink.Target{Engine: "sing-box", Ref: "acceptance-proxy"})
 	// Import a real one-member inline subscription through the actual service,

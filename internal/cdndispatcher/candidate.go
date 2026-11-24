@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 type Candidate struct {
@@ -65,43 +67,11 @@ func atomicWriteManifest(path string, m *TransactionManifest) error {
 	if err != nil {
 		return err
 	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	// Каталог транзакции — 0700; AtomicWritePerm создал бы его с 0755.
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp.*")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	defer func() {
-		_ = os.Remove(tmpPath)
-	}()
-
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(0600); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return err
-	}
-	d, err := os.Open(dir)
-	if err == nil {
-		_ = d.Sync()
-		_ = d.Close()
-	}
-	return nil
+	return storage.AtomicWritePerm(path, data, 0600)
 }
 
 // PrepareCandidate stages a candidate config into an isolated transaction directory with durable old and new state.

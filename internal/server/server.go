@@ -120,7 +120,6 @@ type Server struct {
 	singboxHandler             *api.SingboxHandler
 	fircHandler                *api.FircHandler
 	uplinkHandler              *api.UplinkHandler
-	telemtHandler              *api.TelemtHandler
 	vlessServerService         *vlessserver.Service
 	tgWebProxyService          *tgwebproxy.Service
 	cdnDispatcher              *cdndispatcher.Dispatcher
@@ -248,7 +247,6 @@ type Deps struct {
 	AutolistRemovedBackupProbe func(ctx context.Context) (bool, time.Time, error)
 	SingboxHandler             *api.SingboxHandler
 	FircHandler                *api.FircHandler
-	TelemtHandler              *api.TelemtHandler
 	VlessServerService         *vlessserver.Service
 	TgWebProxyService          *tgwebproxy.Service
 	CDNDispatcher              *cdndispatcher.Dispatcher
@@ -337,7 +335,6 @@ func New(cfg Config, deps Deps) *Server {
 		bus:                        deps.Bus,
 		singboxHandler:             deps.SingboxHandler,
 		fircHandler:                deps.FircHandler,
-		telemtHandler:              deps.TelemtHandler,
 		vlessServerService:         deps.VlessServerService,
 		tgWebProxyService:          deps.TgWebProxyService,
 		cdnDispatcher:              deps.CDNDispatcher,

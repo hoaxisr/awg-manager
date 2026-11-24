@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -215,6 +216,9 @@ func NewWithDataDir(dataDir string, cfg Config) *Dispatcher {
 	d := &Dispatcher{
 		dataDir: dataDir,
 		cfg:     cfg,
+	}
+	if dataDir == "/opt/etc/awg-manager" {
+		legacyNginxOnce.Do(func() { go RemoveLegacyNginxTuning() })
 	}
 
 	snap, _ := d.buildSnapshot(cfg)
@@ -1171,9 +1175,7 @@ func (d *Dispatcher) startLocked() error {
 		return fmt.Errorf("cdn dispatcher bind %s: %w", d.cfg.ListenAddr, err)
 	}
 
-	server := &http.Server{
-		Handler: d,
-	}
+	server := newDispatcherServer(d)
 
 	exited := make(chan struct{})
 	d.server = server
@@ -1292,9 +1294,7 @@ func (d *Dispatcher) applyConfigLocked(cfg Config, mode applyMode) error {
 		oldServer := d.server
 		oldExited := d.exited
 
-		newServer := &http.Server{
-			Handler: d,
-		}
+		newServer := newDispatcherServer(d)
 		newExited := make(chan struct{})
 
 		d.snapshot.Store(newSnap)
@@ -1397,8 +1397,8 @@ func runNdmc(cmdStr string) error {
 // EnsureKeeneticPreserveHost checks Keenetic's local RCI for any "ip http proxy" entries
 // that target either this dispatcher (port 9009) or the Telegram proxy multiplexer (port 8085),
 // and invokes ndmc/ndmq to enable "preserve-host" so incoming requests retain their Host header.
-// It also ensures Keenetic's /etc/nginx/comp_off.conf includes X-Accel-Buffering passthrough
-// and keepalive_timeout 0 so CDN HTTP/1.1 requests do not exhaust the 64-slot KeenDNS Ndns::Ttp table.
+// nginx роутера (его глобальные настройки, HTTP/2, лимиты) мы не трогаем:
+// это системный веб-сервер, смотрящий в интернет.
 func EnsureKeeneticPreserveHost() {
 	preserveHostMu.Lock()
 	if time.Since(lastPreserveHostCheck) < 5*time.Second {
@@ -1407,8 +1407,6 @@ func EnsureKeeneticPreserveHost() {
 	}
 	lastPreserveHostCheck = time.Now()
 	preserveHostMu.Unlock()
-
-	ensureKeeneticNginxCompOff()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -1430,135 +1428,88 @@ func EnsureKeeneticPreserveHost() {
 		return
 	}
 
-	saved := false
 	for name, p := range proxies {
 		if strings.HasSuffix(p.Upstream, ":9009") || strings.HasSuffix(p.Upstream, ":8085") {
-			if err := runNdmc(fmt.Sprintf("ip http proxy %s preserve-host", name)); err == nil {
-				saved = true
-			}
+			_ = runNdmc(fmt.Sprintf("ip http proxy %s preserve-host", name))
 		}
 	}
-	if saved {
-		ensureKeeneticNginxCompOff()
-	}
 }
 
-func ensureKeeneticNginxCompOff() {
-	const nginxCompOff = "/etc/nginx/comp_off.conf"
-	const hookPath = "/opt/etc/ndm/netfilter.d/65-awgm-nginx-unbuffer.sh"
-	const desiredHook = `#!/bin/sh
-CONF="/etc/nginx/comp_off.conf"
-OPT_CONF="/opt/etc/awg-manager/comp_off.conf"
-NGINX_CONF="/tmp/nginx/nginx.conf"
-NEED_RELOAD=0
-
-[ -f "$CONF" ] || exit 0
-
-if ! grep -q "keepalive_timeout 3s;" "$CONF" 2>/dev/null || ! grep -q "proxy_pass_header X-Accel-Buffering;" "$CONF" 2>/dev/null; then
-    cat > "$OPT_CONF" << 'EOF'
-gzip off;
-zstd off;
-proxy_pass_header X-Accel-Buffering;
-keepalive_timeout 3s;
-EOF
-    umount "$CONF" 2>/dev/null || true
-    mount --bind "$OPT_CONF" "$CONF" 2>/dev/null
-    NEED_RELOAD=1
-fi
-
-if [ -f "$NGINX_CONF" ]; then
-    sed -E -e 's/(listen [^;]*:443[^;]*) ssl;/\1 ssl http2;/g' -e 's/(listen unix:\/var\/nginx\/nd[nm][sp]\.ssl\.socket[^;]*) ssl proxy_protocol;/\1 ssl http2 proxy_protocol;/g' "$NGINX_CONF" | awk '
-function count_braces(s,    n, i, ch) {
-    n = 0
-    for (i = 1; i <= length(s); i++) {
-        ch = substr(s, i, 1)
-        if (ch == "{") n++
-        else if (ch == "}") n--
-    }
-    return n
-}
-function flush_srv(    i, is_awgm) {
-    is_awgm = (srv_buf ~ /"127\.0\.0\.1:(9009|8085)"/)
-    for (i = 1; i <= srv_cnt; i++) {
-        if (is_awgm && srv_lines[i] ~ /^[[:space:]]*(limit_req|limit_conn)[[:space:]]/) continue
-        print srv_lines[i]
-    }
-    srv_cnt = 0
-    srv_buf = ""
-}
-{
-    if (!in_srv && $0 ~ /^[[:space:]]*server[[:space:]]*\{[[:space:]]*$/) {
-        in_srv = 1
-        srv_depth = 1
-        srv_cnt = 1
-        srv_lines[1] = $0
-        srv_buf = $0 "\n"
-        next
-    }
-    if (in_srv) {
-        srv_cnt++
-        srv_lines[srv_cnt] = $0
-        srv_buf = srv_buf $0 "\n"
-        srv_depth += count_braces($0)
-        if (srv_depth <= 0) {
-            flush_srv()
-            in_srv = 0
-        }
-        next
-    }
-    print $0
-}
-END {
-    if (in_srv) flush_srv()
-}' > "${NGINX_CONF}.tmp" 2>/dev/null
-    if [ -s "${NGINX_CONF}.tmp" ] && ! cmp -s "${NGINX_CONF}.tmp" "$NGINX_CONF" 2>/dev/null && \
-       nginx -t -c "${NGINX_CONF}.tmp" >/dev/null 2>&1; then
-        mv -f "${NGINX_CONF}.tmp" "$NGINX_CONF"
-        NEED_RELOAD=1
-    fi
-    rm -f "${NGINX_CONF}.tmp"
-fi
-
-if [ "$NEED_RELOAD" = "1" ]; then
-    nginx -s reload 2>/dev/null || killall -HUP nginx 2>/dev/null
-fi
-exit 0
-`
-
-	if _, err := os.Stat(nginxCompOff); err != nil {
-		return
-	}
-
-	if existingHook, err := os.ReadFile(hookPath); err != nil || string(existingHook) != desiredHook {
-		_ = os.WriteFile(hookPath, []byte(desiredHook), 0755)
-	}
-
-	_ = exec.Command("/bin/sh", hookPath).Run()
-}
-
-// CleanupSystemHooks removes the Keenetic nginx unbuffer netfilter hook and bind mount
-// when CDN Dispatcher is fully shut down and reset on a production Keenetic device.
+// CleanupSystemHooks снимает правку nginx роутера, которую ставили сборки
+// #1239 (хук 65-awgm-nginx-unbuffer.sh), при полном сбросе диспетчера.
 func (d *Dispatcher) CleanupSystemHooks() {
 	d.mu.Lock()
 	dataDir := d.dataDir
 	d.mu.Unlock()
-
-	if runtime.GOOS != "linux" {
-		return
-	}
 	if dataDir != "/opt/etc/awg-manager" && dataDir != "" {
 		return
 	}
+	RemoveLegacyNginxTuning()
+}
 
-	const nginxCompOff = "/etc/nginx/comp_off.conf"
-	const optCompOff = "/opt/etc/awg-manager/comp_off.conf"
-	const hookPath = "/opt/etc/ndm/netfilter.d/65-awgm-nginx-unbuffer.sh"
+// legacyNginxOnce — уборка правки nginx на старте демона, один раз.
+var legacyNginxOnce sync.Once
 
-	_ = os.Remove(hookPath)
-	_, optErr := os.Stat(optCompOff)
+// Пути правки nginx из сборок #1239. Переменные — шов для тестов.
+var (
+	legacyNginxHookPath = "/opt/etc/ndm/netfilter.d/65-awgm-nginx-unbuffer.sh"
+	legacyNginxOptConf  = "/opt/etc/awg-manager/comp_off.conf"
+	legacyNginxCompOff  = "/etc/nginx/comp_off.conf"
+	legacyNginxConf     = "/tmp/nginx/nginx.conf"
+	runNginxCmd         = func(args ...string) error { return exec.Command(args[0], args[1:]...).Run() }
+)
+
+// legacyHTTP2Listen — ровно то, что дописывал хук к слушателям :443 и к
+// unix-сокетам ndns/ndmp; обратная замена возвращает строку прошивки.
+var legacyHTTP2Listen = regexp.MustCompile(`(listen [^;]*) ssl http2( proxy_protocol)?;`)
+
+// RemoveLegacyNginxTuning снимает правку nginx роутера из сборок #1239: хук на
+// каждое событие netfilter включал HTTP/2 на ВСЕХ слушателях :443 (включая
+// внешний адрес), вырезал limit_req/limit_conn у блоков наших прокси и
+// подменял глобальный comp_off.conf. Идемпотентна; ничего не делает, если
+// правки не было. HTTP/2 откатываем только при следах нашего хука — если
+// прошивка когда-нибудь включит его сама, мы его не трогаем. Вырезанные
+// limit_* вернёт следующая пересборка конфига прошивкой. nginx не
+// останавливаем (остановка роняет веб-управление, F771) — только reload.
+func RemoveLegacyNginxTuning() {
+	if runtime.GOOS != "linux" {
+		return
+	}
+	_, hookErr := os.Stat(legacyNginxHookPath)
+	_, optErr := os.Stat(legacyNginxOptConf)
+	if hookErr != nil && optErr != nil {
+		return
+	}
+	_ = os.Remove(legacyNginxHookPath)
+	reload := false
 	if optErr == nil {
-		_ = exec.Command("umount", nginxCompOff).Run()
-		_ = os.Remove(optCompOff)
-		_ = exec.Command("nginx", "-s", "reload").Run()
+		_ = runNginxCmd("umount", legacyNginxCompOff)
+		_ = os.Remove(legacyNginxOptConf)
+		reload = true
+	}
+	if hookErr == nil {
+		if conf, err := os.ReadFile(legacyNginxConf); err == nil {
+			fixed := legacyHTTP2Listen.ReplaceAll(conf, []byte("$1 ssl$2;"))
+			if string(fixed) != string(conf) {
+				tmp := legacyNginxConf + ".awgm"
+				if os.WriteFile(tmp, fixed, 0o644) == nil && runNginxCmd("nginx", "-t", "-c", tmp) == nil && os.Rename(tmp, legacyNginxConf) == nil {
+					reload = true
+				}
+				_ = os.Remove(tmp)
+			}
+		}
+	}
+	if reload {
+		_ = runNginxCmd("nginx", "-s", "reload")
 	}
 }
+
+// newDispatcherServer: адрес слушания не сужаем — в режиме origin внешний CDN
+// забирает трафик с <адрес роутера>:9009 напрямую. ReadTimeout/WriteTimeout не
+// ставим: через диспетчер идут долгие потоки XHTTP и WebSocket. Срок на
+// заголовки закрывает медленный slowloris.
+func newDispatcherServer(h http.Handler) *http.Server {
+	return &http.Server{Handler: h, ReadHeaderTimeout: dispatcherReadHeaderTimeout}
+}
+
+const dispatcherReadHeaderTimeout = 10 * time.Second

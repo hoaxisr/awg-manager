@@ -53,6 +53,9 @@ func (f *fakeTunnels) Get(_ context.Context, id string) (*service.TunnelWithStat
 	}
 	return nil, errNotFound(id)
 }
+func (f *fakeTunnels) GuardUplinkMutation(context.Context, string, string) (func(), error) {
+	return func() {}, nil
+}
 func (f *fakeTunnels) SetEnabled(_ context.Context, id string, v bool) error {
 	f.enabled[id] = v
 	return nil

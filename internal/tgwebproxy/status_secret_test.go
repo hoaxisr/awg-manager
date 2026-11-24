@@ -3,8 +3,12 @@ package tgwebproxy
 import (
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"io"
+	"net"
 	"strings"
 	"testing"
+	"time"
 )
 
 // statusLeakFixture returns a realistic multi-user, multi-endpoint configuration
@@ -155,5 +159,30 @@ func TestRevealUserSecret_StillReturnsWebProxyLinks(t *testing.T) {
 	}
 	if !strings.Contains(data.MtproxyURL, "secret=ee"+userA) {
 		t.Errorf("reveal mtproxy_url = %q, want ee-prefixed u-a secret", data.MtproxyURL)
+	}
+}
+
+// F819: маска показывает только последние 4 символа секрета.
+func TestMaskSecret_OnlyTail(t *testing.T) {
+	got := maskSecret("00112233445566778899aabbccddeeff")
+	if got != "********eeff" {
+		t.Fatalf("maskSecret = %q, want ********eeff", got)
+	}
+	if maskSecret("short") != "********" || maskSecret("") != "" {
+		t.Fatal("short/empty secrets must not leak characters")
+	}
+}
+
+// F827: остановка движка (в том числе ради ротации секрета) обрывает уже
+// принятые raw-соединения.
+func TestMtgEngine_StopClosesRawConns(t *testing.T) {
+	e := NewMtgEngine()
+	srv, cli := net.Pipe()
+	defer cli.Close()
+	e.trackRaw(srv)
+	e.Stop()
+	_ = srv.SetWriteDeadline(time.Now().Add(time.Second))
+	if _, err := srv.Write([]byte{1}); !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("raw conn still open after Stop: %v", err)
 	}
 }

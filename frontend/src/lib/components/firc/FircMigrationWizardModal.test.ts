@@ -107,6 +107,7 @@ import {
 	setFircMigrationPopupLocallyDismissed,
 } from '$lib/stores/fircMigrationModal';
 import { notifications } from '$lib/stores/notifications';
+import { m } from '$lib/i18n';
 import type { FircInstallStatus, FircMigrationOverview, FircTunnel } from '$lib/types/firc';
 
 const dummyTunnel: FircTunnel = {
@@ -240,7 +241,7 @@ describe('FircMigrationWizardModal engine purge & recovery', () => {
 		render(FircMigrationWizardModal);
 		openFircMigrationModal('forward');
 
-		const cardText = await screen.findByText('Переключить на FIRC и полностью удалить Sing-box и его туннели');
+		const cardText = await screen.findByText(m.firc_migration_fwd_post_uninstall());
 		const radio = screen.getByDisplayValue('switch_and_uninstall');
 		expect(cardText).toBeInTheDocument();
 
@@ -254,7 +255,7 @@ describe('FircMigrationWizardModal engine purge & recovery', () => {
 			expect(snapChk).toBeDisabled();
 		});
 
-		const submitBtn = screen.getByRole('button', { name: 'Выполнить миграцию в FIRC' });
+		const submitBtn = screen.getByRole('button', { name: m.firc_migration_fwd_apply() });
 		await fireEvent.click(submitBtn);
 
 		await waitFor(() => {
@@ -319,11 +320,11 @@ describe('FircMigrationWizardModal engine purge & recovery', () => {
 		render(FircMigrationWizardModal);
 		openFircMigrationModal('forward');
 
-		const purgeBtn = await screen.findByRole('button', { name: 'Удалить Sing-box и туннели' });
-		expect(screen.queryByRole('button', { name: 'Удалить FIRC и туннели' })).toBeNull();
+		const purgeBtn = await screen.findByRole('button', { name: m.firc_migration_purge_singbox() });
+		expect(screen.queryByRole('button', { name: m.firc_migration_purge_firc() })).toBeNull();
 
 		await fireEvent.click(purgeBtn);
-		const confirmBtn = await screen.findByRole('button', { name: 'Подтвердить удаление' });
+		const confirmBtn = await screen.findByRole('button', { name: m.firc_migration_purge_confirm() });
 		await fireEvent.click(confirmBtn);
 
 		await waitFor(() => {
@@ -396,18 +397,18 @@ describe('FircMigrationWizardModal engine purge & recovery', () => {
 		render(FircMigrationWizardModal);
 		openFircMigrationModal('reverse');
 
-		await screen.findByText('Бинарный файл Sing-box не установлен');
-		const returnBtn = screen.getByRole('button', { name: 'Вернуться к сохранённому Sing-box' });
+		await screen.findByText(m.firc_migration_rev_singbox_missing_title());
+		const returnBtn = screen.getByRole('button', { name: m.firc_migration_saved_apply() });
 		expect(returnBtn).toBeDisabled();
 
-		const installBtns = screen.getAllByRole('button', { name: 'Установить Sing-box' });
+		const installBtns = screen.getAllByRole('button', { name: m.firc_migration_install_singbox() });
 		await fireEvent.click(installBtns[0]);
 		await waitFor(() => {
 			expect(singboxInstall).toHaveBeenCalled();
 		});
 
 		await waitFor(() => {
-			expect(screen.queryByText('Бинарный файл Sing-box не установлен')).toBeNull();
+			expect(screen.queryByText(m.firc_migration_rev_singbox_missing_title())).toBeNull();
 			expect(returnBtn).not.toBeDisabled();
 		});
 
@@ -455,9 +456,9 @@ describe('FircMigrationWizardModal engine purge & recovery', () => {
 		render(FircMigrationWizardModal);
 		openFircMigrationModal('snapshots');
 
-		await screen.findByText('Авто до удаления');
-		await screen.findByText('Обнаружены удалённые движки маршрутизации');
-		const restoreBtn = screen.getByRole('button', { name: 'Восстановить' });
+		await screen.findByText(m.firc_migration_trigger_pre_purge());
+		await screen.findByText(m.firc_migration_snap_missing_title());
+		const restoreBtn = screen.getByRole('button', { name: m.firc_migration_snap_restore() });
 		expect(restoreBtn).toBeDisabled();
 	});
 
@@ -478,7 +479,7 @@ describe('FircMigrationWizardModal engine purge & recovery', () => {
 		await waitFor(() => {
 			expect(get(fircMigrationModalOpen)).toBe(true);
 		});
-		await screen.findByText('Переключить на FIRC и полностью удалить Sing-box и его туннели');
+		await screen.findByText(m.firc_migration_fwd_post_uninstall());
 		expect(fircGetMigrationState).toHaveBeenCalledTimes(1);
 	});
 
@@ -519,13 +520,13 @@ describe('FircMigrationWizardModal engine purge & recovery', () => {
 		render(FircMigrationWizardModal);
 		openFircMigrationModal('reverse');
 
-		const cardBadges = await screen.findAllByText('Ожидает Sing-box');
+		const cardBadges = await screen.findAllByText(m.firc_migration_saved_badge_pending());
 		expect(cardBadges.length).toBeGreaterThanOrEqual(1);
-		expect(screen.queryByText('Нет сохранённой копии')).toBeNull();
+		expect(screen.queryByText(m.firc_migration_rev_badge_no_copy())).toBeNull();
 		const scenario1Radio = screen.getByDisplayValue('saved');
 		await fireEvent.click(scenario1Radio);
 		await waitFor(() => {
-			expect(screen.getAllByText('Ожидает Sing-box').length).toBeGreaterThanOrEqual(2);
+			expect(screen.getAllByText(m.firc_migration_saved_badge_pending()).length).toBeGreaterThanOrEqual(2);
 		});
 	});
 });

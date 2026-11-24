@@ -114,6 +114,7 @@ func (h *VlessServerHandler) updateReality(w http.ResponseWriter, r *http.Reques
 		WriteError(w, status, err.Error())
 		return
 	}
+	h.publishIngress("vless-reality-updated")
 	WriteJSON(w, http.StatusOK, h.svc.GetRealityState(r.Context(), false))
 }
 
@@ -153,6 +154,9 @@ func (h *VlessServerHandler) realityQuickSetup(w http.ResponseWriter, r *http.Re
 		WriteError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
+	// Шагов несколько (клиент, REALITY, конфиг выхода), и сорваться можно
+	// после первого — поэтому подсказка на любом исходе после разбора тела.
+	defer h.publishIngress("vless-reality-quick-setup")
 	remark := strings.TrimSpace(req.ClientRemark)
 	if remark == "" {
 		remark = "Reality"

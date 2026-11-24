@@ -783,6 +783,14 @@ type ServiceImpl struct {
 	cloudSyncedOutboundTag  string
 	cloudSyncedActiveMember string
 	cloudLastAgentResetAt   time.Time
+	// cloudOutputDetached — снятие cloud-output уже прошло успешно, а ставить
+	// правила с тех пор не пытались. Под transitionMu. Стартует с false: первый
+	// тик снимает хвосты аварийного выхода, следующие не гоняют exec впустую.
+	cloudOutputDetached bool
+	// globalFailed — содержимое слота Global, на котором reload упал. Под
+	// transitionMu.
+	globalFailed   []byte
+	globalFailedAt time.Time
 }
 
 func NewService(d Deps) *ServiceImpl {

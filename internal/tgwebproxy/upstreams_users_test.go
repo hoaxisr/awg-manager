@@ -10,8 +10,6 @@ import (
 	"io"
 	mrand "math/rand"
 	"net"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -105,11 +103,7 @@ func TestUserSecretEditRegenerateAndDeleteLastUser(t *testing.T) {
 		t.Fatalf("expected 0 active secrets after deleting last user, got %v", secs)
 	}
 
-	// Verify TOML & profiles.json still render valid dummy fallback with 0 users, and persist cleanly on reload.
-	tomlStr := GenerateTelemtDirectConfig(svc.GetInternalConfig())
-	if !strings.Contains(tomlStr, `user1 = "00000000000000000000000000000000"`) {
-		t.Fatalf("expected dummy fallback user1 in direct TOML when 0 users:\n%s", tomlStr)
-	}
+	// Verify profiles.json still renders a valid dummy fallback with 0 users, and persists cleanly on reload.
 	profBytes, err := GenerateProfilesJSON(svc.GetInternalConfig())
 	if err != nil {
 		t.Fatalf("GenerateProfilesJSON with 0 users failed: %v", err)
@@ -124,7 +118,7 @@ func TestUserSecretEditRegenerateAndDeleteLastUser(t *testing.T) {
 	}
 
 	// Reload from disk: empty users list must NOT resurrect "default".
-	reloaded := &Service{dataDir: tempDir, telemtDir: filepath.Join(tempDir, "telemt")}
+	reloaded := &Service{dataDir: tempDir}
 	if err := reloaded.loadAndMigrateConfig(); err != nil {
 		t.Fatalf("reload config with 0 users failed: %v", err)
 	}
@@ -147,8 +141,8 @@ func TestUserSecretEditRegenerateAndDeleteLastUser(t *testing.T) {
 	}
 }
 
-func TestUpstreams_TOMLAndValidationAndUpdateConfig(t *testing.T) {
-	svc, tempDir, _ := setupTestService(t)
+func TestUpstreams_RuntimeSetAndValidationAndUpdateConfig(t *testing.T) {
+	svc, _, _ := setupTestService(t)
 
 	cfg := Config{
 		Upstreams: []UpstreamSpec{
@@ -162,25 +156,18 @@ func TestUpstreams_TOMLAndValidationAndUpdateConfig(t *testing.T) {
 		t.Fatalf("UpdateConfig multi-upstream failed: %v", err)
 	}
 
-	directTOML, err := os.ReadFile(filepath.Join(tempDir, "telemt", "config.toml"))
-	if err != nil {
-		t.Fatalf("read config.toml: %v", err)
+	byID := map[string]UpstreamSpec{}
+	for _, u := range svc.GetInternalConfig().EnabledUpstreams() {
+		byID[u.ID] = u
 	}
-	rawTOML, err := os.ReadFile(filepath.Join(tempDir, "telemt", "raw.toml"))
-	if err != nil {
-		t.Fatalf("read raw.toml: %v", err)
+	if u := byID["up-1"]; u.Device != "nwg1" || u.Weight != 10 {
+		t.Fatalf("expected nwg1 direct upstream in runtime set, got %+v", byID)
 	}
-
-	for _, doc := range []string{string(directTOML), string(rawTOML)} {
-		if !strings.Contains(doc, "bindtodevice = \"nwg1\"\nweight = 10\nenabled = true") {
-			t.Fatalf("expected nwg1 direct upstream in TOML:\n%s", doc)
-		}
-		if !strings.Contains(doc, "type = \"socks5\"\naddress = \"127.0.0.1:1099\"\nusername = \"u1\"\npassword = \"p1\"\nweight = 2\nenabled = true") {
-			t.Fatalf("expected socks5 upstream in TOML:\n%s", doc)
-		}
-		if strings.Contains(doc, "nwg9") {
-			t.Fatalf("disabled upstream nwg9 should not be emitted:\n%s", doc)
-		}
+	if u := byID["up-2"]; u.Address != "127.0.0.1:1099" || u.Username != "u1" || u.Password != "p1" || u.Weight != 2 {
+		t.Fatalf("expected socks5 upstream in runtime set, got %+v", byID)
+	}
+	if _, ok := byID["up-3"]; ok {
+		t.Fatalf("disabled upstream nwg9 must not be in runtime set: %+v", byID)
 	}
 
 	// Validation rejects bad SOCKS5 address, bad weight, all-disabled list.
@@ -195,7 +182,7 @@ func TestUpstreams_TOMLAndValidationAndUpdateConfig(t *testing.T) {
 	}
 
 	// Partial failover allowed: one invalid direct iface + one healthy direct WAN succeeds.
-	err = svc.UpdateConfig(Config{
+	err := svc.UpdateConfig(Config{
 		Upstreams: []UpstreamSpec{
 			{ID: "u-bad", Type: "direct", Device: "invalid_dev", Weight: 5, Enabled: true},
 			{ID: "u-wan", Type: "direct", Device: "direct", Weight: 1, Enabled: true},

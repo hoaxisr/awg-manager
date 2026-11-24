@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
 type TxState string
@@ -140,7 +142,7 @@ func writeManifest(txPath string, manifest *SnapshotManifest) error {
 	if err != nil {
 		return fmt.Errorf("marshal manifest: %w", err)
 	}
-	return atomicWriteFile(filepath.Join(txPath, "snapshot-manifest.json"), data, 0600)
+	return storage.AtomicWritePerm(filepath.Join(txPath, "snapshot-manifest.json"), data, 0600)
 }
 
 // PrepareCandidate stages and validates a candidate configuration in an isolated transaction directory.
@@ -218,7 +220,7 @@ func (s *Service) prepareCandidateLocked(txID string, candidate Config) (string,
 		if err != nil {
 			return abortTx(fmt.Errorf("read settings file: %w", err))
 		}
-		if err := atomicWriteFile(filepath.Join(txPath, "xray-server-settings.json.bak"), data, 0600); err != nil {
+		if err := storage.AtomicWritePerm(filepath.Join(txPath, "xray-server-settings.json.bak"), data, 0600); err != nil {
 			return abortTx(fmt.Errorf("backup settings: %w", err))
 		}
 	}
@@ -457,7 +459,7 @@ func (s *Service) rollbackLocked(txID string, manifest *SnapshotManifest) error 
 		data, err := os.ReadFile(src)
 		if err != nil {
 			rollbackErrs = append(rollbackErrs, fmt.Errorf("read backup settings: %w", err))
-		} else if err := atomicWriteFile(s.cfgPath(), data, 0600); err != nil {
+		} else if err := storage.AtomicWritePerm(s.cfgPath(), data, 0600); err != nil {
 			rollbackErrs = append(rollbackErrs, fmt.Errorf("restore settings: %w", err))
 		}
 	} else {

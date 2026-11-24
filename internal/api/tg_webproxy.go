@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/auth"
+	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/serveringress"
 	"github.com/hoaxisr/awg-manager/internal/tgwebproxy"
 )
@@ -29,6 +30,18 @@ type TgWebProxyHandler struct {
 	authChecker  auth.AuthChecker
 	revealMu     sync.Mutex
 	revealLimits map[string]time.Time
+	bus          *events.Bus
+}
+
+// SetEventBus wires the SSE event bus: успешные мутации публикуют
+// ResourceServersIngress.
+func (h *TgWebProxyHandler) SetEventBus(bus *events.Bus) {
+	h.bus = bus
+}
+
+// publishIngress безопасна без шины: (*events.Bus)(nil) — no-op.
+func (h *TgWebProxyHandler) publishIngress(reason string) {
+	h.bus.PublishInvalidated(events.ResourceServersIngress, reason)
 }
 
 func NewTgWebProxyHandler(svc *tgwebproxy.Service, sessions *auth.SessionStore) *TgWebProxyHandler {
@@ -49,7 +62,7 @@ func (h *TgWebProxyHandler) authDisabled() bool {
 }
 
 // SetCoordinator attaches the shared ingress coordinator so API mutations
-// serialize with ConfigWatcher and refresh watcher snapshots before releasing the lock.
+// serialize with other ingress transactions.
 func (h *TgWebProxyHandler) SetCoordinator(coord *serveringress.Coordinator) {
 	h.coord = coord
 }
@@ -247,6 +260,7 @@ func (h *TgWebProxyHandler) UpdateConfig(w http.ResponseWriter, r *http.Request)
 		WriteError(w, http.StatusInternalServerError, "failed to update config: "+err.Error())
 		return
 	}
+	h.publishIngress("tg-config-updated")
 	WriteJSON(w, http.StatusOK, h.svc.GetConfig())
 }
 
@@ -442,6 +456,7 @@ func (h *TgWebProxyHandler) Action(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.publishIngress("tg-action")
 	WriteJSON(w, http.StatusOK, h.svc.GetStatus())
 }
 
@@ -480,5 +495,6 @@ func (h *TgWebProxyHandler) FactoryReset(w http.ResponseWriter, r *http.Request)
 		WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.publishIngress("tg-reset")
 	WriteJSON(w, http.StatusOK, res)
 }

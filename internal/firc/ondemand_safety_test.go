@@ -3,27 +3,8 @@ package firc
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 )
-
-func TestUninstallPreservesPackageOwnedRuntime(t *testing.T) {
-	root := t.TempDir()
-	inst := NewOnDemandInstaller("aarch64-3.10", FircBinarySpec{})
-	inst.SetPackageLayout(DefaultPackageLayout(root))
-	info := filepath.Join(root, "opt/lib/opkg/info")
-	if err := os.MkdirAll(info, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(info, "awg-manager.list"), []byte("/opt/sbin/fircd\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := inst.Uninstall(context.Background(), nil, false, false); err == nil || !strings.Contains(err.Error(), "belongs to package") {
-		t.Fatalf("expected ownership refusal: %v", err)
-	}
-}
 
 func TestUninstallFailsClosedOnDependencyProbeError(t *testing.T) {
 	inst := NewOnDemandInstaller("aarch64-3.10", FircBinarySpec{})

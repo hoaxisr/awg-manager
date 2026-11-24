@@ -38,6 +38,7 @@ vi.mock('$lib/api/client', () => ({
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach } from 'vitest';
 import FircMonitorPanel from './FircMonitorPanel.svelte';
+import { m } from '$lib/i18n';
 import { extractFircGroupDomainLines, type FircGroup } from '$lib/types/firc';
 
 const snapshot = {
@@ -75,7 +76,7 @@ describe('FIRC compact monitor', () => {
 	it('starts with a compact overview, not two technical tables and a feed', async () => {
 		const { container } = render(FircMonitorPanel);
 		await screen.findByText('Видео');
-		expect(screen.getByText('Соединения: 2')).toBeTruthy();
+		expect(screen.getByText(m.firc_monitor_group_conns({ n: 2 }))).toBeTruthy();
 		expect(container.querySelectorAll('table')).toHaveLength(0);
 		expect(container.querySelector('details')?.open).toBe(false);
 		expect(fircCheckDomain).not.toHaveBeenCalled();
@@ -83,26 +84,26 @@ describe('FIRC compact monitor', () => {
 	it('shows sources and counters separately; DNS history is not current traffic', async () => {
 		const { container } = render(FircMonitorPanel);
 		await screen.findByText('Видео');
-		await fireEvent.click(screen.getByRole('button', { name: 'Источники' }));
+		await fireEvent.click(screen.getByRole('button', { name: m.firc_monitor_view_sources() }));
 		expect(screen.getByText('Домашняя сеть')).toBeTruthy();
-		expect(screen.getByText('Есть DNS-совпадения')).toBeTruthy();
+		expect(screen.getByText(m.firc_monitor_src_has_dns())).toBeTruthy();
 		expect(container.querySelectorAll('table')).toHaveLength(1);
-		await fireEvent.click(screen.getByRole('button', { name: 'Счётчики' }));
+		await fireEvent.click(screen.getByRole('button', { name: m.firc_monitor_view_details() }));
 		expect(screen.queryByText('Домашняя сеть')).toBeNull();
 		expect(screen.getByText('FakeIP: 198.18.1.0/24')).toBeTruthy();
 	});
 	it('does not claim the daemon is stopped when the first request fails', async () => {
 		fircGetMonitor.mockRejectedValueOnce(new Error('offline'));
 		render(FircMonitorPanel);
-		await screen.findByText('Данные мониторинга недоступны. Попробуйте обновить.');
-		expect(screen.queryByText('Служба остановлена')).toBeNull();
+		await screen.findByText(m.firc_monitor_load_unavailable());
+		expect(screen.queryByText(m.firc_monitor_service_stopped())).toBeNull();
 	});
 	it('keeps the previous snapshot with a warning on refresh failure', async () => {
 		render(FircMonitorPanel);
 		await screen.findByText('Видео');
 		fircGetMonitor.mockRejectedValueOnce(new Error('offline'));
-		await fireEvent.click(screen.getByRole('button', { name: 'Обновить' }));
-		await waitFor(() => expect(screen.getByRole('status').textContent).toContain('последний полученный снимок'));
+		await fireEvent.click(screen.getByRole('button', { name: m.common_refresh() }));
+		await waitFor(() => expect(screen.getByRole('status').textContent).toBe(m.firc_monitor_load_stale()));
 		expect(screen.getByText('Видео')).toBeTruthy();
 	});
 	it('does not render the removed bypass tab', async () => {

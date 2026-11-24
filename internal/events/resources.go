@@ -49,6 +49,17 @@ const (
 
 	ResourceDeviceProxyConfig  Resource = "deviceproxy.config"
 	ResourceDeviceProxyRuntime Resource = "deviceproxy.runtime"
+
+	// ResourceFirc — состояние и настройки FIRC: статус демона, установка
+	// рантайма, настройки fircd и ext. Публикуют мутации FircHandler и
+	// сторож рантайма на смену живости демона.
+	ResourceFirc Resource = "firc"
+	// ResourceServersIngress — VLESS/XHTTP, Telegram-прокси и CDN-диспетчер:
+	// конфиг и рантайм. Отдельно от ResourceServers, который приходит на
+	// каждый такт метрик WG-серверов.
+	ResourceServersIngress Resource = "servers.ingress"
+	// ResourceUplink — политики Multi-WAN и их наблюдаемое состояние.
+	ResourceUplink Resource = "uplink"
 )
 
 // AllResources — перечень всего набора для сверки с фронтом.
@@ -81,6 +92,9 @@ var AllResources = []Resource{
 	ResourceRoutingZapretStatus,
 	ResourceDeviceProxyConfig,
 	ResourceDeviceProxyRuntime,
+	ResourceFirc,
+	ResourceServersIngress,
+	ResourceUplink,
 }
 
 // Publisher — минимум шины, которого хватает для подсказки инвалидации.

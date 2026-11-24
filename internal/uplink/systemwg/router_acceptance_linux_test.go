@@ -221,7 +221,7 @@ func TestRouterSystemWGUplinkAcceptance(t *testing.T) {
 		t.Fatal(err)
 	}
 	check("GigabitEthernet1")
-	if err = c.Delete(p.ID, p.Revision); err != nil {
+	if err = c.Delete(context.Background(), p.ID, p.Revision); err != nil {
 		t.Fatal(err)
 	}
 	t.Log("production system WG adapter: selective failure, automatic WISP fallback and manual return passed; IPv6 payload AllowedIPs preserved")

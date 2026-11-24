@@ -342,6 +342,9 @@ func (s *stubTunnelSvc) Restart(ctx context.Context, _ string) error {
 	s.restartCtxErrs = append(s.restartCtxErrs, ctx.Err())
 	return nil
 }
+func (s *stubTunnelSvc) GuardUplinkMutation(context.Context, string, string) (func(), error) {
+	return func() {}, nil
+}
 func (s *stubTunnelSvc) CheckAddressConflicts(context.Context, string) []string { return nil }
 func (s *stubTunnelSvc) GetState(_ context.Context, tunnelID string) tunnel.StateInfo {
 	if s.stateFn != nil {

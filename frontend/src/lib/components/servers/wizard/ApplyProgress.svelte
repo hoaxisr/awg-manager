@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { JobStatusResponse } from '$lib/types/serverWizard';
+	import { m } from '$lib/i18n';
 	import { Button } from '$lib/components/ui';
 	import { CheckCircle2, AlertOctagon, Loader2, Ban } from 'lucide-svelte';
 
@@ -22,35 +23,35 @@
 			<div class="status-icon icon-succeeded">
 				<CheckCircle2 size={32} />
 			</div>
-			<div class="status-title">Применение успешно завершено</div>
+			<div class="status-title">{m.servers_wizard_apply_succeeded()}</div>
 		{:else if job.phase === 'failed' || job.phase === 'recovery_required'}
 			<div class="status-icon icon-failed">
 				<AlertOctagon size={32} />
 			</div>
-			<div class="status-title title-error">Ошибка применения конфигурации</div>
+			<div class="status-title title-error">{m.servers_wizard_apply_failed()}</div>
 		{:else if job.phase === 'cancelled'}
 			<div class="status-icon icon-cancelled">
 				<Ban size={32} />
 			</div>
-			<div class="status-title">Операция отменена</div>
+			<div class="status-title">{m.servers_wizard_apply_cancelled()}</div>
 		{:else}
 			<div class="status-icon icon-applying">
 				<Loader2 size={32} class="animate-spin" />
 			</div>
 			<div class="status-title">
-				{job.phase === 'committing' ? 'Фиксация конфигурации (не закрывайте окно)...' : 'Применение изменений...'}
+				{job.phase === 'committing' ? m.servers_wizard_apply_committing() : m.servers_wizard_apply_applying()}
 			</div>
 		{/if}
 
 		<p class="status-desc">
-			{job.current_step || 'Выполняются операции координатора...'}
+			{job.current_step || m.servers_wizard_apply_running_ops()}
 		</p>
 	</div>
 
 	<!-- Progress Bar -->
 	<div class="progress-bar-group">
 		<div class="progress-meta">
-			<span>Прогресс</span>
+			<span>{m.servers_wizard_apply_progress()}</span>
 			<span class="progress-percent">{job.progress}%</span>
 		</div>
 		<div class="progress-track">
@@ -66,7 +67,7 @@
 		<div class="error-alert">
 			<div class="error-header">
 				<AlertOctagon size={16} />
-				<span>Ошибка ({job.error_code || 'ERROR'})</span>
+				<span>{m.servers_wizard_apply_error({ code: job.error_code || 'ERROR' })}</span>
 			</div>
 			<p class="error-msg">{job.error}</p>
 		</div>
@@ -80,13 +81,13 @@
 				size="sm"
 				onclick={oncancel}
 				disabled={!canCancel}
-				title={job.phase === 'committing' ? 'Фиксация транзакции не может быть прервана' : 'Прервать операцию'}
+				title={job.phase === 'committing' ? m.servers_wizard_apply_commit_uncancellable() : m.servers_wizard_apply_abort()}
 			>
 				{#if cancelling}
 					<Loader2 size={14} class="animate-spin mr-1.5" />
-					Отмена...
+					{m.servers_wizard_apply_cancelling()}
 				{:else}
-					Отменить операцию
+					{m.servers_wizard_apply_cancel()}
 				{/if}
 			</Button>
 		</div>

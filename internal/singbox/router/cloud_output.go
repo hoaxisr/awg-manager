@@ -1943,11 +1943,16 @@ func (s *ServiceImpl) reconcileCloudOutput(ctx context.Context, sr storage.Singb
 	slot := orchestrator.SlotKeenDNSCloud
 	enabled := s.slotEnabled(slot)
 	if !sr.Enabled || stopped || strings.TrimSpace(sr.KeenDNSCloudOutbound) == "" {
-		// Always detach kernel rules and ipsets even when the slot is already
-		// disabled so a stale rule set left by an unclean exit is cleaned up.
+		// Detach kernel rules and ipsets even when the slot is already disabled
+		// so a stale rule set left by an unclean exit is cleaned up — once per
+		// process: only the attach path below can bring them back.
+		if s.cloudOutputDetached && !enabled {
+			return nil
+		}
 		if err := s.detachCloudOutputLocked(ctx, enabled); err != nil {
 			return err
 		}
+		s.cloudOutputDetached = true
 		return nil
 	}
 	running, pid := true, 0
@@ -1955,8 +1960,17 @@ func (s *ServiceImpl) reconcileCloudOutput(ctx context.Context, sr storage.Singb
 		running, pid = s.deps.Singbox.IsRunning()
 	}
 	if !running {
-		return s.detachCloudOutputLocked(ctx, false)
+		// Слот здесь не трогается, поэтому повторять снятие незачем.
+		if s.cloudOutputDetached {
+			return nil
+		}
+		if err := s.detachCloudOutputLocked(ctx, false); err != nil {
+			return err
+		}
+		s.cloudOutputDetached = true
+		return nil
 	}
+	s.cloudOutputDetached = false
 
 	snap, rciErr := s.fetchCloudSnapshot(ctx)
 	useIpset, ipsetErr := s.syncCloudOutputIpset(ctx, snap, rciErr)

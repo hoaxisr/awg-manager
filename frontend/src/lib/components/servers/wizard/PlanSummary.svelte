@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { ChangePlan } from '$lib/types/serverWizard';
+	import { m } from '$lib/i18n';
 	import { ShieldCheck, RefreshCw, Layers } from 'lucide-svelte';
 
 	interface Props {
@@ -25,7 +26,7 @@
 			{#if plan.restart_required}
 				<span class="badge-restart">
 					<RefreshCw size={12} class="mr-1" />
-					Перезапуск служб
+					{m.servers_wizard_plan_restart()}
 				</span>
 			{/if}
 		</div>
@@ -34,7 +35,7 @@
 			<div class="fingerprint-row">
 				<span class="fingerprint-label">
 					<ShieldCheck size={14} class="shield-icon" />
-					Слепок состояния системы (Fingerprint):
+					{m.servers_wizard_plan_fingerprint()}
 				</span>
 				<span class="fingerprint-val" title={plan.state_fingerprint}>
 					{formatFingerprint(plan.state_fingerprint)}
@@ -46,7 +47,7 @@
 	<!-- Change Items -->
 	<div>
 		<div class="section-title">
-			Запланированные действия ({plan.items?.length || 0})
+			{m.servers_wizard_plan_actions({ count: plan.items?.length || 0 })}
 		</div>
 
 		<div class="items-card">
@@ -59,7 +60,7 @@
 						<div class="item-desc-group">
 							<div class="item-desc">{item.description}</div>
 							<div class="item-target">
-								Цель: <span class="target-val">{item.target}</span>
+								{m.servers_wizard_plan_target()} <span class="target-val">{item.target}</span>
 							</div>
 						</div>
 					</div>

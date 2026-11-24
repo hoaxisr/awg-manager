@@ -243,8 +243,12 @@ func (o *Orchestrator) Reload() error {
 				o.mu.Lock()
 				o.prevHasTun = st.HasTun
 				o.reloading = false
+				after := o.afterReload
 				o.mu.Unlock()
 				o.log("info", fmt.Sprintf("orchestrator: config unchanged — reload skipped (sing-box pid %d adopted)", pid))
+				if after != nil {
+					go after() // рестарт демона усыновляет sing-box этой веткой
+				}
 				return nil
 			}
 		}
@@ -366,7 +370,11 @@ func (o *Orchestrator) Reload() error {
 	} else {
 		o.prevHasTun = newHasTun
 	}
+	after := o.afterReload
 	o.mu.Unlock()
+	if err == nil && after != nil {
+		go after()
+	}
 	return err
 }
 

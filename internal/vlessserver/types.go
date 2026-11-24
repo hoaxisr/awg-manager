@@ -13,8 +13,6 @@ var (
 	ErrRecoveryRequired         = errors.New("vless server configuration is corrupt or requires manual recovery")
 	ErrStaleTransactionConflict = errors.New("vless server transaction conflict: candidate was prepared against a stale configuration revision")
 	ErrUnsupportedTransport     = errors.New("unsupported VLESS server transport: legacy WebSocket (ws) server transport has been removed; use xhttp or finiteproto")
-	ErrUnsupportedLegacyConfig  = errors.New("unsupported legacy configuration: only VLESS over XHTTP is supported for automatic migration")
-	ErrLegacyRuntimeRemoved     = errors.New("legacy Xray runtime (keep_legacy / S99xray-cdn) has been removed; use awgm-xhttpd")
 )
 
 type Client struct {
@@ -421,8 +419,6 @@ type Status struct {
 	RecoveryRequired    bool     `json:"recovery_required,omitempty"`
 	RecoveryReason      string   `json:"recovery_reason,omitempty"`
 	RecoveryFingerprint string   `json:"recovery_fingerprint,omitempty"`
-	MigrationStatus     string   `json:"migration_status,omitempty"`
-	ActiveGeneration    string   `json:"active_generation,omitempty"`
 }
 
 // ShareLinks holds external client export formats for a VLESS/XHTTP/FiniteProto client.

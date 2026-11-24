@@ -2,8 +2,6 @@ package tgwebproxy
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -76,7 +74,7 @@ func TestPublicViews_DoNotExposeSocks5Password(t *testing.T) {
 }
 
 func TestUpdateConfig_PreservesRedactedSocks5Password(t *testing.T) {
-	svc, tempDir, _ := setupTestService(t)
+	svc, _, _ := setupTestService(t)
 	if err := svc.UpdateConfig(socksUpstreamConfig()); err != nil {
 		t.Fatalf("UpdateConfig: %v", err)
 	}
@@ -88,12 +86,14 @@ func TestUpdateConfig_PreservesRedactedSocks5Password(t *testing.T) {
 	if u.Password != socksTestPassword || u.Weight != 3 {
 		t.Fatalf("stored upstream after round-trip = %+v, want password kept and weight 3", u)
 	}
-	toml, err := os.ReadFile(filepath.Join(tempDir, "telemt", "config.toml"))
-	if err != nil {
-		t.Fatal(err)
+	var runtimePass string
+	for _, eu := range svc.GetInternalConfig().EnabledUpstreams() {
+		if eu.ID == "up-socks" {
+			runtimePass = eu.Password
+		}
 	}
-	if !strings.Contains(string(toml), socksTestPassword) {
-		t.Fatalf("telemt config lost the SOCKS5 password after round-trip")
+	if runtimePass != socksTestPassword {
+		t.Fatalf("runtime upstreams lost the SOCKS5 password after round-trip")
 	}
 }
 

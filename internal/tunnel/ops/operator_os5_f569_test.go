@@ -1220,3 +1220,21 @@ func TestRollback_ExistingRecord_L2_StripsPriorRouting(t *testing.T) {
 		t.Fatalf("снятия default/global перед `no` нет: %v", f.Posts)
 	}
 }
+
+// F814: отказ quiesce перед SetConf (туннель под kernel-uplink) откатывает
+// только что созданный OpkgTun, как и остальные отказы этой фазы.
+func TestColdStart_QuiesceFailRollsBack(t *testing.T) {
+	f := ndmsquery.NewFakeNDMS()
+	f.ExpectCreate("OpkgTun10")
+	o, _, rec := newOS5Oracle(t, f, &MockBackend{})
+	o.SetUplinkLifecycle(func(string) bool { return true }, nil)
+	rec.failOn = "link set down"
+	rec.failErr = "injected: quiesce"
+
+	if err := o.ColdStart(context.Background(), lifecycleCfg(t)); err == nil {
+		t.Fatal("ColdStart: want ошибку quiesce")
+	}
+	if f.Has("OpkgTun10") {
+		t.Fatalf("созданная запись осталась после отказа quiesce: %v", f.Posts)
+	}
+}

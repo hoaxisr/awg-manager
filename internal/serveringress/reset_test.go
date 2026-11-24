@@ -10,7 +10,6 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/cdndispatcher"
 	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
-	"github.com/hoaxisr/awg-manager/internal/telemt"
 	"github.com/hoaxisr/awg-manager/internal/tgwebproxy"
 	"github.com/hoaxisr/awg-manager/internal/vlessserver"
 )
@@ -180,16 +179,8 @@ func TestCoordinator_ResetVless_KeepsActiveTelegramAndDispatcherRoutes(t *testin
 	}
 }
 
-func TestCoordinator_ResetTelegram_KeepsActiveVlessAndPreservesTelemtBinary(t *testing.T) {
+func TestCoordinator_ResetTelegram_KeepsActiveVless(t *testing.T) {
 	dataDir := t.TempDir()
-	telemtSvc := telemt.New(dataDir, "x86_64")
-	binPath := filepath.Join(dataDir, "telemt", "telemt")
-	if err := os.WriteFile(binPath, []byte("keep-telemt-bin"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dataDir, "telemt", "settings.json"), []byte(`{"enabled":true}`), 0600); err != nil {
-		t.Fatal(err)
-	}
 
 	xray := &resettableXray{
 		mockXray: &mockXray{
@@ -229,7 +220,6 @@ func TestCoordinator_ResetTelegram_KeepsActiveVlessAndPreservesTelemtBinary(t *t
 	}
 
 	coord := New(dataDir, xray, disp, tg)
-	coord.SetTelemt(telemtSvc)
 
 	res, err := coord.ResetTelegram(context.Background(), ResetOptions{DeleteKeenDNS: false})
 	if err != nil {
@@ -243,12 +233,6 @@ func TestCoordinator_ResetTelegram_KeepsActiveVlessAndPreservesTelemtBinary(t *t
 	}
 	if xray.resetCalled || !xray.GetConfig().Enabled {
 		t.Fatal("expected VLESS config and runtime to remain untouched")
-	}
-	if data, err := os.ReadFile(binPath); err != nil || string(data) != "keep-telemt-bin" {
-		t.Fatalf("expected telemt binary preserved, got err=%v data=%q", err, string(data))
-	}
-	if _, err := os.Stat(filepath.Join(dataDir, "telemt", "settings.json")); !os.IsNotExist(err) {
-		t.Fatal("expected standalone telemt settings.json removed")
 	}
 	if !disp.IsRunning() {
 		t.Fatal("expected Dispatcher to stay running while VLESS is active")

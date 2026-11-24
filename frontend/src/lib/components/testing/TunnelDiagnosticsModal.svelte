@@ -12,7 +12,6 @@
 		targetId: string;
 		displayName: string;
 		subject?: DiagnosticsSubject;
-		subjectLabel?: string;
 		iface?: string;
 		loading?: boolean;
 		unavailableReason?: string;
@@ -25,7 +24,6 @@
 		targetId,
 		displayName,
 		subject,
-		subjectLabel,
 		iface,
 		loading = false,
 		unavailableReason,
@@ -54,7 +52,7 @@
 		{displayName}
 		backHref=""
 		backLabel=""
-		subject={subject ?? (subjectLabel === 'подписку' ? 'subscription' : 'tunnel')}
+		subject={subject ?? 'tunnel'}
 		{iface}
 		{loading}
 		{unavailableReason}
