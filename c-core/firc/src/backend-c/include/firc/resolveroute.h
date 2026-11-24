@@ -32,6 +32,10 @@ typedef struct firc_resolve_route {
     firc_resolve_source_t source;
     size_t n_servers;
     firc_resolver_addr_t servers[FIRC_RESOLVE_MAX_SERVERS];
+    uint16_t url_ids[FIRC_RESOLVE_MAX_SERVERS];
+    char urls[FIRC_RESOLVE_MAX_SERVERS][FIRC_RESOLVER_URL_MAX + 1];
+    bool dns_only;
+    bool no_fallback;
     uint64_t gen;
 } firc_resolve_route_t;
 
@@ -46,6 +50,8 @@ typedef struct firc_resolve_input {
     bool ktcp;
     const firc_resolver_addr_t *firmware;
     size_t n_firmware;
+    uint16_t (*intern)(void *ud, const char *url);
+    void *intern_ud;
 } firc_resolve_input_t;
 
 typedef struct firc_resolve_table {

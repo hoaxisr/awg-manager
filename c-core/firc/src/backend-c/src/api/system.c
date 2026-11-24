@@ -79,6 +79,7 @@ static const char *decision_name(uint8_t d) {
     case FIRC_DNS_POOL_REFUSED: return "pool-refused";
     case FIRC_DNS_PASSED: return "passed";
     case FIRC_DNS_BLOCKED: return "blocked";
+    case FIRC_DNS_DNS_ONLY: return "dns-only";
     }
     return "passed";
 }
@@ -840,6 +841,9 @@ static char *interfaces_body(const firc_system_ctx_t *ctx, const firc_kn_aliases
         cJSON *block = cJSON_CreateObject();
         cJSON_AddStringToObject(block, "id", FIRC_IFACE_BLOCK);
         cJSON_AddItemToArray(arr, block);
+        cJSON *dns = cJSON_CreateObject();
+        cJSON_AddStringToObject(dns, "id", FIRC_IFACE_DNS);
+        cJSON_AddItemToArray(arr, dns);
         for (size_t i = 0; i < n; i++) {
             cJSON *item = cJSON_CreateObject();
             cJSON_AddStringToObject(item, "id", ifaces[i].id);

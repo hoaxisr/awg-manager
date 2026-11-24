@@ -13,6 +13,7 @@
 #include <curl/curl.h>
 
 #include "firc/log.h"
+#include "firc/sub_sock.h"
 #include "firc/subparse.h"
 #include "firc/version.h"
 
@@ -22,15 +23,10 @@ void firc_sub_fetch_set_setsockopt_for_test(firc_sub_setsockopt_fn fn) { g_setso
 
 firc_sub_setsockopt_fn firc_sub_fetch_get_setsockopt(void) { return g_setsockopt; }
 
-typedef struct sock_cfg {
-    uint32_t mark;
-    bool mark_refused;
-} sock_cfg_t;
-
-static int cloexec_cb(void *ud, curl_socket_t fd, curlsocktype purpose)
+int firc_sub_sock_cb(void *ud, curl_socket_t fd, curlsocktype purpose)
 {
     (void)purpose;
-    sock_cfg_t *cfg = ud;
+    firc_sub_sock_t *cfg = ud;
     int fl = fcntl(fd, F_GETFD);
     if (fl >= 0) { (void)fcntl(fd, F_SETFD, fl | FD_CLOEXEC); }
     if (cfg != NULL && cfg->mark != 0 && g_setsockopt(fd, SOL_SOCKET, SO_MARK, &cfg->mark, sizeof cfg->mark) != 0) {
@@ -329,7 +325,7 @@ firc_err_t firc_sub_fetch_to(const char *url, const firc_sub_fetch_opts_t *o, fi
         }
         char curl_err[CURL_ERROR_SIZE] = "";
         xfer_t x = {.curl = curl, .sink = sink, .sink_ud = sink_ud, .o = o};
-        sock_cfg_t sock = {.mark = o->mark};
+        firc_sub_sock_t sock = {.mark = o->mark};
         curl_easy_setopt(curl, CURLOPT_URL, current);
         curl_easy_setopt(curl, CURLOPT_USERAGENT, "firc/" FIRC_VERSION);
         curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
@@ -353,7 +349,7 @@ firc_err_t firc_sub_fetch_to(const char *url, const firc_sub_fetch_opts_t *o, fi
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &x);
         curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-        curl_easy_setopt(curl, CURLOPT_SOCKOPTFUNCTION, cloexec_cb);
+        curl_easy_setopt(curl, CURLOPT_SOCKOPTFUNCTION, firc_sub_sock_cb);
         curl_easy_setopt(curl, CURLOPT_SOCKOPTDATA, &sock);
         curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, xferinfo_cb);
         curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &x);

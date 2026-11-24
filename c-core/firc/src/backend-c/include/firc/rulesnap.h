@@ -17,6 +17,8 @@ typedef struct firc_group_snapshot {
     firc_devsel_t *devices; /* owned */
     int8_t block;           /* -1 not a block group, else the firc_block_answer_t */
     bool cloudflare;
+    bool dns_only;
+    bool no_fallback;
 } firc_group_snapshot_t;
 
 typedef struct firc_ruleset_snapshot {

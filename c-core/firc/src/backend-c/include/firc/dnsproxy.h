@@ -7,6 +7,7 @@
 #include <sys/types.h>
 
 #include "firc/dnswire.h"
+#include "firc/doh.h"
 #include "firc/err.h"
 #include "firc/listen.h"
 #include "firc/events.h"
@@ -109,6 +110,9 @@ typedef struct firc_dnsproxy_route {
     size_t n_servers;
     struct sockaddr_storage servers[FIRC_RESOLVE_MAX_SERVERS];
     socklen_t server_lens[FIRC_RESOLVE_MAX_SERVERS];
+    uint16_t url_ids[FIRC_RESOLVE_MAX_SERVERS];
+    bool dns_only;
+    bool no_fallback;
     bool blocked; /* the proxy answers with `answer` itself */
     firc_block_answer_t answer;
     firc_id_t owner;
@@ -120,6 +124,8 @@ typedef bool (*firc_dnsproxy_route_fn)(void *ud, const firc_dns_msg_t *query, co
 
 /* NULL sends everything to the common upstream. Loop thread, or before start. */
 void firc_dnsproxy_set_router(firc_dnsproxy_t *p, firc_dnsproxy_route_fn fn, void *ud);
+
+void firc_dnsproxy_set_doh(firc_dnsproxy_t *p, firc_doh_ops_t ops);
 
 /* Told of every query the proxy answered with a block answer, before the reply. */
 typedef void (*firc_dnsproxy_blocked_cb)(void *ud, const firc_dns_msg_t *query, const firc_ip_t *client,

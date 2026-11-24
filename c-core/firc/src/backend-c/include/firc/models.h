@@ -44,12 +44,14 @@ typedef struct firc_group_list firc_group_list_t;
 typedef struct firc_group_resolve {
     bool tunnel;
     char *server; /* NULL/"" means the firmware's own resolvers for this interface; else "addr[:port]" */
+    bool fallback;
 } firc_group_resolve_t;
 
 #define FIRC_GROUP_IFACES_MAX 4
 
 /* The interface value of a group that routes nothing and answers its names locally. */
 #define FIRC_IFACE_BLOCK "block"
+#define FIRC_IFACE_DNS "dns"
 
 typedef enum { FIRC_BLOCK_NULL = 0, FIRC_BLOCK_NXDOMAIN, FIRC_BLOCK_REFUSED } firc_block_answer_t;
 
@@ -115,6 +117,8 @@ static inline const char *firc_group_iface_at(const firc_group_t *g, size_t i)
 }
 /* Whether g's interface is exactly block, alone. */
 bool firc_group_is_block(const firc_group_t *g);
+bool firc_group_is_dns(const firc_group_t *g);
+const char *firc_group_dns_check(const firc_group_t *g, const char **field);
 /* "null", "nxdomain" or "refused". */
 const char *firc_block_answer_name(firc_block_answer_t a);
 /* Reads one of those three names into *out; false for anything else. */

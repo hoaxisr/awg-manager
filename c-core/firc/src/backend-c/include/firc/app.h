@@ -53,6 +53,7 @@ typedef struct firc_app_deps {
     firc_fakeip_t *pool; /* nullable; without it the group logs its table unprotected */
     firc_loop_t *loop; /* nullable; without it a completed pass reports synchronously */
     firc_dnsproxy_t *proxy;
+    firc_doh_t *doh;
     firc_resolve_router_t *router; /* nullable; without it no resolve routes publish */
     firc_kn_resolvers_t *resolvers; /* nullable; without it only resolve.server groups get a resolver */
     uint32_t start_idx;
@@ -77,6 +78,7 @@ typedef struct firc_app_resolver_info {
     firc_resolve_source_t source;
     size_t n_servers;
     firc_resolver_addr_t servers[FIRC_RESOLVE_MAX_SERVERS];
+    char urls[FIRC_RESOLVE_MAX_SERVERS][FIRC_RESOLVER_URL_MAX + 1];
     firc_dnsproxy_health_t health;
     int64_t wall_s;
 } firc_app_resolver_info_t;
