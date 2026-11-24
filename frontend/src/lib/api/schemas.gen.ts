@@ -1020,6 +1020,28 @@ const api_PageScanEnvelope: v.GenericSchema = v.looseObject({
 	success: v.optional(v.nullable(v.boolean())),
 });
 
+const api_PageScanInterfaceOptionDTO: v.GenericSchema = v.looseObject({
+	label: v.optional(v.nullable(v.string())),
+	name: v.optional(v.nullable(v.string())),
+});
+
+const api_PageScanOptionsDTO: v.GenericSchema = v.looseObject({
+	defaultProxy: v.optional(v.nullable(v.string())),
+	defaultProxyLabel: v.optional(v.nullable(v.string())),
+	interfaces: v.optional(v.nullable(v.array(v.lazy(() => api_PageScanInterfaceOptionDTO)))),
+	proxies: v.optional(v.nullable(v.array(v.lazy(() => api_PageScanProxyOptionDTO)))),
+});
+
+const api_PageScanOptionsEnvelope: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_PageScanOptionsDTO))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_PageScanProxyOptionDTO: v.GenericSchema = v.looseObject({
+	label: v.optional(v.nullable(v.string())),
+	url: v.optional(v.nullable(v.string())),
+});
+
 const api_PageScanResourceDTO: v.GenericSchema = v.looseObject({
 	fakeIp: v.optional(v.nullable(v.string())),
 	groupId: v.optional(v.nullable(v.string())),
@@ -1030,6 +1052,7 @@ const api_PageScanResourceDTO: v.GenericSchema = v.looseObject({
 	outbound: v.optional(v.nullable(v.string())),
 	outboundLabel: v.optional(v.nullable(v.string())),
 	resolveError: v.optional(v.nullable(v.string())),
+	routeUnknown: v.optional(v.nullable(v.boolean())),
 	routed: v.optional(v.nullable(v.boolean())),
 	sources: v.optional(v.nullable(v.array(v.string()))),
 });
@@ -1038,7 +1061,10 @@ const api_PageScanResultDTO: v.GenericSchema = v.looseObject({
 	bodyBytes: v.optional(v.nullable(v.number())),
 	bodyTruncated: v.optional(v.nullable(v.boolean())),
 	contentType: v.optional(v.nullable(v.string())),
+	defaultProxy: v.optional(v.nullable(v.string())),
 	durationMs: v.optional(v.nullable(v.number())),
+	fetchTarget: v.optional(v.nullable(v.string())),
+	fetchTargetLabel: v.optional(v.nullable(v.string())),
 	fetchVia: v.optional(v.nullable(v.string())),
 	finalUrl: v.optional(v.nullable(v.string())),
 	hostsTruncated: v.optional(v.nullable(v.boolean())),
@@ -3495,6 +3521,36 @@ const vlessserver_XHTTPTuning: v.GenericSchema = v.looseObject({
 	x_padding_placement: v.optional(v.nullable(v.string())),
 });
 
+const wdttdiag_DiagResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => wdttdiag_Result))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const wdttdiag_Result: v.GenericSchema = v.looseObject({
+	durationMs: v.optional(v.nullable(v.number())),
+	exitCode: v.optional(v.nullable(v.number())),
+	mode: v.optional(v.nullable(v.string())),
+	steps: v.optional(v.nullable(v.array(v.lazy(() => wdttdiag_Step)))),
+	transport: v.optional(v.nullable(v.string())),
+	verdict: v.optional(v.nullable(v.lazy(() => wdttdiag_Verdict))),
+});
+
+const wdttdiag_Step: v.GenericSchema = v.looseObject({
+	state: v.optional(v.nullable(v.string())),
+	step: v.optional(v.nullable(v.string())),
+	text: v.optional(v.nullable(v.string())),
+	title: v.optional(v.nullable(v.string())),
+});
+
+const wdttdiag_Verdict: v.GenericSchema = v.looseObject({
+	actions: v.optional(v.nullable(v.array(v.string()))),
+	code: v.optional(v.nullable(v.string())),
+	facts: v.optional(v.nullable(v.unknown())),
+	sev: v.optional(v.nullable(v.string())),
+	text: v.optional(v.nullable(v.string())),
+	title: v.optional(v.nullable(v.string())),
+});
+
 const wdttlink_DecodeResponse: v.GenericSchema = v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => wdttlink_LinkDecodeResult))),
 	success: v.optional(v.nullable(v.boolean())),
@@ -3515,6 +3571,7 @@ const wdttlink_EnsureWGTunnelResponse: v.GenericSchema = v.looseObject({
 const wdttlink_ImportPayload: v.GenericSchema = v.looseObject({
 	connMode: v.optional(v.nullable(v.string())),
 	deviceId: v.optional(v.nullable(v.string())),
+	diagKey: v.optional(v.nullable(v.string())),
 	listen: v.optional(v.nullable(v.string())),
 	name: v.optional(v.nullable(v.string())),
 	password: v.optional(v.nullable(v.string())),
@@ -3550,6 +3607,15 @@ const wdttlink_LinkResult: v.GenericSchema = v.looseObject({
 	link: v.optional(v.nullable(v.string())),
 	linkQwdtt: v.optional(v.nullable(v.string())),
 	peer: v.optional(v.nullable(v.string())),
+});
+
+const wdttlink_RotateDiagKeyResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => wdttlink_RotateDiagKeyResult))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const wdttlink_RotateDiagKeyResult: v.GenericSchema = v.looseObject({
+	rotated: v.optional(v.nullable(v.boolean())),
 });
 
 const wdttlink_SubscriptionPreview: v.GenericSchema = v.looseObject({
@@ -3710,6 +3776,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"GET /connections": v.lazy(() => api_ConnectionsResponseEnvelope),
 	"GET /diagnostics/dns-proxy": v.lazy(() => api_DnsProxyInfoEnvelope),
 	"GET /diagnostics/ip-inspect": v.lazy(() => api_IPInspectEnvelope),
+	"GET /diagnostics/page-scan/options": v.lazy(() => api_PageScanOptionsEnvelope),
 	"GET /diagnostics/status": v.lazy(() => api_DiagnosticsStatusResponse),
 	"GET /dns-check/client": v.lazy(() => api_DnsCheckStartResponseEnvelope),
 	"GET /dns-check/probe": v.lazy(() => api_APIEnvelope),
@@ -3977,6 +4044,8 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /proxyrt/install/uninstall": v.lazy(() => install_InstallResponse),
 	"POST /proxyrt/instances": v.lazy(() => api_ProxyRtInstanceResponse),
 	"POST /proxyrt/instances/{key}/apply": v.lazy(() => api_OkResponse),
+	"POST /proxyrt/instances/{key}/diag": v.lazy(() => wdttdiag_DiagResponse),
+	"POST /proxyrt/instances/{key}/diag-key/rotate": v.lazy(() => wdttlink_RotateDiagKeyResponse),
 	"POST /proxyrt/instances/{key}/ensure-wg-tunnel": v.lazy(() => wdttlink_EnsureWGResponse),
 	"POST /proxyrt/instances/{key}/link": v.lazy(() => wdttlink_LinkResponse),
 	"POST /proxyrt/instances/{key}/restart": v.lazy(() => api_OkResponse),
@@ -4159,6 +4228,7 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /uplink/switch": v.lazy(() => api_UplinkEntriesResponse),
 	"POST /warpscout/account/address": v.record(v.string(), v.unknown()),
 	"POST /warpscout/account/delete": v.record(v.string(), v.unknown()),
+	"POST /warpscout/account/import": v.record(v.string(), v.unknown()),
 	"POST /warpscout/account/license": v.record(v.string(), v.unknown()),
 	"POST /warpscout/account/register": v.record(v.string(), v.unknown()),
 	"POST /warpscout/apply": v.record(v.string(), v.unknown()),

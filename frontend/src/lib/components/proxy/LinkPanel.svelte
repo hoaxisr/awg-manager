@@ -3,7 +3,7 @@
 	// пароль абонента; peer и VK-хеши правятся здесь же и пересобирают ссылку.
 	import { m } from '$lib/i18n';
 	import { onMount } from 'svelte';
-	import { Button, FieldHint, Input, IconButton, SegmentedControl } from '$lib/components/ui';
+	import { Button, FieldHint, Input, IconButton, SegmentedControl, Toggle } from '$lib/components/ui';
 	import { X } from 'lucide-svelte';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
@@ -45,6 +45,7 @@
 
 	let link = $state('');
 	let linkQwdtt = $state('');
+	let includeDiagKey = $state(false);
 	let busy = $state(false);
 	let wanBusy = $state(false);
 
@@ -54,8 +55,8 @@
 		void generate();
 	});
 
-	async function generate() {
-		if (busy) return;
+	async function generate(): Promise<boolean> {
+		if (busy) return false;
 		busy = true;
 		try {
 			let peerParam = peer.trim();
@@ -72,13 +73,24 @@
 				name: serverName,
 				password: user.password,
 				mode,
+				includeDiagKey: includeDiagKey || undefined,
 			});
 			link = res.link ?? '';
 			linkQwdtt = res.linkQwdtt ?? '';
+			return true;
 		} catch (e) {
 			notifications.error(errText(e));
+			return false;
 		} finally {
 			busy = false;
+		}
+	}
+
+	async function toggleDiagKey(on: boolean) {
+		const prev = includeDiagKey;
+		includeDiagKey = on;
+		if (!(await generate())) {
+			includeDiagKey = prev;
 		}
 	}
 
@@ -146,6 +158,21 @@
 			onchange={() => generate()}
 			fullWidth
 		/>
+		<div class="mode-row">
+			<Toggle
+				size="sm"
+				spinner="none"
+				controlled
+				label={m.proxy_link_panel_include_diag_key()}
+				checked={includeDiagKey}
+				disabled={busy}
+				onchange={toggleDiagKey}
+			/>
+			<FieldHint
+				text={m.proxy_link_panel_include_diag_key_hint()}
+				ariaLabel={m.proxy_link_panel_include_diag_key_aria()}
+			/>
+		</div>
 	</div>
 
 	{#if linkQwdtt}

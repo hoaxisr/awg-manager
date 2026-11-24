@@ -1,7 +1,8 @@
 <script lang="ts">
   import { m } from '$lib/i18n';
   import type { FircExtConfig, FircInterfaceOption } from '$lib/types/firc';
-  import { isSelectableFircFallbackInterface } from '$lib/utils/fircFallback';
+  import { fircTunnelsState } from '$lib/stores/firc';
+  import { friendlyIfaceLabel, isSelectableFircFallbackInterface } from '$lib/utils/fircFallback';
   import { Toggle, Button } from '$lib/components/ui';
   import { formatIfaceLabel } from './fircSettingsIface';
 
@@ -98,7 +99,7 @@
         <optgroup label={m.firc_fallback_panel_title()}>
           {#each extConfig.proxyGroups as pg (pg.id)}
             <option value="pg:{pg.id}">
-              {pg.name} ({pg.interfaces.map((id) => (id === 'eth3' ? 'Direct (eth3)' : id)).join(' → ')})
+              {pg.name} ({pg.interfaces.map((id) => friendlyIfaceLabel(id, interfaces, $fircTunnelsState)).join(' → ')})
             </option>
           {/each}
         </optgroup>

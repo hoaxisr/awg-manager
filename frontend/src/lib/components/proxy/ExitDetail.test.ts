@@ -26,6 +26,7 @@ const apiMock = vi.hoisted(() => ({
 	ensureWdttRawTunnel: vi.fn(),
 	importConfig: vi.fn(),
 	getFreeTurnCaptchaStatus: vi.fn(),
+	runWdttClientDiag: vi.fn(),
 }));
 vi.mock('$lib/api/client', () => ({ api: apiMock }));
 
@@ -183,4 +184,127 @@ describe('ExitDetail: режим подключения правится в де
 
 		expect(await findByText('WDTT · Raw')).toBeTruthy();
 	});
-})
+});
+
+describe('ExitDetail: кнопка диагностики WDTT', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		apiMock.ensureWdttWgTunnel.mockResolvedValue(undefined);
+		apiMock.ensureWdttRawTunnel.mockResolvedValue(undefined);
+		apiMock.getFreeTurnCaptchaStatus.mockResolvedValue({ available: false, clients: [] });
+		apiMock.runWdttClientDiag.mockResolvedValue({
+			mode: 'dtls',
+			durationMs: 120,
+			exitCode: 0,
+			steps: [],
+			verdict: { code: 'path_ok', sev: 'ok', title: 'Путь ОК', text: 'Всё работает' },
+		});
+	});
+
+	it('кнопка «Диагностика» открывает модалку без автозапуска и запускает проверку кнопкой «Проверить»', async () => {
+		const { findByRole, findByText } = mount('diag-1', 'wg');
+		await fireEvent.click(await findByRole('button', { name: 'Диагностика' }));
+		expect(await findByRole('button', { name: 'Проверить' })).toBeTruthy();
+		expect(apiMock.runWdttClientDiag).not.toHaveBeenCalled();
+
+		await fireEvent.click(await findByRole('button', { name: 'Проверить' }));
+		await waitFor(() =>
+			expect(apiMock.runWdttClientDiag).toHaveBeenCalledWith('diag-1', {}, expect.any(AbortSignal)),
+		);
+		expect(await findByText('Путь ОК')).toBeTruthy();
+	});
+
+	it('у FreeTurn-клиента кнопки диагностики WDTT нет', async () => {
+		const { queryByRole, findByRole } = render(ExitDetail, {
+			props: {
+				row: {
+					key: 'freeturn-client:ft1',
+					id: 'ft1',
+					protocol: 'freeturn',
+					role: 'client',
+					name: 'FreeTurn NL',
+					state: 'stopped',
+					autostart: false,
+					orphanedPid: false,
+					binaryPresent: true,
+				},
+				status: { running: false, binary: '/opt/bin/freeturn', binaryPresent: true },
+				ftClient: {
+					enabled: false,
+					listen: '127.0.0.1:9002',
+					peer: 'ft.example:3478',
+					provider: 'vk',
+					links: '',
+					streams: 4,
+					transport: 'tcp',
+					mode: 'udp',
+					bond: false,
+					obfProfile: 'none',
+					obfTimingMs: 0,
+					streamsPerCred: 0,
+					obfKey: '',
+					obfKeySet: true,
+					platform: 'desktop',
+					dnsMode: 'auto',
+					dnsServers: '',
+					clientId: '',
+					sub: '',
+					debug: false,
+				},
+				policies: [] as AccessPolicy[],
+				tunnels: [] as TunnelListItem[],
+				onstart: () => {},
+				onstop: () => {},
+				onsave: async () => null,
+				onreload: () => {},
+			},
+		});
+		expect(await findByRole('button', { name: 'Настройки' })).toBeTruthy();
+		expect(queryByRole('button', { name: 'Диагностика' })).toBeNull();
+	});
+
+	it('модалка диагностики не закрывается при фоновом поллинге с новым объектом row того же id', async () => {
+		const { findByRole, findByText, queryByText, rerender } = mount('diag-poll-1', 'raw');
+		await fireEvent.click(await findByRole('button', { name: 'Диагностика' }));
+		await fireEvent.click(await findByRole('button', { name: 'Проверить' }));
+		await waitFor(() => expect(apiMock.runWdttClientDiag).toHaveBeenCalledTimes(1));
+		expect(await findByText('Путь ОК')).toBeTruthy();
+
+		// Имитация тика statusPoll: новый объект row с тем же id и обновлённый status.
+		await rerender({
+			row: row('diag-poll-1', 'raw'),
+			status: { ...status },
+			wdttClient: { ...CLIENT, connMode: 'raw' },
+			policies: [] as AccessPolicy[],
+			tunnels: [] as TunnelListItem[],
+			onstart: () => {},
+			onstop: () => {},
+			onsave: async () => null,
+			onreload: () => {},
+		});
+		await new Promise((r) => setTimeout(r, 20));
+		expect(queryByText('Путь ОК')).toBeTruthy();
+		expect(apiMock.runWdttClientDiag).toHaveBeenCalledTimes(1);
+	});
+
+	it('подсказка diagKeySet обновляется реактивно из пропа wdttClient без перемонтирования', async () => {
+		const { findByRole, queryByText, rerender } = mount('diag-dk-1', 'wg');
+		await fireEvent.click(await findByRole('button', { name: 'Диагностика' }));
+		expect(queryByText('Сохранён из ссылки; оставьте пустым, чтобы использовать его')).toBeNull();
+
+		await rerender({
+			row: row('diag-dk-1', 'wg'),
+			status: { ...status },
+			wdttClient: { ...CLIENT, connMode: 'wg', diagKeySet: true },
+			policies: [] as AccessPolicy[],
+			tunnels: [] as TunnelListItem[],
+			onstart: () => {},
+			onstop: () => {},
+			onsave: async () => null,
+			onreload: () => {},
+		});
+		await waitFor(() =>
+			expect(queryByText('Сохранён из ссылки; оставьте пустым, чтобы использовать его')).toBeTruthy(),
+		);
+	});
+});

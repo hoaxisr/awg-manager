@@ -4,7 +4,7 @@
 	// server.log и освобождение портов. Свёрнута: глобального режима «Эксперт»
 	// больше нет (решение Q7 ИА).
 	import { m } from '$lib/i18n';
-	import { Dropdown, FieldHint, Input, SegmentedControl } from '$lib/components/ui';
+	import { Button, ConfirmModal, Dropdown, FieldHint, Input, SegmentedControl } from '$lib/components/ui';
 	import { modeOptions } from '../freeturn/options';
 	import { listenPortNumber } from '$lib/utils/listenPortUtils';
 	import { effectiveStaticWan } from '$lib/api/proxyInstances';
@@ -27,6 +27,10 @@
 		 * не приехал либо не отдался: поле остаётся, но выбирать не из чего.
 		 */
 		wanOptions?: { value: string; label: string }[];
+		busy?: boolean;
+		/** Смена diag.key сервера (только WDTT). */
+		onrotatediagkey?: () => Promise<void> | void;
+		rotatingDiagKey?: boolean;
 	}
 
 	let {
@@ -34,7 +38,13 @@
 		ftServer = $bindable(),
 		ports,
 		wanOptions = [],
+		busy = false,
+		onrotatediagkey,
+		rotatingDiagKey = false,
 	}: Props = $props();
+
+	// Смена ключа гасит розданные ссылки и перезапускает сервер — через подтверждение.
+	let rotateOpen = $state(false);
 
 	// Внутренний WG-порт: наружу на него не приходят, снаружи не виден.
 	const wgPort = $derived(String(wdttServer?.wgPort || 56001));
@@ -124,6 +134,25 @@
 				ariaLabel={m.proxy_adv_log_mode_aria()}
 			/>
 		</div>
+
+		{#if onrotatediagkey}
+			<div class="log-mode">
+				<span class="row-label">{m.proxy_adv_diag_key()}</span>
+				<Button
+					variant="secondary"
+					size="sm"
+					loading={rotatingDiagKey}
+					disabled={busy || rotatingDiagKey}
+					onclick={() => (rotateOpen = true)}
+				>
+					{m.proxy_adv_diag_key_rotate()}
+				</Button>
+				<FieldHint
+					text={m.proxy_adv_diag_key_hint()}
+					ariaLabel={m.proxy_adv_diag_key_aria()}
+				/>
+			</div>
+		{/if}
 	{:else if ftServer}
 		<div class="grid">
 			<Input label={m.proxy_adv_backend()} bind:value={ftServer.connect} fullWidth />
@@ -133,6 +162,18 @@
 
 	<KillPortSection title={m.proxy_adv_kill_ports()} {ports} />
 </DetailSection>
+
+<ConfirmModal
+	open={rotateOpen}
+	title={m.proxy_adv_diag_key_rotate()}
+	message={m.proxy_adv_diag_key_hint()}
+	confirmLabel={m.proxy_adv_diag_key_rotate()}
+	onConfirm={() => {
+		rotateOpen = false;
+		void onrotatediagkey?.();
+	}}
+	onClose={() => (rotateOpen = false)}
+/>
 
 <style>
 	.grid {

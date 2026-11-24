@@ -165,7 +165,8 @@ func (r *ipRunRecorder) run(_ context.Context, name string, args ...string) (*ex
 		if r.failErr != "" {
 			return &exec.Result{}, errors.New(r.failErr)
 		}
-		return &exec.Result{}, errors.New("ip: RTNETLINK answers: No such process")
+		// Как у живого exec.Run: причина в stderr, в ошибке — только код.
+		return &exec.Result{ExitCode: 2, Stderr: "RTNETLINK answers: No such process"}, errors.New("exit status 2")
 	}
 	return &exec.Result{}, nil
 }

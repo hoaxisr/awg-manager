@@ -207,4 +207,75 @@ describe('PageScanSection', () => {
 		expect(fircSaveGroupsMock.mock.calls[0][1]).toBe(true);
 		expect(onRoutesChanged).toHaveBeenCalledTimes(1);
 	});
+
+	it('renders explicit tunnel/proxy exit badge, defaultProxy tooltip, and retry action on error', async () => {
+		const onRetry = vi.fn();
+		const { rerender } = render(PageScanSection, {
+			props: {
+				result: {
+					...sampleResult,
+					fetchVia: 'interface',
+					fetchTarget: 'opkgtun11',
+					fetchTargetLabel: 'VPN DE (opkgtun11)',
+					defaultProxy: 'http://127.0.0.1:1099',
+				},
+			},
+		});
+
+		const ifaceBadge = screen.getByText(
+			m.page_scan_via_interface({ target: 'VPN DE (opkgtun11)' }),
+		);
+		expect(ifaceBadge).toBeInTheDocument();
+		expect(ifaceBadge).toHaveAttribute('title', 'opkgtun11');
+
+		await rerender({
+			result: {
+				...sampleResult,
+				fetchVia: 'proxy',
+				fetchTarget: 'http://127.0.0.1:1099',
+				fetchTargetLabel: 'FIRC inbound (127.0.0.1:1099)',
+				defaultProxy: 'http://127.0.0.1:1099',
+			},
+			onRescan: vi.fn(),
+		});
+		expect(
+			screen.getByText(
+				m.page_scan_via_proxy_target({ target: 'FIRC inbound (127.0.0.1:1099)' }),
+			),
+		).toBeInTheDocument();
+
+		await rerender({
+			result: {
+				...sampleResult,
+				fetchVia: 'direct',
+				defaultProxy: 'http://127.0.0.1:1099',
+			},
+			onRescan: vi.fn(),
+		});
+		expect(screen.getByRole('button', { name: m.page_scan_rescan_proxy() })).toHaveAttribute(
+			'title',
+			m.page_scan_rescan_proxy_title({ proxy: 'http://127.0.0.1:1099' }),
+		);
+
+		await rerender({
+			result: null,
+			error: 'proxy timeout',
+			onRetry,
+		});
+		const retryBtn = screen.getByRole('button', { name: m.page_scan_retry_btn() });
+		await fireEvent.click(retryBtn);
+		expect(onRetry).toHaveBeenCalledTimes(1);
+	});
+
+	it('does not call an unchecked host direct', async () => {
+		const host = { host: 'target.example.com', sources: ['document'], routed: false };
+		const { rerender } = render(PageScanSection, {
+			props: { result: { ...sampleResult, resources: [{ ...host, routeUnknown: true }] } },
+		});
+		expect(screen.queryByText(m.page_scan_route_direct())).toBeNull();
+		expect(screen.queryByText(m.page_scan_select_unrouted({ count: 1 }))).toBeNull();
+
+		await rerender({ result: { ...sampleResult, resources: [host] } });
+		expect(screen.getByText(m.page_scan_route_direct())).toBeInTheDocument();
+	});
 });

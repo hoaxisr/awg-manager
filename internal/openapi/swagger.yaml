@@ -2823,10 +2823,59 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.PageScanInterfaceOptionDTO:
+    properties:
+      label:
+        example: VPN DE (opkgtun11)
+        type: string
+      name:
+        example: opkgtun11
+        type: string
+    type: object
+  api.PageScanOptionsDTO:
+    properties:
+      defaultProxy:
+        example: http://127.0.0.1:1099
+        type: string
+      defaultProxyLabel:
+        example: FIRC inbound (127.0.0.1:1099)
+        type: string
+      interfaces:
+        items:
+          $ref: '#/definitions/api.PageScanInterfaceOptionDTO'
+        type: array
+      proxies:
+        items:
+          $ref: '#/definitions/api.PageScanProxyOptionDTO'
+        type: array
+    type: object
+  api.PageScanOptionsEnvelope:
+    properties:
+      data:
+        $ref: '#/definitions/api.PageScanOptionsDTO'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.PageScanProxyOptionDTO:
+    properties:
+      label:
+        example: FIRC inbound (127.0.0.1:1099)
+        type: string
+      url:
+        example: http://127.0.0.1:1099
+        type: string
+    type: object
   api.PageScanRequestDTO:
     properties:
       fetchMode:
         example: auto
+        type: string
+      interface:
+        example: opkgtun11
+        type: string
+      proxyUrl:
+        example: socks5://127.0.0.1:1080
         type: string
       url:
         example: https://www.themoviedb.org
@@ -2859,6 +2908,8 @@ definitions:
         type: string
       resolveError:
         type: string
+      routeUnknown:
+        type: boolean
       routed:
         example: true
         type: boolean
@@ -2881,9 +2932,18 @@ definitions:
       contentType:
         example: text/html; charset=utf-8
         type: string
+      defaultProxy:
+        example: http://127.0.0.1:1099
+        type: string
       durationMs:
         example: 420
         type: integer
+      fetchTarget:
+        example: http://127.0.0.1:1099
+        type: string
+      fetchTargetLabel:
+        example: FIRC inbound (127.0.0.1:1099)
+        type: string
       fetchVia:
         example: direct
         type: string
@@ -9661,6 +9721,71 @@ definitions:
         description: '"queryInHeader"'
         type: string
     type: object
+  wdttdiag.DiagResponse:
+    properties:
+      data:
+        $ref: '#/definitions/wdttdiag.Result'
+      success:
+        example: true
+        type: boolean
+    type: object
+  wdttdiag.Request:
+    properties:
+      diagKey:
+        type: string
+      transport:
+        enum:
+        - ""
+        - auto
+        - udp
+        - tcp
+        type: string
+    type: object
+  wdttdiag.Result:
+    properties:
+      durationMs:
+        type: integer
+      exitCode:
+        type: integer
+      mode:
+        type: string
+      steps:
+        items:
+          $ref: '#/definitions/wdttdiag.Step'
+        type: array
+      transport:
+        type: string
+      verdict:
+        $ref: '#/definitions/wdttdiag.Verdict'
+    type: object
+  wdttdiag.Step:
+    properties:
+      state:
+        type: string
+      step:
+        type: string
+      text:
+        type: string
+      title:
+        type: string
+    type: object
+  wdttdiag.Verdict:
+    properties:
+      actions:
+        items:
+          type: string
+        type: array
+      code:
+        type: string
+      facts:
+        type: object
+      sev:
+        type: string
+      text:
+        type: string
+      title:
+        type: string
+    type: object
   wdttlink.DecodeResponse:
     properties:
       data:
@@ -9693,6 +9818,8 @@ definitions:
       connMode:
         type: string
       deviceId:
+        type: string
+      diagKey:
         type: string
       listen:
         type: string
@@ -9741,6 +9868,8 @@ definitions:
     properties:
       clientId:
         type: string
+      includeDiagKey:
+        type: boolean
       mode:
         type: string
       mtu:
@@ -9789,6 +9918,20 @@ definitions:
       peer:
         example: 1.2.3.4:56002
         type: string
+    type: object
+  wdttlink.RotateDiagKeyResponse:
+    properties:
+      data:
+        $ref: '#/definitions/wdttlink.RotateDiagKeyResult'
+      success:
+        example: true
+        type: boolean
+    type: object
+  wdttlink.RotateDiagKeyResult:
+    properties:
+      rotated:
+        example: true
+        type: boolean
     type: object
   wdttlink.SubscriptionPreview:
     properties:
@@ -11331,7 +11474,8 @@ paths:
       description: Fetches target HTML page on demand (SSRF-safe), extracts referenced
         hostnames, checks FIRC routing, and inspects DNS/PTR/ASN metadata.
       parameters:
-      - description: Target URL and optional fetch mode (auto, direct, proxy)
+      - description: Target URL and optional fetch mode (auto, direct, proxy, interface)
+          with interface/proxyUrl
         in: body
         name: request
         required: true
@@ -11363,6 +11507,26 @@ paths:
       security:
       - CookieAuth: []
       summary: Scan page resources
+      tags:
+      - diagnostics
+  /diagnostics/page-scan/options:
+    get:
+      description: Discovers active router tunnel interfaces and reachable local proxies
+        available for on-demand page scanning.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.PageScanOptionsEnvelope'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: List page scan egress options
       tags:
       - diagnostics
   /diagnostics/result:
@@ -14317,6 +14481,92 @@ paths:
       security:
       - CookieAuth: []
       summary: Разбудить реконсиляцию инстанса
+      tags:
+      - proxyrt
+  /proxyrt/instances/{key}/diag:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Одноразовый прогон `wt-client -diag` через TURN VK без запуска туннеля.
+        409 WDTT_DIAG_UNSUPPORTED — установлен старый `wt-client` без флага `-diag`.
+        409 WDTT_DIAG_BUSY — диагностика уже запущена.
+        504 WDTT_DIAG_TIMEOUT — превышен лимит времени ожидания ответа.
+      parameters:
+      - description: Ключ инстанса (роль:id)
+        in: path
+        name: key
+        required: true
+        type: string
+      - description: Опции диагностики (транспорт, одноразовый ключ)
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/wdttdiag.Request'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/wdttdiag.DiagResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "504":
+          description: Gateway Timeout
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Диагностика подключения wdtt-клиента
+      tags:
+      - proxyrt
+  /proxyrt/instances/{key}/diag-key/rotate:
+    post:
+      description: Генерирует новый diag.key в configDir сервера (права 0600). Запущенный
+        сервер нужно перезапустить.
+      parameters:
+      - description: Ключ инстанса (роль:id)
+        in: path
+        name: key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/wdttlink.RotateDiagKeyResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Сменить ключ диагностики wdtt-сервера
       tags:
       - proxyrt
   /proxyrt/instances/{key}/ensure-wg-tunnel:
@@ -23418,6 +23668,23 @@ paths:
       security:
       - CookieAuth: []
       summary: Delete WARP account
+      tags:
+      - warpscout
+  /warpscout/account/import:
+    post:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: Import Cloudflare WARP account
       tags:
       - warpscout
   /warpscout/account/license:

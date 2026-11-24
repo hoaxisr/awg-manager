@@ -29,6 +29,16 @@
 			open = false;
 			await ondone();
 			notifications.success(m.server_reset_vless_success());
+			if (res.keendns_deleted?.length) {
+				notifications.info(
+					m.server_reset_keendns_deleted({ domains: res.keendns_deleted.join(', ') }),
+				);
+			}
+			if (res.keendns_skipped?.length) {
+				notifications.warning(
+					m.server_reset_keendns_skipped({ domains: res.keendns_skipped.join(', ') }),
+				);
+			}
 			if (res.warnings?.length) {
 				notifications.warning(res.warnings.join('; '));
 			}
@@ -71,8 +81,10 @@
 
 <style>
 	.checkbox-input {
-		width: 16px;
-		height: 16px;
+		width: 18px;
+		height: 18px;
+		flex-shrink: 0;
+		margin-top: 2px;
 		accent-color: var(--color-accent);
 		cursor: pointer;
 	}
@@ -110,6 +122,8 @@
 		display: flex;
 		flex-direction: column;
 		gap: 2px;
+		flex: 1 1 0;
+		min-width: 0;
 	}
 
 	.reset-keendns-label {

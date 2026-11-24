@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 )
@@ -403,8 +404,7 @@ func (s *Service) liveProfileName(id, fallback string) string {
 
 func (s *Service) swap(ctx context.Context, p Profile, ref *TunnelRef, reason string, st *watcherState) {
 	p.Name = s.liveProfileName(p.ID, p.Name)
-	acct := s.d.Store.Account()
-	if acct == nil {
+	if s.d.Store.Account() == nil {
 		return
 	}
 	if _, ok := s.d.Runner.Available(); !ok {
@@ -430,7 +430,6 @@ func (s *Service) swap(ctx context.Context, p Profile, ref *TunnelRef, reason st
 	if endpointIPv4(ref.Endpoint) != "" {
 		exclude = append(exclude, ref.Endpoint)
 	}
-	swapAcct := acct
 	var scanOverride string
 	var outerRef *TunnelRef
 	if ref.ViaIface != "" {
@@ -451,13 +450,6 @@ func (s *Service) swap(ctx context.Context, p Profile, ref *TunnelRef, reason st
 				Running:  ref.ViaRunning,
 			}
 		}
-		// Ключ скана обязан отличаться от ключа внешнего туннеля, иначе
-		// Cloudflare рвёт внешнюю сессию. Берём готовую запись: регистрировать
-		// слот без пользователя автоподмена не должна.
-		if swapAcct = s.existingAccountAvoiding(outerRef.LocalPublicKey); swapAcct == nil {
-			s.finishSwap(ctx, p, ev, st, errors.New("нет учётной записи WARP с ключом, отличным от внешнего туннеля, — запустите скан вручную"), nil, false, false)
-			return
-		}
 	} else {
 		// Нельзя сканировать изнутри самого заменяемого туннеля — упадём на WAN по умолчанию.
 		scanOverride = s.d.Store.Config().ScanInterface
@@ -466,17 +458,13 @@ func (s *Service) swap(ctx context.Context, p Profile, ref *TunnelRef, reason st
 			scanOverride = wan
 		}
 		outerRef = s.resolveRouteTunnel(ctx, s.resolveScanIface(ctx, scanOverride))
-		// Скан через WARP его же ключом рвёт внешнюю сессию у Cloudflare.
-		// Без готовой записи с другим ключом уходим на WAN.
-		if outerRef != nil && outerRef.IsWarp && outerRef.LocalPublicKey != "" && swapAcct.PublicKey == outerRef.LocalPublicKey {
-			if other := s.existingAccountAvoiding(outerRef.LocalPublicKey); other != nil {
-				swapAcct = other
-			} else {
-				scanOverride, _ = s.d.WAN(ctx)
-				outerRef = nil
-			}
-		}
 	}
+	swapAcct, err := s.claimScanAccount(func() (*Account, error) { return s.pickSwapAccount(ctx, ref, outerRef) })
+	if err != nil {
+		s.finishSwap(ctx, p, ev, st, err, nil, false, false)
+		return
+	}
+	defer s.releaseScanKey()
 	awg := s.awgForUse()
 	params, err := s.buildParams(ctx, swapAcct, awg, p.Filters, swapScanMaxHits, 0, nil, exclude, scanOverride, outerRef)
 	if err != nil {
@@ -573,6 +561,48 @@ func (s *Service) swap(ctx context.Context, p Profile, ref *TunnelRef, reason st
 		ev.ProfileName = curName
 	}
 	s.finishSwap(ctx, p, ev, st, verifyErr, verified, false, true)
+}
+
+// pickSwapAccount — запись для скана автоподмены. Конфликт — только ключ
+// другого или внешнего туннеля: их сессию Cloudflare порвал бы. Целевой туннель заменяют как неисправный, поэтому скан
+// его собственным ключом допустим (на нём живут туннели, созданные на ключе
+// основной записи). Берутся только готовые записи: регистрировать слот без
+// пользователя автоподмена не должна.
+func (s *Service) pickSwapAccount(ctx context.Context, ref, outer *TunnelRef) (*Account, error) {
+	acct := s.d.Store.Account()
+	if acct == nil {
+		return nil, ErrNoAccount
+	}
+	// Без списка туннелей подмена отказывает и для туннеля со своей записью:
+	// сканирует не его ключ, а ключ учётной записи, и занят ли тот соседом,
+	// знает только этот список.
+	keys, hasInv, err := s.listTunnelKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+	keys = slices.DeleteFunc(keys, func(k TunnelKeyRef) bool { return k.Mode == ref.Mode && k.ID == ref.ID })
+	if ref.ViaIface != "" {
+		free := s.existingFreeAccountFrom(keys, hasInv, outer.LocalPublicKey)
+		if free == nil {
+			return nil, errors.New("нет свободной учётной записи WARP с ключом, отличным от внешнего туннеля, — запустите скан вручную")
+		}
+		return free, nil
+	}
+	inUse, owner := s.findKeyOwnerInList(keys, hasInv, acct.PublicKey)
+	avoid := []string{acct.PublicKey}
+	if outer != nil && outer.IsWarp && outer.LocalPublicKey != "" {
+		// Скан через WARP его же ключом недопустим, даже если это сам целевой туннель.
+		if !inUse && strings.TrimSpace(acct.PublicKey) == strings.TrimSpace(outer.LocalPublicKey) {
+			inUse, owner = true, outer.Name
+		}
+		avoid = append(avoid, outer.LocalPublicKey)
+	}
+	if inUse {
+		if acct = s.existingFreeAccountFrom(keys, hasInv, avoid...); acct == nil {
+			return nil, fmt.Errorf("ключ аккаунта WARP занят туннелем %q — автоподмена пропущена, чтобы не разорвать соединение", owner)
+		}
+	}
+	return acct, nil
 }
 
 func (s *Service) finishSwap(ctx context.Context, p Profile, ev SwapEvent, st *watcherState, err error, tr *TraceResult, noHits, swapped bool) {

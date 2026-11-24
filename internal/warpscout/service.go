@@ -50,10 +50,26 @@ type SwapOptions struct {
 	AWG      AWGParams
 }
 
+// TunnelKeyRef — облегчённая запись туннеля для проверки занятости ключей.
+type TunnelKeyRef struct {
+	Mode           TargetMode
+	ID             string
+	Name           string
+	LocalPublicKey string
+	// Protected — чужой или служебный интерфейс, прерывать который нельзя.
+	Protected bool
+}
+
+// TunnelKeyInventory — необязательный быстрый интерфейс инвентаризации ключей
+// живых и защищённых интерфейсов без опроса статистики/состояний каждого туннеля.
+type TunnelKeyInventory interface {
+	ListKeys(ctx context.Context) ([]TunnelKeyRef, error)
+}
+
 // TunnelOps — операции над туннелями, которые автопилоту нужны от
 // остального приложения. Реализация живёт в internal/api.
 type TunnelOps interface {
-	// List — все туннели, пригодные для показа в выборе цели.
+	// List — туннели, пригодные для выбора цели.
 	List(ctx context.Context) ([]TunnelRef, error)
 	// Get — один туннель; ошибка, если его нет.
 	Get(ctx context.Context, mode TargetMode, id string) (*TunnelRef, error)
@@ -85,9 +101,15 @@ type Deps struct {
 	// UsedIPv4 — IPv4-адреса, уже занятые существующими туннелями и интерфейсами роутера.
 	UsedIPv4 func(ctx context.Context) []string
 	HTTP     HTTPClientFactory
+	// HTTPDirectBypass — прямой WAN-клиент с фрагментацией TLS ClientHello по SNI
+	// для пробивания ТСПУ при блокировке домена регистрации Cloudflare.
+	HTTPDirectBypass HTTPClientFactory
+	// HTTPProxyClient — фабрика одноразового клиента для ручной регистрации через
+	// указанный пользователем URL прокси (http/https/socks5/socks5h).
+	HTTPProxyClient func(proxyURL string) (*http.Client, error)
 	// HTTPFallbacks — резервные HTTP-клиенты (прокси/туннель) на случай
 	// блокировки API регистрации Cloudflare на прямом WAN.
-	HTTPFallbacks  func(ctx context.Context) []*http.Client
+	HTTPFallbacks  func(ctx context.Context) []FallbackClient
 	Bus            Publisher
 	OnWatchChanged func()
 	Log            Logger
@@ -99,6 +121,13 @@ type Deps struct {
 	SupportsKernelAWG31 func() bool
 	// Now/Sleep — для тестов.
 	Now func() time.Time
+}
+
+// FallbackClient связывает резервный HTTP-клиент с функцией освобождения
+// ресурсов (например, downloader.Lease.Close или CloseIdleConnections).
+type FallbackClient struct {
+	Client *http.Client
+	Close  func()
 }
 
 // ScanRequest — параметры ручного скана.
@@ -163,22 +192,24 @@ type EngineInfo struct {
 
 // State — полный снимок для UI.
 type State struct {
-	Engine              EngineInfo          `json:"engine"`
-	Account             *Account            `json:"account"`
-	HasInnerAccount     bool                `json:"hasInnerAccount"`
-	AccountUnreadable   bool                `json:"accountUnreadable"`
-	DefaultWAN          string              `json:"defaultWan,omitempty"`
-	Routes              []RouteRef          `json:"routes"`
-	ObfuscationSources  []ObfuscationSource `json:"obfuscationSources,omitempty"`
-	UsedIPv4            []string            `json:"usedIpv4,omitempty"`
-	Config              Config              `json:"config"`
-	Scan                ScanStatus          `json:"scan"`
-	FindJunk            FindJunkStatus      `json:"findJunk"`
-	Watch               []WatchStatus       `json:"watch"`
-	Stats               []ProfileStats      `json:"stats"`
-	History             []SwapEvent         `json:"history"`
-	SupportsASC3        bool                `json:"supportsAsc3"`
-	SupportsKernelAWG31 bool                `json:"supportsKernelAwg31"`
+	Engine               EngineInfo          `json:"engine"`
+	Account              *Account            `json:"account"`
+	AccountKeyInUseBy    string              `json:"accountKeyInUseBy,omitempty"`
+	AccountKeyCheckError string              `json:"accountKeyCheckError,omitempty"`
+	HasInnerAccount      bool                `json:"hasInnerAccount"`
+	AccountUnreadable    bool                `json:"accountUnreadable"`
+	DefaultWAN           string              `json:"defaultWan,omitempty"`
+	Routes               []RouteRef          `json:"routes"`
+	ObfuscationSources   []ObfuscationSource `json:"obfuscationSources,omitempty"`
+	UsedIPv4             []string            `json:"usedIpv4,omitempty"`
+	Config               Config              `json:"config"`
+	Scan                 ScanStatus          `json:"scan"`
+	FindJunk             FindJunkStatus      `json:"findJunk"`
+	Watch                []WatchStatus       `json:"watch"`
+	Stats                []ProfileStats      `json:"stats"`
+	History              []SwapEvent         `json:"history"`
+	SupportsASC3         bool                `json:"supportsAsc3"`
+	SupportsKernelAWG31  bool                `json:"supportsKernelAwg31"`
 }
 
 // ApplyRequest — применить найденный эндпоинт.
@@ -197,12 +228,17 @@ type ApplyRequest struct {
 	AWG             *AWGParams `json:"awg,omitempty"`
 	EnableAutopilot bool       `json:"enableAutopilot"`
 	Filters         *Filters   `json:"filters,omitempty"`
+	// ReuseAccount разрешает использовать основной аккаунт без обращения к
+	// Cloudflare API (офлайн/импортированная учётка), если его ключ ещё не
+	// занят другим WARP-туннелем.
+	ReuseAccount bool `json:"reuseAccount,omitempty"`
 }
 
 // ApplyResult — итог применения.
 type ApplyResult struct {
-	Tunnel    *TunnelRef `json:"tunnel"`
-	ProfileID string     `json:"profileId,omitempty"`
+	Tunnel        *TunnelRef `json:"tunnel"`
+	ProfileID     string     `json:"profileId,omitempty"`
+	AccountReused bool       `json:"accountReused,omitempty"`
 }
 
 // ExportRequest — собрать .conf для найденного эндпоинта без создания туннеля.
@@ -247,6 +283,7 @@ type Service struct {
 	findJunk            FindJunkStatus
 	findJunkCancel      context.CancelFunc
 	findJunkSeq         uint64 // монотонный счётчик запусков подбора маскировки
+	scanKey             string // публичный ключ, которым сейчас идёт скан (под acctMu занимается, под mu освобождается)
 	testBeforeApplySave func() // барьер только для тестов конкурентности
 	watch               map[string]*WatchStatus
 	stats               map[string]*ProfileStats
@@ -377,23 +414,36 @@ func (s *Service) State() State {
 			obfSources = src
 		}
 	}
+	acct := s.d.Store.Account()
+	accountKeyInUseBy := ""
+	accountKeyCheckError := ""
+	if acct != nil {
+		inUse, owner, checkErr := s.accountKeyOwner(s.rootCtx, acct)
+		if checkErr != nil {
+			accountKeyCheckError = checkErr.Error()
+		} else if inUse {
+			accountKeyInUseBy = owner
+		}
+	}
 	return State{
-		Engine:              s.Engine(),
-		Account:             s.d.Store.Account(),
-		HasInnerAccount:     s.d.Store.InnerAccount() != nil,
-		AccountUnreadable:   s.d.Store.AccountUnreadable(),
-		DefaultWAN:          defaultWAN,
-		Routes:              routes,
-		ObfuscationSources:  obfSources,
-		UsedIPv4:            usedIPv4,
-		Config:              cfg,
-		Scan:                scan,
-		FindJunk:            findJunk,
-		Watch:               watch,
-		Stats:               stats,
-		History:             s.d.Store.History(),
-		SupportsASC3:        s.supportsASC3(),
-		SupportsKernelAWG31: s.supportsKernelAWG31(),
+		Engine:               s.Engine(),
+		Account:              acct,
+		AccountKeyInUseBy:    accountKeyInUseBy,
+		AccountKeyCheckError: accountKeyCheckError,
+		HasInnerAccount:      s.d.Store.InnerAccount() != nil,
+		AccountUnreadable:    s.d.Store.AccountUnreadable(),
+		DefaultWAN:           defaultWAN,
+		Routes:               routes,
+		ObfuscationSources:   obfSources,
+		UsedIPv4:             usedIPv4,
+		Config:               cfg,
+		Scan:                 scan,
+		FindJunk:             findJunk,
+		Watch:                watch,
+		Stats:                stats,
+		History:              s.d.Store.History(),
+		SupportsASC3:         s.supportsASC3(),
+		SupportsKernelAWG31:  s.supportsKernelAWG31(),
 	}
 }
 
@@ -503,14 +553,21 @@ func (s *Service) ClearHistory() error {
 	return nil
 }
 
-// Targets — туннели для выбора цели.
+// Targets — туннели для выбора цели (защищённые системные интерфейсы скрываются).
 func (s *Service) Targets(ctx context.Context) ([]TunnelRef, error) {
 	if s.d.Tunnels == nil {
 		return []TunnelRef{}, nil
 	}
-	list, err := s.d.Tunnels.List(ctx)
+	raw, err := s.d.Tunnels.List(ctx)
 	if err != nil {
 		return nil, err
+	}
+	list := make([]TunnelRef, 0, len(raw))
+	for _, t := range raw {
+		if t.Mode == TargetSystem && t.Protected {
+			continue
+		}
+		list = append(list, t)
 	}
 	sort.SliceStable(list, func(i, j int) bool {
 		if list[i].Mode != list[j].Mode {
@@ -531,6 +588,24 @@ func (s *Service) httpClient(ctx context.Context) (*http.Client, error) {
 	return s.d.HTTP(iface)
 }
 
+func (s *Service) httpBypassClient(ctx context.Context) (*http.Client, error) {
+	if s.d.HTTPDirectBypass == nil {
+		return nil, errors.New("TLS-bypass HTTP-клиент не настроен")
+	}
+	iface := s.resolveScanIface(ctx, "")
+	return s.d.HTTPDirectBypass(iface)
+}
+
+func altAPIBaseFor(primaryBase string, opts RegisterOptions) string {
+	if strings.TrimSpace(opts.RelayURL) != "" {
+		return ""
+	}
+	if cfAPIBaseAlt == "" || cfAPIBaseAlt == primaryBase {
+		return ""
+	}
+	return cfAPIBaseAlt
+}
+
 func (s *Service) resolveScanIface(ctx context.Context, override string) string {
 	if v := sanitizeIfaceName(override); v != "" {
 		return v
@@ -543,33 +618,140 @@ func (s *Service) resolveScanIface(ctx context.Context, override string) string 
 }
 
 // doAccountOp выполняет запрос к Cloudflare API сначала напрямую через WAN, а
-// при сетевой блокировке ТСПУ перебирает резервные выходы (прокси/туннели).
+// при сетевой блокировке ТСПУ перебирает TLS-bypass, запасной хост и резервные выходы.
 func (s *Service) doAccountOp(ctx context.Context, fn func(*http.Client) error) error {
-	var firstErr error
-	if hc, err := s.httpClient(ctx); err == nil && hc != nil {
-		err = fn(hc)
-		if err == nil || !shouldRetryFallback(err) {
-			return err
-		}
-		firstErr = err
-	} else if err != nil {
-		firstErr = err
+	return s.doAccountOpWithBase(ctx, RegisterOptions{}, func(hc *http.Client, _ string) error {
+		return fn(hc)
+	})
+}
+
+func (s *Service) doAccountOpWithBase(ctx context.Context, opts RegisterOptions, fn func(*http.Client, string) error) error {
+	relayBase, err := NormalizeRelayBaseURL(opts.RelayURL)
+	if err != nil {
+		return err
 	}
+	primaryBase := cfAPIBase
+	if relayBase != "" {
+		primaryBase = relayBase
+	}
+	altBase := altAPIBaseFor(primaryBase, opts)
+
+	wrapUserDisallowed := func(e error) error {
+		if errors.Is(e, ErrDisallowedAddress) && !errors.Is(e, ErrInvalidInput) {
+			return fmt.Errorf("%w: %w", ErrInvalidInput, e)
+		}
+		return e
+	}
+	allowFallback := func(e error) bool {
+		if relayBase != "" && (errors.Is(e, ErrDisallowedAddress) || errors.Is(e, ErrInvalidInput)) {
+			return false
+		}
+		return shouldRetryFallback(e)
+	}
+
+	if proxyURL := strings.TrimSpace(opts.ProxyURL); proxyURL != "" {
+		if s.d.HTTPProxyClient == nil {
+			return errors.New("HTTP-клиент прокси не настроен")
+		}
+		phc, pErr := s.d.HTTPProxyClient(proxyURL)
+		if pErr != nil {
+			return SanitizeProxyError(pErr, proxyURL)
+		}
+		defer phc.CloseIdleConnections()
+		err := fn(phc, primaryBase)
+		if err != nil && altBase != "" {
+			var se *apiStatusError
+			if errors.As(err, &se) && shouldRetryFallback(err) {
+				err = fn(phc, altBase)
+			}
+		}
+		return SanitizeProxyError(wrapUserDisallowed(err), proxyURL)
+	}
+
+	var firstErr error
+	recordErr := func(e error) {
+		if firstErr == nil && e != nil {
+			firstErr = e
+		}
+	}
+
+	hc, hcErr := s.httpClient(ctx)
+	if hcErr == nil && hc != nil {
+		defer hc.CloseIdleConnections()
+		if err := fn(hc, primaryBase); err == nil || !allowFallback(err) {
+			if relayBase != "" {
+				err = wrapUserDisallowed(err)
+			}
+			return err
+		} else {
+			recordErr(err)
+		}
+	} else if hcErr != nil {
+		recordErr(hcErr)
+	}
+
+	var bypassHC *http.Client
+	if s.d.HTTPDirectBypass != nil {
+		if bhc, bErr := s.httpBypassClient(ctx); bErr == nil && bhc != nil {
+			bypassHC = bhc
+			defer bypassHC.CloseIdleConnections()
+			if err := fn(bypassHC, primaryBase); err == nil || !allowFallback(err) {
+				if relayBase != "" {
+					err = wrapUserDisallowed(err)
+				}
+				return err
+			} else {
+				recordErr(err)
+			}
+		}
+	}
+
+	if altBase != "" {
+		altClient := bypassHC
+		if altClient == nil {
+			altClient = hc
+		}
+		if altClient != nil {
+			if err := fn(altClient, altBase); err == nil || !allowFallback(err) {
+				if relayBase != "" {
+					err = wrapUserDisallowed(err)
+				}
+				return err
+			} else {
+				recordErr(err)
+			}
+		}
+	}
+
 	if s.d.HTTPFallbacks != nil {
-		for _, fb := range s.d.HTTPFallbacks(ctx) {
-			if fb == nil || ctx.Err() != nil {
+		fallbacks := s.d.HTTPFallbacks(ctx)
+		defer func() {
+			for _, fb := range fallbacks {
+				if fb.Close != nil {
+					fb.Close()
+				} else if fb.Client != nil {
+					fb.Client.CloseIdleConnections()
+				}
+			}
+		}()
+		for _, fb := range fallbacks {
+			if fb.Client == nil || ctx.Err() != nil {
 				continue
 			}
-			err := fn(fb)
-			if err == nil || !shouldRetryFallback(err) {
+			err := fn(fb.Client, primaryBase)
+			if err == nil || !allowFallback(err) {
+				if relayBase != "" {
+					err = wrapUserDisallowed(err)
+				}
 				return err
 			}
-			if firstErr == nil {
-				firstErr = err
-			}
+			recordErr(err)
 		}
 	}
 	if firstErr != nil {
+		if relayBase != "" {
+			return wrapUserDisallowed(firstErr)
+		}
 		return firstErr
 	}
 	return errors.New("HTTP-клиент не настроен")
@@ -577,14 +759,30 @@ func (s *Service) doAccountOp(ctx context.Context, fn func(*http.Client) error) 
 
 // Register регистрирует (или перевыпускает ключи) учётную запись WARP.
 func (s *Service) Register(ctx context.Context) (*Account, error) {
+	return s.RegisterWithOptions(ctx, RegisterOptions{})
+}
+
+// RegisterWithOptions регистрирует (или перевыпускает ключи) учётную запись WARP
+// с необязательными ручными параметрами прокси или HTTP-relay.
+func (s *Service) RegisterWithOptions(ctx context.Context, opts RegisterOptions) (*Account, error) {
+	if _, err := NormalizeRelayBaseURL(opts.RelayURL); err != nil {
+		return nil, err
+	}
+	opts.ProxyURL = strings.TrimSpace(opts.ProxyURL)
 	s.acctMu.Lock()
 	defer s.acctMu.Unlock()
 	old := s.d.Store.Account()
+	if inUse, owner, checkErr := s.accountKeyOwner(ctx, old); checkErr != nil {
+		return nil, checkErr
+	} else if inUse {
+		return nil, fmt.Errorf("%w: ключ текущего аккаунта используется туннелем %q — перевыпуск разорвёт его соединение; сначала удалите туннель или импортируйте отдельный аккаунт", ErrInvalidInput, owner)
+	}
 	var acct *Account
 	var oldNotFound bool
-	err := s.doAccountOp(ctx, func(hc *http.Client) error {
-		if old != nil && old.ID != "" && old.Token != "" {
-			rotated, rotErr := RotateAccountKey(ctx, hc, old)
+	useCustomRelay := strings.TrimSpace(opts.RelayURL) != ""
+	err := s.doAccountOpWithBase(ctx, opts, func(hc *http.Client, base string) error {
+		if !useCustomRelay && old != nil && old.ID != "" && old.Token != "" {
+			rotated, rotErr := rotateAccountKeyWithBase(ctx, hc, old, base)
 			if rotErr == nil {
 				acct = rotated
 				return nil
@@ -597,7 +795,7 @@ func (s *Service) Register(ctx context.Context) (*Account, error) {
 			}
 			oldNotFound = true
 		}
-		fresh, regErr := RegisterAccount(ctx, hc)
+		fresh, regErr := registerAccountWithBase(ctx, hc, base)
 		if regErr != nil {
 			return regErr
 		}
@@ -607,23 +805,84 @@ func (s *Service) Register(ctx context.Context) (*Account, error) {
 	if err != nil {
 		return nil, err
 	}
+	keepOld := false
+	if old != nil && old.WarpPlus && acct.ID != old.ID {
+		keepOld = !s.carryLicense(ctx, opts, old, acct)
+	}
 	if old != nil && strings.TrimSpace(old.AddressV4) != "" && old.AddressV4 != DefaultTunnelIPv4 {
 		acct.AddressV4 = old.AddressV4
 	}
 	if err := s.d.Store.SetAccount(acct); err != nil {
 		return nil, err
 	}
-	if old != nil && old.ID != "" && old.ID != acct.ID && !oldNotFound {
-		s.dropRegistration(old)
+	if old != nil && old.ID != "" && old.Token != "" && old.ID != acct.ID && !oldNotFound {
+		if keepOld {
+			s.logWarn("register", "warp", "Прежняя регистрация с WARP+ у Cloudflare не снята")
+		} else {
+			s.dropRegistration(old)
+		}
 	}
 	s.logInfo("register", "warp", "Зарегистрирована учётная запись Cloudflare WARP")
+	return s.d.Store.Account(), nil
+}
+
+// carryLicense переносит WARP+ на новую регистрацию; false — перенести не вышло,
+// и прежнюю регистрацию снимать нельзя. После регистрации через relay лицензия
+// не переносится никаким маршрутом: relay знает токен новой записи и прочёл бы
+// ключ лицензии ответом GET /reg/{id}/account.
+func (s *Service) carryLicense(ctx context.Context, opts RegisterOptions, old, fresh *Account) bool {
+	if strings.TrimSpace(opts.RelayURL) != "" {
+		s.logWarn("register", "warp", "Лицензия WARP+ не перенесена: записи, созданной через relay, её ключ не передаётся")
+		return false
+	}
+	if old.License == "" {
+		s.logWarn("register", "warp", "Лицензия WARP+ не перенесена: её ключ неизвестен")
+		return false
+	}
+	if err := s.doAccountOpWithBase(ctx, opts, func(hc *http.Client, base string) error {
+		return applyLicenseWithBase(ctx, hc, fresh, old.License, base)
+	}); err != nil {
+		s.logWarn("register", "warp", "Лицензия WARP+ к новой регистрации не применена: "+err.Error())
+		return false
+	}
+	return true
+}
+
+// ImportAccount импортирует готовую учётную запись WARP из JSON, TOML или WireGuard/AWG .conf.
+func (s *Service) ImportAccount(ctx context.Context, raw string) (*Account, error) {
+	acct, err := ParseAccountImport(raw)
+	if err != nil {
+		return nil, err
+	}
+	s.acctMu.Lock()
+	defer s.acctMu.Unlock()
+	keys, hasInv, checkErr := s.listTunnelKeys(ctx)
+	if checkErr != nil {
+		return nil, checkErr
+	}
+	if inUse, owner := s.findKeyOwnerInList(keys, hasInv, acct.PublicKey); inUse {
+		return nil, fmt.Errorf("%w: ключ из импортируемых данных уже используется туннелем %q — скан и действия с аккаунтом разорвут это соединение; используйте отдельный конфиг или аккаунт", ErrInvalidInput, owner)
+	}
+	old := s.d.Store.Account()
+	oldInUse := false
+	if old != nil {
+		oldInUse, _ = s.findKeyOwnerInList(keys, hasInv, old.PublicKey)
+	}
+	if err := s.d.Store.SetAccount(acct); err != nil {
+		return nil, err
+	}
+	if old != nil && old.ID != "" && old.Token != "" && old.ID != acct.ID &&
+		strings.TrimSpace(old.PublicKey) != strings.TrimSpace(acct.PublicKey) && !oldInUse {
+		s.dropRegistration(old)
+	}
+	s.logInfo("import", "warp", "Импортирована учётная запись Cloudflare WARP")
 	return s.d.Store.Account(), nil
 }
 
 // dropRegistration снимает регистрацию у Cloudflare лучшим усилием, в фоне,
 // под общим WaitGroup сервиса, чтобы Stop дожидался запроса.
 func (s *Service) dropRegistration(prev *Account) {
-	if prev == nil || prev.ID == "" || s.rootCtx.Err() != nil {
+	if prev == nil || prev.ID == "" || prev.Token == "" || s.rootCtx.Err() != nil {
 		return
 	}
 	s.wg.Add(1)
@@ -631,8 +890,8 @@ func (s *Service) dropRegistration(prev *Account) {
 		defer s.wg.Done()
 		dctx, cancel := context.WithTimeout(s.rootCtx, 20*time.Second)
 		defer cancel()
-		_ = s.doAccountOp(dctx, func(hc *http.Client) error {
-			return DeleteAccount(dctx, hc, prev)
+		_ = s.doAccountOpWithBase(dctx, RegisterOptions{}, func(hc *http.Client, base string) error {
+			return deleteAccountWithBase(dctx, hc, prev, base)
 		})
 	}()
 }
@@ -646,8 +905,8 @@ func (s *Service) registerTunnelAccount(ctx context.Context, primary *Account) (
 	s.acctMu.Lock()
 	defer s.acctMu.Unlock()
 	var fresh *Account
-	if err := s.doAccountOp(ctx, func(hc *http.Client) error {
-		reg, err := RegisterAccount(ctx, hc)
+	if err := s.doAccountOpWithBase(ctx, RegisterOptions{}, func(hc *http.Client, base string) error {
+		reg, err := registerAccountWithBase(ctx, hc, base)
 		if err != nil {
 			return err
 		}
@@ -657,13 +916,147 @@ func (s *Service) registerTunnelAccount(ctx context.Context, primary *Account) (
 		return nil, err
 	}
 	if primary != nil && primary.License != "" {
-		if err := s.doAccountOp(ctx, func(hc *http.Client) error {
-			return ApplyLicense(ctx, hc, fresh, primary.License)
+		if err := s.doAccountOpWithBase(ctx, RegisterOptions{}, func(hc *http.Client, base string) error {
+			return applyLicenseWithBase(ctx, hc, fresh, primary.License, base)
 		}); err != nil {
 			s.logWarn("register", "warp", "Лицензия WARP+ к учётной записи туннеля не применена: "+err.Error())
 		}
 	}
 	return fresh, nil
+}
+
+func (s *Service) isStoredSlotAccount(a *Account) bool {
+	if a == nil {
+		return false
+	}
+	pub := strings.TrimSpace(a.PublicKey)
+	id := strings.TrimSpace(a.ID)
+	for _, slot := range []*Account{s.d.Store.Account(), s.d.Store.InnerAccount()} {
+		if slot == nil {
+			continue
+		}
+		if pub != "" && strings.TrimSpace(slot.PublicKey) == pub {
+			return true
+		}
+		if id != "" && strings.TrimSpace(slot.ID) == id {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Service) listTunnelKeys(ctx context.Context) ([]TunnelKeyRef, bool, error) {
+	if s.d.Tunnels == nil {
+		return nil, false, nil
+	}
+	if inv, ok := s.d.Tunnels.(TunnelKeyInventory); ok {
+		keys, err := inv.ListKeys(ctx)
+		if err != nil {
+			return nil, false, fmt.Errorf("не удалось проверить занятость ключа по списку туннелей: %w", err)
+		}
+		return keys, true, nil
+	}
+	list, err := s.d.Tunnels.List(ctx)
+	if err != nil {
+		return nil, false, fmt.Errorf("не удалось проверить занятость ключа по списку туннелей: %w", err)
+	}
+	keys := make([]TunnelKeyRef, 0, len(list))
+	for i := range list {
+		keys = append(keys, TunnelKeyRef{
+			Mode:           list[i].Mode,
+			ID:             list[i].ID,
+			Name:           list[i].Name,
+			LocalPublicKey: list[i].LocalPublicKey,
+			Protected:      list[i].Protected,
+		})
+	}
+	return keys, true, nil
+}
+
+func (s *Service) findKeyOwnerInList(keys []TunnelKeyRef, hasInventory bool, pubKey string) (bool, string) {
+	if owners := s.keyOwnersInList(keys, hasInventory, pubKey); len(owners) > 0 {
+		return true, owners[0].Name
+	}
+	return false, ""
+}
+
+// keyOwnersInList — все туннели, работающие на ключе pubKey.
+func (s *Service) keyOwnersInList(keys []TunnelKeyRef, hasInventory bool, pubKey string) []TunnelKeyRef {
+	pubKey = strings.TrimSpace(pubKey)
+	if pubKey == "" {
+		return nil
+	}
+	var owners []TunnelKeyRef
+	seen := map[string]bool{}
+	byID := make(map[string]TunnelKeyRef, len(keys))
+	for _, t := range keys {
+		k := string(t.Mode) + ":" + t.ID
+		if t.Name = strings.TrimSpace(t.Name); t.Name == "" {
+			t.Name = t.ID
+		}
+		byID[k] = t
+		if strings.TrimSpace(t.LocalPublicKey) == pubKey && !seen[k] {
+			seen[k] = true
+			owners = append(owners, t)
+		}
+	}
+	for _, ta := range s.d.Store.TunnelAccounts() {
+		k := string(ta.TunnelMode) + ":" + ta.TunnelID
+		if strings.TrimSpace(ta.PublicKey) != pubKey || seen[k] {
+			continue
+		}
+		t, alive := byID[k]
+		if !hasInventory {
+			t, alive = TunnelKeyRef{Mode: ta.TunnelMode, ID: ta.TunnelID, Name: ta.TunnelID}, true
+		}
+		if alive {
+			seen[k] = true
+			owners = append(owners, t)
+		}
+	}
+	return owners
+}
+
+func (s *Service) isAccountKeyInUse(ctx context.Context, pubKey string) (bool, string, error) {
+	if strings.TrimSpace(pubKey) == "" {
+		return false, "", nil
+	}
+	keys, hasInv, err := s.listTunnelKeys(ctx)
+	if err != nil {
+		return false, "", err
+	}
+	inUse, owner := s.findKeyOwnerInList(keys, hasInv, pubKey)
+	return inUse, owner, nil
+}
+
+func (s *Service) accountKeyOwner(ctx context.Context, acct *Account) (bool, string, error) {
+	if acct == nil {
+		return false, "", nil
+	}
+	return s.isAccountKeyInUse(ctx, acct.PublicKey)
+}
+
+func (s *Service) existingFreeAccountFrom(keys []TunnelKeyRef, hasInventory bool, avoidPubKeys ...string) *Account {
+	avoid := make(map[string]bool, len(avoidPubKeys))
+	for _, k := range avoidPubKeys {
+		if k = strings.TrimSpace(k); k != "" {
+			avoid[k] = true
+		}
+	}
+	for _, a := range []*Account{s.d.Store.InnerAccount(), s.d.Store.Account()} {
+		if a == nil || a.PrivateKey == "" {
+			continue
+		}
+		pub := strings.TrimSpace(a.PublicKey)
+		if pub != "" && avoid[pub] {
+			continue
+		}
+		if inUse, _ := s.findKeyOwnerInList(keys, hasInventory, pub); inUse {
+			continue
+		}
+		return a
+	}
+	return nil
 }
 
 // collectTunnelAccounts снимает учётные записи удалённых туннелей. Судит по
@@ -692,7 +1085,11 @@ func (s *Service) collectTunnelAccounts(ctx context.Context) {
 		if err := s.d.Store.RemoveTunnelAccount(ta.PublicKey); err != nil {
 			continue
 		}
-		s.dropRegistration(&ta.Account)
+		// Если удалённый туннель создавался офлайн на ключе основного слота,
+		// сам слот в Store и его регистрацию у Cloudflare сохраняем.
+		if !s.isStoredSlotAccount(&ta.Account) {
+			s.dropRegistration(&ta.Account)
+		}
 	}
 }
 
@@ -704,8 +1101,11 @@ func (s *Service) SetLicense(ctx context.Context, license string) (*Account, err
 	if acct == nil {
 		return nil, ErrNoAccount
 	}
-	if err := s.doAccountOp(ctx, func(hc *http.Client) error {
-		return ApplyLicense(ctx, hc, acct, license)
+	if acct.ID == "" || acct.Token == "" || !acct.HasToken {
+		return nil, fmt.Errorf("%w: импортированный аккаунт без токена Cloudflare не поддерживает привязку лицензии WARP+ — импортируйте JSON/TOML с токеном или перерегистрируйтесь", ErrInvalidInput)
+	}
+	if err := s.doAccountOpWithBase(ctx, RegisterOptions{}, func(hc *http.Client, base string) error {
+		return applyLicenseWithBase(ctx, hc, acct, license, base)
 	}); err != nil {
 		return nil, err
 	}
@@ -743,18 +1143,34 @@ func (s *Service) DeleteAccountLocal(ctx context.Context) error {
 	defer s.acctMu.Unlock()
 	acct := s.d.Store.Account()
 	inner := s.d.Store.InnerAccount()
+	if acct != nil || inner != nil {
+		keys, hasInv, checkErr := s.listTunnelKeys(ctx)
+		if checkErr != nil {
+			return checkErr
+		}
+		if acct != nil {
+			if inUse, owner := s.findKeyOwnerInList(keys, hasInv, acct.PublicKey); inUse {
+				return fmt.Errorf("%w: ключ текущего аккаунта используется туннелем %q — удаление снимет его регистрацию у Cloudflare; сначала удалите туннель", ErrInvalidInput, owner)
+			}
+		}
+		if inner != nil {
+			if inUse, owner := s.findKeyOwnerInList(keys, hasInv, inner.PublicKey); inUse {
+				return fmt.Errorf("%w: ключ дополнительного слота используется туннелем %q — сначала удалите туннель", ErrInvalidInput, owner)
+			}
+		}
+	}
 	if err := s.d.Store.SetAccount(nil); err != nil {
 		return err
 	}
 	_ = s.d.Store.SetInnerAccount(nil)
-	if acct != nil {
-		_ = s.doAccountOp(ctx, func(hc *http.Client) error {
-			return DeleteAccount(ctx, hc, acct)
+	if acct != nil && acct.ID != "" && acct.Token != "" {
+		_ = s.doAccountOpWithBase(ctx, RegisterOptions{}, func(hc *http.Client, base string) error {
+			return deleteAccountWithBase(ctx, hc, acct, base)
 		})
 	}
-	if inner != nil {
-		_ = s.doAccountOp(ctx, func(hc *http.Client) error {
-			return DeleteAccount(ctx, hc, inner)
+	if inner != nil && inner.ID != "" && inner.Token != "" {
+		_ = s.doAccountOpWithBase(ctx, RegisterOptions{}, func(hc *http.Client, base string) error {
+			return deleteAccountWithBase(ctx, hc, inner, base)
 		})
 	}
 	return nil
@@ -839,22 +1255,14 @@ func (s *Service) pickNonCollidingIPv4(ctx context.Context, preferred string, av
 	return "172.16.0.3"
 }
 
-// existingAccountAvoiding — уже имеющаяся учётная запись, чей ключ отличается
-// от avoidKey; второй слот в приоритете. Сети не касается: автоподмена
-// работает без пользователя и регистрировать слот сама не должна.
-func (s *Service) existingAccountAvoiding(avoidKey string) *Account {
-	for _, a := range []*Account{s.d.Store.InnerAccount(), s.d.Store.Account()} {
-		if a != nil && a.PrivateKey != "" && a.PublicKey != avoidKey {
-			return a
-		}
-	}
-	return nil
-}
-
 // ensureDistinctAccount возвращает учётную запись WARP, чей PublicKey не
 // совпадает ни с одним из avoidPubKeys (иначе Cloudflare разрывает внешний
 // туннель при появлении пакета с тем же ключом). При необходимости лениво
-// регистрирует и шифрует второй слот InnerAccount.
+// регистрирует и шифрует второй слот InnerAccount. Вызывается под acctMu: тот
+// же замок, что у Register, DeleteAccountLocal и Apply(ReuseAccount), — иначе
+// выбранный ключ мог бы занять параллельный Apply, а регистрация слота,
+// завершившаяся после удаления учётной записи, оставила бы слот, который у
+// Cloudflare уже никто не снимет.
 func (s *Service) ensureDistinctAccount(ctx context.Context, routeIface string, avoidPubKeys ...string) (*Account, error) {
 	avoid := map[string]bool{}
 	for _, k := range avoidPubKeys {
@@ -863,26 +1271,29 @@ func (s *Service) ensureDistinctAccount(ctx context.Context, routeIface string, 
 		}
 	}
 	primary := s.d.Store.Account()
-	if len(avoid) > 0 && primary != nil && primary.PrivateKey != "" && primary.PublicKey != "" && !avoid[primary.PublicKey] {
-		return primary, nil
-	}
-
-	// Тот же замок, что у Register и DeleteAccountLocal: иначе регистрация
-	// слота, завершившаяся после удаления учётной записи, оставила бы слот,
-	// который у Cloudflare уже никто не снимет.
-	s.acctMu.Lock()
-	defer s.acctMu.Unlock()
-
-	if s.d.Store.Account() == nil {
+	if primary == nil {
 		return nil, ErrNoAccount
 	}
-	if inner := s.d.Store.InnerAccount(); inner != nil && inner.PrivateKey != "" {
-		if !avoid[inner.PublicKey] {
-			return inner, nil
+	keys, hasInv, err := s.listTunnelKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(avoid) > 0 && primary.PrivateKey != "" && primary.PublicKey != "" && !avoid[primary.PublicKey] {
+		if inUse, _ := s.findKeyOwnerInList(keys, hasInv, primary.PublicKey); !inUse {
+			return primary, nil
 		}
-		// Готовый слот не перезаписываем: на его ключе работают созданные
-		// каскады, а прежняя регистрация осталась бы висеть у Cloudflare.
-		return nil, fmt.Errorf("%w: обе учётные записи WARP совпадают с ключом внешнего туннеля", ErrInvalidInput)
+	}
+
+	if inner := s.d.Store.InnerAccount(); inner != nil && inner.PrivateKey != "" {
+		if avoid[inner.PublicKey] {
+			// Готовый слот не перезаписываем: на его ключе работают созданные
+			// каскады, а прежняя регистрация осталась бы висеть у Cloudflare.
+			return nil, fmt.Errorf("%w: обе учётные записи WARP совпадают с ключом внешнего туннеля", ErrInvalidInput)
+		}
+		if inUse, owner := s.findKeyOwnerInList(keys, hasInv, inner.PublicKey); inUse {
+			return nil, fmt.Errorf("%w: ключ дополнительного слота уже используется туннелем %q", ErrInvalidInput, owner)
+		}
+		return inner, nil
 	}
 
 	var fresh *Account
@@ -900,8 +1311,8 @@ func (s *Service) ensureDistinctAccount(ctx context.Context, routeIface string, 
 		}
 	}
 	if fresh == nil && (firstErr == nil || shouldRetryFallback(firstErr)) {
-		err := s.doAccountOp(ctx, func(hc *http.Client) error {
-			reg, rerr := RegisterAccount(ctx, hc)
+		err := s.doAccountOpWithBase(ctx, RegisterOptions{}, func(hc *http.Client, base string) error {
+			reg, rerr := registerAccountWithBase(ctx, hc, base)
 			if rerr != nil {
 				return rerr
 			}
@@ -916,7 +1327,7 @@ func (s *Service) ensureDistinctAccount(ctx context.Context, routeIface string, 
 		return nil, firstErr
 	}
 	var avoidIPs []string
-	if primary != nil && primary.AddressV4 != "" {
+	if primary.AddressV4 != "" {
 		avoidIPs = append(avoidIPs, primary.AddressV4)
 	}
 	fresh.AddressV4 = s.pickNonCollidingIPv4(ctx, "172.16.0.3", avoidIPs...)
@@ -1046,6 +1457,109 @@ func (s *Service) awgForUse() AWGParams {
 
 // ── Ручной скан ──────────────────────────────────────────────────
 
+func (s *Service) hasAccountHTTP() bool {
+	return s.d.HTTP != nil || s.d.HTTPDirectBypass != nil || s.d.HTTPFallbacks != nil
+}
+
+// prepareScanAccount — быстрая проверка до запуска скана: отказ, который не
+// изменится за время ожидания сканера, уходит сразу ответом на запрос.
+// Запись для скана выбирает pickScanAccount.
+func (s *Service) prepareScanAccount(ctx context.Context, acct *Account, scanIface string) (outer *TunnelRef, err error) {
+	outer = s.resolveRouteTunnel(ctx, scanIface)
+	if outer != nil && outer.IsWarp {
+		return outer, nil
+	}
+	keys, hasInv, err := s.listTunnelKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+	owners := s.keyOwnersInList(keys, hasInv, acct.PublicKey)
+	if mayInterruptOwners(owners) || s.existingFreeAccountFrom(keys, hasInv, acct.PublicKey) != nil ||
+		(s.d.Store.InnerAccount() == nil && s.hasAccountHTTP()) {
+		return outer, nil
+	}
+	return nil, sharedKeyError(owners)
+}
+
+// mayInterruptOwners — скан ключом этих туннелей допустим: ключ ничей или у
+// одного туннеля, который не чужой и не служебный.
+func mayInterruptOwners(owners []TunnelKeyRef) bool {
+	return len(owners) == 0 || (len(owners) == 1 && !owners[0].Protected)
+}
+
+func sharedKeyError(owners []TunnelKeyRef) error {
+	names := make([]string, len(owners))
+	for i, o := range owners {
+		names[i] = fmt.Sprintf("%q", o.Name)
+	}
+	return fmt.Errorf("%w: ключ аккаунта WARP занят (туннели: %s), а отдельной записи для сканера нет — скан разорвал бы соединение; удалите туннель или импортируйте отдельный аккаунт", ErrInvalidInput, strings.Join(names, ", "))
+}
+
+// claimScanAccount выбирает запись под acctMu и закрепляет её ключ за сканером
+// до releaseScanKey: Apply(ReuseAccount) этим ключом туннель не создаст.
+func (s *Service) claimScanAccount(pick func() (*Account, error)) (*Account, error) {
+	s.acctMu.Lock()
+	defer s.acctMu.Unlock()
+	acct, err := pick()
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	s.scanKey = strings.TrimSpace(acct.PublicKey)
+	s.mu.Unlock()
+	return acct, nil
+}
+
+// pickScanAccount — запись для ручного скана и подбора маскировки.
+func (s *Service) pickScanAccount(ctx context.Context, outer *TunnelRef) (*Account, error) {
+	primary := s.d.Store.Account()
+	if primary == nil {
+		return nil, ErrNoAccount
+	}
+	viaWarp := outer != nil && outer.IsWarp
+	routeIface, avoid, shared := "", primary.PublicKey, primary
+	if viaWarp {
+		routeIface, avoid = outer.Iface, outer.LocalPublicKey
+		if strings.TrimSpace(primary.PublicKey) == strings.TrimSpace(avoid) {
+			shared = s.d.Store.InnerAccount()
+		}
+	} else if inUse, _, err := s.isAccountKeyInUse(ctx, primary.PublicKey); err != nil {
+		return nil, err
+	} else if !inUse {
+		return primary, nil
+	}
+	acct, distErr := s.ensureDistinctAccount(ctx, routeIface, avoid)
+	if distErr == nil || ctx.Err() != nil {
+		return acct, distErr
+	}
+	// Отдельной записи нет и завести её не удалось (Cloudflare недоступен, второй
+	// слот занят). Ключ единственного туннеля всё же годится: скан запустил
+	// пользователь, туннель прервётся лишь на время скана. Через WARP его же
+	// ключом не сканируем никогда.
+	if shared == nil || shared.PrivateKey == "" ||
+		(viaWarp && (outer.LocalPublicKey == "" || strings.TrimSpace(shared.PublicKey) == strings.TrimSpace(outer.LocalPublicKey))) {
+		return nil, distErr
+	}
+	keys, hasInv, err := s.listTunnelKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+	owners := s.keyOwnersInList(keys, hasInv, shared.PublicKey)
+	if !mayInterruptOwners(owners) {
+		return nil, fmt.Errorf("%w (%w)", sharedKeyError(owners), distErr)
+	}
+	if len(owners) == 1 {
+		s.logWarn("scan", "warp", fmt.Sprintf("Отдельной учётной записи для сканера нет (%v) — скан идёт ключом туннеля %q и кратко прервёт его соединение", distErr, owners[0].Name))
+	}
+	return shared, nil
+}
+
+func (s *Service) releaseScanKey() {
+	s.mu.Lock()
+	s.scanKey = ""
+	s.mu.Unlock()
+}
+
 // StartScan запускает ручной скан в фоне.
 func (s *Service) StartScan(req ScanRequest) error {
 	if len(req.Endpoints) > maxScanCandidates {
@@ -1062,6 +1576,11 @@ func (s *Service) StartScan(req ScanRequest) error {
 	}
 	if _, ok := s.d.Runner.Available(); !ok {
 		return ErrEngineMissing
+	}
+	scanIface := s.resolveScanIface(s.rootCtx, req.Ifname)
+	outer, err := s.prepareScanAccount(s.rootCtx, acct, scanIface)
+	if err != nil {
+		return err
 	}
 	s.mu.Lock()
 	if s.scan.Running || s.findJunk.Running {
@@ -1082,9 +1601,7 @@ func (s *Service) StartScan(req ScanRequest) error {
 		s.engineMu.Unlock()
 		return err
 	}
-	// Зависший процесс сканера иначе держал бы engineMu, а автопилот сидел бы
-	// в engine_busy до ручного «Стоп».
-	ctx, cancel := context.WithTimeout(s.rootCtx, time.Duration(params.DeadlineMs)*time.Millisecond+scanKillGrace)
+	ctx, cancel := context.WithCancel(s.rootCtx)
 	s.mu.Lock()
 	s.scan = ScanStatus{Running: true, Owner: "manual", StartedAt: s.d.Now(), Hits: []Hit{}}
 	s.scanCancel = cancel
@@ -1097,20 +1614,19 @@ func (s *Service) StartScan(req ScanRequest) error {
 		defer s.wg.Done()
 		defer s.engineMu.Unlock()
 		defer cancel()
+		defer s.releaseScanKey()
 		var runErr error
-		scanIface := params.Ifname
-		outer := s.resolveRouteTunnel(ctx, scanIface)
-		if outer != nil && outer.IsWarp {
-			if !outer.Running {
-				runErr = errors.New("внешний туннель WARP выключен — сначала запустите его")
-			} else {
-				var scanAcct *Account
-				scanAcct, runErr = s.ensureDistinctAccount(ctx, outer.Iface, outer.LocalPublicKey)
-				if runErr == nil {
-					params, runErr = s.buildParams(ctx, scanAcct, awg, req.Filters, maxHits, req.MaxCandidates, req.Endpoints, nil, outer.Iface, outer)
-				}
-			}
+		var scanAcct *Account
+		if outer != nil && outer.IsWarp && !outer.Running {
+			runErr = errors.New("внешний туннель WARP выключен — сначала запустите его")
+		} else if scanAcct, runErr = s.claimScanAccount(func() (*Account, error) { return s.pickScanAccount(ctx, outer) }); runErr == nil {
+			params, runErr = s.buildParams(ctx, scanAcct, awg, req.Filters, maxHits, req.MaxCandidates, req.Endpoints, nil, scanIface, outer)
 		}
+		// Зависший процесс сканера иначе держал бы engineMu, а автопилот сидел бы
+		// в engine_busy до ручного «Стоп». Отсчёт идёт после выбора записи:
+		// регистрация слота при заблокированном API съела бы время скана.
+		ctx, cancelRun := context.WithTimeout(ctx, time.Duration(params.DeadlineMs)*time.Millisecond+scanKillGrace)
+		defer cancelRun()
 		lastPub := time.Time{}
 		if runErr == nil {
 			runErr = s.d.Runner.Run(ctx, params, func(ev EngineEvent) {
@@ -1448,6 +1964,7 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplyResult, er
 		return nil, err
 	}
 	var ref *TunnelRef
+	var accountReused bool
 	var createOpts CreateOptions
 	switch req.Action {
 	case "create":
@@ -1539,31 +2056,78 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplyResult, er
 		} else if outer != nil {
 			addrV4 = s.pickNonCollidingIPv4(ctx, addrV4, outer.AddressV4)
 		}
-		s.collectTunnelAccounts(ctx)
-		tunAcct, err := s.registerTunnelAccount(ctx, acct)
-		if err != nil {
-			return nil, fmt.Errorf("учётная запись WARP для туннеля: %w", err)
+		buildTunConf := func(tunAcct *Account, tunAddrV4 string) string {
+			cfgAcct := *tunAcct
+			cfgAcct.AddressV4 = tunAddrV4
+			includeAWG3 := req.Mode == TargetKernel || s.supportsASC3()
+			includeAWG31 := (req.Mode == TargetKernel && s.supportsKernelAWG31()) || (req.Mode != TargetKernel && s.supportsASC3())
+			return BuildConfWithOptions(&cfgAcct, awg, protocol, req.Endpoint, ConfOptions{
+				MTU:            mtu,
+				IncludeAWG3:    includeAWG3,
+				IncludeAWG31:   includeAWG31,
+				RangeKeepalive: req.Mode == TargetKernel,
+			})
 		}
-		cfgAcct := *tunAcct
-		cfgAcct.AddressV4 = addrV4
-		includeAWG3 := req.Mode == TargetKernel || s.supportsASC3()
-		includeAWG31 := (req.Mode == TargetKernel && s.supportsKernelAWG31()) || (req.Mode != TargetKernel && s.supportsASC3())
-		conf := BuildConfWithOptions(&cfgAcct, awg, protocol, req.Endpoint, ConfOptions{
-			MTU:            mtu,
-			IncludeAWG3:    includeAWG3,
-			IncludeAWG31:   includeAWG31,
-			RangeKeepalive: req.Mode == TargetKernel,
-		})
-		created, err := s.d.Tunnels.Create(ctx, req.Mode, name, conf, createOpts)
-		if err != nil {
-			s.dropRegistration(tunAcct)
-			return nil, err
-		}
-		ref = created
-		if err := s.d.Store.AddTunnelAccount(TunnelAccount{Account: *tunAcct, TunnelMode: created.Mode, TunnelID: created.ID}); err != nil {
-			// Туннель работает; не сохранена лишь запись, по которой
-			// регистрацию сняли бы после его удаления.
-			s.logWarn("apply", name, "Учётная запись туннеля не сохранена: "+err.Error())
+		if req.ReuseAccount {
+			var err error
+			ref, err = func() (*TunnelRef, error) {
+				s.acctMu.Lock()
+				defer s.acctMu.Unlock()
+				curAcct := s.d.Store.Account()
+				if curAcct == nil || curAcct.PrivateKey == "" {
+					return nil, ErrNoAccount
+				}
+				tunAddr := addrV4
+				if strings.TrimSpace(req.AddressV4) == "" {
+					tunAddr = curAcct.AddressV4
+					if outer != nil {
+						tunAddr = s.pickNonCollidingIPv4(ctx, tunAddr, outer.AddressV4)
+					}
+				}
+				s.mu.Lock()
+				scanKey := s.scanKey
+				s.mu.Unlock()
+				if scanKey != "" && scanKey == strings.TrimSpace(curAcct.PublicKey) {
+					return nil, fmt.Errorf("%w: ключом текущего аккаунта сейчас идёт скан — дождитесь его окончания или остановите", ErrInvalidInput)
+				}
+				s.collectTunnelAccounts(ctx)
+				if inUse, owner, checkErr := s.isAccountKeyInUse(ctx, curAcct.PublicKey); checkErr != nil {
+					return nil, checkErr
+				} else if inUse {
+					return nil, fmt.Errorf("%w: ключ текущего аккаунта уже используется туннелем %q — для второго туннеля нужна отдельная регистрация или другой импорт", ErrInvalidInput, owner)
+				}
+				created, err := s.d.Tunnels.Create(ctx, req.Mode, name, buildTunConf(curAcct, tunAddr), createOpts)
+				if err != nil {
+					return nil, err
+				}
+				if err := s.d.Store.AddTunnelAccount(TunnelAccount{Account: *curAcct, TunnelMode: created.Mode, TunnelID: created.ID}); err != nil {
+					// Туннель работает; не сохранена лишь запись, по которой
+					// регистрацию сняли бы после его удаления.
+					s.logWarn("apply", name, "Учётная запись туннеля не сохранена: "+err.Error())
+				}
+				return created, nil
+			}()
+			if err != nil {
+				return nil, err
+			}
+			accountReused = true
+		} else {
+			s.collectTunnelAccounts(ctx)
+			regAcct, regErr := s.registerTunnelAccount(ctx, acct)
+			if regErr != nil {
+				return nil, fmt.Errorf("учётная запись WARP для туннеля (если Cloudflare API недоступен, включите опцию «Использовать текущий аккаунт» в окне создания): %w", regErr)
+			}
+			created, err := s.d.Tunnels.Create(ctx, req.Mode, name, buildTunConf(regAcct, addrV4), createOpts)
+			if err != nil {
+				s.dropRegistration(regAcct)
+				return nil, err
+			}
+			ref = created
+			if err := s.d.Store.AddTunnelAccount(TunnelAccount{Account: *regAcct, TunnelMode: created.Mode, TunnelID: created.ID}); err != nil {
+				// Туннель работает; не сохранена лишь запись, по которой
+				// регистрацию сняли бы после его удаления.
+				s.logWarn("apply", name, "Учётная запись туннеля не сохранена: "+err.Error())
+			}
 		}
 		if viaID != "" {
 			s.logInfo("apply", name, fmt.Sprintf("Создан WARP-in-WARP (%s) через %s с узлом %s", req.Mode, outer.Name, req.Endpoint))
@@ -1617,7 +2181,7 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplyResult, er
 	default:
 		return nil, fmt.Errorf("%w: action должен быть create или swap", ErrInvalidInput)
 	}
-	res := &ApplyResult{Tunnel: ref}
+	res := &ApplyResult{Tunnel: ref, AccountReused: accountReused}
 	if req.EnableAutopilot && ref != nil {
 		cfg := s.d.Store.Config()
 		filters := DefaultFilters()

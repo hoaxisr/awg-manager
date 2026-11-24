@@ -23,7 +23,7 @@ import (
 // proxyConfigPtr прописан (иначе конфиг непоправим), proxySecretsOf забыт.
 func TestKinds_ProxySecretsClassified(t *testing.T) {
 	want := map[instancestore.Kind][]string{
-		instancestore.KindWdttClient:     {"password"},
+		instancestore.KindWdttClient:     {"password", "diagKey"},
 		instancestore.KindWdttServer:     nil,
 		instancestore.KindFreeTurnClient: {"obfKey"},
 		instancestore.KindFreeTurnServer: {"obfKey"},

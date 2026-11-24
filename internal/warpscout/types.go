@@ -73,6 +73,8 @@ type Account struct {
 	ClientID      string    `json:"clientId,omitempty"` // base64, 3 байта reserved
 	AccountType   string    `json:"accountType,omitempty"`
 	WarpPlus      bool      `json:"warpPlus"`
+	HasToken      bool      `json:"hasToken"`
+	Imported      bool      `json:"imported,omitempty"`
 	License       string    `json:"-"`
 	CreatedAt     time.Time `json:"createdAt"`
 }

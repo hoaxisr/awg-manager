@@ -23,6 +23,7 @@
 		result?: PageScanResult | null;
 		onOpenQuickAdd?: (target: { ip?: string; domain?: string; prefix?: string }) => void;
 		onRescan?: (mode: PageScanFetchMode) => void;
+		onRetry?: () => void;
 		onRoutesChanged?: () => void;
 	}
 
@@ -37,6 +38,7 @@
 		result = null,
 		onOpenQuickAdd,
 		onRescan,
+		onRetry,
 		onRoutesChanged,
 	}: Props = $props();
 
@@ -57,7 +59,7 @@
 	);
 
 	let unroutedDomains = $derived(
-		selectableDomains.filter((r) => !r.routed),
+		selectableDomains.filter((r) => !r.routed && !r.routeUnknown),
 	);
 
 	let checkedDomainList = $derived(
@@ -358,6 +360,12 @@
 			<div class="scan-error" role="status">
 				<Badge variant="error" size="xs">{m.page_scan_error_prefix()}</Badge>
 				<span class="scan-error-msg">{error}</span>
+				{#if onRetry}
+					<Button variant="ghost" size="sm" disabled={loading} onclick={() => onRetry()}>
+						{#snippet iconBefore()}<RefreshCw size={12} aria-hidden="true" />{/snippet}
+						{m.page_scan_retry_btn()}
+					</Button>
+				{/if}
 			</div>
 		{/if}
 
@@ -369,8 +377,28 @@
 					<Badge variant={result.statusCode >= 400 ? 'warning' : 'success'} size="xs" mono>
 						HTTP {result.statusCode}
 					</Badge>
-					<Badge variant={result.fetchVia === 'proxy' ? 'info' : 'muted'} size="xs">
-						{result.fetchVia === 'proxy' ? m.page_scan_via_proxy() : m.page_scan_via_direct()}
+					<Badge
+						variant={result.fetchVia === 'interface'
+							? 'info'
+							: result.fetchVia === 'proxy'
+								? 'accent'
+								: 'muted'}
+						size="xs"
+						title={result.fetchTarget || undefined}
+					>
+						{#if result.fetchVia === 'interface'}
+							{m.page_scan_via_interface({
+								target: result.fetchTargetLabel || result.fetchTarget || '',
+							})}
+						{:else if result.fetchVia === 'proxy'}
+							{result.fetchTargetLabel || result.fetchTarget
+								? m.page_scan_via_proxy_target({
+										target: result.fetchTargetLabel || result.fetchTarget || '',
+									})
+								: m.page_scan_via_proxy()}
+						{:else}
+							{m.page_scan_via_direct()}
+						{/if}
 					</Badge>
 					<Badge variant="default" size="xs">
 						{m.page_scan_hosts_count({ count: resources.length })}
@@ -392,6 +420,9 @@
 							variant="ghost"
 							size="sm"
 							disabled={loading}
+							title={result.fetchVia !== 'proxy' && result.defaultProxy
+								? m.page_scan_rescan_proxy_title({ proxy: result.defaultProxy })
+								: undefined}
 							onclick={() => onRescan(result!.fetchVia === 'proxy' ? 'direct' : 'proxy')}
 						>
 							{#snippet iconBefore()}<RefreshCw size={12} aria-hidden="true" />{/snippet}
@@ -561,7 +592,7 @@
 												</span>
 											{/if}
 										</div>
-									{:else}
+									{:else if !item.routeUnknown}
 										<Badge variant="warning" size="xs">{m.page_scan_route_direct()}</Badge>
 									{/if}
 

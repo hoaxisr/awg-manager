@@ -19,11 +19,12 @@ import (
 // Mode — единственное НОВОЕ поле (§11): режим ссылки wg|raw, независимый от
 // RelayMode записи. Пусто — режим записи.
 type LinkRequest struct {
-	Peer     string   `json:"peer,omitempty"`
-	VKHashes []string `json:"vkHashes,omitempty"`
-	Name     string   `json:"name,omitempty"`
-	Password string   `json:"password,omitempty"`
-	Mode     string   `json:"mode,omitempty"`
+	Peer           string   `json:"peer,omitempty"`
+	VKHashes       []string `json:"vkHashes,omitempty"`
+	Name           string   `json:"name,omitempty"`
+	Password       string   `json:"password,omitempty"`
+	Mode           string   `json:"mode,omitempty"`
+	IncludeDiagKey bool     `json:"includeDiagKey,omitempty"`
 
 	Provider       string `json:"provider,omitempty"`
 	MTU            int    `json:"mtu,omitempty"`
@@ -142,7 +143,19 @@ func (b *Builder) BuildLink(ctx context.Context, rec instancestore.Record, req L
 	if err != nil {
 		return nil, &LinkError{Code: "WDTT_LINK_ENCODE_FAILED", Msg: err.Error()}
 	}
-	qLink, err := EncodeQwdttLink(peer, linkPassword, hashes, name, 0, 0, mode)
+	var diagKey string
+	if req.IncludeDiagKey {
+		diagKey = ReadDiagToken(cfg.ConfigDir)
+		if diagKey == "" {
+			return nil, &LinkError{
+				Code: "WDTT_DIAG_KEY_MISSING",
+				Msg:  "ключ диагностики сервера ещё не создан: запустите сервер или нажмите «Сменить ключ» в настройках",
+			}
+		}
+	}
+	qLink, err := EncodeQwdttLinkWithOptions(peer, linkPassword, hashes, name, 0, 0, mode, QwdttLinkOptions{
+		DiagKey: diagKey,
+	})
 	if err != nil {
 		return nil, &LinkError{Code: "WDTT_LINK_ENCODE_FAILED", Msg: err.Error()}
 	}

@@ -10,6 +10,7 @@ import type {
 	WarpFindJunkApplyRequest,
 	WarpFindJunkRequest,
 	WarpFindJunkStatus,
+	WarpRegisterOptions,
 	WarpScanRequest,
 	WarpScanStatus,
 	WarpScoutState,
@@ -28,10 +29,17 @@ export class WarpScoutClient extends Awg3Client {
 		return list ?? [];
 	}
 
-	async warpscoutRegister(): Promise<WarpAccount> {
+	async warpscoutRegister(opts?: WarpRegisterOptions): Promise<WarpAccount> {
 		return this.request<WarpAccount>('/warpscout/account/register', {
 			method: 'POST',
-			body: JSON.stringify({}),
+			body: JSON.stringify(opts ?? {}),
+		});
+	}
+
+	async warpscoutImportAccount(raw: string): Promise<WarpAccount> {
+		return this.request<WarpAccount>('/warpscout/account/import', {
+			method: 'POST',
+			body: JSON.stringify({ raw }),
 		});
 	}
 

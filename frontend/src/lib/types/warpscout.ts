@@ -14,7 +14,14 @@ export interface WarpAccount {
 	clientId?: string;
 	accountType?: string;
 	warpPlus: boolean;
+	hasToken?: boolean;
+	imported?: boolean;
 	createdAt: string;
+}
+
+export interface WarpRegisterOptions {
+	proxyUrl?: string;
+	relayUrl?: string;
 }
 
 export type WarpSignatureHostPreset = 'default' | 'ru_whitelist' | 'cdn' | 'custom';
@@ -199,6 +206,8 @@ export interface WarpEngineInfo {
 export interface WarpScoutState {
 	engine: WarpEngineInfo;
 	account: WarpAccount | null;
+	accountKeyInUseBy?: string;
+	accountKeyCheckError?: string;
 	hasInnerAccount?: boolean;
 	accountUnreadable: boolean;
 	defaultWan?: string;
@@ -308,11 +317,13 @@ export interface WarpApplyRequest {
 	awg?: WarpAWGParams;
 	enableAutopilot: boolean;
 	filters?: WarpFilters;
+	reuseAccount?: boolean;
 }
 
 export interface WarpApplyResult {
 	tunnel: WarpTunnelRef | null;
 	profileId?: string;
+	accountReused?: boolean;
 }
 
 export interface WarpExportRequest {

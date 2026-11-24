@@ -27,6 +27,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/ftlink"
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/install"
 	proxysub "github.com/hoaxisr/awg-manager/internal/proxyapp/subscription"
+	"github.com/hoaxisr/awg-manager/internal/proxyapp/wdttdiag"
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/wdttlink"
 	"github.com/hoaxisr/awg-manager/internal/proxyapp/wdttusers"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt"
@@ -48,6 +49,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/testing"
 	"github.com/hoaxisr/awg-manager/internal/traffic"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ops"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
@@ -926,31 +928,18 @@ func (a *app) wireProxyrt() {
 	a.obfDispatcher = obfuscator.NewDispatcher(obfRunner, kernelRelay, useKernel, obfLog)
 	a.nwgOp.SetObfuscator(a.obfDispatcher)
 	// Два туннеля могут смотреть на один IP сервера: host-route до него общий,
-	// и Stop одного не имеет права обрубить второй. Бэкенд значения не имеет —
-	// обфусцированный nativewg ставит ту же запись `ip route host`, что и
-	// kernel-туннель (nwg.addObfHostRoute против ops.addKernelHostRoute), так
-	// что предикат обязан видеть оба: до этого каждый ref-count считал только
-	// своих и снимал чужое.
-	routeHeldByOther := func(excludeID, ip string) bool {
-		if ip == "" {
-			return false
-		}
+	// и Stop одного не имеет права обрубить второй.
+	routeHolders := func(excludeID, ip string) netutil.RouteHolders {
 		list, err := a.awgStore.List()
 		if err != nil {
-			return false
+			return netutil.RouteHolders{}
 		}
-		for i := range list {
-			t := &list[i]
-			if t.ID != excludeID && t.Enabled && t.ResolvedEndpointIP == ip {
-				return true
-			}
-		}
-		return false
+		return hostRouteHolders(list, excludeID, ip)
 	}
-	a.nwgOp.SetObfuscatorRouteSharing(routeHeldByOther)
+	a.nwgOp.SetObfuscatorRouteSharing(routeHolders)
 	// На OS4 endpoint-маршрутами оператор не управляет — там подключать нечего.
 	if os5, ok := a.operator.(*ops.OperatorOS5Impl); ok {
-		os5.SetEndpointRouteSharing(routeHeldByOther)
+		os5.SetEndpointRouteSharing(routeHolders)
 	}
 	// Усыновить релеи живых включённых туннелей, сирот погасить.
 	keep := func(id string) bool {
@@ -1055,6 +1044,10 @@ func (a *app) wireProxyrt() {
 		Snapshots: snapshots,
 		Log:       logTail,
 	})
+	diagHandler := wdttdiag.New(wdttdiag.Deps{
+		Records: records,
+		Binary:  installSvc.Binary,
+	})
 	instances := api.NewProxyInstancesHandler(api.ProxyInstancesDeps{
 		Manager:          mgr,
 		States:           states,
@@ -1067,13 +1060,15 @@ func (a *app) wireProxyrt() {
 
 	a.srv.SetProxyRtSurface(server.ProxyRtSurface{
 		Instances: proxyrtDispatch{
-			instances: instances.Handle,
-			users:     users.Serve,
-			captcha:   captchaSvc.Serve,
-			allowlist: allowlist.Serve,
-			link:      linkHandler.Link,
-			ensureWG:  linkHandler.EnsureWGTunnel,
-			refresh:   subs.Serve,
+			instances:     instances.Handle,
+			users:         users.Serve,
+			captcha:       captchaSvc.Serve,
+			allowlist:     allowlist.Serve,
+			link:          linkHandler.Link,
+			rotateDiagKey: linkHandler.RotateDiagKey,
+			ensureWG:      linkHandler.EnsureWGTunnel,
+			diag:          diagHandler.Serve,
+			refresh:       subs.Serve,
 		}.handler(),
 		ListenMoves:        instances.AckListenMoves,
 		WdttLinkDecode:     linkHandler.Decode,
@@ -1349,13 +1344,15 @@ func (a *app) proxyFactory(ref *proxyManagerRef, journal *logging.ScopedLogger,
 // владелец поддерева и отвечает 404 на неизвестном хвосте, то есть проглотил
 // бы users, link, captcha и allowlist целиком.
 type proxyrtDispatch struct {
-	instances http.HandlerFunc
-	users     func(w http.ResponseWriter, r *http.Request, key string, sub []string)
-	captcha   func(w http.ResponseWriter, r *http.Request, key string, sub []string)
-	allowlist func(w http.ResponseWriter, r *http.Request, key string, sub []string)
-	link      func(w http.ResponseWriter, r *http.Request, key string)
-	ensureWG  func(w http.ResponseWriter, r *http.Request, key string)
-	refresh   func(w http.ResponseWriter, r *http.Request, key string)
+	instances     http.HandlerFunc
+	users         func(w http.ResponseWriter, r *http.Request, key string, sub []string)
+	captcha       func(w http.ResponseWriter, r *http.Request, key string, sub []string)
+	allowlist     func(w http.ResponseWriter, r *http.Request, key string, sub []string)
+	link          func(w http.ResponseWriter, r *http.Request, key string)
+	rotateDiagKey func(w http.ResponseWriter, r *http.Request, key string)
+	ensureWG      func(w http.ResponseWriter, r *http.Request, key string)
+	diag          func(w http.ResponseWriter, r *http.Request, key string)
+	refresh       func(w http.ResponseWriter, r *http.Request, key string)
 }
 
 func (d proxyrtDispatch) handler() http.HandlerFunc {
@@ -1381,8 +1378,20 @@ func (d proxyrtDispatch) handler() http.HandlerFunc {
 			d.allowlist(w, r, key, parts)
 		case "link":
 			d.link(w, r, key)
+		case "diag-key":
+			if sub == "rotate" && d.rotateDiagKey != nil {
+				d.rotateDiagKey(w, r, key)
+				return
+			}
+			d.instances(w, r)
 		case "ensure-wg-tunnel":
 			d.ensureWG(w, r, key)
+		case "diag":
+			if len(parts) == 0 && d.diag != nil {
+				d.diag(w, r, key)
+				return
+			}
+			d.instances(w, r)
 		case "linked-tunnels":
 			// Своей ручки у связей больше нет: снимает их путь удаления
 			// инстанса (PF24). Путь остаётся ради честного 404 на старый
@@ -1438,3 +1447,25 @@ func proxyDefaultDeviceID(ctx context.Context, g interface {
 }
 
 var deviceIDRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$`)
+
+// hostRouteHolders — включённые туннели, кроме excludeID, с тем же IP сервера.
+func hostRouteHolders(list []storage.AWGTunnel, excludeID, ip string) netutil.RouteHolders {
+	var h netutil.RouteHolders
+	if ip == "" {
+		return h
+	}
+	for i := range list {
+		t := &list[i]
+		if t.ID == excludeID || !t.Enabled || t.ResolvedEndpointIP != ip {
+			continue
+		}
+		h.Any = true
+		switch {
+		case t.Backend == "" || t.Backend == "kernel":
+			h.Kernel = true
+		case t.Obfuscator != nil:
+			h.Obfuscated = true
+		}
+	}
+	return h
+}

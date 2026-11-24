@@ -35,11 +35,12 @@ type ObfuscatorRunner interface {
 
 func (o *OperatorNativeWG) SetObfuscator(r ObfuscatorRunner) { o.obf = r }
 
-// SetObfuscatorRouteSharing подключает проверку «host-route до этого IP держит
-// другой туннель». Без неё Stop одного из двух туннелей с общим target-IP
+// SetObfuscatorRouteSharing подключает сведения о соседях с тем же IP. Запись
+// держит только другой обфусцированный туннель: строка kernel-туннеля своя, в
+// ядре, и снятие записи NDMS её не трогает (стенд 5.02, F889). Без проверки Stop одного из двух туннелей с общим target-IP
 // снимал бы маршрут, нужный второму.
-func (o *OperatorNativeWG) SetObfuscatorRouteSharing(fn func(excludeID, ip string) bool) {
-	o.obfRouteHeldByOther = fn
+func (o *OperatorNativeWG) SetObfuscatorRouteSharing(fn func(excludeID, ip string) netutil.RouteHolders) {
+	o.obfRouteHolders = fn
 }
 
 // removeObfHostRoute снимает host-route, если он не нужен другому туннелю.
@@ -52,7 +53,7 @@ func (o *OperatorNativeWG) SetObfuscatorRouteSharing(fn func(excludeID, ip strin
 // подписи, и снимается только она — статический маршрут пользователя на тот
 // же адрес переживает нашу уборку.
 func (o *OperatorNativeWG) removeObfHostRoute(ctx context.Context, tunnelID, ip, wan string) error {
-	if o.obfRouteHeldByOther != nil && o.obfRouteHeldByOther(tunnelID, ip) {
+	if o.obfRouteHolders != nil && o.obfRouteHolders(tunnelID, ip).Obfuscated {
 		o.appLog.Info("obfuscator", tunnelID, "host-route "+ip+" нужен другому туннелю, оставляем")
 		return nil
 	}

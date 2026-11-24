@@ -42,6 +42,7 @@ type accountDisk struct {
 	ClientID         string    `json:"clientId,omitempty"`
 	AccountType      string    `json:"accountType,omitempty"`
 	WarpPlus         bool      `json:"warpPlus"`
+	Imported         bool      `json:"imported,omitempty"`
 	CreatedAt        time.Time `json:"createdAt"`
 }
 
@@ -156,7 +157,9 @@ func (s *Store) decryptAccount(d *accountDisk) (*Account, error) {
 		ID: d.ID, Token: tok, PrivateKey: pk, License: lic,
 		PublicKey: d.PublicKey, PeerPublicKey: d.PeerPublicKey,
 		AddressV4: d.AddressV4, AddressV6: d.AddressV6, ClientID: d.ClientID,
-		AccountType: d.AccountType, WarpPlus: d.WarpPlus, CreatedAt: d.CreatedAt,
+		AccountType: d.AccountType, WarpPlus: d.WarpPlus,
+		HasToken: d.ID != "" && tok != "", Imported: d.Imported,
+		CreatedAt: d.CreatedAt,
 	}, nil
 }
 
@@ -219,7 +222,7 @@ func (s *Store) encryptAccount(a *Account) (*accountDisk, error) {
 		ID: a.ID, TokenCipher: tok, PrivateKeyCipher: pk, LicenseCipher: lic,
 		PublicKey: a.PublicKey, PeerPublicKey: a.PeerPublicKey,
 		AddressV4: a.AddressV4, AddressV6: a.AddressV6, ClientID: a.ClientID,
-		AccountType: a.AccountType, WarpPlus: a.WarpPlus, CreatedAt: a.CreatedAt,
+		AccountType: a.AccountType, WarpPlus: a.WarpPlus, Imported: a.Imported, CreatedAt: a.CreatedAt,
 	}, nil
 }
 
@@ -232,12 +235,13 @@ func (s *Store) SetAccount(a *Account) error {
 		s.acct = nil
 		return s.saveLocked()
 	}
-	d, err := s.encryptAccount(a)
+	c := *a
+	c.HasToken = c.ID != "" && c.Token != ""
+	d, err := s.encryptAccount(&c)
 	if err != nil {
 		return err
 	}
 	s.state.Account = d
-	c := *a
 	s.acct = &c
 	return s.saveLocked()
 }
@@ -262,12 +266,13 @@ func (s *Store) SetInnerAccount(a *Account) error {
 		s.innerAcct = nil
 		return s.saveLocked()
 	}
-	d, err := s.encryptAccount(a)
+	c := *a
+	c.HasToken = c.ID != "" && c.Token != ""
+	d, err := s.encryptAccount(&c)
 	if err != nil {
 		return err
 	}
 	s.state.InnerAccount = d
-	c := *a
 	s.innerAcct = &c
 	return s.saveLocked()
 }

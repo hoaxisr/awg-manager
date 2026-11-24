@@ -21,6 +21,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/obfuscator"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
 )
 
 type fakeObfRunner struct {
@@ -715,11 +716,12 @@ func TestStopObfuscated_StopsRunnerAndRemovesRoute(t *testing.T) {
 func TestStopObfuscated_SharedHostRouteKeptForNeighbour(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
-		held        bool
+		held        netutil.RouteHolders
 		wantRemoved bool
 	}{
-		{"сосед держит маршрут", true, false},
-		{"соседа нет", false, true},
+		{"обфусцированный сосед держит запись", netutil.RouteHolders{Obfuscated: true, Any: true}, false},
+		{"строка kernel-соседа своя", netutil.RouteHolders{Kernel: true, Any: true}, true},
+		{"соседа нет", netutil.RouteHolders{}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			withObfDirs(t)
@@ -727,7 +729,7 @@ func TestStopObfuscated_SharedHostRouteKeptForNeighbour(t *testing.T) {
 			fr := newFakeObfRunner()
 			op := newObfOperator(t, n, fr)
 			var gotID, gotIP string
-			op.SetObfuscatorRouteSharing(func(excludeID, ip string) bool {
+			op.SetObfuscatorRouteSharing(func(excludeID, ip string) netutil.RouteHolders {
 				gotID, gotIP = excludeID, ip
 				return tc.held
 			})

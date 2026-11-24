@@ -716,6 +716,7 @@ export interface FircProxyGroup {
 	id: string;
 	name: string;
 	interfaces: string[];
+	check?: FircGroupCheck;
 }
 
 export interface FircInterfaceProbeResult {

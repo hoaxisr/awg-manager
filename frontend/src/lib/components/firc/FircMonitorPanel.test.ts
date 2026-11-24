@@ -5,6 +5,11 @@ vi.hoisted(() => {
 		configurable: true,
 		value: (query: string) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {} }),
 	});
+	globalThis.ResizeObserver = class {
+		observe() {}
+		unobserve() {}
+		disconnect() {}
+	};
 });
 const {
 	fircGetMonitor,
@@ -16,6 +21,10 @@ const {
 	fircProbeAutolistHost,
 	fircAutolistCandidateAction,
 	fircDismissAutolistAddress,
+	fircGetGroups,
+	listDnsRoutes,
+	getPageScanOptions,
+	scanPage,
 } = vi.hoisted(() => ({
 	fircGetMonitor: vi.fn(),
 	fircGetHosts: vi.fn(),
@@ -26,6 +35,10 @@ const {
 	fircProbeAutolistHost: vi.fn(),
 	fircAutolistCandidateAction: vi.fn(),
 	fircDismissAutolistAddress: vi.fn(),
+	fircGetGroups: vi.fn(),
+	listDnsRoutes: vi.fn(),
+	getPageScanOptions: vi.fn(),
+	scanPage: vi.fn(),
 }));
 vi.mock('$lib/api/client', () => ({
 	api: {
@@ -38,6 +51,10 @@ vi.mock('$lib/api/client', () => ({
 		fircProbeAutolistHost,
 		fircAutolistCandidateAction,
 		fircDismissAutolistAddress,
+		fircGetGroups,
+		listDnsRoutes,
+		getPageScanOptions,
+		scanPage,
 	},
 }));
 
@@ -79,6 +96,17 @@ beforeEach(() => {
 	fircGetPolicies.mockResolvedValue([{ name: 'Policy3', description: 'Дети', devices: 1 }]);
 	fircGetAutolist.mockResolvedValue(autolistMock);
 	fircAutolistCandidateAction.mockResolvedValue({ ...autolistMock, candidates: [] });
+	fircGetGroups.mockResolvedValue([]);
+	listDnsRoutes.mockResolvedValue([]);
+	getPageScanOptions.mockResolvedValue({
+		defaultProxy: 'http://127.0.0.1:1099',
+		defaultProxyLabel: 'FIRC inbound (127.0.0.1:1099)',
+		proxies: [
+			{ url: 'http://127.0.0.1:1099', label: 'FIRC inbound (127.0.0.1:1099)' },
+			{ url: 'socks5://127.0.0.1:1080', label: 'SOCKS5 proxy (:1080)' },
+		],
+		interfaces: [{ name: 'opkgtun11', label: 'VPN DE (opkgtun11)' }],
+	});
 });
 afterEach(cleanup);
 
@@ -143,6 +171,105 @@ describe('FIRC compact monitor', () => {
 		expect(res.lines).toEqual(['openai.com', '*.chatgpt.com']);
 		expect(res.skippedRegexOrCidr).toBe(2);
 		expect(res.skippedRemoteLists).toBe(1);
+	});
+
+	it('loads page scan egress options, supports tunnel/custom proxy selection, syncs rescan selector, and clears stale results on error', async () => {
+		const { container } = render(FircMonitorPanel);
+		await screen.findByText('Видео');
+
+		const details = container.querySelector('details.domain-checker') as HTMLDetailsElement;
+		details.open = true;
+		await fireEvent(details, new Event('toggle'));
+
+		await waitFor(() => {
+			expect(getPageScanOptions).toHaveBeenCalledTimes(1);
+		});
+
+		const trigger = screen.getByLabelText(m.page_scan_exit_label());
+		const pickExit = async (name: string) => {
+			await fireEvent.click(trigger);
+			await fireEvent.click(await screen.findByRole('option', { name }));
+		};
+		expect(trigger.textContent).toContain(
+			m.page_scan_exit_auto_with_proxy({ proxy: 'FIRC inbound (127.0.0.1:1099)' }),
+		);
+
+		const domainInput = screen.getByLabelText(m.firc_monitor_checker_input_aria());
+		await fireEvent.input(domainInput, { target: { value: 'example.com' } });
+
+		// 1. Select tunnel interface and scan.
+		scanPage.mockResolvedValueOnce({
+			requestedUrl: 'https://example.com',
+			finalUrl: 'https://example.com/',
+			statusCode: 200,
+			fetchVia: 'interface',
+			fetchTarget: 'opkgtun11',
+			fetchTargetLabel: 'VPN DE (opkgtun11)',
+			proxyAvailable: true,
+			bodyBytes: 1200,
+			totalHosts: 1,
+			durationMs: 42,
+			resources: [{ host: 'cdn.example.com', sources: ['script'], routed: false }],
+		});
+		await pickExit('VPN DE (opkgtun11)');
+		await fireEvent.click(screen.getByRole('button', { name: m.page_scan_btn() }));
+
+		await waitFor(() => {
+			expect(scanPage).toHaveBeenCalledWith('example.com', {
+				fetchMode: 'interface',
+				interface: 'opkgtun11',
+			});
+		});
+		expect(await screen.findByText('cdn.example.com')).toBeTruthy();
+
+		// 2. Rescan via proxy from interface result syncs selector to default proxy.
+		scanPage.mockResolvedValueOnce({
+			requestedUrl: 'https://example.com',
+			finalUrl: 'https://example.com/',
+			statusCode: 200,
+			fetchVia: 'proxy',
+			fetchTarget: 'http://127.0.0.1:1099',
+			fetchTargetLabel: 'FIRC inbound (127.0.0.1:1099)',
+			defaultProxy: 'http://127.0.0.1:1099',
+			proxyAvailable: true,
+			bodyBytes: 1200,
+			totalHosts: 1,
+			durationMs: 40,
+			resources: [{ host: 'cdn.example.com', sources: ['script'], routed: false }],
+		});
+		await fireEvent.click(screen.getByRole('button', { name: m.page_scan_rescan_proxy() }));
+		await waitFor(() => {
+			expect(scanPage).toHaveBeenLastCalledWith('example.com', { fetchMode: 'proxy' });
+		});
+		expect(trigger.textContent).toContain('FIRC inbound (127.0.0.1:1099)');
+
+		// 3. Select custom proxy with empty URL -> shows validation error, clears stale cdn.example.com, skips API call.
+		await pickExit(m.page_scan_exit_custom_proxy());
+		await fireEvent.click(screen.getByRole('button', { name: m.page_scan_btn() }));
+		expect(await screen.findByText(m.page_scan_custom_proxy_required())).toBeTruthy();
+		expect(screen.queryByText('cdn.example.com')).toBeNull();
+		expect(scanPage).toHaveBeenCalledTimes(2);
+
+		// 4. Enter custom proxy URL -> scan fails -> error displayed and stale result remains cleared.
+		const customInput = screen.getByLabelText(m.page_scan_exit_custom_proxy());
+		await fireEvent.input(customInput, { target: { value: 'socks5://127.0.0.1:1080' } });
+		scanPage.mockRejectedValueOnce(new Error('socks5 timeout'));
+		await fireEvent.click(screen.getByRole('button', { name: m.page_scan_btn() }));
+
+		await waitFor(() => {
+			expect(scanPage).toHaveBeenLastCalledWith('example.com', {
+				fetchMode: 'proxy',
+				proxyUrl: 'socks5://127.0.0.1:1080',
+			});
+		});
+		expect(await screen.findByText('socks5 timeout')).toBeTruthy();
+		expect(screen.queryByText('cdn.example.com')).toBeNull();
+
+		// 5. Поле не предлагается запомнить браузеру и забывается при сворачивании панели.
+		expect(customInput.getAttribute('autocomplete')).toBe('off');
+		details.open = false;
+		await fireEvent(details, new Event('toggle'));
+		expect(screen.getByLabelText<HTMLInputElement>(m.page_scan_exit_custom_proxy()).value).toBe('');
 	});
 
 	// Как бэкенд: списки клиентов — только по запросу, счётчики — всегда.

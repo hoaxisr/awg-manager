@@ -118,6 +118,9 @@ func applyProfile(r *instancestore.Record, p wdttlink.ImportPayload, subURL stri
 	if p.Password != "" {
 		c.Password = p.Password
 	}
+	if dk := strings.TrimSpace(p.DiagKey); dk != "" {
+		c.DiagKey = dk
+	}
 	if len(p.VKHashes) > 0 {
 		c.VKHashes = strings.Join(p.VKHashes, ",")
 	}

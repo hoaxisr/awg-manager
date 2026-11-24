@@ -24,6 +24,8 @@ import type {
 	McpKeyCreated,
 	MonitoringSnapshot,
 	PageScanFetchMode,
+	PageScanOptions,
+	PageScanParams,
 	PageScanResult,
 	RouterInterface,
 	ServerListenChangeResult,
@@ -526,10 +528,20 @@ export class SystemClient extends TunnelsClient {
 		return this.request<IpInspectResult>(`/diagnostics/ip-inspect?ip=${encodeURIComponent(ip)}`);
 	}
 
-	async scanPage(url: string, fetchMode: PageScanFetchMode = 'auto'): Promise<PageScanResult> {
+	async getPageScanOptions(): Promise<PageScanOptions> {
+		return this.request<PageScanOptions>('/diagnostics/page-scan/options');
+	}
+
+	async scanPage(url: string, options: PageScanFetchMode | PageScanParams = 'auto'): Promise<PageScanResult> {
+		const params: PageScanParams = typeof options === 'string' ? { fetchMode: options } : options;
 		return this.request<PageScanResult>('/diagnostics/page-scan', {
 			method: 'POST',
-			body: JSON.stringify({ url, fetchMode }),
+			body: JSON.stringify({
+				url,
+				fetchMode: params.fetchMode ?? 'auto',
+				...(params.interface ? { interface: params.interface } : {}),
+				...(params.proxyUrl ? { proxyUrl: params.proxyUrl } : {}),
+			}),
 		});
 	}
 

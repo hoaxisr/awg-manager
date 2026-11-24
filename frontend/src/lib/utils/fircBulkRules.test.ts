@@ -150,6 +150,22 @@ describe('applyBulkGroupAction', () => {
 		expect(resChain.groups[0].interface).toEqual(['tunvless0', 'tunvless1']);
 		expect(resChain.groups[0].check).toEqual({ mode: 'none', url: '' });
 
+		const resChainWithCheck = applyBulkGroupAction(resChain.groups, new Set(['g1', 'g2']), {
+			kind: 'setInterface',
+			iface: ['qmi_br0', 'tunvless2'],
+			check: { mode: 'url', url: 'https://cp.cloudflare.com/generate_204' },
+		});
+		expect(resChainWithCheck.affected).toBe(2);
+		expect(resChainWithCheck.groups[0].check).toEqual({
+			mode: 'url',
+			url: 'https://cp.cloudflare.com/generate_204',
+		});
+		expect(resChainWithCheck.groups[1].check).toEqual({
+			mode: 'url',
+			url: 'https://cp.cloudflare.com/generate_204',
+		});
+		expect(resChainWithCheck.groups[0].check).not.toBe(resChainWithCheck.groups[1].check);
+
 		const sharedDevices = { allow: ['mac:aa:bb:cc:dd:ee:01'], deny: [] };
 		const resDevices = applyBulkGroupAction(resChain.groups, new Set(['g1', 'g2']), {
 			kind: 'setDevices',
