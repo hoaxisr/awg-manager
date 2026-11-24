@@ -66,7 +66,9 @@ export class ServersClient extends SystemClient {
 		csrfTokenPromise = (async () => {
 			try {
 				const res = await this.request<{ csrf_token: string }>('/servers/tgwebproxy/csrf', {
-					method: 'GET'
+					method: 'GET',
+					// За публикацией KeenDNS Origin и Referer стёрты — бэкенд опознаёт нас по этому заголовку.
+					headers: { 'X-Requested-With': 'XMLHttpRequest' }
 				});
 				cachedCsrfToken = res.csrf_token;
 				return res.csrf_token;
