@@ -100,11 +100,10 @@ type OperatorNativeWG struct {
 	// (obfuscated.go). nil на путях, где обфускация не заведена.
 	obf ObfuscatorRunner
 
-	// obfRouteHeldByOther — «host-route до ip нужен ещё кому-то, кроме
-	// excludeID»: у двух обфусцированных туннелей target может резолвиться в
+	// obfRouteHolders — кто из других туннелей смотрит на ip: у двух обфусцированных туннелей target может резолвиться в
 	// один IP, и снятие маршрута на Stop одного обрубало бы второй. nil =
 	// прежнее поведение (снимаем безусловно).
-	obfRouteHeldByOther func(excludeID, ip string) bool
+	obfRouteHolders func(excludeID, ip string) netutil.RouteHolders
 
 	// obfRouteErr — причина, по которой host-route до target НЕ стоит, по ID
 	// туннеля. Start из-за маршрута не валится (на WAN-up оркестратор всё

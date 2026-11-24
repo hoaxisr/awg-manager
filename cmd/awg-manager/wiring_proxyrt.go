@@ -48,6 +48,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/testing"
 	"github.com/hoaxisr/awg-manager/internal/traffic"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
+	"github.com/hoaxisr/awg-manager/internal/tunnel/netutil"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/ops"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
@@ -926,31 +927,18 @@ func (a *app) wireProxyrt() {
 	a.obfDispatcher = obfuscator.NewDispatcher(obfRunner, kernelRelay, useKernel, obfLog)
 	a.nwgOp.SetObfuscator(a.obfDispatcher)
 	// Два туннеля могут смотреть на один IP сервера: host-route до него общий,
-	// и Stop одного не имеет права обрубить второй. Бэкенд значения не имеет —
-	// обфусцированный nativewg ставит ту же запись `ip route host`, что и
-	// kernel-туннель (nwg.addObfHostRoute против ops.addKernelHostRoute), так
-	// что предикат обязан видеть оба: до этого каждый ref-count считал только
-	// своих и снимал чужое.
-	routeHeldByOther := func(excludeID, ip string) bool {
-		if ip == "" {
-			return false
-		}
+	// и Stop одного не имеет права обрубить второй.
+	routeHolders := func(excludeID, ip string) netutil.RouteHolders {
 		list, err := a.awgStore.List()
 		if err != nil {
-			return false
+			return netutil.RouteHolders{}
 		}
-		for i := range list {
-			t := &list[i]
-			if t.ID != excludeID && t.Enabled && t.ResolvedEndpointIP == ip {
-				return true
-			}
-		}
-		return false
+		return hostRouteHolders(list, excludeID, ip)
 	}
-	a.nwgOp.SetObfuscatorRouteSharing(routeHeldByOther)
+	a.nwgOp.SetObfuscatorRouteSharing(routeHolders)
 	// На OS4 endpoint-маршрутами оператор не управляет — там подключать нечего.
 	if os5, ok := a.operator.(*ops.OperatorOS5Impl); ok {
-		os5.SetEndpointRouteSharing(routeHeldByOther)
+		os5.SetEndpointRouteSharing(routeHolders)
 	}
 	// Усыновить релеи живых включённых туннелей, сирот погасить.
 	keep := func(id string) bool {
@@ -1438,3 +1426,25 @@ func proxyDefaultDeviceID(ctx context.Context, g interface {
 }
 
 var deviceIDRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$`)
+
+// hostRouteHolders — включённые туннели, кроме excludeID, с тем же IP сервера.
+func hostRouteHolders(list []storage.AWGTunnel, excludeID, ip string) netutil.RouteHolders {
+	var h netutil.RouteHolders
+	if ip == "" {
+		return h
+	}
+	for i := range list {
+		t := &list[i]
+		if t.ID == excludeID || !t.Enabled || t.ResolvedEndpointIP != ip {
+			continue
+		}
+		h.Any = true
+		switch {
+		case t.Backend == "" || t.Backend == "kernel":
+			h.Kernel = true
+		case t.Obfuscator != nil:
+			h.Obfuscated = true
+		}
+	}
+	return h
+}
