@@ -74,7 +74,6 @@
 				apiKey={editor.settings.apiKey}
 				{origin}
 				saving={editor.saving}
-				showFeedback={editor.settings.updates.channel === 'develop'}
 				{showNdmsProxy}
 				ongenerateApiKey={generateApiKey}
 			/>

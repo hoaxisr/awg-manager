@@ -1,8 +1,7 @@
 <!--
-  Карточка «Дополнительно»: API-ключ, кнопка отзыва (develop), ключи Happ и
-  NDMS Proxy для sing-box. Ключ выпускает страница (ongenerateApiKey) — он
-  меняет общие настройки; NDMS Proxy живёт в сторе sing-box, поэтому его
-  переключение — здесь. id="feedback-fab" — цель прокрутки со страницы.
+  Карточка «Дополнительно»: API-ключ, ключи Happ и NDMS Proxy для sing-box.
+  Ключ выпускает страница (ongenerateApiKey) — он меняет общие настройки; NDMS
+  Proxy живёт в сторе sing-box, поэтому его переключение — здесь.
 -->
 <script lang="ts">
 	import { api } from '$lib/api/client';
@@ -12,7 +11,6 @@
 	import HappKeysModal from '$lib/components/subscriptions/HappKeysModal.svelte';
 	import { notifications } from '$lib/stores/notifications';
 	import { singboxStatus } from '$lib/stores/singbox';
-	import { developFeedbackFabVisible } from '$lib/stores/developFeedbackFab';
 	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { Wrench } from 'lucide-svelte';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
@@ -22,13 +20,11 @@
 		/** Origin веб-интерфейса — для адреса API в описании ключа. */
 		origin: string;
 		saving?: boolean;
-		/** Тумблер кнопки отзыва — только на канале develop. */
-		showFeedback: boolean;
 		showNdmsProxy: boolean;
 		ongenerateApiKey: () => void;
 	}
 
-	let { apiKey, origin, saving = false, showFeedback, showNdmsProxy, ongenerateApiKey }: Props = $props();
+	let { apiKey, origin, saving = false, showNdmsProxy, ongenerateApiKey }: Props = $props();
 
 	let showHappKeysModal = $state(false);
 
@@ -87,10 +83,7 @@
 </script>
 
 <div class="settings-block">
-	<div
-		id="feedback-fab"
-		class="card"
-	>
+	<div class="card">
 	<SettingsSectionLabel label={m.settings_page_advanced_title()} icon={Wrench} tone="indigo" header />
 	<div class="setting-row api-key-setting">
 		<div class="flex flex-col gap-1">
@@ -123,21 +116,6 @@
 			</div>
 		</div>
 	</div>
-	{#if showFeedback}
-	<div class="setting-row toggle-inline-row">
-		<div class="flex flex-col gap-1">
-			<span class="font-medium">{m.settings_page_feedback_label()}</span>
-			<span class="setting-description">
-				{m.settings_page_feedback_description()}
-			</span>
-		</div>
-		<Toggle
-			checked={$developFeedbackFabVisible}
-			onchange={(v) => developFeedbackFabVisible.set(v)}
-		/>
-	</div>
-	{/if}
-
 	<div class="setting-row toggle-inline-row">
 		<div class="flex flex-col gap-1">
 			<span class="font-medium">{m.settings_page_happ_label()}</span>

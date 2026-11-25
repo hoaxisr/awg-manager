@@ -21,7 +21,7 @@ describe('DnsRouteSettings', () => {
 		const input = container.querySelector('#dnsRefreshInterval') as HTMLInputElement;
 
 		await fireEvent.input(input, { target: { value: '12' } });
-		await fireEvent.click(getByRole('button'));
+		await fireEvent.click(getByRole('button', { name: /сохранить/i }));
 
 		expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ refreshIntervalHours: 12 }));
 		await vi.waitFor(() => expect(input.value).toBe('6'));

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
-import UpdateSection from './UpdateSection.svelte';
+import InstallSettings from './InstallSettings.svelte';
 import { api } from '$lib/api/client';
 import type { Settings } from '$lib/types';
 
@@ -26,12 +26,12 @@ function settingsWith(snapshotDisabled?: boolean): Settings {
 	} as unknown as Settings;
 }
 
-describe('UpdateSection: снимок перед обновлением', () => {
+describe('InstallSettings: снимок перед обновлением', () => {
 	// F684: шлётся только изменённое поле, а не снимок настроек.
 	it('включён по умолчанию; выключение шлёт только updates.snapshotDisabled=true', async () => {
 		const initial = settingsWith(undefined);
 		vi.mocked(api.updateSettings).mockResolvedValue(initial);
-		render(UpdateSection, { props: { updateInfo: null, settings: initial } });
+		render(InstallSettings, { props: { updateInfo: null, settings: initial } });
 
 		const toggle = screen.getByRole<HTMLInputElement>('checkbox', { name: 'Снимок настроек перед обновлением' });
 		expect(toggle.checked).toBe(true);

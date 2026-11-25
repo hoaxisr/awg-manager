@@ -5,6 +5,7 @@
 	import { api } from '$lib/api/client';
 	import { m } from '$lib/i18n';
 	import { SegmentedControl, Toggle } from '$lib/components/ui';
+	import { developFeedbackFabVisible } from '$lib/stores/developFeedbackFab';
 	import {
 		downloadOutbounds,
 		downloadOutboundsError,
@@ -22,10 +23,11 @@
 	} from '$lib/types/usageLevel';
 	import { hasDevelopChannelQuizPassed } from '$lib/utils/developChannelGate';
 	import { downloadErrorToText } from '$lib/utils/downloadError';
-	import { CircleArrowDown, CloudDownload } from 'lucide-svelte';
+	import { CalendarClock, CircleArrowDown, CloudDownload, ListRestart } from 'lucide-svelte';
 	import DevelopChannelGateModal from './DevelopChannelGateModal.svelte';
 	import DnsRouteSettings from './DnsRouteSettings.svelte';
 	import DownloadSettings from './DownloadSettings.svelte';
+	import InstallSettings from './InstallSettings.svelte';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
 	import UpdateSection from './UpdateSection.svelte';
 	import { pageState } from './pageState.svelte';
@@ -40,6 +42,9 @@
 	const update = pageState<{ info: UpdateInfo | null }>('update-info', () => ({ info: null }));
 	const showDownloadRoute = $derived(areDownloadRouteDetailsVisible($usageLevel));
 	const showDnsRoute = $derived(Boolean($systemInfo.data?.isOS5) && isRoutingSubTabVisible($usageLevel, 'dnsRoutes'));
+	// Кнопка отзыва есть только на канале develop; её тумблер — у того же уровня,
+	// что и выбор канала.
+	const showFeedback = $derived($usageLevel === 'expert' && editor.settings.updates.channel === 'develop');
 	let developGateOpen = $state(false);
 
 	onMount(() => {
@@ -154,14 +159,7 @@
 		<div id="awgm-update" class="settings-block">
 			<div class="card">
 				<SettingsSectionLabel label={m.settings_page_update_section_title()} icon={CircleArrowDown} tone="green" header />
-				<UpdateSection bind:updateInfo={update.info} bind:settings={editor.settings} />
-			</div>
-		</div>
-	</div>
-	<div class="settings-column">
-		<div class="settings-block">
-			<div class="card">
-				<SettingsSectionLabel label={m.settings_page_downloads_title()} icon={CloudDownload} tone="orange" header />
+				<UpdateSection bind:updateInfo={update.info} />
 				<div class="setting-row toggle-inline-row">
 					<div class="flex flex-col gap-1">
 						<span class="font-medium">{m.settings_page_update_check_label()}</span>
@@ -174,14 +172,6 @@
 						disabled={editor.saving}
 					/>
 				</div>
-				{#if showDnsRoute}
-					<DnsRouteSettings
-						settings={editor.settings}
-						saving={editor.saving}
-						onToggle={toggleDnsAutoRefresh}
-						onSave={saveDnsRouteSettings}
-					/>
-				{/if}
 				{#if isUpdateChannelSwitchVisible(editor.settings.usageLevel)}
 					<div class="setting-row">
 						<div class="flex flex-col gap-1">
@@ -200,7 +190,31 @@
 						/>
 					</div>
 				{/if}
-				{#if showDownloadRoute}
+				{#if showFeedback}
+					<div class="setting-sub" id="feedback-fab">
+						<div class="setting-row toggle-inline-row">
+							<div class="flex flex-col gap-1">
+								<span class="font-medium">{m.settings_page_feedback_label()}</span>
+								<span class="setting-description">{m.settings_page_feedback_description()}</span>
+							</div>
+							<Toggle checked={$developFeedbackFabVisible} onchange={(v) => developFeedbackFabVisible.set(v)} />
+						</div>
+					</div>
+				{/if}
+			</div>
+		</div>
+	</div>
+	<div class="settings-column">
+		<div class="settings-block">
+			<div class="card">
+				<SettingsSectionLabel label={m.settings_update_install_title()} icon={CalendarClock} tone="teal" header />
+				<InstallSettings updateInfo={update.info} bind:settings={editor.settings} />
+			</div>
+		</div>
+		{#if showDownloadRoute}
+			<div class="settings-block">
+				<div class="card">
+					<SettingsSectionLabel label={m.settings_page_downloads_title()} icon={CloudDownload} tone="orange" header />
 					<DownloadSettings
 						settings={editor.settings}
 						saving={editor.saving}
@@ -210,9 +224,22 @@
 						onRefresh={refreshDownloadOutbounds}
 						onSelectRoute={selectDownloadRoute}
 					/>
-				{/if}
+				</div>
 			</div>
-		</div>
+		{/if}
+		{#if showDnsRoute}
+			<div class="settings-block">
+				<div class="card">
+					<SettingsSectionLabel label={m.settings_page_dns_lists_title()} icon={ListRestart} tone="indigo" header />
+					<DnsRouteSettings
+						settings={editor.settings}
+						saving={editor.saving}
+						onToggle={toggleDnsAutoRefresh}
+						onSave={saveDnsRouteSettings}
+					/>
+				</div>
+			</div>
+		{/if}
 	</div>
 </div>
 
