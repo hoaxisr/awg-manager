@@ -39,9 +39,6 @@ export const EXTERNAL_ACCESS_LABELS = {
 	get telegramWebBadge() {
 		return m.servers_ext_lbl_telegram_web();
 	},
-	get dispatcherTitle() {
-		return m.servers_ext_lbl_dispatcher_title();
-	},
 	get dispatcherRailTitle() {
 		return m.servers_ext_lbl_dispatcher_rail_title();
 	},

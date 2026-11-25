@@ -190,11 +190,7 @@
 		});
 	}
 
-	let railItems = $derived<RailItem[]>(
-		buildRailItems(managedServers, managedStatsMap, serverList, xrayStatus, tgStatus, dispatcherConfig),
-	);
 
-	let hasServers = $derived(railItems.length > 0);
 	let occupiedListenPorts = $derived.by<number[]>(() => {
 		const ports = new Set<number>();
 		for (const ms of managedServers) {
@@ -213,6 +209,12 @@
 	// Default to empty; the effect below snaps to the first item once the rail loads
 	// and re-snaps if the current activeId disappears (e.g. after a delete).
 	let activeId = $state<string>(readStoredActiveId());
+
+	let railItems = $derived<RailItem[]>(
+		buildRailItems(managedServers, managedStatsMap, serverList, xrayStatus, tgStatus, dispatcherConfig, activeId),
+	);
+
+	let hasServers = $derived(railItems.length > 0);
 
 	function setActiveId(id: string) {
 		activeId = id;

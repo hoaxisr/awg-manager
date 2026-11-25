@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildFlatDashboardItems, shouldShowDashboardSingboxBanner } from './tunnelDashboardFlat';
+import { buildFlatDashboardItems, shouldShowDashboardSingboxBanner, shouldShowSingboxListTab } from './tunnelDashboardFlat';
 
 describe('buildFlatDashboardItems', () => {
 	it('keeps category order and sorts alphabetically within each group', () => {
@@ -150,5 +150,29 @@ describe('shouldShowDashboardSingboxBanner', () => {
 				singboxRunning: false,
 			}),
 		).toBe(true);
+	});
+});
+
+describe('shouldShowSingboxListTab', () => {
+	const base = { showSingboxTabs: true, singboxInstalledOrLoading: false, listLoading: false, savedCount: 0 };
+
+	it('hides without sing-box and without saved entries', () => {
+		expect(shouldShowSingboxListTab(base)).toBe(false);
+	});
+
+	it('shows when sing-box is installed or status is loading', () => {
+		expect(shouldShowSingboxListTab({ ...base, singboxInstalledOrLoading: true })).toBe(true);
+	});
+
+	it('shows when saved entries exist even without sing-box', () => {
+		expect(shouldShowSingboxListTab({ ...base, savedCount: 2 })).toBe(true);
+	});
+
+	it('shows while the list is still loading (no flicker)', () => {
+		expect(shouldShowSingboxListTab({ ...base, listLoading: true })).toBe(true);
+	});
+
+	it('hides on a usage level without sing-box sections', () => {
+		expect(shouldShowSingboxListTab({ ...base, showSingboxTabs: false, savedCount: 2 })).toBe(false);
 	});
 });
