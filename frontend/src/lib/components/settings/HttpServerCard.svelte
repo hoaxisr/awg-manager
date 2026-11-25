@@ -7,8 +7,9 @@
     2. Фронт уходит на новый origin, унося одноразовый токен в URL-фрагменте
        (#listen-confirm=...) — cookie сессии привязана к хосту и смену
        интерфейса не переживает, токен аутентифицирует confirm сам.
-    3. Эта же карточка на новой странице настроек в onMount видит фрагмент,
-       зовёт POST /server/listen/confirm — бэкенд гасит откат и персистит.
+    3. Новая страница настроек видит фрагмент (resolveSettingsLink) и зовёт
+       POST /server/listen/confirm — бэкенд гасит откат и персистит. Зовёт
+       страница, а не карточка: карточка смонтирована только на своей вкладке.
        Не дошли (адрес недоступен) — бэкенд сам откатывается к старому.
 
   Листенер 127.0.0.1 держится всегда (реверс-прокси NDMS, health-пробы,
@@ -16,26 +17,28 @@
   Пустой список интерфейсов = все (0.0.0.0).
 -->
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { m, formatLocale } from '$lib/i18n';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { Button, ConfirmModal, ChipMultiSelect, type ChipOption } from '$lib/components/ui';
 	import type { RouterInterface, ServerListenState } from '$lib/types';
+	import { pageDraft, pageState } from './pageState.svelte';
 	import { usageLevel } from '$lib/stores/settings';
 	import { isHttpServerSettingsVisible } from '$lib/types/usageLevel';
 
 	const showSettings = $derived(isHttpServerSettingsVisible($usageLevel));
 
-	let listen = $state<ServerListenState | null>(null);
+	// Снимок общий на время страницы: с ним сверяются черновики, пока карточка
+	// после возврата на вкладку перечитывает состояние.
+	const view = pageState<{ listen: ServerListenState | null }>('http-listen', () => ({ listen: null }));
+	const listen = $derived(view.listen);
 	let ifaces = $state<RouterInterface[]>([]);
-	// number|string: Svelte на <input type="number"> присваивает в bind число,
-	// а начальное/пустое значение — строка; никаких строковых методов ниже.
-	let portDraft = $state<number | string>('');
-	let selected = $state<string[]>([]);
-	let busy = $state(false);
+	const portDraft = pageDraft<number | null>('http-port', () => listen?.port ?? null);
+	const selected = pageDraft<string[]>('http-ifaces', () => listen?.interfaces ?? [], ifacesEqual);
+	// Смена адреса взводит откат на бэкенде: вторая поверх идущей недопустима и
+	// после ухода со вкладки и возврата.
+	const op = pageState('http-op', () => ({ busy: false }));
 	let confirmOpen = $state(false);
-	let touched = $state(false);
 
 	/** Радио/Wi‑Fi slave-интерфейсы — L2 под br*, слушать HTTP на них бессмысленно. */
 	function isListenNoise(name: string): boolean {
@@ -66,7 +69,7 @@
 			}));
 	});
 
-	const port = $derived(Number(portDraft));
+	const port = $derived(Number(portDraft.value));
 	const portValid = $derived(Number.isInteger(port) && port >= 1 && port <= 65535);
 
 	function ifacesEqual(a: string[], b: string[]): boolean {
@@ -74,40 +77,14 @@
 		return [...a].sort().join(',') === [...b].sort().join(',');
 	}
 
-	const dirty = $derived.by(() => {
-		if (!listen) return false;
-		if (portValid && port !== listen.port) return true;
-		return !ifacesEqual(selected, listen.interfaces);
-	});
-	const applyDisabled = $derived(busy || !portValid || !dirty || !touched);
-
-	function markTouched(): void {
-		touched = true;
-	}
+	const dirty = $derived(Boolean(listen) && ((portValid && portDraft.dirty) || selected.dirty));
+	const applyDisabled = $derived(op.busy || !portValid || !dirty);
 
 	async function load(): Promise<void> {
-		listen = await api.serverListenState();
-		portDraft = String(listen.port);
-		selected = [...listen.interfaces];
-		touched = false;
+		view.listen = await api.serverListenState();
+		portDraft.reset();
+		selected.reset();
 	}
-
-	onMount(async () => {
-		// Токен подтверждения из URL-фрагмента — мы только что приехали со
-		// старого origin после живой смены адреса. Confirm всегда, даже если
-		// UI порта/интерфейсов скрыт уровнем использования.
-		const hashMatch = window.location.hash.match(/listen-confirm=([0-9a-f]{16,})/);
-		if (!hashMatch) return;
-		history.replaceState(null, '', window.location.pathname + window.location.search);
-		try {
-			await api.serverListenConfirm(hashMatch[1]);
-			notifications.success(m.settings_http_confirmed_saved());
-		} catch (e) {
-			notifications.error(
-				m.settings_http_confirm_failed({ error: e instanceof Error ? e.message : String(e) }),
-			);
-		}
-	});
 
 	// Данные и UI — только на «Продвинутом»; подгружаем при появлении уровня.
 	$effect(() => {
@@ -117,12 +94,9 @@
 			try {
 				const state = await api.serverListenState();
 				if (cancelled) return;
-				listen = state;
-				portDraft = String(state.port);
-				selected = [...state.interfaces];
-				touched = false;
+				view.listen = state;
 			} catch {
-				if (!cancelled) listen = null;
+				if (!cancelled) view.listen = null;
 				return;
 			}
 			try {
@@ -152,9 +126,9 @@
 	// (0.0.0.0 покрывает текущий хост — тоже оставляем его).
 	function redirectTarget(newPort: number, boundAddrs: string[]): string {
 		const cur = window.location;
-		const sameIfaces = listen ? ifacesEqual(selected, listen.interfaces) : true;
+		const sameIfaces = listen ? ifacesEqual(selected.value, listen.interfaces) : true;
 		let host = cur.hostname;
-		if (!sameIfaces && selected.length > 0) {
+		if (!sameIfaces && selected.value.length > 0) {
 			const ext = boundAddrs.find((a) => !a.startsWith('127.') && !a.startsWith('0.0.0.0'));
 			if (ext) host = ext.slice(0, ext.lastIndexOf(':'));
 		}
@@ -163,10 +137,10 @@
 
 	async function apply(): Promise<void> {
 		if (applyDisabled || !listen) return;
-		busy = true;
+		op.busy = true;
 		const prevPort = listen.port;
 		try {
-			const res = await api.serverListenChange(port, selected);
+			const res = await api.serverListenChange(port, selected.value);
 			if (isFrontendBehindProxy(prevPort)) {
 				await api.serverListenConfirm(res.confirmToken);
 				await load();
@@ -176,7 +150,7 @@
 						m.settings_http_port_changed_warning(),
 					);
 				}
-				busy = false;
+				op.busy = false;
 				return;
 			}
 			const target = redirectTarget(port, res.boundAddrs);
@@ -184,12 +158,12 @@
 			window.location.href = `${target}/settings#listen-confirm=${res.confirmToken}`;
 		} catch (e) {
 			notifications.error(m.settings_http_change_failed({ error: e instanceof Error ? e.message : String(e) }));
-			busy = false;
+			op.busy = false;
 		}
 	}
 
 	const confirmIfaceLabel = $derived(
-		selected.length === 0 ? m.settings_http_all_interfaces() : selected.join(', '),
+		selected.value.length === 0 ? m.settings_http_all_interfaces() : selected.value.join(', '),
 	);
 </script>
 
@@ -214,11 +188,10 @@
 					type="number"
 					min="1"
 					max="65535"
-					bind:value={portDraft}
-					oninput={markTouched}
+					bind:value={portDraft.value}
 					aria-label={m.settings_http_port_aria()}
 				/>
-				{#if portDraft !== '' && !portValid}
+				{#if portDraft.value !== null && !portValid}
 					<span class="err">1–65535</span>
 				{:else if portValid && port < 1024}
 					<span class="warn-inline" title={m.settings_http_privileged_port_title()}>&lt;1024</span>
@@ -235,12 +208,9 @@
 					</span>
 				</div>
 				<ChipMultiSelect
-					values={selected}
+					values={selected.value}
 					options={ifaceOptions}
-					onchange={(next) => {
-						selected = next;
-						markTouched();
-					}}
+					onchange={(next) => (selected.value = next)}
 					placeholder={m.settings_http_interfaces_placeholder()}
 					allowOrphans
 				/>
@@ -252,16 +222,16 @@
 			{m.settings_http_redirect_hint()}
 		</p>
 
-		{#if touched && dirty}
+		{#if dirty}
 			<div class="actions">
 				<Button
 					variant="primary"
 					size="sm"
 					disabled={applyDisabled}
-					loading={busy}
+					loading={op.busy}
 					onclick={() => (confirmOpen = true)}
 				>
-					{busy ? m.settings_http_applying() : m.common_apply()}
+					{op.busy ? m.settings_http_applying() : m.common_apply()}
 				</Button>
 			</div>
 		{/if}
@@ -272,13 +242,13 @@
 			message={m.settings_http_confirm_message({ port: portValid ? port : '?', interfaces: confirmIfaceLabel })}
 			confirmLabel={m.common_apply()}
 			variant="primary"
-			busy={busy}
+			busy={op.busy}
 			onConfirm={() => {
 				confirmOpen = false;
 				void apply();
 			}}
 			onClose={() => {
-				if (!busy) confirmOpen = false;
+				if (!op.busy) confirmOpen = false;
 			}}
 		/>
 	{:else}

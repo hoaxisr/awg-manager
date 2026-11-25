@@ -2,58 +2,35 @@
 	import { m } from '$lib/i18n';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
-	import { Modal, Button, Toggle } from '$lib/components/ui';
+	import { Modal, Button } from '$lib/components/ui';
 	import ChangelogModal from './ChangelogModal.svelte';
 	import DownloadErrorNotice from '$lib/components/downloads/DownloadErrorNotice.svelte';
 	import { downloadErrorToText } from '$lib/utils/downloadError';
 	import { formatDate } from '$lib/utils/format';
-	import { setSettings as setGlobalSettings } from '$lib/stores/settings';
-	import { isAutoInstallSettingsVisible } from '$lib/types/usageLevel';
-	import type { Settings, UpdateInfo } from '$lib/types';
+	import type { UpdateInfo } from '$lib/types';
+	import { pageState } from './pageState.svelte';
 
 	interface Props {
 		updateInfo: UpdateInfo | null;
-		settings: Settings;
 	}
 
-	let { updateInfo = $bindable(), settings = $bindable() }: Props = $props();
+	let { updateInfo = $bindable() }: Props = $props();
 
-	let checking = $state(false);
-	let upgrading = $state(false);
+	// Обновление идёт минуту и дольше — признак переживает уход со вкладки.
+	const op = pageState('update-op', () => ({ checking: false, upgrading: false }));
 	let showConfirm = $state(false);
 	let showChangelog = $state(false);
-	let savingAutoInstall = $state(false);
-	let savingStats = $state(false);
-	let savingSnapshot = $state(false);
-
-	let localIntervalDays = $state(settings.updates.autoInstallIntervalDays || 7);
-	let localTime = $state(settings.updates.autoInstallTime || '05:00');
-
-	let savedIntervalDays = $derived(settings.updates.autoInstallIntervalDays || 7);
-	let savedTime = $derived(settings.updates.autoInstallTime || '05:00');
-
-	let autoInstallScheduleChanged = $derived(
-		localIntervalDays !== savedIntervalDays || localTime !== savedTime
-	);
-
-	$effect(() => {
-		localIntervalDays = savedIntervalDays;
-	});
-
-	$effect(() => {
-		localTime = savedTime;
-	});
 
 	const manualCheckTitle = $derived(
 		updateInfo?.available ? m.settings_update_check_newer_title() : m.settings_update_check_title()
 	);
 	const manualCheckLabel = $derived(
-		checking ? m.settings_update_checking() : updateInfo?.available ? m.settings_update_check_again() : m.common_check()
+		op.checking ? m.settings_update_checking() : updateInfo?.available ? m.settings_update_check_again() : m.common_check()
 	);
 
 	async function checkForUpdates() {
-		if (checking) return;
-		checking = true;
+		if (op.checking) return;
+		op.checking = true;
 		try {
 			updateInfo = await api.checkUpdate(true);
 			if (updateInfo.error) {
@@ -69,19 +46,19 @@
 		} catch (e) {
 			notifications.error(m.settings_update_check_failed({ error: downloadErrorToText(e) }));
 		} finally {
-			checking = false;
+			op.checking = false;
 		}
 	}
 
 	function confirmUpgrade() {
-		if (checking || !updateInfo?.available) return;
+		if (op.checking || !updateInfo?.available) return;
 		showConfirm = true;
 	}
 
 	async function applyUpgrade() {
-		if (checking || !updateInfo?.available) return;
+		if (op.checking || !updateInfo?.available) return;
 		showConfirm = false;
-		upgrading = true;
+		op.upgrading = true;
 
 		// Capture instanceId before upgrade to detect restart
 		let previousInstanceId = '';
@@ -94,7 +71,7 @@
 			await api.applyUpdate();
 		} catch (e) {
 			notifications.error(m.settings_update_start_failed({ error: downloadErrorToText(e) }));
-			upgrading = false;
+			op.upgrading = false;
 			return;
 		}
 
@@ -116,81 +93,30 @@
 		}
 
 		notifications.error(m.settings_update_no_response());
-		upgrading = false;
-	}
-
-	async function toggleStats(enabled: boolean) {
-		savingStats = true;
-		try {
-			settings = await api.updateSettings({ updates: { statsEnabled: enabled } });
-			setGlobalSettings(settings);
-		} catch (e) {
-			notifications.error(m.settings_update_stats_failed({ error: downloadErrorToText(e) }));
-		} finally {
-			savingStats = false;
-		}
-	}
-
-	async function toggleSnapshot(enabled: boolean) {
-		savingSnapshot = true;
-		try {
-			settings = await api.updateSettings({ updates: { snapshotDisabled: !enabled } });
-			setGlobalSettings(settings);
-		} catch (e) {
-			notifications.error(m.settings_update_snapshot_failed({ error: downloadErrorToText(e) }));
-		} finally {
-			savingSnapshot = false;
-		}
-	}
-
-	async function toggleAutoInstall(enabled: boolean) {
-		savingAutoInstall = true;
-		try {
-			settings = await api.updateSettings({ updates: { autoInstallEnabled: enabled } });
-			setGlobalSettings(settings);
-			notifications.success(
-				enabled ? m.settings_update_auto_enabled() : m.settings_update_auto_disabled()
-			);
-		} catch (e) {
-			notifications.error(m.settings_update_auto_failed({ error: downloadErrorToText(e) }));
-		} finally {
-			savingAutoInstall = false;
-		}
-	}
-
-	async function saveAutoInstallSchedule() {
-		savingAutoInstall = true;
-		try {
-			settings = await api.updateSettings({
-				updates: { autoInstallIntervalDays: localIntervalDays, autoInstallTime: localTime },
-			});
-			setGlobalSettings(settings);
-			notifications.success(m.settings_update_schedule_saved());
-		} catch (e) {
-			notifications.error(m.settings_update_schedule_failed({ error: downloadErrorToText(e) }));
-		} finally {
-			savingAutoInstall = false;
-		}
+		op.upgrading = false;
 	}
 </script>
 
-<div class="setting-row update-row">
-	<div class="flex flex-col gap-1 update-info">
-		{#if upgrading}
-			<span class="setting-description update-status">
+<div class="setting-row">
+	<div class="flex flex-col gap-1">
+		{#if op.upgrading}
+			<span class="font-medium update-status">
 				{m.settings_update_in_progress()}
 			</span>
 		{:else if updateInfo?.available}
-			<span class="setting-description update-available">
+			<span class="font-medium update-available">
 				{m.settings_update_version_available({ version: updateInfo.latestVersion ?? '' })}
 			</span>
 		{:else if updateInfo?.error}
-			<div class="update-error-notice">
-				<DownloadErrorNotice error={updateInfo.error} hideSettingsLink />
-			</div>
+			<DownloadErrorNotice error={updateInfo.error} hideSettingsLink />
 		{:else}
-			<span class="setting-description">
+			<span class="font-medium" class:update-available={updateInfo}>
 				{m.settings_update_latest()}
+			</span>
+		{/if}
+		{#if updateInfo && !op.upgrading}
+			<span class="setting-description">
+				{m.settings_update_checked({ version: updateInfo.currentVersion, date: formatDate(updateInfo.checkedAt) })}
 			</span>
 		{/if}
 		{#if updateInfo?.warning}
@@ -199,8 +125,8 @@
 			</span>
 		{/if}
 	</div>
-	<div class="update-actions">
-		{#if upgrading}
+	<div class="setting-actions">
+		{#if op.upgrading}
 			<div class="update-spinner"></div>
 		{:else}
 			{#if updateInfo?.currentVersion}
@@ -218,7 +144,7 @@
 				variant="secondary"
 				size="sm"
 				onclick={checkForUpdates}
-				loading={checking}
+				loading={op.checking}
 				title={manualCheckTitle}
 			>
 				{manualCheckLabel}
@@ -228,100 +154,13 @@
 					variant="primary"
 					size="sm"
 					onclick={confirmUpgrade}
-					disabled={checking}
+					disabled={op.checking}
 				>
 					{m.common_update()}
 				</Button>
 			{/if}
 		{/if}
 	</div>
-</div>
-
-{#if isAutoInstallSettingsVisible(settings.usageLevel)}
-	<div class="setting-row toggle-inline-row">
-		<div class="flex flex-col gap-1">
-			<span class="font-medium">{m.settings_update_auto_label()}</span>
-			<span class="setting-description">
-				{m.settings_update_auto_description()}
-			</span>
-		</div>
-		<Toggle
-			checked={settings.updates.autoInstallEnabled}
-			controlled
-			onchange={toggleAutoInstall}
-			disabled={savingAutoInstall}
-		/>
-	</div>
-
-	{#if settings.updates.autoInstallEnabled}
-		<div class="settings-panel">
-			<div class="inline-form">
-				<div class="input-with-suffix">
-					<input
-						type="number"
-						id="autoInstallIntervalDays"
-						bind:value={localIntervalDays}
-						min="1"
-						max="30"
-						disabled={savingAutoInstall}
-					/>
-					<span class="input-suffix">{m.settings_update_every_n_days()}</span>
-				</div>
-				<input
-					type="time"
-					id="autoInstallTime"
-					bind:value={localTime}
-					disabled={savingAutoInstall}
-				/>
-				{#if autoInstallScheduleChanged}
-					<Button
-						variant="primary"
-						size="sm"
-						onclick={saveAutoInstallSchedule}
-						loading={savingAutoInstall}
-					>
-						{savingAutoInstall ? m.common_saving() : m.common_save()}
-					</Button>
-				{/if}
-			</div>
-			{#if updateInfo?.nextAutoInstallAt}
-				<p class="auto-install-status">{m.settings_update_next_window({ date: formatDate(updateInfo.nextAutoInstallAt) })}</p>
-			{/if}
-			{#if updateInfo?.lastAutoInstallAt}
-				<p class="auto-install-status">{m.settings_update_last_auto({ date: formatDate(updateInfo.lastAutoInstallAt) })}</p>
-			{/if}
-		</div>
-	{/if}
-{/if}
-
-<div class="setting-row toggle-inline-row">
-	<div class="flex flex-col gap-1">
-		<span class="font-medium">{m.settings_update_snapshot_label()}</span>
-		<span class="setting-description">
-			{m.settings_update_snapshot_description()}
-		</span>
-	</div>
-	<Toggle
-		checked={!settings.updates.snapshotDisabled}
-		ariaLabel={m.settings_update_snapshot_label()}
-		onchange={toggleSnapshot}
-		disabled={savingSnapshot}
-	/>
-</div>
-
-<div class="setting-row toggle-inline-row">
-	<div class="flex flex-col gap-1">
-		<span class="font-medium">{m.settings_update_stats_label()}</span>
-		<span class="setting-description">
-			{m.settings_update_stats_description()}
-		</span>
-	</div>
-	<Toggle
-		checked={settings.updates.statsEnabled}
-		controlled
-		onchange={toggleStats}
-		disabled={savingStats}
-	/>
 </div>
 
 <Modal
@@ -354,98 +193,18 @@
 {/if}
 
 <style>
-	.update-row.setting-row {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) auto;
-		align-items: center;
-		gap: 0.75rem;
-	}
-
-	.update-info {
-		min-width: 0;
-	}
-
-	.update-actions {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		flex-shrink: 0;
-		flex-wrap: wrap;
-		justify-content: flex-end;
-	}
-
-	@media (max-width: 860px) {
-		.update-row.setting-row {
-			grid-template-columns: 1fr;
-			align-items: start;
-		}
-
-		.update-actions {
-			justify-content: stretch;
-			width: 100%;
-			display: grid;
-			grid-template-columns: repeat(2, minmax(0, 1fr));
-			gap: 0.5rem;
-		}
-
-		.update-actions :global(button) {
-			width: 100%;
-		}
-	}
-
-	/* Keep the update card readable in the narrow settings column:
-		status takes its own row, actions are arranged below. */
-	.update-row.setting-row {
-		grid-template-columns: minmax(0, 1fr);
-		align-items: start;
-	}
-
-	.update-actions {
-		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		justify-content: stretch;
-		width: 100%;
-		flex-shrink: 1;
-	}
-
-	.update-actions :global(button) {
-		width: 100%;
-		min-width: 0;
-	}
-
-	.update-actions :global(button:first-child:nth-last-child(3)),
-	.update-actions :global(button:first-child:last-child) {
-		grid-column: 1 / -1;
-	}
-
-	.update-spinner {
-		grid-column: 1 / -1;
-		justify-self: end;
-	}
-
-	@media (min-width: 641px) {
-		.update-actions {
-			justify-self: end;
-			max-width: 28rem;
-		}
-	}
-
 	.update-available {
-		color: var(--success, #22c55e) !important;
-		font-weight: 500;
-	}
-
-	.update-error-notice {
-		min-width: 0;
+		color: var(--color-success);
 	}
 
 	.update-warning {
-		color: var(--warning, #eab308) !important;
+		color: var(--color-warning);
 	}
 
 	.update-status {
-		color: var(--accent) !important;
+		color: var(--color-accent);
 	}
+
 	.update-spinner {
 		width: 20px;
 		height: 20px;
@@ -462,61 +221,5 @@
 	.modal-text {
 		color: var(--text-secondary);
 		margin: 0;
-	}
-
-	.inline-form {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		flex-wrap: wrap;
-	}
-
-	.input-with-suffix {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.35rem;
-		min-width: 0;
-	}
-
-	.input-suffix {
-		font-size: 0.8125rem;
-		color: var(--text-secondary);
-	}
-
-	.inline-form input[type="number"] {
-		width: 4.75rem;
-	}
-
-	.inline-form input[type="time"] {
-		width: 8rem;
-	}
-
-	.auto-install-status {
-		margin: 0.5rem 0 0;
-		font-size: 0.75rem;
-		color: var(--text-secondary);
-	}
-
-	@media (max-width: 640px) {
-		.inline-form {
-			flex-direction: column;
-			align-items: stretch;
-		}
-
-		.input-with-suffix {
-			display: grid;
-			grid-template-columns: minmax(0, 1fr) auto;
-			width: 100%;
-		}
-
-		.inline-form input[type="number"],
-		.inline-form input[type="time"] {
-			width: 100%;
-			box-sizing: border-box;
-		}
-
-		.inline-form :global(.btn) {
-			width: 100%;
-		}
 	}
 </style>

@@ -1,17 +1,16 @@
 <!--
-  Карточка «MCP-сервер»: тумблер включения эндпоинта /mcp и управление
-  именованными ключами доступа. Компонент презентационный: состояние и
-  вызовы API отдаёт родитель через props/колбэки (как IntegrationsCard),
+  Строки «MCP-сервер» карточки «Ключи и API»: тумблер включения эндпоинта /mcp
+  и управление именованными ключами доступа. Компонент презентационный: состояние и
+  вызовы API отдаёт родитель через props/колбэки (как SingboxCard),
   поэтому тестируется без моков api.
 -->
 <script lang="ts">
 	import { m, uiText, type UiText } from '$lib/i18n';
 	import { Badge, Button, ConfirmModal, IconButton, Modal, Toggle } from '$lib/components/ui';
-	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
 	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { formatDate } from '$lib/utils/format';
 	import { notifications } from '$lib/stores/notifications';
-	import { Copy, Plug } from 'lucide-svelte';
+	import { Copy } from 'lucide-svelte';
 	import type { McpKey, McpKeyCreated } from '$lib/types';
 
 	interface Props {
@@ -143,80 +142,80 @@
 	);
 </script>
 
-<div class="settings-block">
-	<div class="card">
-		<SettingsSectionLabel label={m.settings_mcp_title()} icon={Plug} tone="indigo" header />
-		<div class="setting-row toggle-inline-row">
+<div class="setting-row toggle-inline-row">
+	<div class="flex flex-col gap-1">
+		<span class="flex flex-wrap items-center gap-2">
+			<span class="font-medium">{m.settings_mcp_access_label()}</span>
+			<Badge variant="accent" size="sm" uppercase>Beta</Badge>
+		</span>
+		<span class="setting-description">
+			{m.settings_mcp_access_description()}
+		</span>
+	</div>
+	<Toggle checked={enabled} controlled onchange={ontoggle} disabled={saving} ariaLabel={m.settings_mcp_title()} />
+</div>
+
+{#if enabled}
+	<div class="setting-sub">
+		<div class="setting-row settings-stacked-row">
 			<div class="flex flex-col gap-1">
-				<span class="flex items-center gap-2">
-					<span class="font-medium">{m.settings_mcp_access_label()}</span>
-					<Badge variant="accent" size="sm" uppercase>Beta</Badge>
-				</span>
-				<span class="setting-description">
-					{m.settings_mcp_access_description()}
-				</span>
+				<span class="font-medium">{m.settings_mcp_endpoint_label()}</span>
+				<span class="setting-description">{m.settings_mcp_endpoint_description()}</span>
 			</div>
-			<Toggle checked={enabled} controlled onchange={ontoggle} disabled={saving} ariaLabel={m.settings_mcp_title()} />
+			<div class="mcp-key-row">
+				<code class="mcp-code-value">{endpoint}</code>
+				<IconButton size="md" ariaLabel={m.settings_mcp_copy_endpoint()} title={m.settings_mcp_copy_endpoint()} onclick={copyEndpoint}>
+					<Copy size={16} />
+				</IconButton>
+			</div>
 		</div>
 
-		{#if enabled}
-			<div class="setting-row">
-				<div class="flex flex-col gap-1">
-					<span class="font-medium">{m.settings_mcp_endpoint_label()}</span>
-					<span class="setting-description">{m.settings_mcp_endpoint_description()}</span>
-				</div>
-				<div class="mcp-key-row">
-					<code class="mcp-code-value">{endpoint}</code>
-					<IconButton size="md" ariaLabel={m.settings_mcp_copy_endpoint()} title={m.settings_mcp_copy_endpoint()} onclick={copyEndpoint}>
-						<Copy size={16} />
-					</IconButton>
-				</div>
-			</div>
-
-			<div class="setting-row toggle-inline-row">
+		<div class="setting-row toggle-inline-row">
+			<div class="flex flex-col gap-1">
 				<span class="font-medium">{m.settings_mcp_keys_label()}</span>
-				<Button variant="secondary" size="md" onclick={openCreate} disabled={saving}>{m.settings_mcp_create_key()}</Button>
-			</div>
-			<div class="setting-row">
 				{#if keysLoading}
 					<span class="setting-description">{m.common_loading()}</span>
 				{:else if keys.length === 0}
 					<span class="setting-description">{m.settings_mcp_no_keys()}</span>
-				{:else}
-					<div class="mcp-keys-table-wrap">
-						<table class="mcp-keys-table w-full text-sm">
-							<thead>
-								<tr class="setting-description text-left">
-									<th class="font-normal">{m.settings_mcp_col_name()}</th>
-									<th class="font-normal">{m.settings_mcp_col_created()}</th>
-									<th class="font-normal">{m.settings_mcp_col_used()}</th>
-									<th></th>
-								</tr>
-							</thead>
-							<tbody>
-								{#each keys as k (k.id)}
-									<tr>
-										<td>
-											{k.name}
-											{#if k.readOnly}
-												<Badge variant="info" size="sm">{m.settings_mcp_read_only_badge()}</Badge>
-											{/if}
-										</td>
-										<td>{formatDate(k.createdAt)}</td>
-										<td>{k.lastUsedAt ? formatDate(k.lastUsedAt) : '—'}</td>
-										<td class="text-right">
-											<Button variant="danger" size="sm" onclick={() => (revokeTarget = k)} disabled={saving}>{m.settings_mcp_revoke()}</Button>
-										</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</div>
 				{/if}
+			</div>
+			<Button variant="secondary" size="md" onclick={openCreate} disabled={saving}>{m.settings_mcp_create_key()}</Button>
+		</div>
+		{#if !keysLoading && keys.length > 0}
+			<div class="setting-row">
+				<div class="mcp-keys-table-wrap">
+					<table class="mcp-keys-table w-full text-sm">
+						<thead>
+							<tr class="setting-description text-left">
+								<th class="font-normal">{m.settings_mcp_col_name()}</th>
+								<th class="font-normal">{m.settings_mcp_col_created()}</th>
+								<th class="font-normal">{m.settings_mcp_col_used()}</th>
+								<th></th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each keys as k (k.id)}
+								<tr>
+									<td>
+										{k.name}
+										{#if k.readOnly}
+											<Badge variant="info" size="sm">{m.settings_mcp_read_only_badge()}</Badge>
+										{/if}
+									</td>
+									<td>{formatDate(k.createdAt)}</td>
+									<td>{k.lastUsedAt ? formatDate(k.lastUsedAt) : '—'}</td>
+									<td class="text-right">
+										<Button variant="danger" size="sm" onclick={() => (revokeTarget = k)} disabled={saving}>{m.settings_mcp_revoke()}</Button>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
 			</div>
 		{/if}
 	</div>
-</div>
+{/if}
 
 <Modal open={createOpen} title={created ? m.settings_mcp_modal_created() : m.settings_mcp_modal_new()} size="md" onclose={() => closeCreate()}>
 	{#if !created}

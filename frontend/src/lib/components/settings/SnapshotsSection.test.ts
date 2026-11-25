@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/svelte';
+import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import { writable, type Readable } from 'svelte/store';
 import BackupRestoreCard from './BackupRestoreCard.svelte';
+import PageStateTestHost from './PageStateTestHost.svelte';
+import SnapshotsSection from './SnapshotsSection.svelte';
 import { api } from '$lib/api/client';
 import type { PollingState } from '$lib/stores/polling';
 import type { UpdateSnapshotsData } from '$lib/types';
@@ -54,12 +56,12 @@ const snap = {
 	size: 204800
 };
 
-describe('BackupRestoreCard: снимки перед обновлением', () => {
+describe('SnapshotsSection: снимки перед обновлением', () => {
 	beforeEach(() => vi.clearAllMocks());
 
 	it('без снимков говорит, когда появится первый, и называет срок хранения', () => {
 		setState({ data: { snapshots: [], keep: 3, ttlDays: 7 } });
-		render(BackupRestoreCard);
+		render(SnapshotsSection);
 		expect(screen.getByText(/Снимков пока нет/)).toBeTruthy();
 		expect(document.body.textContent).toMatch(/Хранятся 3 последних, каждый — не дольше 7 дн\./);
 	});
@@ -67,7 +69,7 @@ describe('BackupRestoreCard: снимки перед обновлением', ()
 	it('показывает версию снимка и удаляет его только после подтверждения', async () => {
 		setState({ data: { snapshots: [snap], keep: 3, ttlDays: 7 } });
 		vi.mocked(api.deleteUpdateSnapshot).mockResolvedValue({ snapshots: [], keep: 3, ttlDays: 7 });
-		render(BackupRestoreCard);
+		render(SnapshotsSection);
 		expect(screen.getByText(/версия 2\.19\.9/)).toBeTruthy();
 
 		await fireEvent.click(screen.getByRole('button', { name: 'Удалить' }));
@@ -87,7 +89,7 @@ describe('BackupRestoreCard: снимки перед обновлением', ()
 	it('восстанавливает выбранный снимок только после подтверждения', async () => {
 		setState({ data: { snapshots: [snap], keep: 3, ttlDays: 7 } });
 		vi.mocked(api.restoreUpdateSnapshot).mockResolvedValue({ message: 'ok' });
-		render(BackupRestoreCard);
+		render(SnapshotsSection);
 
 		const rowRestore = screen.getAllByRole('button', { name: 'Восстановить' });
 		await fireEvent.click(rowRestore[rowRestore.length - 1]);
@@ -102,7 +104,7 @@ describe('BackupRestoreCard: снимки перед обновлением', ()
 
 	it('ошибку загрузки не выдаёт за «снимков нет» и даёт повторить', async () => {
 		setState({ status: 'error', error: 'boom' });
-		render(BackupRestoreCard);
+		render(SnapshotsSection);
 		expect(screen.getByText(/Не удалось загрузить список снимков: boom/)).toBeTruthy();
 		expect(screen.queryByText(/Снимков пока нет/)).toBeNull();
 		await fireEvent.click(screen.getByRole('button', { name: 'Повторить' }));
@@ -111,7 +113,28 @@ describe('BackupRestoreCard: снимки перед обновлением', ()
 
 	it('пока список грузится, пустым его не показывает', () => {
 		setState({ status: 'loading', lastFetchedAt: 0 });
-		render(BackupRestoreCard);
+		render(SnapshotsSection);
 		expect(screen.queryByText(/Снимков пока нет/)).toBeNull();
+	});
+
+	// Восстановление поверх идущего смешало бы данные двух архивов.
+	it('пока восстанавливается файл, кнопки снимков заперты', async () => {
+		setState({ data: { snapshots: [snap], keep: 3, ttlDays: 7 } });
+		vi.mocked(api.importFullBackup).mockReturnValue(new Promise(() => {}));
+		vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
+		const { container } = render(PageStateTestHost, {
+			props: { shown: true, cards: [{ component: BackupRestoreCard }, { component: SnapshotsSection }] },
+		});
+		const row = container.querySelector<HTMLElement>('.snapshot-row')!;
+		const rowDisabled = () => within(row).getAllByRole<HTMLButtonElement>('button').map((b) => b.disabled);
+		expect(rowDisabled()).toEqual([false, false, false]);
+
+		await fireEvent.change(container.querySelector('input[type="file"]')!, {
+			target: { files: [new File(['x'], 'backup.tar.gz')] },
+		});
+		await fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Восстановить' }));
+		await vi.waitFor(() => expect(api.importFullBackup).toHaveBeenCalledTimes(1));
+		expect(rowDisabled()).toEqual([true, true, true]);
+		vi.unstubAllGlobals();
 	});
 });

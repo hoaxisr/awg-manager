@@ -1,5 +1,5 @@
 <!--
-  Карточка «Доступ»: вход по паролю роутера, время жизни сессии и HTTP-сервер
+  Карточка «Вход в панель»: вход по паролю роутера, время жизни сессии и HTTP-сервер
   панели. Сохранение общих настроек — у страницы (ontoggleAuth,
   onsaveSessionTtl); черновик времени сессии — здесь.
 -->
@@ -11,10 +11,10 @@
 	import HttpServerCard from './HttpServerCard.svelte';
 	import {
 		clampSessionTtlHours,
-		SESSION_TTL_DEFAULT_HOURS,
 		SESSION_TTL_MIN_HOURS,
 		SESSION_TTL_MAX_HOURS,
 	} from './sessionTtl';
+	import { pageDraft } from './pageState.svelte';
 
 	interface Props {
 		authEnabled: boolean;
@@ -27,19 +27,11 @@
 
 	let { authEnabled, sessionTtlHours, saving = false, ontoggleAuth, onsaveSessionTtl }: Props = $props();
 
-	// «Время жизни сессии» — local state + changed-derived + save button
-	// (same pattern as DnsRouteSettings).
-	let sessionTtlLocal = $state<number | null>(SESSION_TTL_DEFAULT_HOURS);
-	const savedSessionTtl = $derived(clampSessionTtlHours(sessionTtlHours));
-	const sessionTtlChanged = $derived(sessionTtlLocal !== savedSessionTtl);
-
-	$effect(() => {
-		sessionTtlLocal = savedSessionTtl;
-	});
+	const ttl = pageDraft<number | null>('session-ttl', () => clampSessionTtlHours(sessionTtlHours));
 
 	function saveSessionTtl() {
-		const hours = clampSessionTtlHours(sessionTtlLocal);
-		sessionTtlLocal = hours;
+		const hours = clampSessionTtlHours(ttl.value);
+		ttl.value = hours;
 		onsaveSessionTtl(hours);
 	}
 </script>
@@ -57,26 +49,26 @@
 		<Toggle checked={authEnabled} controlled onchange={ontoggleAuth} disabled={saving} />
 	</div>
 	{#if authEnabled}
-		<div class="setting-row session-ttl-row">
+		<div class="setting-row">
 			<div class="flex flex-col gap-1">
 				<span class="font-medium">{m.settings_page_session_ttl_label()}</span>
 				<span class="setting-description">
 					{m.settings_page_session_ttl_description()}
 				</span>
 			</div>
-			<div class="session-ttl-form">
+			<div class="inline-form">
 				<div class="input-with-suffix">
 					<input
 						type="number"
 						id="sessionTtlHours"
-						bind:value={sessionTtlLocal}
+						bind:value={ttl.value}
 						min={SESSION_TTL_MIN_HOURS}
 						max={SESSION_TTL_MAX_HOURS}
 						disabled={saving}
 					/>
 					<span class="input-suffix">{m.settings_page_hours_suffix()}</span>
 				</div>
-				{#if sessionTtlChanged}
+				{#if ttl.dirty}
 					<Button variant="primary" size="sm" onclick={saveSessionTtl} loading={saving}>
 						{saving ? m.common_saving() : m.common_save()}
 					</Button>
@@ -87,45 +79,3 @@
 	<HttpServerCard />
 	</div>
 </div>
-
-<style>
-	/* «Время жизни сессии» — inline number input + save button (по образцу DnsRouteSettings) */
-	.session-ttl-form {
-		display: flex;
-		align-items: center;
-		justify-content: flex-end;
-		gap: 0.5rem;
-		flex-shrink: 0;
-		min-width: 0;
-	}
-
-	.input-with-suffix {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.35rem;
-		min-width: 0;
-	}
-
-	.input-suffix {
-		font-size: 0.8125rem;
-		color: var(--text-secondary);
-	}
-
-	.session-ttl-form input[type="number"] {
-		width: 4.75rem;
-	}
-
-	@media (max-width: 640px) {
-		.session-ttl-row {
-			display: grid;
-			grid-template-columns: minmax(0, 1fr) auto;
-			align-items: center;
-			gap: 0.75rem;
-		}
-
-		.session-ttl-form {
-			flex-wrap: wrap;
-			justify-content: flex-end;
-		}
-	}
-</style>

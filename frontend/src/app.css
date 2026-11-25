@@ -765,6 +765,148 @@ body:has(> .modal-backdrop) .toast-container {
 	gap: var(--settings-gap);
 }
 
+/* Вкладка настроек: две колонки равной ширины; единственная занимает строку. */
+.settings-columns {
+	display: grid;
+	align-items: start;
+	gap: var(--settings-gap);
+}
+
+@media (min-width: 901px) {
+	.settings-columns:has(> .settings-column + .settings-column) {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	/* Карточка на обе колонки — под ними. */
+	.settings-columns > .settings-wide {
+		grid-column: 1 / -1;
+	}
+}
+
+.settings-column {
+	display: flex;
+	flex-direction: column;
+	gap: var(--settings-gap);
+	min-width: 0;
+}
+
+/* Длинное поле на всю ширину карточки — под подписью. */
+.settings-layout .setting-row.settings-stacked-row {
+	flex-direction: column;
+	align-items: stretch;
+	gap: 0.5rem;
+}
+
+.settings-layout .settings-stacked-row > * {
+	flex: none;
+}
+
+/* Строка без точки выровнена по подписи компонента над ней. */
+.settings-layout .setting-row.component-indent {
+	padding-left: 1.25rem;
+}
+
+.settings-layout .setting-description.warning {
+	color: var(--color-warning);
+}
+
+.component-sub {
+	font-size: 0.6875rem;
+	font-family: var(--font-mono);
+	color: var(--color-text-muted);
+}
+
+/* Строки, уточняющие настройку над ними (расписание под тумблером и т.п.). */
+.setting-sub {
+	margin: 0 0 0.875rem 0.125rem;
+	padding-left: 1rem;
+	border-left: 2px solid var(--color-settings-control-bg);
+}
+
+.setting-sub:last-child {
+	margin-bottom: 0;
+}
+
+.setting-sub + .setting-row {
+	border-top: 1px solid var(--border);
+}
+
+/* Список или поле справа от подписи; на телефоне — под ней на всю ширину. */
+.settings-select {
+	width: 180px;
+	flex-shrink: 0;
+}
+
+@media (max-width: 640px) {
+	.settings-select {
+		width: 100%;
+	}
+}
+
+/* Кнопки строки настроек. */
+.setting-actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 0.375rem;
+}
+
+/* Поле с единицей измерения и «Сохранить», появляющейся после правки. */
+.settings-layout .inline-form {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 0.5rem;
+	min-width: 0;
+}
+
+.settings-layout .input-with-suffix {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.35rem;
+	min-width: 0;
+}
+
+.settings-layout .input-suffix {
+	font-size: 0.8125rem;
+	color: var(--text-secondary);
+}
+
+.settings-layout .inline-form input[type='number'] {
+	width: 4.75rem;
+}
+
+.settings-layout .inline-form input[type='time'] {
+	width: 8rem;
+}
+
+@media (min-width: 641px) {
+	/* Подпись не уже 12rem: не хватает места — контрол уходит под неё, а не
+	   сжимает её до слова в строке. */
+	.settings-columns .setting-row:not(.toggle-inline-row, .component-row) > *:first-child {
+		min-width: min(100%, 12rem);
+	}
+}
+
+@media (max-width: 640px) {
+	/* Телефон: контрол под подписью на всю ширину. */
+	.setting-actions > *,
+	.settings-layout .inline-form > * {
+		flex: 1 1 auto;
+	}
+
+	.settings-layout .inline-form,
+	.setting-actions {
+		justify-content: flex-start;
+	}
+
+	.settings-layout .inline-form input {
+		flex: 1 1 auto;
+	}
+}
+
 /* Shared text field for API/MCP keys (settings page + MCP card): monospace,
  * full width, wraps a long token. `input.` beats `.setting-row input` above. */
 input.api-key-input {
@@ -939,16 +1081,6 @@ input.api-key-input {
 
 .settings-panel + .setting-row {
 	margin-top: 0.875rem;
-	border-top: 1px solid var(--border);
-}
-
-/* Highlight wrapper (e.g. deep-link to downloads) breaks adjacent .setting-row chain */
-.setting-row + .settings-highlight-target > .setting-row {
-	border-top: 1px solid var(--border);
-	padding-top: 0.875rem;
-}
-
-.settings-highlight-target + .setting-row {
 	border-top: 1px solid var(--border);
 }
 

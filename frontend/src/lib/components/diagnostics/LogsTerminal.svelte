@@ -8,6 +8,7 @@
   import { api } from '$lib/api/client';
   import { notifications } from '$lib/stores/notifications';
   import { usageLevel, settings } from '$lib/stores/settings';
+  import { LOGGING_SETTINGS_HREF } from '$lib/utils/settingsLink';
   import { systemInfo } from '$lib/stores/system';
   import { copyToClipboard } from '$lib/utils/clipboard';
   import { stripAnsi } from '$lib/utils/ansi';
@@ -648,7 +649,7 @@
         <TriangleAlert size={48} aria-hidden="true" />
       {/snippet}
       {#snippet action()}
-        <Button variant="primary" size="md" href="/settings">{m.diag_logs_open_settings()}</Button>
+        <Button variant="primary" size="md" href={LOGGING_SETTINGS_HREF}>{m.diag_logs_open_settings()}</Button>
       {/snippet}
     </EmptyState>
   </div>

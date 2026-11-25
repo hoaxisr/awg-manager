@@ -7,6 +7,7 @@
 	import { Button } from '$lib/components/ui';
 	import { Activity } from 'lucide-svelte';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
+	import { pageDraft } from './pageState.svelte';
 
 	interface Props {
 		target: string;
@@ -20,12 +21,8 @@
 	const defaultPingTarget = '8.8.8.8';
 	const defaultConnectivityCheckUrl = 'http://connectivitycheck.gstatic.com/generate_204';
 
-	let targetDraft = $state('');
-	let urlDraft = $state('');
-	$effect(() => {
-		targetDraft = target;
-		urlDraft = url;
-	});
+	const targetDraft = pageDraft('ping-target', () => target);
+	const urlDraft = pageDraft('ping-url', () => url);
 </script>
 
 <div class="settings-block">
@@ -44,7 +41,7 @@
 				<input
 					type="text"
 					class="settings-text-input"
-					bind:value={targetDraft}
+					bind:value={targetDraft.value}
 					placeholder={defaultPingTarget}
 					disabled={saving}
 				/>
@@ -54,13 +51,13 @@
 				<input
 					type="url"
 					class="settings-text-input"
-					bind:value={urlDraft}
+					bind:value={urlDraft.value}
 					placeholder={defaultConnectivityCheckUrl}
 					disabled={saving}
 				/>
 			</label>
 			<div class="ping-target-action">
-				<Button variant="secondary" size="md" onclick={() => onsave(targetDraft, urlDraft)} disabled={saving}>
+				<Button variant="secondary" size="md" onclick={() => onsave(targetDraft.value, urlDraft.value)} disabled={saving}>
 					{m.common_save()}
 				</Button>
 			</div>
