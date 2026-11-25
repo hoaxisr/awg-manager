@@ -234,7 +234,7 @@ func TestProcess_ReloadRestartsWhenTunPresent(t *testing.T) {
 	dir := t.TempDir()
 	pidPath := filepath.Join(dir, "sing-box.pid")
 	// Seed a dead pid so stopLocked's isAlive poll returns immediately.
-	if err := os.WriteFile(pidPath, []byte("999999"), 0644); err != nil {
+	if err := os.WriteFile(pidPath, []byte("999999999"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
