@@ -41,6 +41,7 @@
 		onsetkeendnsmode: (mode: KeenDNSMode) => void;
 		onapplypublication: (label: string, fqdn: string) => void;
 		onsynckeendns: () => void;
+		onswitchtowebbridge?: () => void;
 		onswitchtowebonly?: () => void;
 	}
 
@@ -74,6 +75,7 @@
 		onsetkeendnsmode,
 		onapplypublication,
 		onsynckeendns,
+		onswitchtowebbridge,
 		onswitchtowebonly,
 	}: Props = $props();
 
@@ -112,16 +114,17 @@
 		<div class="origin-box">
 			<div class="origin-header-row">
 				<span class="origin-title">{m.servers_ext_wiz_s3_tg_direct_title()}</span>
-				{#if (keenDNSBaseDomain && keenDNSBaseIsDirect) || detectedMtprotoWhiteIP}
+				{#if keenDNSBaseDomain || detectedMtprotoWhiteIP}
 					<div class="pills-row">
-						{#if keenDNSBaseDomain && keenDNSBaseIsDirect}
+						{#if keenDNSBaseDomain}
 							<button
 								type="button"
 								class="pill-btn"
+								class:pill-warn={!keenDNSBaseIsDirect}
 								class:active={draft.directHost.trim().toLowerCase() === keenDNSBaseDomain.toLowerCase()}
 								onclick={() => (draft.directHost = keenDNSBaseDomain)}
 							>
-								{m.servers_ext_wiz_s3_tg_3rd_domain_pill({ domain: keenDNSBaseDomain })}
+								{m.servers_ext_wiz_s3_tg_3rd_domain_pill({ domain: keenDNSBaseDomain })}{keenDNSBaseIsDirect ? '' : ` ${m.servers_ext_wiz_s3_tg_cloud_suffix()}`}
 							</button>
 						{/if}
 						{#if detectedMtprotoWhiteIP}
@@ -146,10 +149,25 @@
 						id="wiz-direct-host-only"
 						type="text"
 						class="text-input mono"
+						class:input-error={isDirectHostCloudKeenDNS}
 						bind:value={draft.directHost}
 						placeholder={detectedMtprotoDirectDomain || detectedMtprotoWhiteIP || m.servers_ext_wiz_s3_tg_direct_host_ph()}
 					/>
-					{#if keenDNSBaseDomain && !keenDNSBaseIsDirect}
+					{#if isDirectHostCloudKeenDNS}
+						<div class="cloud-host-error-box">
+							<AlertTriangle size={14} class="icon-error-soft" />
+							<div class="dual-cgnat-warn-body">
+								<span>{m.servers_ext_wiz_s3_cloud_host_error({ domain: draft.directHost.trim() })}</span>
+								{#if onswitchtowebbridge}
+									<div>
+										<Button variant="primary" size="sm" onclick={onswitchtowebbridge}>
+											{m.servers_ext_wiz_s2_tg_switch_web()}
+										</Button>
+									</div>
+								{/if}
+							</div>
+						</div>
+					{:else if keenDNSBaseDomain && !keenDNSBaseIsDirect}
 						<div class="scheme-warn-note" style="margin-top: 2px;">
 							<AlertTriangle size={14} />
 							<span>
@@ -356,16 +374,17 @@
 			{/if}
 			<div class="origin-header-row">
 				<span class="origin-title">{m.servers_ext_wiz_s3_tg_direct_title()}</span>
-				{#if (keenDNSBaseDomain && keenDNSBaseIsDirect) || detectedMtprotoWhiteIP}
+				{#if keenDNSBaseDomain || detectedMtprotoWhiteIP}
 					<div class="pills-row">
-						{#if keenDNSBaseDomain && keenDNSBaseIsDirect}
+						{#if keenDNSBaseDomain}
 							<button
 								type="button"
 								class="pill-btn"
+								class:pill-warn={!keenDNSBaseIsDirect}
 								class:active={draft.directHost.trim().toLowerCase() === keenDNSBaseDomain.toLowerCase()}
 								onclick={() => (draft.directHost = keenDNSBaseDomain)}
 							>
-								{m.servers_ext_wiz_s3_tg_3rd_domain_pill({ domain: keenDNSBaseDomain })}
+								{m.servers_ext_wiz_s3_tg_3rd_domain_pill({ domain: keenDNSBaseDomain })}{keenDNSBaseIsDirect ? '' : ` ${m.servers_ext_wiz_s3_tg_cloud_suffix()}`}
 							</button>
 						{/if}
 						{#if detectedMtprotoWhiteIP}
@@ -390,16 +409,31 @@
 						id="wiz-direct-host"
 						type="text"
 						class="text-input mono"
+						class:input-error={isDirectHostCloudKeenDNS}
 						bind:value={draft.directHost}
 						placeholder={hideCloudFallback
 							? detectedMtprotoDirectDomain || detectedMtprotoWhiteIP || m.servers_ext_wiz_s3_tg_direct_host_ph()
 							: detectedMtprotoDirectDomain || detectedMtprotoWhiteIP || draft.originHost || draft.publicDomain || 'router.example.com'}
 					/>
-					{#if (keenDNSBaseDomain && !keenDNSBaseIsDirect) || isDirectHostCloudKeenDNS}
+					{#if isDirectHostCloudKeenDNS}
+						<div class="cloud-host-error-box">
+							<AlertTriangle size={14} class="icon-error-soft" />
+							<div class="dual-cgnat-warn-body">
+								<span>{m.servers_ext_wiz_s3_cloud_host_error({ domain: draft.directHost.trim() })}</span>
+								{#if onswitchtowebonly}
+									<div>
+										<Button variant="secondary" size="sm" onclick={onswitchtowebonly}>
+											{m.servers_ext_wiz_s3_disable_mtproto_btn()}
+										</Button>
+									</div>
+								{/if}
+							</div>
+						</div>
+					{:else if keenDNSBaseDomain && !keenDNSBaseIsDirect}
 						<div class="scheme-warn-note" style="margin-top: 2px;">
 							<AlertTriangle size={14} />
 							<span>
-								{m.servers_ext_wiz_s3_tg_cloud_warn_before()} <strong class="mono">{keenDNSBaseDomain || draft.directHost.trim()}</strong> {m.servers_ext_wiz_s3_tg_cloud_warn_after()}
+								{m.servers_ext_wiz_s3_tg_cloud_warn_before()} <strong class="mono">{keenDNSBaseDomain}</strong> {m.servers_ext_wiz_s3_tg_cloud_warn_after()}
 							</span>
 						</div>
 					{/if}
@@ -534,6 +568,35 @@
 		background: var(--color-accent-tint);
 		color: var(--color-accent);
 		font-weight: 600;
+	}
+
+	.pill-btn.pill-warn {
+		border-color: var(--color-warning-border);
+		color: var(--color-warning);
+	}
+
+	:global(.text-input.input-error) {
+		border-color: var(--color-error-border);
+	}
+
+	.cloud-host-error-box {
+		display: flex;
+		align-items: flex-start;
+		gap: 8px;
+		margin-top: 4px;
+		padding: 9px 11px;
+		border-radius: var(--radius-sm);
+		border: 1px solid var(--color-error-border);
+		background: var(--color-error-tint);
+		font-size: 12px;
+		line-height: 1.45;
+		color: var(--color-text-primary);
+	}
+
+	:global(.icon-error-soft) {
+		color: var(--color-error);
+		flex-shrink: 0;
+		margin-top: 2px;
 	}
 
 	.scheme-warn-note {

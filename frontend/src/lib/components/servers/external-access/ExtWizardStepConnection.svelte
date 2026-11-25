@@ -108,6 +108,10 @@
 									{m.servers_ext_wiz_s2_tg_switch_web()}
 								</Button>
 							</div>
+							<label class="checkbox-row" style="margin-top: 4px;">
+								<input type="checkbox" bind:checked={draft.confirmDirectBehindNAT} />
+								<span>{m.servers_ext_wiz_s2_confirm_behind_nat()}</span>
+							</label>
 						</div>
 					{/if}
 				{:else if keendnsInfo?.wan_ip}
@@ -127,6 +131,10 @@
 									{m.servers_ext_wiz_s2_tg_switch_web()}
 								</Button>
 							</div>
+							<label class="checkbox-row" style="margin-top: 4px;">
+								<input type="checkbox" bind:checked={draft.confirmDirectBehindNAT} />
+								<span>{m.servers_ext_wiz_s2_confirm_behind_nat()}</span>
+							</label>
 						</div>
 					{/if}
 				{:else}
@@ -309,6 +317,13 @@
 				</button>
 			</div>
 
+			{#if keendnsInfo?.wan_ip_private && draft.originType === 'public_address'}
+				<div class="scheme-warn-note" style="margin-top: 6px;">
+					<AlertTriangle size={14} />
+					<span>{m.servers_ext_wiz_s2_public_ip_cgnat_mismatch({ ip: keendnsInfo.wan_ip || '' })}</span>
+				</div>
+			{/if}
+
 			{#if showRouterFacts && keendnsInfo}
 				<div class="router-facts-box">
 					<div class="facts-title">{m.servers_ext_wiz_s2_facts_title()}</div>
@@ -343,12 +358,6 @@
 							{/if}
 						</li>
 					</ul>
-					{#if keendnsInfo.wan_ip_private && draft.originType === 'public_address'}
-						<div class="scheme-warn-note">
-							<AlertTriangle size={14} />
-							<span>{m.servers_ext_wiz_s2_public_ip_cgnat_mismatch({ ip: keendnsInfo.wan_ip || '' })}</span>
-						</div>
-					{/if}
 					<div class="facts-scope">
 						{m.servers_ext_wiz_s2_facts_note()}
 					</div>

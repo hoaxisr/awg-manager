@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/cdndispatcher"
+	"github.com/hoaxisr/awg-manager/internal/serveringress"
 	"github.com/hoaxisr/awg-manager/internal/serverwizard/egress"
 	"github.com/hoaxisr/awg-manager/internal/tgwebproxy"
 )
@@ -423,9 +424,68 @@ func (s *WizardService) verifyTelegram(ctx context.Context, checks *[]Verificati
 			})
 		}
 
+		var kdDisc *serveringress.KeenDNSDiscovery
+		if s.keendns != nil {
+			d := s.DiscoverKeenDNS(ctx)
+			kdDisc = &d
+		}
+
 		directHost := strings.TrimSpace(cfg.DirectHost)
-		if directHost != "" && net.ParseIP(directHost) == nil {
-			s.verifyDomainDNS(ctx, "tg_mtproto_dns", "tg_mtproto", "DNS прямого адреса MTProto", directHost, checks)
+		if directHost != "" {
+			if isCloudKeenDNSHost(directHost, kdDisc) {
+				lookupFn := s.lookupHost
+				if lookupFn == nil {
+					lookupFn = net.DefaultResolver.LookupHost
+				}
+				dnsCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+				addrs, lookupErr := lookupFn(dnsCtx, directHost)
+				cancel()
+				msg := fmt.Sprintf("Домен %s работает в облачном режиме KeenDNS (только HTTP/HTTPS). Прямое TCP-подключение MTProto через облачный KeenDNS невозможно.", directHost)
+				if lookupErr == nil && len(addrs) > 0 {
+					msg = fmt.Sprintf("Домен %s работает в облачном режиме KeenDNS (разрешается на облачный HTTP/HTTPS-прокси %s). Прямое TCP-подключение MTProto через облачный KeenDNS невозможно.", directHost, addrs[0])
+				}
+				*checks = append(*checks, VerificationCheck{
+					ID:            "tg_mtproto_dns",
+					Service:       "tg_mtproto",
+					Title:         "DNS прямого адреса MTProto",
+					Status:        CheckStatusBlocked,
+					Category:      VerifyCategoryDNS,
+					Message:       msg,
+					Remediation:   "Переведите KeenDNS в режим «Прямой доступ» на белом IP, укажите другой прямой IP/домен либо переключите Telegram на режим «Веб-мост (через домен)».",
+					TargetAddress: directHost,
+				})
+			} else if serveringress.IsPrivateOrCGNATIP(directHost) {
+				*checks = append(*checks, VerificationCheck{
+					ID:            "tg_mtproto_host",
+					Service:       "tg_mtproto",
+					Title:         "Прямой адрес MTProto",
+					Status:        CheckStatusWarning,
+					Category:      VerifyCategoryDNS,
+					Message:       fmt.Sprintf("Прямой адрес MTProto (%s) относится к приватной/CGNAT подсети и недоступен клиентам из интернета.", directHost),
+					Remediation:   "Укажите внешний белый IP/прямой домен либо переключитесь на «Веб-мост (через домен)».",
+					TargetAddress: directHost,
+				})
+			} else if net.ParseIP(directHost) == nil {
+				s.verifyDomainDNS(ctx, "tg_mtproto_dns", "tg_mtproto", "DNS прямого адреса MTProto", directHost, checks)
+			}
+		}
+
+		if kdDisc != nil && kdDisc.WANPrivate {
+			wanTarget := strings.TrimSpace(kdDisc.WANAddress)
+			wanMsg := fmt.Sprintf("На WAN-интерфейсе роутера серый (приватный/CGNAT) адрес — прямые входящие TCP-подключения MTProto на порт %d из интернета недоступны без проброса порта с внешнего белого IP/VPS.", directPort)
+			if wanTarget != "" {
+				wanMsg = fmt.Sprintf("На WAN-интерфейсе роутера серый (приватный/CGNAT) адрес %s — прямые входящие TCP-подключения MTProto на порт %d из интернета недоступны без проброса порта с внешнего белого IP/VPS.", wanTarget, directPort)
+			}
+			*checks = append(*checks, VerificationCheck{
+				ID:            "tg_mtproto_wan_ip",
+				Service:       "tg_mtproto",
+				Title:         "Внешний WAN-адрес для MTProto",
+				Status:        CheckStatusWarning,
+				Category:      VerifyCategoryFirewall,
+				Message:       wanMsg,
+				Remediation:   "Для роутера с серым IP используйте «Веб-мост (через домен)» через облако KeenDNS либо настройте проброс TCP-порта с внешнего белого IP/VPS.",
+				TargetAddress: wanTarget,
+			})
 		}
 
 		if tgwebproxy.IsDirectWANPortOpen(directPort) {

@@ -25,6 +25,7 @@
 		applyPhase: 'review' | 'applying' | 'done';
 		isRealityOnly: boolean;
 		isTgDirectOnly: boolean;
+		grayIPDetected?: boolean;
 		usesReality: boolean;
 		wantXray: boolean;
 		wantTg: boolean;
@@ -58,6 +59,7 @@
 		applyPhase,
 		isRealityOnly,
 		isTgDirectOnly,
+		grayIPDetected = false,
 		usesReality,
 		wantXray,
 		wantTg,
@@ -160,7 +162,9 @@
 				<div class="summary-row-item">
 					<span class="sum-label">{m.servers_ext_wiz_s5_entry()}</span>
 					<span class="sum-val mono">
-						{m.servers_ext_wiz_s5_entry_tg_direct({ port: draft.directPort || 8443 })}
+						{grayIPDetected
+							? m.servers_ext_wiz_s5_entry_tg_direct_cgnat({ port: draft.directPort || 8443 })
+							: m.servers_ext_wiz_s5_entry_tg_direct({ port: draft.directPort || 8443 })}
 					</span>
 				</div>
 				<div class="summary-row-item">

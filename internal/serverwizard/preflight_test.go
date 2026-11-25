@@ -475,11 +475,11 @@ func TestPreflightEngine_CdnHTTPAndCloudKeenDNSWarnings(t *testing.T) {
 		t.Fatalf("expected cdn_http preflight to include bin_tproxy")
 	}
 
-	// 2. Cloud KeenDNS BaseFQDN triggers direct_host_keendns_cloud warning for direct_fake_tls & dual
+	// 2. Cloud KeenDNS BaseFQDN triggers direct_host_keendns_cloud BLOCKED for direct_fake_tls & dual
 	kdCloud := &mockKeenDNSOperator{
 		disc: serveringress.KeenDNSDiscovery{
 			State:      "supported",
-			BaseFQDN:   "vinvanvlad-dacha.crazedns.ru",
+			BaseFQDN:   "dacha.example.keenetic.pro",
 			AccessMode: "cloud",
 		},
 	}
@@ -493,13 +493,13 @@ func TestPreflightEngine_CdnHTTPAndCloudKeenDNSWarnings(t *testing.T) {
 	}{
 		{
 			scenario:   "direct_fake_tls",
-			directHost: "vinvanvlad-dacha.crazedns.ru",
+			directHost: "dacha.example.keenetic.pro",
 			cdnProfile: "direct",
 		},
 		{
 			scenario:   "dual",
-			directHost: "connect.vinvanvlad-dacha.crazedns.ru",
-			pubDomain:  "connect.vinvanvlad-dacha.crazedns.ru",
+			directHost: "connect.dacha.example.keenetic.pro",
+			pubDomain:  "connect.dacha.example.keenetic.pro",
 			cdnProfile: "cdn_get",
 		},
 	} {
@@ -513,54 +513,96 @@ func TestPreflightEngine_CdnHTTPAndCloudKeenDNSWarnings(t *testing.T) {
 			TlsDomain:    "www.google.com",
 			CdnProfileID: tc.cdnProfile,
 		})
-		if !resp.CanProceed || !resp.HasWarnings {
-			t.Fatalf("expected CanProceed=true & HasWarnings=true for %s (%s), got %+v", tc.scenario, tc.directHost, resp)
+		if resp.CanProceed {
+			t.Fatalf("expected CanProceed=false for %s (%s), got %+v", tc.scenario, tc.directHost, resp)
 		}
-		foundWarn := false
+		foundBlocked := false
 		for _, c := range resp.Checks {
-			if c.ID == "direct_host_keendns_cloud" && c.Status == CheckStatusWarning {
-				foundWarn = true
+			if c.ID == "direct_host_keendns_cloud" && c.Status == CheckStatusBlocked {
+				foundBlocked = true
 			}
 		}
-		if !foundWarn {
-			t.Fatalf("expected direct_host_keendns_cloud warning for %s (%s), got %+v", tc.scenario, tc.directHost, resp.Checks)
+		if !foundBlocked {
+			t.Fatalf("expected direct_host_keendns_cloud blocked for %s (%s), got %+v", tc.scenario, tc.directHost, resp.Checks)
 		}
 	}
 
-	// 3. cdn_http does NOT trigger direct_host_keendns_cloud warning even with leftover DirectHost
+	// 3. cdn_http does NOT trigger direct_host_keendns_cloud even with leftover DirectHost
 	respCDNLeftover := engine.Run(ctx, WizardPlanRequest{
 		Kind:         "tgwebproxy",
 		Scenario:     "cdn_http",
-		DirectHost:   "connect.vinvanvlad-dacha.crazedns.ru",
-		PublicDomain: "connect.vinvanvlad-dacha.crazedns.ru",
+		DirectHost:   "connect.dacha.example.keenetic.pro",
+		PublicDomain: "connect.dacha.example.keenetic.pro",
 		ListenPort:   8085,
 		CdnProfileID: "cdn_get",
 	})
 	for _, c := range respCDNLeftover.Checks {
 		if c.ID == "direct_host_keendns_cloud" {
-			t.Fatalf("unexpected direct_host_keendns_cloud warning for cdn_http: %+v", c)
+			t.Fatalf("unexpected direct_host_keendns_cloud check for cdn_http: %+v", c)
 		}
 	}
 
-	// 4. Direct-mode KeenDNS does NOT trigger direct_host_keendns_cloud warning
+	// 4. Direct-mode KeenDNS does NOT trigger direct_host_keendns_cloud
 	engine.SetKeenDNS(&mockKeenDNSOperator{
 		disc: serveringress.KeenDNSDiscovery{
 			State:      "supported",
-			BaseFQDN:   "vinvanvlad.crazedns.ru",
+			BaseFQDN:   "router.example.keenetic.pro",
 			AccessMode: "direct",
 		},
 	})
 	respDirectMode := engine.Run(ctx, WizardPlanRequest{
 		Kind:         "tgwebproxy",
 		Scenario:     "direct_fake_tls",
-		DirectHost:   "vinvanvlad.crazedns.ru",
+		DirectHost:   "router.example.keenetic.pro",
 		DirectPort:   8443,
 		TlsDomain:    "www.google.com",
 		CdnProfileID: "direct",
 	})
 	for _, c := range respDirectMode.Checks {
 		if c.ID == "direct_host_keendns_cloud" {
-			t.Fatalf("unexpected direct_host_keendns_cloud warning for direct KeenDNS: %+v", c)
+			t.Fatalf("unexpected direct_host_keendns_cloud check for direct KeenDNS: %+v", c)
+		}
+	}
+
+	// 5. Private/CGNAT WAN emits wan_cgnat_direct_mtproto warning for direct_fake_tls & dual, never for cdn_http
+	engine.SetKeenDNS(&mockKeenDNSOperator{
+		disc: serveringress.KeenDNSDiscovery{
+			State:      "supported",
+			BaseFQDN:   "dacha.example.keenetic.pro",
+			AccessMode: "cloud",
+			WANAddress: "10.20.30.40",
+			WANPrivate: true,
+		},
+	})
+	for _, tc := range []struct {
+		scenario   string
+		directHost string
+		pubDomain  string
+		cdnProfile string
+		wantWarn   bool
+	}{
+		{"direct_fake_tls", "vps.example.com", "", "direct", true},
+		{"dual", "vps.example.com", "connect.dacha.example.keenetic.pro", "cdn_get", true},
+		{"cdn_http", "", "connect.dacha.example.keenetic.pro", "cdn_get", false},
+	} {
+		resp := engine.Run(ctx, WizardPlanRequest{
+			Kind:         "tgwebproxy",
+			Scenario:     tc.scenario,
+			DirectHost:   tc.directHost,
+			DirectPort:   8443,
+			ListenPort:   8085,
+			PublicDomain: tc.pubDomain,
+			TlsDomain:    "www.google.com",
+			CdnProfileID: tc.cdnProfile,
+		})
+		foundWanWarn := false
+		for _, c := range resp.Checks {
+			if c.ID == "wan_cgnat_direct_mtproto" && c.Status == CheckStatusWarning {
+				foundWanWarn = true
+			}
+		}
+		if foundWanWarn != tc.wantWarn {
+			t.Fatalf("scenario=%s: foundWanWarn=%v, want %v; checks=%+v", tc.scenario, foundWanWarn, tc.wantWarn, resp.Checks)
 		}
 	}
 }

@@ -30,6 +30,7 @@ export interface ExternalAccessWizardDraft {
 	disableOtherService: boolean;
 	existingClientCount: number;
 	keepExistingConnectionScheme: boolean;
+	confirmDirectBehindNAT: boolean;
 	/** Текст для показа: в черновике ($state) лежит отложенным вызовом i18n. */
 	connectionSchemeSummary: UiText;
 	connectionSchemeWarning: UiText;
@@ -631,6 +632,7 @@ export function createInitialWizardDraft(
 			disableOtherService: false,
 			existingClientCount: 0,
 			keepExistingConnectionScheme: false,
+			confirmDirectBehindNAT: false,
 			connectionSchemeSummary: '',
 			connectionSchemeWarning: '',
 			keendnsMode: 'manual',
@@ -822,6 +824,7 @@ export function createInitialWizardDraft(
 		disableOtherService: false,
 		existingClientCount: xClients.length,
 		keepExistingConnectionScheme: true,
+		confirmDirectBehindNAT: false,
 		connectionSchemeSummary: () => schemeParts.map((t) => t()).join(' · '),
 		connectionSchemeWarning: schemeWarnings.length ? () => schemeWarnings.map((t) => t()).join('. ') : '',
 		keendnsMode: 'manual',

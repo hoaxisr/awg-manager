@@ -3,8 +3,10 @@
 	// домены веб-подключения и зона сброса.
 	import { m } from '$lib/i18n';
 	import type { TgWebProxyConfig, TelegramUpstream, WebProxyEndpoint, TgNetworkPreset } from '$lib/types';
+	import type { KeenDNSDiscovery } from '$lib/types/serverWizard';
 	import { Button, IconButton } from '$lib/components/ui';
 	import TelegramUpstreamsEditor from '../TelegramUpstreamsEditor.svelte';
+	import { isCloudKeenDNSHost } from '../external-access/externalAccessModel';
 	import {
 		WEBPROXY_PRESETS,
 		getPresetMeta,
@@ -12,12 +14,13 @@
 		newEndpoint,
 		type EgressChoice,
 	} from './tgProxyModel';
-	import { Plus, Trash2 } from 'lucide-svelte';
+	import { AlertTriangle, Plus, Trash2 } from 'lucide-svelte';
 
 	interface Props {
 		editConfig: Partial<TgWebProxyConfig>;
 		editUpstreams: TelegramUpstream[];
 		egressOptions: EgressChoice[];
+		keendnsInfo?: KeenDNSDiscovery | null;
 		onrequestreset: () => void;
 	}
 
@@ -25,8 +28,23 @@
 		editConfig = $bindable({}),
 		editUpstreams = $bindable([]),
 		egressOptions,
+		keendnsInfo = null,
 		onrequestreset,
 	}: Props = $props();
+
+	let keenDNSBaseDomain = $derived(
+		keendnsInfo?.enabled && keendnsInfo.domain ? keendnsInfo.domain.trim() : ''
+	);
+	let keenDNSBaseIsDirect = $derived(
+		Boolean(keendnsInfo?.enabled && keendnsInfo.mode === 'direct')
+	);
+	let detectedWhiteIP = $derived(
+		keendnsInfo?.wan_ip && !keendnsInfo.wan_ip_private ? keendnsInfo.wan_ip.trim() : ''
+	);
+	let isCloudDirectHost = $derived(
+		editConfig.scenario !== 'cdn_http' &&
+			isCloudKeenDNSHost(editConfig.direct_host, keenDNSBaseDomain, keenDNSBaseIsDirect)
+	);
 
 	function applyEndpointPreset(ep: WebProxyEndpoint, presetId: TgNetworkPreset, idx: number) {
 		const meta = getPresetMeta(presetId);
@@ -53,11 +71,49 @@
 
 <div class="settings-form">
 	<div class="form-row">
-		<label class="form-field">
-			<span class="field-label">{m.servers_tg_direct_host_label()}</span>
-			<input type="text" bind:value={editConfig.direct_host} class="text-input" placeholder="router.example.com" />
+		<div class="form-field">
+			<label class="field-label" for="tg-settings-direct-host">{m.servers_tg_direct_host_label()}</label>
+			<input
+				id="tg-settings-direct-host"
+				type="text"
+				bind:value={editConfig.direct_host}
+				class="text-input"
+				class:input-error={isCloudDirectHost}
+				placeholder="router.example.com"
+			/>
+			{#if keenDNSBaseDomain || detectedWhiteIP}
+				<div class="pills-row">
+					{#if keenDNSBaseDomain}
+						<button
+							type="button"
+							class="pill-btn"
+							class:pill-warn={!keenDNSBaseIsDirect}
+							class:active={(editConfig.direct_host || '').trim().toLowerCase() === keenDNSBaseDomain.toLowerCase()}
+							onclick={() => (editConfig.direct_host = keenDNSBaseDomain)}
+						>
+							{m.servers_ext_wiz_s3_tg_3rd_domain_pill({ domain: keenDNSBaseDomain })}{keenDNSBaseIsDirect ? '' : ` ${m.servers_ext_wiz_s3_tg_cloud_suffix()}`}
+						</button>
+					{/if}
+					{#if detectedWhiteIP}
+						<button
+							type="button"
+							class="pill-btn"
+							class:active={(editConfig.direct_host || '').trim() === detectedWhiteIP}
+							onclick={() => (editConfig.direct_host = detectedWhiteIP)}
+						>
+							{m.servers_ext_wiz_s3_tg_white_ip_pill({ ip: detectedWhiteIP })}
+						</button>
+					{/if}
+				</div>
+			{/if}
+			{#if isCloudDirectHost}
+				<div class="direct-cloud-warn">
+					<AlertTriangle size={14} class="warn-icon-inline" />
+					<span>{m.servers_tg_direct_host_cloud_warn({ domain: (editConfig.direct_host || '').trim() })}</span>
+				</div>
+			{/if}
 			<span class="field-hint">{m.servers_tg_direct_host_hint()}</span>
-		</label>
+		</div>
 		<label class="form-field">
 			<span class="field-label">{m.servers_tg_direct_port_label()}</span>
 			<input type="number" bind:value={editConfig.direct_port} class="text-input" placeholder="8443" />
@@ -202,6 +258,60 @@
 		padding: 6px 10px;
 		font-size: 13px;
 		color: var(--color-text-primary);
+	}
+
+	.text-input.input-error {
+		border-color: var(--color-warning-border);
+	}
+
+	.pills-row {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+		margin-top: 2px;
+	}
+
+	.pill-btn {
+		display: inline-flex;
+		align-items: center;
+		padding: 3px 9px;
+		border-radius: var(--radius-sm);
+		border: 1px solid var(--color-border);
+		background: var(--color-bg-primary);
+		color: var(--color-text-secondary);
+		font-size: 11px;
+		cursor: pointer;
+	}
+
+	.pill-btn.pill-warn {
+		border-color: var(--color-warning-border);
+		color: var(--color-warning);
+	}
+
+	.pill-btn.active {
+		border-color: var(--color-accent-border);
+		background: var(--color-accent-tint);
+		color: var(--color-accent);
+		font-weight: 600;
+	}
+
+	.direct-cloud-warn {
+		display: flex;
+		align-items: flex-start;
+		gap: 6px;
+		padding: 7px 9px;
+		border-radius: var(--radius-sm);
+		border: 1px solid var(--color-warning-border);
+		background: var(--color-warning-tint);
+		font-size: 11.5px;
+		line-height: 1.4;
+		color: var(--color-text-primary);
+	}
+
+	:global(.warn-icon-inline) {
+		color: var(--color-warning);
+		flex-shrink: 0;
+		margin-top: 2px;
 	}
 
 	.badge {

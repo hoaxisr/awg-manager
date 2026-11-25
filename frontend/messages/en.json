@@ -10331,5 +10331,10 @@
 	"servers_ext_wiz_s2_public_ip_cgnat_mismatch": "Warning: a private WAN IP ({ip}) was detected on the router. Public IP mode works only if ports are forwarded to the router upstream.",
 	"servers_ext_wiz_s3_dual_cgnat_warn": "Behind a private IP / CGNAT (cloud KeenDNS), direct MTProto cannot work through a 4th-level cloud domain. If you do not have a public IP, disable MTProto and keep Web Bridge only.",
 	"servers_ext_wiz_s3_disable_mtproto_btn": "Disable MTProto (Web Bridge only)",
+	"servers_ext_wiz_s1_loading": "Checking router and network parameters...",
+	"servers_ext_wiz_s2_confirm_behind_nat": "I have external TCP port forwarding configured (DMZ / upstream router / VPS with public IP) — continue MTProto setup",
+	"servers_ext_wiz_s3_cloud_host_error": "Domain {domain} is currently in KeenDNS cloud mode (HTTP/HTTPS only) — direct TCP MTProto will not work through it. Switch KeenDNS to \"Direct access\" in Keenetic settings (requires a public IP), enter another public IP/domain, or switch to Web Bridge.",
+	"servers_ext_wiz_s5_entry_tg_direct_cgnat": "Direct TCP connection (WAN behind CGNAT, external port forwarding required) · port {port}/tcp",
+	"servers_tg_direct_host_cloud_warn": "Domain {domain} is in KeenDNS cloud mode (HTTP/HTTPS only) — direct TCP MTProto will not work through it until KeenDNS is switched to \"Direct access\" on a public IP.",
 	"firc_router_view_journal": "Journal"
 }

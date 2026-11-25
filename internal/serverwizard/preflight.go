@@ -353,6 +353,13 @@ func (pe *PreflightEngine) checkTelegram(ctx context.Context, req WizardPlanRequ
 		}
 	}
 
+	var kdDisc *serveringress.KeenDNSDiscovery
+	if scenario != "cdn_http" && pe.keendns != nil {
+		if disc, err := pe.keendns.Discover(ctx, dispPort); err == nil {
+			kdDisc = &disc
+		}
+	}
+
 	if req.DirectHost != "" {
 		if err := ValidateDirectHost(req.DirectHost); err != nil {
 			*checks = append(*checks, PreflightCheck{
@@ -370,21 +377,29 @@ func (pe *PreflightEngine) checkTelegram(ctx context.Context, req WizardPlanRequ
 				Message:     fmt.Sprintf("Адрес %s относится к частной/CGNAT подсети — для подключения Telegram из интернета требуется белый IP или прямой домен", req.DirectHost),
 				Remediation: "Укажите белый публичный IP роутера, прямой домен KeenDNS 3-го уровня или переключитесь на сценарий Web Proxy.",
 			})
-		} else if scenario != "cdn_http" && pe.keendns != nil {
-			if disc, err := pe.keendns.Discover(ctx, dispPort); err == nil && disc.State == "supported" && strings.EqualFold(strings.TrimSpace(disc.AccessMode), "cloud") {
-				base := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(disc.BaseFQDN), "."))
-				host := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(req.DirectHost), "."))
-				if base != "" && (host == base || strings.HasSuffix(host, "."+base)) {
-					*checks = append(*checks, PreflightCheck{
-						ID:          "direct_host_keendns_cloud",
-						Title:       "Адрес прямого подключения MTProto",
-						Status:      CheckStatusWarning,
-						Message:     fmt.Sprintf("Домен %s работает в облачном режиме KeenDNS (только HTTP/HTTPS) — прямое TCP-подключение MTProto через него недоступно", req.DirectHost),
-						Remediation: "Укажите белый публичный IP роутера, переведите KeenDNS в режим «Прямой доступ» или выберите сценарий Веб-мост (cdn_http).",
-					})
-				}
-			}
+		} else if scenario != "cdn_http" && isCloudKeenDNSHost(req.DirectHost, kdDisc) {
+			*checks = append(*checks, PreflightCheck{
+				ID:          "direct_host_keendns_cloud",
+				Title:       "Адрес прямого подключения MTProto",
+				Status:      CheckStatusBlocked,
+				Message:     fmt.Sprintf("Домен %s работает в облачном режиме KeenDNS (только HTTP/HTTPS) — прямое TCP-подключение MTProto через него недоступно", req.DirectHost),
+				Remediation: "Переведите KeenDNS в режим «Прямой доступ» в настройках Keenetic (требуется белый IP), укажите другой белый IP/домен или переключитесь на сценарий Веб-мост (cdn_http).",
+			})
 		}
+	}
+	if scenario != "cdn_http" && kdDisc != nil && kdDisc.WANPrivate {
+		wanAddr := strings.TrimSpace(kdDisc.WANAddress)
+		wanMsg := fmt.Sprintf("На WAN-интерфейсе роутера серый (приватный/CGNAT) адрес — прямой TCP-порт %d MTProto из интернета недоступен без внешнего проброса порта (DMZ/VPS).", directPort)
+		if wanAddr != "" {
+			wanMsg = fmt.Sprintf("На WAN-интерфейсе роутера серый (приватный/CGNAT) адрес %s — прямой TCP-порт %d MTProto из интернета недоступен без внешнего проброса порта (DMZ/VPS).", wanAddr, directPort)
+		}
+		*checks = append(*checks, PreflightCheck{
+			ID:          "wan_cgnat_direct_mtproto",
+			Title:       "WAN-адрес роутера для прямого MTProto",
+			Status:      CheckStatusWarning,
+			Message:     wanMsg,
+			Remediation: "Для роутера с серым IP используйте сценарий «Веб-мост (через домен)» через облако KeenDNS либо настройте проброс TCP-порта с внешнего белого IP/VPS.",
+		})
 	}
 	if scenario != "direct_fake_tls" && req.PublicDomain != "" {
 		if err := ValidatePublicHostname(req.PublicDomain); err != nil {
@@ -771,6 +786,19 @@ func (pe *PreflightEngine) checkPort(id, title string, port int, allowedPID int,
 		Details:     fmt.Sprintf("Socket inode: %s", lookup.SocketInode),
 		Remediation: fmt.Sprintf("Остановите конфликтующий процесс (%s) или выберите другой порт.", pidInfo),
 	})
+}
+
+// isCloudKeenDNSHost reports whether host matches the router's cloud-mode KeenDNS base domain or any 4th-level subdomain under it.
+func isCloudKeenDNSHost(host string, disc *serveringress.KeenDNSDiscovery) bool {
+	if disc == nil || disc.State != "supported" || !strings.EqualFold(strings.TrimSpace(disc.AccessMode), "cloud") {
+		return false
+	}
+	base := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(disc.BaseFQDN), "."))
+	h := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+	if h == "" || base == "" {
+		return false
+	}
+	return h == base || strings.HasSuffix(h, "."+base)
 }
 
 // Ensure interface compatibility

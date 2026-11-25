@@ -560,4 +560,54 @@ describe('TelegramWebProxyCard', () => {
 		})) as HTMLInputElement;
 		expect(socksInput.value).toBe('127.0.0.1:1099');
 	});
+
+	it('offers 1-click KeenDNS 3rd-level domain fill in manual Settings and warns on cloud KeenDNS direct_host', async () => {
+		vi.mocked(api.getWizardCapabilities).mockResolvedValue({
+			egress_options: [
+				{
+					id: 'direct',
+					kind: 'direct',
+					owner: 'system',
+					name: 'WAN',
+					iface: 'direct',
+					available: true,
+					state: 'up',
+					current: true,
+					supports_tcp: true,
+					supports_udp: true,
+					generation: 1,
+				},
+			],
+			keendns: {
+				state: 'supported',
+				enabled: true,
+				domain: 'dacha.example.keenetic.pro',
+				mode: 'cloud',
+				cert_ok: false,
+				publications: [],
+				wan_ip: '10.20.30.40',
+				wan_ip_private: true,
+			},
+		} as unknown as Awaited<ReturnType<typeof api.getWizardCapabilities>>);
+		vi.mocked(api.getTgWebProxyConfig).mockResolvedValue(
+			baseConfig({ enabled: true, scenario: 'direct_fake_tls', direct_host: '' }),
+		);
+		vi.mocked(api.getTgWebProxyStatus).mockResolvedValue(
+			baseStatus({ running: true, direct_online: true }),
+		);
+
+		render(TelegramWebProxyCard, {});
+
+		const settingsBtn = await screen.findByRole('button', { name: new RegExp(m.servers_tg_settings_btn()) });
+		await fireEvent.click(settingsBtn);
+
+		const pillBtn = await screen.findByRole('button', {
+			name: new RegExp('dacha\\.example\\.keenetic\\.pro'),
+		});
+		await fireEvent.click(pillBtn);
+
+		const directHostInput = screen.getByLabelText(m.servers_tg_direct_host_label()) as HTMLInputElement;
+		expect(directHostInput.value).toBe('dacha.example.keenetic.pro');
+		await screen.findByText(m.servers_tg_direct_host_cloud_warn({ domain: 'dacha.example.keenetic.pro' }));
+	});
 });

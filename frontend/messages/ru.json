@@ -10735,5 +10735,10 @@
 	"servers_ext_wiz_s2_public_ip_cgnat_mismatch": "Внимание: на WAN роутера обнаружен серый адрес ({ip}). Режим «Белый IP» сработает только при внешнем пробросе портов до роутера.",
 	"servers_ext_wiz_s3_dual_cgnat_warn": "При сером IP / CGNAT (облачный KeenDNS) прямой MTProto не работает через облачный домен 4-го уровня. Если белого IP нет, отключите MTProto и оставьте только Веб-мост.",
 	"servers_ext_wiz_s3_disable_mtproto_btn": "Отключить MTProto (только Веб-мост)",
+	"servers_ext_wiz_s1_loading": "Определяем параметры роутера и сети...",
+	"servers_ext_wiz_s2_confirm_behind_nat": "У меня настроен внешний проброс TCP-порта (DMZ / роутер выше / VPS с белым IP) — продолжить настройку MTProto",
+	"servers_ext_wiz_s3_cloud_host_error": "Домен {domain} сейчас работает в облачном режиме KeenDNS (только HTTP/HTTPS) — прямое TCP-подключение MTProto через него не работает. Переведите KeenDNS в режим «Прямой доступ» в настройках Keenetic (нужен белый IP), укажите другой белый IP/домен или переключитесь на Веб-мост.",
+	"servers_ext_wiz_s5_entry_tg_direct_cgnat": "Прямое TCP-подключение (WAN за серым IP / CGNAT, нужен внешний проброс) · порт {port}/tcp",
+	"servers_tg_direct_host_cloud_warn": "Домен {domain} работает в облачном режиме KeenDNS (только HTTP/HTTPS) — прямое TCP-подключение MTProto через него недоступно, пока KeenDNS не переведён в режим «Прямой доступ» на белом IP.",
 	"firc_router_view_journal": "Журнал"
 }

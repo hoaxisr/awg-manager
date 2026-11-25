@@ -3,7 +3,7 @@
 	import { m } from '$lib/i18n';
 	import type { WizardKind } from '$lib/types/serverWizard';
 	import type { ExternalAccessWizardDraft } from './externalAccessModel';
-	import { Shield, Send, Layers, AlertTriangle } from 'lucide-svelte';
+	import { Shield, Send, Layers, AlertTriangle, RefreshCw } from 'lucide-svelte';
 
 	interface Props {
 		draft: ExternalAccessWizardDraft;
@@ -33,6 +33,12 @@
 	<p class="step-desc">
 		{m.servers_ext_wiz_s1_desc()}
 	</p>
+	{#if initializing}
+		<div class="init-loading-note">
+			<RefreshCw size={13} class="spin" />
+			<span>{m.servers_ext_wiz_s1_loading()}</span>
+		</div>
+	{/if}
 
 	<div class="cards-grid">
 		<button
@@ -187,6 +193,27 @@
 		align-items: center;
 		gap: 5px;
 		flex-wrap: wrap;
+	}
+
+	.init-loading-note {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 12px;
+		color: var(--color-text-muted);
+	}
+
+	.init-loading-note :global(.spin) {
+		animation: ext-wiz-spin 1s linear infinite;
+	}
+
+	@keyframes ext-wiz-spin {
+		from {
+			transform: rotate(0deg);
+		}
+		to {
+			transform: rotate(360deg);
+		}
 	}
 
 	.other-service-warning {

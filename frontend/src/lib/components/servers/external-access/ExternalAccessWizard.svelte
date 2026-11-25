@@ -401,7 +401,7 @@
 				initializing = false;
 			}
 		}
-		if (seq === initSeq && open) {
+		if (seq === initSeq && open && !realityState?.network) {
 			void refreshRealityNetworkInBackground(seq);
 		}
 	}
@@ -524,6 +524,7 @@
 		if (initializing) return;
 		draft.selectedKind = kind;
 		draft.disableOtherService = false;
+		draft.confirmDirectBehindNAT = false;
 		if (kind === 'tgwebproxy') {
 			realityMode = 'off';
 			if (draft.tgScenario === 'direct_fake_tls') {
@@ -551,6 +552,7 @@
 		if (initializing) return;
 		userTouchedTgScenario = true;
 		draft.tgScenario = scenario;
+		draft.confirmDirectBehindNAT = false;
 		if (draft.selectedKind === 'tgwebproxy' && scenario === 'direct_fake_tls') {
 			draft.keendnsMode = 'manual';
 			draft.connectionWay = 'direct';
@@ -569,6 +571,7 @@
 		userTouchedTgScenario = true;
 		draft.tgScenario = 'cdn_http';
 		draft.keepExistingConnectionScheme = false;
+		draft.confirmDirectBehindNAT = false;
 		draft.originType = 'cloud_address';
 		draft.connectionWay = 'direct';
 		draft.directHost = '';
@@ -583,6 +586,7 @@
 	function switchToWebBridgeOnly() {
 		userTouchedTgScenario = true;
 		draft.tgScenario = 'cdn_http';
+		draft.confirmDirectBehindNAT = false;
 		draft.directHost = '';
 	}
 
@@ -689,12 +693,18 @@
 
 	let canProceedStep = $derived.by(() => {
 		if (stepIndex === 0) return true;
-		if (stepIndex === 1) return true;
+		if (stepIndex === 1) {
+			if (isTgDirectOnly && grayIPDetected && !draft.confirmDirectBehindNAT) {
+				return false;
+			}
+			return true;
+		}
 		if (stepIndex === 2) {
 			if (isRealityOnly) {
 				return realityStep2Valid;
 			}
 			if (isTgDirectOnly) {
+				if (isDirectHostCloudKeenDNS) return false;
 				const portNum = Number(draft.directPort);
 				return Boolean(
 					draft.directHost.trim() &&
@@ -728,6 +738,9 @@
 					...draft,
 					publicDomain: effectivePhoneDomain,
 				});
+				if (isCloudKeenDNSHost(dHost, keenDNSBaseDomain, keenDNSBaseIsDirect)) {
+					return false;
+				}
 				const portNum = Number(draft.directPort);
 				if (
 					!dHost ||
@@ -1070,6 +1083,7 @@
 					onsetkeendnsmode={setKeenDNSActionMode}
 					onapplypublication={applyExistingPublication}
 					onsynckeendns={syncKeenDNSToAddresses}
+					onswitchtowebbridge={switchToWebBridgeFromCGNAT}
 					onswitchtowebonly={switchToWebBridgeOnly}
 				/>
 			{:else if stepIndex === 3}
@@ -1096,6 +1110,7 @@
 					{applyPhase}
 					{isRealityOnly}
 					{isTgDirectOnly}
+					{grayIPDetected}
 					{usesReality}
 					{wantXray}
 					{wantTg}

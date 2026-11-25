@@ -987,3 +987,115 @@ func TestWizard_MTProtoDirectOnlyForbidsKeenDNSAndPlansWANFirewall(t *testing.T)
 		t.Fatalf("expected tg_mtproto_wan_firewall warning in report: %+v", vReport.Checks)
 	}
 }
+
+func TestWizardService_VerifyTelegramGrayIPAndCloudKeenDNS(t *testing.T) {
+	svc, _, _, tg, _ := setupTestWizard(t)
+	ctx := context.Background()
+
+	svc.SetDialTimeout(func(network, address string, timeout time.Duration) (net.Conn, error) {
+		return &mockTestConn{}, nil
+	})
+	svc.SetLookupHost(func(ctx context.Context, host string) ([]string, error) {
+		return []string{"192.0.2.42"}, nil
+	})
+	tg.st = tgwebproxy.Status{
+		Installed:       true,
+		InstalledTelemt: true,
+		DirectOnline:    true,
+		DirectPort:      8443,
+	}
+
+	findCheck := func(checks []VerificationCheck, id string) (VerificationCheck, bool) {
+		for _, c := range checks {
+			if c.ID == id {
+				return c, true
+			}
+		}
+		return VerificationCheck{}, false
+	}
+
+	// 1. direct_fake_tls + cloud KeenDNS DirectHost + private WAN -> blocked overall
+	svc.SetKeenDNS(&mockKeenDNSOperator{
+		disc: serveringress.KeenDNSDiscovery{
+			State:      "supported",
+			BaseFQDN:   "dacha.example.keenetic.pro",
+			AccessMode: "cloud",
+			WANAddress: "10.20.30.40",
+			WANPrivate: true,
+		},
+	})
+	tg.cfg = tgwebproxy.PublicConfig{
+		Enabled:    true,
+		Scenario:   "direct_fake_tls",
+		DirectHost: "dacha.example.keenetic.pro",
+		DirectPort: 8443,
+		TlsDomain:  "www.google.com",
+	}
+	rep1, err := svc.Verify(ctx, "tgwebproxy")
+	if err != nil {
+		t.Fatalf("Verify 1 failed: %v", err)
+	}
+	if rep1.OverallStatus != CheckStatusBlocked {
+		t.Fatalf("expected OverallStatus=blocked for cloud KeenDNS DirectHost, got %q (%+v)", rep1.OverallStatus, rep1.Checks)
+	}
+	dns1, okDNS1 := findCheck(rep1.Checks, "tg_mtproto_dns")
+	wan1, okWAN1 := findCheck(rep1.Checks, "tg_mtproto_wan_ip")
+	if !okDNS1 || dns1.Status != CheckStatusBlocked || !strings.Contains(dns1.Message, "192.0.2.42") {
+		t.Fatalf("expected tg_mtproto_dns blocked with resolved proxy IP, got ok=%v %+v", okDNS1, dns1)
+	}
+	if !okWAN1 || wan1.Status != CheckStatusWarning {
+		t.Fatalf("expected tg_mtproto_wan_ip warning, got ok=%v %+v", okWAN1, wan1)
+	}
+
+	// 2. direct_fake_tls + external direct host + private WAN -> warning overall (no false OK)
+	tg.cfg.DirectHost = "router.example.com"
+	rep2, err := svc.Verify(ctx, "tgwebproxy")
+	if err != nil {
+		t.Fatalf("Verify 2 failed: %v", err)
+	}
+	if rep2.OverallStatus != CheckStatusWarning {
+		t.Fatalf("expected OverallStatus=warning for private WAN with external host, got %q (%+v)", rep2.OverallStatus, rep2.Checks)
+	}
+	dns2, okDNS2 := findCheck(rep2.Checks, "tg_mtproto_dns")
+	wan2, okWAN2 := findCheck(rep2.Checks, "tg_mtproto_wan_ip")
+	if !okDNS2 || dns2.Status != CheckStatusOK {
+		t.Fatalf("expected tg_mtproto_dns ok for external host, got ok=%v %+v", okDNS2, dns2)
+	}
+	if !okWAN2 || wan2.Status != CheckStatusWarning {
+		t.Fatalf("expected tg_mtproto_wan_ip warning, got ok=%v %+v", okWAN2, wan2)
+	}
+
+	// 3. direct_fake_tls + private IP DirectHost -> tg_mtproto_host warning
+	tg.cfg.DirectHost = "10.20.30.40"
+	rep3, err := svc.Verify(ctx, "tgwebproxy")
+	if err != nil {
+		t.Fatalf("Verify 3 failed: %v", err)
+	}
+	host3, okHost3 := findCheck(rep3.Checks, "tg_mtproto_host")
+	if !okHost3 || host3.Status != CheckStatusWarning {
+		t.Fatalf("expected tg_mtproto_host warning, got ok=%v %+v", okHost3, host3)
+	}
+
+	// 4. direct_fake_tls + direct-mode KeenDNS + public WAN -> tg_mtproto_dns OK, no tg_mtproto_wan_ip
+	svc.SetKeenDNS(&mockKeenDNSOperator{
+		disc: serveringress.KeenDNSDiscovery{
+			State:      "supported",
+			BaseFQDN:   "home.example.keenetic.pro",
+			AccessMode: "direct",
+			WANAddress: "198.51.100.10",
+			WANPrivate: false,
+		},
+	})
+	tg.cfg.DirectHost = "home.example.keenetic.pro"
+	rep4, err := svc.Verify(ctx, "tgwebproxy")
+	if err != nil {
+		t.Fatalf("Verify 4 failed: %v", err)
+	}
+	dns4, okDNS4 := findCheck(rep4.Checks, "tg_mtproto_dns")
+	if !okDNS4 || dns4.Status != CheckStatusOK {
+		t.Fatalf("expected tg_mtproto_dns OK for direct KeenDNS, got ok=%v %+v", okDNS4, dns4)
+	}
+	if wan4, hasWAN4 := findCheck(rep4.Checks, "tg_mtproto_wan_ip"); hasWAN4 {
+		t.Fatalf("did not expect tg_mtproto_wan_ip on public WAN: %+v", wan4)
+	}
+}

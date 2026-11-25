@@ -942,17 +942,17 @@ describe('externalAccessModel', () => {
 		expect(isGrayIPNetwork({})).toBe(false);
 
 		// 2. isCloudKeenDNSHost
-		expect(isCloudKeenDNSHost('vinvanvlad-dacha.crazedns.ru', 'vinvanvlad-dacha.crazedns.ru', false)).toBe(
+		expect(isCloudKeenDNSHost('dacha.example.keenetic.pro', 'dacha.example.keenetic.pro', false)).toBe(
 			true
 		);
 		expect(
-			isCloudKeenDNSHost('  Connect.VINVANVLAD-DACHA.CRAZEDNS.RU. ', 'vinvanvlad-dacha.crazedns.ru', false)
+			isCloudKeenDNSHost('  Connect.DACHA.EXAMPLE.KEENETIC.PRO. ', 'dacha.example.keenetic.pro', false)
 		).toBe(true);
-		expect(isCloudKeenDNSHost('vinvanvlad-dacha.crazedns.ru', 'vinvanvlad-dacha.crazedns.ru', true)).toBe(
+		expect(isCloudKeenDNSHost('dacha.example.keenetic.pro', 'dacha.example.keenetic.pro', true)).toBe(
 			false
 		);
-		expect(isCloudKeenDNSHost('203.0.113.10', 'vinvanvlad-dacha.crazedns.ru', false)).toBe(false);
-		expect(isCloudKeenDNSHost('', 'vinvanvlad-dacha.crazedns.ru', false)).toBe(false);
+		expect(isCloudKeenDNSHost('203.0.113.10', 'dacha.example.keenetic.pro', false)).toBe(false);
+		expect(isCloudKeenDNSHost('', 'dacha.example.keenetic.pro', false)).toBe(false);
 
 		// 3. pickDefaultKeenDNSActionMode priority: existing > create > manual
 		expect(
@@ -971,8 +971,8 @@ describe('externalAccessModel', () => {
 		cloudDual.tgScenario = 'dual';
 		cloudDual.originType = 'cloud_address';
 		cloudDual.keendnsMode = 'create';
-		cloudDual.publicDomain = 'connect.vinvanvlad-dacha.crazedns.ru';
-		cloudDual.originHost = 'connect.vinvanvlad-dacha.crazedns.ru';
+		cloudDual.publicDomain = 'connect.dacha.example.keenetic.pro';
+		cloudDual.originHost = 'connect.dacha.example.keenetic.pro';
 		cloudDual.directHost = '';
 		expect(resolveEffectiveMtprotoDirectHost(cloudDual)).toBe('');
 		expect(buildPlanRequestFromDraft(cloudDual).direct_host).toBe('');
@@ -984,8 +984,10 @@ describe('externalAccessModel', () => {
 
 		cloudDual.directHost = '';
 		cloudDual.keendnsMode = 'manual';
+		const freshDraft = createInitialWizardDraft({});
+		expect(freshDraft.confirmDirectBehindNAT).toBe(false);
 		expect(resolveEffectiveMtprotoDirectHost(cloudDual)).toBe(
-			'connect.vinvanvlad-dacha.crazedns.ru'
+			'connect.dacha.example.keenetic.pro'
 		);
 	});
 });

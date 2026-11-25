@@ -5,6 +5,7 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import type { TgWebProxyConfig, TgWebProxyStatus, TelegramUpstream, WebProxyEndpoint } from '$lib/types';
+	import type { KeenDNSDiscovery } from '$lib/types/serverWizard';
 	import { Button, Modal } from '$lib/components/ui';
 	import TgProxySettingsGeneral from './TgProxySettingsGeneral.svelte';
 	import TgProxySecurityPane from './TgProxySecurityPane.svelte';
@@ -26,6 +27,7 @@
 		config: TgWebProxyConfig | null;
 		status: TgWebProxyStatus | null;
 		egressOptions: EgressChoice[];
+		keendnsInfo?: KeenDNSDiscovery | null;
 		egressSummaryLabel: string;
 		cardFingerprint: string;
 		onOpenDispatcher?: () => void;
@@ -41,6 +43,7 @@
 		config,
 		status,
 		egressOptions,
+		keendnsInfo = null,
 		egressSummaryLabel,
 		cardFingerprint,
 		onOpenDispatcher,
@@ -212,7 +215,7 @@
 		</div>
 
 		{#if settingsTab === 'general'}
-			<TgProxySettingsGeneral bind:editConfig bind:editUpstreams {egressOptions} {onrequestreset} />
+			<TgProxySettingsGeneral bind:editConfig bind:editUpstreams {egressOptions} {keendnsInfo} {onrequestreset} />
 		{:else if settingsTab === 'security'}
 			<TgProxySecurityPane {status} onchanged={onstatus} />
 		{:else if settingsTab === 'diagnostics'}
