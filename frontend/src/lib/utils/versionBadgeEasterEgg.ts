@@ -1,8 +1,9 @@
 import { m } from '$lib/i18n';
 import { get } from 'svelte/store';
+import { goto } from '$app/navigation';
 import { experimentalSettingsUnlocked } from '$lib/stores/experimentalSettingsUnlocked';
 import { poniesUnlocked } from '$lib/stores/poniesUnlocked';
-import { settingsUpdateHighlight } from '$lib/stores/settingsUpdateHighlight';
+import { UPDATE_SETTINGS_HREF } from './settingsLink';
 import { notifications } from '$lib/stores/notifications';
 import type { UsageLevel } from '$lib/types/usageLevel';
 
@@ -42,12 +43,7 @@ export function handleVersionBadgeClick(options: {
 	}
 
 	if (hasUpdate) {
-		settingsUpdateHighlight.pulse();
-		if (typeof window !== 'undefined') {
-			window.requestAnimationFrame(() => {
-				document.getElementById('awgm-update')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-			});
-		}
+		void goto(UPDATE_SETTINGS_HREF);
 	}
 
 	if (usageLevel === 'expert') {

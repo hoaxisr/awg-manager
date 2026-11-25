@@ -14,12 +14,10 @@ vi.mock('$lib/stores/notifications', () => ({
 	},
 }));
 
-vi.mock('$lib/stores/settingsUpdateHighlight', () => ({
-	settingsUpdateHighlight: { pulse: vi.fn() },
-}));
+vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 
 import { notifications } from '$lib/stores/notifications';
-import { settingsUpdateHighlight } from '$lib/stores/settingsUpdateHighlight';
+import { goto } from '$app/navigation';
 
 describe('handleVersionBadgeClick', () => {
 	beforeEach(() => {
@@ -30,13 +28,13 @@ describe('handleVersionBadgeClick', () => {
 
 	it('ignores clicks outside settings', () => {
 		handleVersionBadgeClick({ usageLevel: 'expert', hasUpdate: true, onSettingsPage: false });
-		expect(settingsUpdateHighlight.pulse).not.toHaveBeenCalled();
+		expect(goto).not.toHaveBeenCalled();
 		expect(notifications.info).not.toHaveBeenCalled();
 	});
 
-	it('highlights update block on settings when update is available', () => {
+	it('opens the update block on settings when update is available', () => {
 		handleVersionBadgeClick({ usageLevel: 'basic', hasUpdate: true, onSettingsPage: true });
-		expect(settingsUpdateHighlight.pulse).toHaveBeenCalledOnce();
+		expect(goto).toHaveBeenCalledExactlyOnceWith('/settings#awgm-update');
 	});
 
 	it('shows countdown from the 7th click in expert mode', () => {

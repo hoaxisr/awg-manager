@@ -7,8 +7,9 @@
     2. Фронт уходит на новый origin, унося одноразовый токен в URL-фрагменте
        (#listen-confirm=...) — cookie сессии привязана к хосту и смену
        интерфейса не переживает, токен аутентифицирует confirm сам.
-    3. Эта же карточка на новой странице настроек в onMount видит фрагмент,
-       зовёт POST /server/listen/confirm — бэкенд гасит откат и персистит.
+    3. Новая страница настроек видит фрагмент (resolveSettingsLink) и зовёт
+       POST /server/listen/confirm — бэкенд гасит откат и персистит. Зовёт
+       страница, а не карточка: карточка смонтирована только на своей вкладке.
        Не дошли (адрес недоступен) — бэкенд сам откатывается к старому.
 
   Листенер 127.0.0.1 держится всегда (реверс-прокси NDMS, health-пробы,
@@ -16,7 +17,6 @@
   Пустой список интерфейсов = все (0.0.0.0).
 -->
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { m, formatLocale } from '$lib/i18n';
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
@@ -91,23 +91,6 @@
 		selected = [...listen.interfaces];
 		touched = false;
 	}
-
-	onMount(async () => {
-		// Токен подтверждения из URL-фрагмента — мы только что приехали со
-		// старого origin после живой смены адреса. Confirm всегда, даже если
-		// UI порта/интерфейсов скрыт уровнем использования.
-		const hashMatch = window.location.hash.match(/listen-confirm=([0-9a-f]{16,})/);
-		if (!hashMatch) return;
-		history.replaceState(null, '', window.location.pathname + window.location.search);
-		try {
-			await api.serverListenConfirm(hashMatch[1]);
-			notifications.success(m.settings_http_confirmed_saved());
-		} catch (e) {
-			notifications.error(
-				m.settings_http_confirm_failed({ error: e instanceof Error ? e.message : String(e) }),
-			);
-		}
-	});
 
 	// Данные и UI — только на «Продвинутом»; подгружаем при появлении уровня.
 	$effect(() => {

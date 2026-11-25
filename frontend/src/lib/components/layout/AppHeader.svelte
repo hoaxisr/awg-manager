@@ -9,6 +9,7 @@
 	import type { ThemeState } from '$lib/stores/theme';
 	import { isAppearanceSettingsVisible, isSectionVisible, type Section } from '$lib/types/usageLevel';
 	import { handleVersionBadgeClick } from '$lib/utils/versionBadgeEasterEgg';
+	import { UPDATE_SETTINGS_HREF } from '$lib/utils/settingsLink';
 	import { m } from '$lib/i18n';
 	import { Sun, Moon, Heart, LogOut, X, Menu, Terminal, ChevronRight } from 'lucide-svelte';
 
@@ -177,7 +178,7 @@
 					{#if currentVersion}
 						{#if hasUpdate && authenticated && !onSettingsPage}
 							<a
-								href="/settings"
+								href={UPDATE_SETTINGS_HREF}
 								class="version-badge version-clickable"
 								class:version-update-stable={!isPreRelease}
 								class:version-update-prerelease={isPreRelease}

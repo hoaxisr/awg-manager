@@ -1,14 +1,14 @@
 <script lang="ts">
-	import { onMount } from "svelte";
+	import { onMount, tick, untrack } from "svelte";
 	import { startVisiblePoll } from '$lib/utils/visiblePoll';
 	import { get } from "svelte/store";
-	import { afterNavigate } from "$app/navigation";
+	import { goto } from "$app/navigation";
 	import { page } from "$app/stores";
 	import { api } from "$lib/api/client";
 	import { notifications } from "$lib/stores/notifications";
 	import { singboxStatus } from "$lib/stores/singbox";
 	import { PageContainer, PageHeader, LoadingSpinner } from "$lib/components/layout";
-	import { Toggle, Button, SegmentedControl } from "$lib/components/ui";
+	import { Tabs, Toggle, SegmentedControl } from "$lib/components/ui";
 	import {
 		SystemInfoGrid,
 		LoggingSettings,
@@ -58,7 +58,13 @@
 	import { m } from "$lib/i18n";
 	import { hasDevelopChannelQuizPassed } from "$lib/utils/developChannelGate";
 	import { experimentalSettingsUnlocked } from "$lib/stores/experimentalSettingsUnlocked";
-	import { settingsUpdateHighlight } from "$lib/stores/settingsUpdateHighlight";
+	import {
+		resolveSettingsLink,
+		revealSettingsTarget,
+		settingsTabHref,
+		type SettingsLink,
+		type SettingsTab,
+	} from "$lib/utils/settingsLink";
 	import {
 		CircleArrowDown,
 		CloudDownload,
@@ -66,9 +72,62 @@
 	} from "lucide-svelte";
 	import { downloadErrorToText } from "$lib/utils/downloadError";
 
-	const expandUsageLevel = $derived($page.url.searchParams.has('mode'));
-	const highlightFeedbackFab = $derived($page.url.searchParams.has('feedbackFab'));
-	const highlightDownloads = $derived($page.url.searchParams.get('highlight') === 'downloads');
+	let activeTab = $state<SettingsTab>(resolveSettingsLink($page.url)?.tab ?? 'general');
+	const tabs = $derived([
+		{ id: 'general', label: m.settings_tab_general() },
+		{ id: 'updates', label: m.settings_tab_updates() },
+		{ id: 'components', label: m.settings_tab_components() },
+		{ id: 'access', label: m.settings_tab_access() },
+		{ id: 'logs', label: m.settings_tab_logs() },
+		{ id: 'system', label: m.settings_tab_system() },
+	] satisfies Array<{ id: SettingsTab; label: string }>);
+	/** Блок, к которому привела глубокая ссылка; до ручной смены вкладки. */
+	let target = $state.raw<SettingsLink | null>(null);
+	let confirmedToken = '';
+
+	// Глубокая ссылка — разовое событие: открыли вкладку, запомнили блок и
+	// убрали её из адреса, иначе она возвращала бы на свою вкладку при каждом
+	// переключении. Токен подтверждения адреса панели обязан уйти на бэкенд с
+	// любой вкладки и до загрузки настроек: не дойдёт — адрес откатится.
+	$effect(() => {
+		const url = $page.url;
+		const link = url.pathname === '/settings' ? resolveSettingsLink(url) : null;
+		if (link) void untrack(() => followLink(link));
+	});
+
+	async function followLink(link: SettingsLink) {
+		if (link.listenConfirm && link.listenConfirm !== confirmedToken) {
+			confirmedToken = link.listenConfirm;
+			void confirmListenChange(link.listenConfirm);
+		}
+		activeTab = link.tab;
+		target = link;
+		// Сначала Tabs дописывает в адрес вкладку, затем ссылка уходит целиком.
+		await tick();
+		await goto(settingsTabHref(link.tab), { replaceState: true, noScroll: true, keepFocus: true });
+	}
+
+	async function confirmListenChange(token: string) {
+		try {
+			await api.serverListenConfirm(token);
+			notifications.success(m.settings_http_confirmed_saved());
+		} catch (e) {
+			notifications.error(
+				m.settings_http_confirm_failed({ error: e instanceof Error ? e.message : String(e) }),
+			);
+		}
+	}
+
+	$effect(() => {
+		const anchor = target?.anchor;
+		if (loading || !anchor) return;
+		void tick().then(() => requestAnimationFrame(() => revealSettingsTarget(anchor)));
+	});
+
+	function selectTab(id: string) {
+		activeTab = id as SettingsTab;
+		target = null;
+	}
 
 	let systemInfo: SystemInfo | null = $state(null);
 	let settings = $state<Settings | null>(null);
@@ -158,23 +217,6 @@
 		);
 	}
 
-	function scrollToSettingsHashTarget() {
-		if (typeof window === "undefined") return;
-		if (window.location.hash !== "#downloads") return;
-		window.requestAnimationFrame(() => {
-			const target = document.getElementById("downloads");
-			target?.scrollIntoView({ behavior: "smooth", block: "start" });
-		});
-	}
-
-	function scrollToFeedbackFabSetting() {
-		if (typeof window === "undefined") return;
-		if (!highlightFeedbackFab) return;
-		window.requestAnimationFrame(() => {
-			document.getElementById("feedback-fab")?.scrollIntoView({ behavior: "smooth", block: "center" });
-		});
-	}
-
 onMount(() => {
 	// Свой таймер мимо стора sysInfo. Данные тут почти статичные: версии,
 	// возможности прошивки, состояние kernel-модуля. Всё, что меняется,
@@ -191,7 +233,6 @@ onMount(() => {
 			]);
 			settings = appSettings;
 			setGlobalSettings(appSettings);
-			scrollToSettingsHashTarget();
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : m.settings_page_load_failed());
 		} finally {
@@ -405,27 +446,6 @@ $effect(() => {
 	async function refreshSystemInfo() {
 		await fetchSystemInfo(false);
 	}
-
-	let feedbackFabScrolled = $state(false);
-
-	afterNavigate(async ({ to, from }) => {
-		if (!to?.url || to.url.pathname !== "/settings") return;
-		if (!from?.url || from.url.pathname !== "/settings") {
-			await fetchSystemInfo(true);
-		}
-		scrollToSettingsHashTarget();
-		scrollToFeedbackFabSetting();
-	});
-
-	$effect(() => {
-		if (!highlightFeedbackFab) {
-			feedbackFabScrolled = false;
-			return;
-		}
-		if (loading || !settings || feedbackFabScrolled) return;
-		feedbackFabScrolled = true;
-		scrollToFeedbackFabSetting();
-	});
 </script>
 
 <svelte:head>
@@ -434,191 +454,211 @@ $effect(() => {
 
 <PageContainer width="full">
 	<PageHeader title={m.nav_settings()} />
+	<Tabs {tabs} active={activeTab} onchange={selectTab} urlParam="tab" defaultTab="general" />
 	{#if loading}
 		<div class="flex justify-center py-8">
 			<LoadingSpinner size="md" />
 		</div>
-	{:else if settings && systemInfo}
+	{:else if settings}
 		<div class="settings-layout">
-		<div class="settings-grid">
-			<aside class="settings-left">
-				<div class="settings-left-sticky">
-				<SystemInfoGrid
-					{systemInfo}
-					usageLevel={settings.usageLevel}
-					onrefresh={refreshSystemInfo}
-					refreshing={systemInfoRefreshing}
-					lastUpdated={systemInfoUpdatedAt}
-				/>
-
-				<div id="awgm-update" class="settings-block">
-					<div class="card settings-highlight-target" class:highlighted={$settingsUpdateHighlight}>
-						<SettingsSectionLabel label={m.settings_page_update_section_title()} icon={CircleArrowDown} tone="green" header />
-						<UpdateSection bind:updateInfo bind:settings />
+			{#if activeTab === 'general'}
+				<div class="settings-columns">
+					<div class="settings-column">
+						<UsageLevelCard
+							value={settings.usageLevel}
+							{saving}
+							onSelect={selectUsageLevel}
+							initialExpanded={target?.anchor === 'usage-level'}
+						/>
+						<ServiceActionsCard showSingbox={showSingboxIntegration} />
+						{#if $usageLevel === 'expert' && $experimentalSettingsUnlocked}
+							<ExperimentalSettingsCard />
+						{/if}
+					</div>
+					{#if isAppearanceSettingsVisible(settings.usageLevel)}
+						<div class="settings-column">
+							<ThemeSchemeCard />
+						</div>
+					{/if}
+				</div>
+			{:else if activeTab === 'updates'}
+				<div class="settings-columns">
+					<div class="settings-column">
+						<div id="awgm-update" class="settings-block">
+							<div class="card">
+								<SettingsSectionLabel label={m.settings_page_update_section_title()} icon={CircleArrowDown} tone="green" header />
+								<UpdateSection bind:updateInfo bind:settings />
+							</div>
+						</div>
+					</div>
+					<div class="settings-column">
+						<div class="settings-block">
+							<div class="card">
+							<SettingsSectionLabel label={m.settings_page_downloads_title()} icon={CloudDownload} tone="orange" header />
+							<div class="setting-row toggle-inline-row">
+								<div class="flex flex-col gap-1">
+									<span class="font-medium">{m.settings_page_update_check_label()}</span>
+									<span class="setting-description">{m.settings_page_update_check_description()}</span>
+								</div>
+								<Toggle
+									checked={settings.updates.checkEnabled}
+									controlled
+									onchange={toggleUpdateCheck}
+									disabled={saving}
+								/>
+							</div>
+							{#if systemInfo?.isOS5 && showDnsRouteCard}
+								<DnsRouteSettings
+									{settings}
+									{saving}
+									onToggle={toggleDnsAutoRefresh}
+									onSave={saveDnsRouteSettings}
+								/>
+							{/if}
+							{#if isUpdateChannelSwitchVisible(settings.usageLevel)}
+								<div class="setting-row">
+									<div class="flex flex-col gap-1">
+										<span class="font-medium">{m.settings_page_channel_label()}</span>
+										<span class="setting-description">
+											{m.settings_page_channel_description()}
+										</span>
+									</div>
+									<SegmentedControl
+										value={settings.updates.channel}
+										options={[
+											{ value: 'stable', label: m.settings_page_channel_option_stable() },
+											{ value: 'develop', label: m.settings_page_channel_option_develop() },
+										] satisfies Array<{ value: 'stable' | 'develop'; label: string }>}
+										ariaLabel={m.settings_page_channel_label()}
+										disabled={saving}
+										onchange={(channel) => requestChannel(channel)}
+									/>
+								</div>
+							{/if}
+							{#if showDownloadRouteDetails}
+									<DownloadSettings
+										bind:settings
+										{saving}
+										outbounds={$downloadOutbounds}
+										loading={$downloadOutboundsLoading}
+										error={$downloadOutboundsError}
+										onRefresh={refreshDownloadOutbounds}
+										onSelectRoute={selectDownloadRoute}
+									/>
+							{/if}
+							</div>
+						</div>
 					</div>
 				</div>
-
-				<IntegrationsSection
-					showSingbox={showSingboxIntegration}
-					bootstrapDNS={settings.singboxBootstrapDNS ?? ''}
-					bootstrapSaving={savingBootstrapDNS}
-					onsaveBootstrapDNS={saveBootstrapDNS}
-					clashPort={settings.singboxClashPort ?? 0}
-					clashPortSaving={savingClashPort}
-					{clashPortError}
-					onsaveClashPort={saveClashPort}
-				/>
-
-				<FircIntegrationSection />
-
+			{:else if activeTab === 'components'}
+				<div class="settings-columns">
+					<div class="settings-column">
+						<IntegrationsSection
+							showSingbox={showSingboxIntegration}
+							bootstrapDNS={settings.singboxBootstrapDNS ?? ''}
+							bootstrapSaving={savingBootstrapDNS}
+							onsaveBootstrapDNS={saveBootstrapDNS}
+							clashPort={settings.singboxClashPort ?? 0}
+							clashPortSaving={savingClashPort}
+							{clashPortError}
+							onsaveClashPort={saveClashPort}
+						/>
+					</div>
+					<div class="settings-column">
+						<FircIntegrationSection />
+						{#if $usageLevel === 'expert'}
+							<ObfuscatorRelayCard
+								process={settings.obfuscatorRelayProcess ?? false}
+								tripped={settings.obfuscatorKmodTripped ?? ''}
+								{saving}
+								ontoggle={toggleObfuscatorRelay}
+							/>
+						{/if}
+					</div>
 				</div>
-			</aside>
-
-			<main class="settings-right">
-			<UsageLevelCard
-				value={settings.usageLevel}
-				{saving}
-				onSelect={selectUsageLevel}
-				initialExpanded={expandUsageLevel}
-				highlighted={expandUsageLevel}
-			/>
-
-			{#if isAppearanceSettingsVisible(settings.usageLevel)}
-				<ThemeSchemeCard />
+			{:else if activeTab === 'access'}
+				<div class="settings-columns">
+					<div class="settings-column">
+						<AccessCard
+							authEnabled={settings.authEnabled}
+							sessionTtlHours={settings.sessionTtlHours}
+							{saving}
+							ontoggleAuth={toggleAuth}
+							onsaveSessionTtl={saveSessionTtl}
+						/>
+					</div>
+					{#if $usageLevel === 'expert'}
+						<div class="settings-column">
+							<AdvancedCard
+								apiKey={settings.apiKey}
+								{origin}
+								{saving}
+								showFeedback={settings.updates.channel === 'develop'}
+								showNdmsProxy={singboxInstalled && showSingboxIntegration}
+												ongenerateApiKey={generateApiKey}
+							/>
+							<McpSection
+								enabled={settings.mcpEnabled ?? false}
+								{saving}
+								{origin}
+								ontoggle={toggleMcp}
+							/>
+						</div>
+					{/if}
+				</div>
+			{:else if activeTab === 'logs'}
+				<div class="settings-columns">
+					<div class="settings-column">
+						<div class="settings-block">
+							<div class="card">
+							<SettingsSectionLabel label={m.settings_page_logging_title()} icon={ScrollText} tone="slate" header />
+							<LoggingSettings
+								{settings}
+								{saving}
+								onToggle={toggleLogging}
+								onSave={saveLoggingSettings}
+							/>
+							</div>
+						</div>
+					</div>
+					{#if $usageLevel === 'expert'}
+						<div class="settings-column">
+							<PingTargetsCard
+								target={settings.pingCheck.defaults.target}
+								url={settings.connectivityCheckUrl}
+								{saving}
+								onsave={savePingTargetsSettings}
+							/>
+						</div>
+					{/if}
+				</div>
+			{:else if activeTab === 'system'}
+				<div class="settings-columns">
+					<div class="settings-column">
+						{#if systemInfo}
+							<SystemInfoGrid
+								{systemInfo}
+								usageLevel={settings.usageLevel}
+								onrefresh={refreshSystemInfo}
+								refreshing={systemInfoRefreshing}
+								lastUpdated={systemInfoUpdatedAt}
+							/>
+						{/if}
+					</div>
+					<div class="settings-column">
+						<div class="settings-block" id="settings-backup">
+							<BackupRestoreCard />
+						</div>
+					</div>
+				</div>
 			{/if}
 
-				<AccessCard
-					authEnabled={settings.authEnabled}
-					sessionTtlHours={settings.sessionTtlHours}
-					{saving}
-					ontoggleAuth={toggleAuth}
-					onsaveSessionTtl={saveSessionTtl}
-				/>
-
-				<div class="settings-block">
-					<div class="card">
-					<SettingsSectionLabel label={m.settings_page_downloads_title()} icon={CloudDownload} tone="orange" header />
-					<div class="setting-row toggle-inline-row">
-						<div class="flex flex-col gap-1">
-							<span class="font-medium">{m.settings_page_update_check_label()}</span>
-							<span class="setting-description">{m.settings_page_update_check_description()}</span>
-						</div>
-						<Toggle
-							checked={settings.updates.checkEnabled}
-							controlled
-							onchange={toggleUpdateCheck}
-							disabled={saving}
-						/>
-					</div>
-					{#if systemInfo.isOS5 && showDnsRouteCard}
-						<DnsRouteSettings
-							{settings}
-							{saving}
-							onToggle={toggleDnsAutoRefresh}
-							onSave={saveDnsRouteSettings}
-						/>
-					{/if}
-					{#if isUpdateChannelSwitchVisible(settings.usageLevel)}
-						<div class="setting-row">
-							<div class="flex flex-col gap-1">
-								<span class="font-medium">{m.settings_page_channel_label()}</span>
-								<span class="setting-description">
-									{m.settings_page_channel_description()}
-								</span>
-							</div>
-							<SegmentedControl
-								value={settings.updates.channel}
-								options={[
-									{ value: 'stable', label: m.settings_page_channel_option_stable() },
-									{ value: 'develop', label: m.settings_page_channel_option_develop() },
-								] satisfies Array<{ value: 'stable' | 'develop'; label: string }>}
-								ariaLabel={m.settings_page_channel_label()}
-								disabled={saving}
-								onchange={(channel) => requestChannel(channel)}
-							/>
-						</div>
-					{/if}
-					{#if showDownloadRouteDetails}
-						<div class="settings-highlight-target" class:highlighted={highlightDownloads}>
-							<DownloadSettings
-								bind:settings
-								{saving}
-								outbounds={$downloadOutbounds}
-								loading={$downloadOutboundsLoading}
-								error={$downloadOutboundsError}
-								onRefresh={refreshDownloadOutbounds}
-								onSelectRoute={selectDownloadRoute}
-							/>
-						</div>
-					{/if}
-					</div>
+			<div class="settings-doc-block" id="settings-footer-block">
+				<div class="settings-footer-patrol-host" bind:clientWidth={footerPatrolWidth}>
+					<PukhososPatrol trackWidth={footerPatrolWidth} />
+					<SettingsFooter />
 				</div>
-
-				<div class="settings-block">
-					<div class="card">
-					<SettingsSectionLabel label={m.settings_page_logging_title()} icon={ScrollText} tone="slate" header />
-					<LoggingSettings
-						{settings}
-						{saving}
-						onToggle={toggleLogging}
-						onSave={saveLoggingSettings}
-					/>
-					</div>
-				</div>
-
-				{#if $usageLevel === "expert"}
-				<PingTargetsCard
-					target={settings.pingCheck.defaults.target}
-					url={settings.connectivityCheckUrl}
-					{saving}
-					onsave={savePingTargetsSettings}
-				/>
-
-				<AdvancedCard
-					apiKey={settings.apiKey}
-					{origin}
-					{saving}
-					showFeedback={settings.updates.channel === 'develop'}
-					showNdmsProxy={singboxInstalled && showSingboxIntegration}
-					highlighted={highlightFeedbackFab}
-					ongenerateApiKey={generateApiKey}
-				/>
-
-				<McpSection
-					enabled={settings.mcpEnabled ?? false}
-					{saving}
-					{origin}
-					ontoggle={toggleMcp}
-				/>
-
-				<ObfuscatorRelayCard
-					process={settings.obfuscatorRelayProcess ?? false}
-					tripped={settings.obfuscatorKmodTripped ?? ''}
-					{saving}
-					ontoggle={toggleObfuscatorRelay}
-				/>
-
-				{#if $experimentalSettingsUnlocked}
-					<ExperimentalSettingsCard />
-				{/if}
-				{/if}
-
-				<div class="settings-block" id="settings-backup">
-					<BackupRestoreCard />
-				</div>
-			</main>
-		</div>
-
-		<ServiceActionsCard
-			showSingbox={showSingboxIntegration}
-		/>
-
-		<div class="settings-doc-block" id="settings-footer-block">
-			<div class="settings-footer-patrol-host" bind:clientWidth={footerPatrolWidth}>
-				<PukhososPatrol trackWidth={footerPatrolWidth} />
-				<SettingsFooter />
 			</div>
-		</div>
 		</div>
 	{/if}
 
@@ -633,39 +673,6 @@ $effect(() => {
 </PageContainer>
 
 <style>
-	/* Сетка страницы настроек — базовый layout/gap в app.css (.settings-layout) */
-
-	.settings-doc-block {
-		margin-top: 0;
-	}
-
-	.settings-grid {
-		display: grid;
-		grid-template-columns: 360px 1fr;
-		gap: var(--settings-gap);
-		align-items: stretch;
-	}
-
-	.settings-left,
-	.settings-right {
-		display: flex;
-		flex-direction: column;
-		gap: var(--settings-gap);
-		min-width: 0;
-	}
-
-	/* Parent stretches with the grid; sticky lives on the inner block so
-	   the sidebar stays pinned for the whole right column, then leaves
-	   with the grid (Actions / footer below). No nested scroll. */
-	.settings-left-sticky {
-		display: flex;
-		flex-direction: column;
-		gap: var(--settings-gap);
-		position: sticky;
-		top: calc(56px + 0.75rem);
-		width: 100%;
-	}
-
 	.settings-footer-patrol-host {
 		position: relative;
 		overflow: visible;
@@ -685,14 +692,5 @@ $effect(() => {
 			min-width: 0;
 		}
 
-	}
-
-	@media (max-width: 900px) {
-		.settings-grid {
-			grid-template-columns: 1fr;
-		}
-		.settings-left-sticky {
-			position: static;
-		}
 	}
 </style>

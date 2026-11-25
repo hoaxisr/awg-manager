@@ -99,6 +99,7 @@
   import { Badge, StatusDot, Modal, Button } from '$lib/components/ui';
   import { formatRelativeTime } from '$lib/utils/format';
   import { usageLevel } from '$lib/stores/settings';
+  import { LOGGING_SETTINGS_HREF } from '$lib/utils/settingsLink';
   import { systemInfo } from '$lib/stores/system';
 
   interface Props {
@@ -271,7 +272,7 @@
     </span>
 
     <span class="buffer-meta" title={m.diag_logs_buffer_title()}>
-      <a class="buffer-link" href="/settings#logging">
+      <a class="buffer-link" href={LOGGING_SETTINGS_HREF}>
         {bufferStats.size}/{bufferStats.capacity}
       </a>
       {#if oldestRel}

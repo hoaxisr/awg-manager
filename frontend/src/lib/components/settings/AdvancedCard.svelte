@@ -25,11 +25,10 @@
 		/** Тумблер кнопки отзыва — только на канале develop. */
 		showFeedback: boolean;
 		showNdmsProxy: boolean;
-		highlighted?: boolean;
 		ongenerateApiKey: () => void;
 	}
 
-	let { apiKey, origin, saving = false, showFeedback, showNdmsProxy, highlighted = false, ongenerateApiKey }: Props = $props();
+	let { apiKey, origin, saving = false, showFeedback, showNdmsProxy, ongenerateApiKey }: Props = $props();
 
 	let showHappKeysModal = $state(false);
 
@@ -90,8 +89,7 @@
 <div class="settings-block">
 	<div
 		id="feedback-fab"
-		class="card settings-highlight-target"
-		class:highlighted
+		class="card"
 	>
 	<SettingsSectionLabel label={m.settings_page_advanced_title()} icon={Wrench} tone="indigo" header />
 	<div class="setting-row api-key-setting">

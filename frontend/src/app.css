@@ -759,6 +759,21 @@ label {
 	gap: var(--settings-gap);
 }
 
+/* Вкладка настроек: две колонки равной ширины; единственная занимает строку. */
+.settings-columns {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr));
+	align-items: start;
+	gap: var(--settings-gap);
+}
+
+.settings-column {
+	display: flex;
+	flex-direction: column;
+	gap: var(--settings-gap);
+	min-width: 0;
+}
+
 /* Shared text field for API/MCP keys (settings page + MCP card): monospace,
  * full width, wraps a long token. `input.` beats `.setting-row input` above. */
 input.api-key-input {

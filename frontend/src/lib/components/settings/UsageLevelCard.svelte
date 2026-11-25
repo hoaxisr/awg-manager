@@ -13,10 +13,9 @@
 		saving: boolean;
 		onSelect: (level: UsageLevel) => void | Promise<void>;
 		initialExpanded?: boolean;
-		highlighted?: boolean;
 	}
 
-	let { value, saving, onSelect, initialExpanded = false, highlighted = false }: Props = $props();
+	let { value, saving, onSelect, initialExpanded = false }: Props = $props();
 
 	type LevelOption = {
 		value: UsageLevel;
@@ -89,7 +88,7 @@
 </script>
 
 <div class="settings-block">
-	<div class="card" class:highlighted>
+	<div class="card" id="usage-level">
 	<SettingsSectionLabel label={m.settings_general()} icon={SlidersHorizontal} tone="slate" header />
 	<!-- Карточка «Внешний вид» (там язык и формат даты) скрыта ниже её уровня — язык должен быть доступен всегда. -->
 	{#if !isAppearanceSettingsVisible(value)}
@@ -409,22 +408,6 @@
 		border-radius: 999px;
 		background: var(--color-accent-tint);
 		color: var(--color-accent);
-	}
-
-
-
-	.card.highlighted {
-		animation: usage-level-glow 2.8s ease-out forwards;
-	}
-
-	@keyframes usage-level-glow {
-		0%   { box-shadow: none; }
-		12%  { box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 55%, transparent), 0 0 18px 2px color-mix(in srgb, var(--color-accent) 22%, transparent); }
-		30%  { box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 20%, transparent); }
-		48%  { box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 40%, transparent), 0 0 14px 2px color-mix(in srgb, var(--color-accent) 15%, transparent); }
-		65%  { box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 15%, transparent); }
-		82%  { box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 22%, transparent), 0 0 8px 1px color-mix(in srgb, var(--color-accent) 10%, transparent); }
-		100% { box-shadow: none; }
 	}
 
 	@media (max-width: 640px) {
