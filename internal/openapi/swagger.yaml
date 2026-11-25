@@ -8248,6 +8248,11 @@ definitions:
     type: object
   autolistdetect.Candidate:
     properties:
+      clientIP:
+        description: 'Клиент, чей трафик вызвал решение: IP и MAC из заголовка кадра.'
+        type: string
+      clientMAC:
+        type: string
       correlationID:
         type: string
       coverage:
@@ -8306,6 +8311,11 @@ definitions:
       action:
         type: string
       at:
+        type: string
+      clientIP:
+        description: Клиент, чей трафик вызвал решение. Пусто у старых записей журнала.
+        type: string
+      clientMAC:
         type: string
       domain:
         type: string

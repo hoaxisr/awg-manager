@@ -78,10 +78,11 @@ func (e *Engine) resolveTunnel(ctx context.Context, cfg config.Config) (awgm.Tun
 // configuration change, a WAN outage or a budget change cannot slip between
 // the checks and the write:
 //   - tunnel probe enabled, AutoAdd enabled and tunnel verdict reachable;
+//   - not a manual recheck: the decision belongs to the user;
 //   - current decision generation;
 //   - fresh WAN reachable on the same direct path;
 //   - budget: at most 50 actual new additions in the rolling hour.
-func (e *Engine) autoAdd(att *attempt, cand *model.Candidate, directPath awgm.DirectPath) bool {
+func (e *Engine) autoAdd(att *attempt, cand *model.Candidate, directPath awgm.DirectPath, manual bool) bool {
 	if cand.Tunnel.Verdict != model.VerdictReachable {
 		return false
 	}
@@ -94,6 +95,10 @@ func (e *Engine) autoAdd(att *attempt, cand *model.Candidate, directPath awgm.Di
 	cfg := e.deps.Config.Config()
 	if !cfg.TunnelProbe || !cfg.AutoAdd {
 		refuse("autoAdd is disabled in configuration")
+		return false
+	}
+	if manual {
+		refuse("manual recheck: the decision belongs to the user")
 		return false
 	}
 	if e.deps.Writer == nil {
@@ -193,6 +198,8 @@ func historyEntry(cand model.Candidate, action, source, note string) model.Histo
 		Port:      cand.Target.Port,
 		Action:    action,
 		Source:    source,
+		ClientIP:  cand.ClientIP,
+		ClientMAC: cand.ClientMAC,
 		Interface: cand.TargetInterface,
 		Outbound:  cand.TargetOutbound,
 		Reason:    cand.Reason,

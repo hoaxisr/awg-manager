@@ -587,7 +587,7 @@ func (e *Engine) process(suspect capture.Suspect, recheckState model.CandidateSt
 		return
 	}
 
-	if tunnelResult.Verdict == model.VerdictReachable && e.autoAdd(att, &cand, directPath) {
+	if tunnelResult.Verdict == model.VerdictReachable && e.autoAdd(att, &cand, directPath, recheckState != "") {
 		return // the candidate is stored as added by autoAdd
 	}
 	e.publishDecision(att, key, cand, model.CandidateWaiting, true)

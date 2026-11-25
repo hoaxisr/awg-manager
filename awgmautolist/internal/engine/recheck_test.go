@@ -314,6 +314,34 @@ func TestRecheckAddedWithTunnelOff(t *testing.T) {
 	}
 }
 
+// TestRecheckDoesNotAutoAdd verifies that a manual recheck never writes a
+// rule on its own, even with autoAdd enabled: the decision belongs to the
+// user, so the candidate stays waiting and the writer is not called.
+func TestRecheckDoesNotAutoAdd(t *testing.T) {
+	h := newHarness(t, func(cfg *configConfig) { cfg.AutoAdd = true })
+	_, key := rejectedFixture(t, h)
+	h.probes.setDirect(key, model.VerdictBlocked)
+	h.probes.setTunnel(key, model.VerdictReachable)
+	h.probes.setWAN(model.VerdictReachable)
+
+	if err := h.engine.Recheck(context.Background(), key); err != nil {
+		t.Fatalf("recheck: %v", err)
+	}
+	updated, ok := h.candidate(key)
+	if !ok {
+		t.Fatal("candidate disappeared after recheck")
+	}
+	if updated.State != model.CandidateWaiting {
+		t.Fatalf("state=%s, want waiting: a manual recheck must not add the rule", updated.State)
+	}
+	if len(h.writer.adds) != 0 {
+		t.Fatalf("manual recheck must not write rules, adds=%v", h.writer.adds)
+	}
+	if used := h.engine.Status().AdditionsUsed; used != 0 {
+		t.Fatalf("additions used=%d, want 0", used)
+	}
+}
+
 // TestRecheckMissingID verifies the error for an unknown id.
 func TestRecheckMissingID(t *testing.T) {
 	h := newHarness(t, nil)

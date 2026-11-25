@@ -48,17 +48,20 @@ type Candidate struct {
 }
 
 type HistoryEntry struct {
-	At        time.Time `json:"at"`
-	Domain    string    `json:"domain,omitempty"`
-	Host      string    `json:"host,omitempty"`
-	IP        string    `json:"ip,omitempty"`
-	Network   Network   `json:"network,omitempty"`
-	Port      uint16    `json:"port,omitempty"`
-	Action    string    `json:"action"`
-	Source    string    `json:"source"`
-	Interface string    `json:"interface,omitempty"`
-	Outbound  string    `json:"outbound,omitempty"`
-	Reason    string    `json:"reason,omitempty"`
-	Why       string    `json:"why,omitempty"` // legacy history field
-	Result    string    `json:"result,omitempty"`
+	At      time.Time `json:"at"`
+	Domain  string    `json:"domain,omitempty"`
+	Host    string    `json:"host,omitempty"`
+	IP      string    `json:"ip,omitempty"`
+	Network Network   `json:"network,omitempty"`
+	Port    uint16    `json:"port,omitempty"`
+	Action  string    `json:"action"`
+	Source  string    `json:"source"`
+	// Клиент, чей трафик вызвал решение. Пусто у старых записей журнала.
+	ClientIP  string `json:"clientIP,omitempty"`
+	ClientMAC string `json:"clientMAC,omitempty"`
+	Interface string `json:"interface,omitempty"`
+	Outbound  string `json:"outbound,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+	Why       string `json:"why,omitempty"` // legacy history field
+	Result    string `json:"result,omitempty"`
 }

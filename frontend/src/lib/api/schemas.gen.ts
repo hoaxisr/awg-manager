@@ -2901,6 +2901,8 @@ const api_zapretStatusResponse: v.GenericSchema = v.looseObject({
 });
 
 const autolistdetect_Candidate: v.GenericSchema = v.looseObject({
+	clientIP: v.optional(v.nullable(v.string())),
+	clientMAC: v.optional(v.nullable(v.string())),
 	correlationID: v.optional(v.nullable(v.string())),
 	coverage: v.optional(v.nullable(v.lazy(() => autolistdetect_CoverageEvidence))),
 	direct: v.optional(v.nullable(v.lazy(() => autolistdetect_CheckEvidence))),
@@ -2935,6 +2937,8 @@ const autolistdetect_CoverageEvidence: v.GenericSchema = v.looseObject({
 const autolistdetect_HistoryEntry: v.GenericSchema = v.looseObject({
 	action: v.optional(v.nullable(v.string())),
 	at: v.optional(v.nullable(v.string())),
+	clientIP: v.optional(v.nullable(v.string())),
+	clientMAC: v.optional(v.nullable(v.string())),
 	domain: v.optional(v.nullable(v.string())),
 	host: v.optional(v.nullable(v.string())),
 	interface: v.optional(v.nullable(v.string())),
