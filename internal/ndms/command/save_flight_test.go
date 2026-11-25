@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -319,17 +320,19 @@ func TestSave_UptimeZero_Unknown(t *testing.T) {
 // Н5: обрыв позже t0 + fallback — полёт закрыт сразу (отрицательная
 // задержка). Мутация: AfterFunc только при d > 0 → ждёт потолок, красный.
 func TestSave_BusDownLate_ClosesNow(t *testing.T) {
-	p := &flightPoster{}
-	sc := newFlightSC(t, p)
-	sc.SetSaveTimings(5*time.Second, 30*time.Millisecond, 0)
-	sc.Request()
-	p.waitCalls(t, 1)
-	waitFlight(t, sc)
-	time.Sleep(80 * time.Millisecond)
-	ch := holdAsync(sc, context.Background())
-	requireBlocked(t, ch, 20*time.Millisecond, "шина жива, события нет")
-	sc.OnBusState(false)
-	requirePassed(t, ch, 200*time.Millisecond, "срок fallback прошёл")
+	synctest.Test(t, func(t *testing.T) {
+		p := &flightPoster{}
+		sc := newFlightSC(t, p)
+		sc.SetSaveTimings(5*time.Second, 30*time.Millisecond, 0)
+		sc.Request()
+		p.waitCalls(t, 1)
+		waitFlight(t, sc)
+		time.Sleep(80 * time.Millisecond)
+		ch := holdAsync(sc, context.Background())
+		requireBlocked(t, ch, 20*time.Millisecond, "шина жива, события нет")
+		sc.OnBusState(false)
+		requirePassed(t, ch, 200*time.Millisecond, "срок fallback прошёл")
+	})
 }
 
 // Н13: отмена ctx в ожидании — ошибка, удержание снято, следующий Request
@@ -372,23 +375,25 @@ func TestSave_EventWithoutFlight_NoOp(t *testing.T) {
 // Мутация: saved при POST → FlushPendingSave пропустит Flush при
 // незаконченной записи, красный.
 func TestSave_Epochs(t *testing.T) {
-	p := &flightPoster{}
-	sc := newFlightSC(t, p)
-	sc.Request()
-	p.waitCalls(t, 1)
-	waitFlight(t, sc)
-	if req, saved := sc.Epoch(); req != 1 || saved != 0 {
-		t.Fatalf("в полёте: %d/%d, ждали 1/0", req, saved)
-	}
-	sc.OnConfigurationSaved(104)
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		if _, saved := sc.Epoch(); saved == 1 {
-			return
+	synctest.Test(t, func(t *testing.T) {
+		p := &flightPoster{}
+		sc := newFlightSC(t, p)
+		sc.Request()
+		p.waitCalls(t, 1)
+		waitFlight(t, sc)
+		if req, saved := sc.Epoch(); req != 1 || saved != 0 {
+			t.Fatalf("в полёте: %d/%d, ждали 1/0", req, saved)
 		}
-		time.Sleep(time.Millisecond)
-	}
-	t.Fatal("saved не вырос после события")
+		sc.OnConfigurationSaved(104)
+		deadline := time.Now().Add(time.Second)
+		for time.Now().Before(deadline) {
+			if _, saved := sc.Epoch(); saved == 1 {
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+		t.Fatal("saved не вырос после события")
+	})
 }
 
 // Пока удержание держится, fire не стреляет; release взводит его.
@@ -417,24 +422,26 @@ func TestSave_HoldDefersFire(t *testing.T) {
 // Мутация: release взводит таймер при любом отпускании → fire зовётся под
 // внешним удержанием, красный.
 func TestSave_NestedHolds(t *testing.T) {
-	p := &flightPoster{}
-	sc := newFlightSC(t, p)
-	var fires atomic.Int32
-	sc.SetFireObserver(func(bool) { fires.Add(1) })
-	outer, _ := sc.HoldForRemoval(context.Background())
-	inner, _ := sc.HoldForRemoval(context.Background())
-	sc.Request()
-	deadline := time.Now().Add(time.Second)
-	for fires.Load() == 0 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	inner()
-	time.Sleep(50 * time.Millisecond)
-	if n := fires.Load(); n != 1 {
-		t.Fatalf("fire зван %d раз под внешним удержанием, ждали 1", n)
-	}
-	outer()
-	p.waitCalls(t, 1)
+	synctest.Test(t, func(t *testing.T) {
+		p := &flightPoster{}
+		sc := newFlightSC(t, p)
+		var fires atomic.Int32
+		sc.SetFireObserver(func(bool) { fires.Add(1) })
+		outer, _ := sc.HoldForRemoval(context.Background())
+		inner, _ := sc.HoldForRemoval(context.Background())
+		sc.Request()
+		deadline := time.Now().Add(time.Second)
+		for fires.Load() == 0 && time.Now().Before(deadline) {
+			time.Sleep(time.Millisecond)
+		}
+		inner()
+		time.Sleep(50 * time.Millisecond)
+		if n := fires.Load(); n != 1 {
+			t.Fatalf("fire зван %d раз под внешним удержанием, ждали 1", n)
+		}
+		outer()
+		p.waitCalls(t, 1)
+	})
 }
 
 // Наше сохранение не раньше afterRemoval после нашего сноса.
@@ -456,28 +463,30 @@ func TestSave_FireNotBefore5sAfterRemoval(t *testing.T) {
 // Flush ждёт удержаний, затем паузу после сноса.
 // Мутация: Flush не смотрит lastRemovalAt → POST раньше паузы, красный.
 func TestSave_FlushWaitsHoldsThenRemovalGap(t *testing.T) {
-	p := &flightPoster{}
-	sc := newFlightSC(t, p)
-	const gap = 150 * time.Millisecond
-	sc.SetSaveTimings(5*time.Second, 5*time.Second, gap)
-	rel, _ := sc.HoldForRemoval(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- sc.Flush(context.Background()) }()
-	time.Sleep(30 * time.Millisecond)
-	if n := len(p.calls()); n != 0 {
-		t.Fatalf("Flush под удержанием: POST %d", n)
-	}
-	sc.NoteRemoval()
-	removed := time.Now()
-	rel()
-	at := p.waitCalls(t, 1)[0]
-	if d := at.Sub(removed); d < gap {
-		t.Fatalf("Flush POST через %s после сноса, ждали ≥ %s", d, gap)
-	}
-	sc.OnConfigurationSaved(104)
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		p := &flightPoster{}
+		sc := newFlightSC(t, p)
+		const gap = 150 * time.Millisecond
+		sc.SetSaveTimings(5*time.Second, 5*time.Second, gap)
+		rel, _ := sc.HoldForRemoval(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- sc.Flush(context.Background()) }()
+		time.Sleep(30 * time.Millisecond)
+		if n := len(p.calls()); n != 0 {
+			t.Fatalf("Flush под удержанием: POST %d", n)
+		}
+		sc.NoteRemoval()
+		removed := time.Now()
+		rel()
+		at := p.waitCalls(t, 1)[0]
+		if d := at.Sub(removed); d < gap {
+			t.Fatalf("Flush POST через %s после сноса, ждали ≥ %s", d, gap)
+		}
+		sc.OnConfigurationSaved(104)
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	})
 }
 
 // Дедлок трёх участников: Flush держит saveSem и ждёт удержаний, таймер fire
@@ -485,30 +494,32 @@ func TestSave_FlushWaitsHoldsThenRemovalGap(t *testing.T) {
 // holder проходит, Flush идёт. Мутация: открыть полёт в fire до saveSem →
 // holder ждёт полёт, Flush ждёт holder'а, fire ждёт Flush, красный по времени.
 func TestSave_NoDeadlock_FlushHoldsSaveMu(t *testing.T) {
-	p := &flightPoster{}
-	sc := newFlightSC(t, p)
-	p.onPost = func() { sc.OnConfigurationSaved(1e9) } // событие конца — на каждый POST
-	start := time.Now()
-	h1, _ := sc.HoldForRemoval(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- sc.Flush(context.Background()) }()
-	time.Sleep(20 * time.Millisecond) // Flush взял saveSem и ждёт удержаний
-	sc.Request()
-	time.Sleep(20 * time.Millisecond) // fire стоит на saveSem
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	h2, err := sc.HoldForRemoval(ctx)
-	if err != nil {
-		t.Fatalf("holder ждал чужой полёт: %v", err)
-	}
-	h2()
-	h1()
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
-	if d := time.Since(start); d > time.Second {
-		t.Fatalf("три участника разошлись за %s", d)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		p := &flightPoster{}
+		sc := newFlightSC(t, p)
+		p.onPost = func() { sc.OnConfigurationSaved(1e9) } // событие конца — на каждый POST
+		start := time.Now()
+		h1, _ := sc.HoldForRemoval(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- sc.Flush(context.Background()) }()
+		time.Sleep(20 * time.Millisecond) // Flush взял saveSem и ждёт удержаний
+		sc.Request()
+		time.Sleep(20 * time.Millisecond) // fire стоит на saveSem
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		h2, err := sc.HoldForRemoval(ctx)
+		if err != nil {
+			t.Fatalf("holder ждал чужой полёт: %v", err)
+		}
+		h2()
+		h1()
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		if d := time.Since(start); d > time.Second {
+			t.Fatalf("три участника разошлись за %s", d)
+		}
+	})
 }
 
 // Владение полётом: Flush, пришедший во время полёта fire, открывает свой
@@ -516,35 +527,37 @@ func TestSave_NoDeadlock_FlushHoldsSaveMu(t *testing.T) {
 // полёт Flush, пока тот летит. Мутация: Flush открывает полёт до saveSem →
 // событие закрывает полёт Flush, fire ждёт потолок, красный.
 func TestSave_FlightOwnership_FireYieldsToFlush(t *testing.T) {
-	p := &flightPoster{}
-	sc := newFlightSC(t, p)
-	sc.Request()
-	p.waitCalls(t, 1)
-	f1 := waitFlight(t, sc)
-	done := make(chan error, 1)
-	go func() { done <- sc.Flush(context.Background()) }()
-	time.Sleep(20 * time.Millisecond)
-	sc.mu.Lock()
-	cur := sc.cur
-	sc.mu.Unlock()
-	if cur != f1 {
-		t.Fatal("Flush открыл полёт, пока летит полёт fire")
-	}
-	sc.OnConfigurationSaved(104)
-	p.waitCalls(t, 2)
-	f2 := waitFlightOther(t, sc, f1)
-	if !f1.done || f2.done {
-		t.Fatalf("f1.done=%v f2.done=%v", f1.done, f2.done)
-	}
-	sc.OnConfigurationSaved(105)
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	if sc.cur != nil {
-		t.Fatal("cur не снят после Flush")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		p := &flightPoster{}
+		sc := newFlightSC(t, p)
+		sc.Request()
+		p.waitCalls(t, 1)
+		f1 := waitFlight(t, sc)
+		done := make(chan error, 1)
+		go func() { done <- sc.Flush(context.Background()) }()
+		time.Sleep(20 * time.Millisecond)
+		sc.mu.Lock()
+		cur := sc.cur
+		sc.mu.Unlock()
+		if cur != f1 {
+			t.Fatal("Flush открыл полёт, пока летит полёт fire")
+		}
+		sc.OnConfigurationSaved(104)
+		p.waitCalls(t, 2)
+		f2 := waitFlightOther(t, sc, f1)
+		if !f1.done || f2.done {
+			t.Fatalf("f1.done=%v f2.done=%v", f1.done, f2.done)
+		}
+		sc.OnConfigurationSaved(105)
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		sc.mu.Lock()
+		defer sc.mu.Unlock()
+		if sc.cur != nil {
+			t.Fatal("cur не снят после Flush")
+		}
+	})
 }
 
 func waitFlightOther(t *testing.T, sc *SaveCoordinator, not *saveFlight) *saveFlight {

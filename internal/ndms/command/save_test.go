@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
@@ -167,97 +168,105 @@ func (m *mockInvalidator) CalledAt() time.Time {
 // --- Tests ---
 
 func TestSaveCoordinator_SingleRequestTriggersSave(t *testing.T) {
-	poster := &fakePoster{}
-	pub := &fakePublisher{}
-	sc := NewSaveCoordinator(poster, pub, 20*time.Millisecond, 100*time.Millisecond, 0, nil)
-	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
+	synctest.Test(t, func(t *testing.T) {
+		poster := &fakePoster{}
+		pub := &fakePublisher{}
+		sc := NewSaveCoordinator(poster, pub, 20*time.Millisecond, 100*time.Millisecond, 0, nil)
+		sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
-	sc.Request()
-	time.Sleep(50 * time.Millisecond)
+		sc.Request()
+		time.Sleep(50 * time.Millisecond)
 
-	if got := poster.Calls(); got != 1 {
-		t.Errorf("Post calls: want 1, got %d", got)
-	}
+		if got := poster.Calls(); got != 1 {
+			t.Errorf("Post calls: want 1, got %d", got)
+		}
+	})
 }
 
 func TestSaveCoordinator_MultipleRequestsCoalesce(t *testing.T) {
-	poster := &fakePoster{}
-	pub := &fakePublisher{}
-	sc := NewSaveCoordinator(poster, pub, 30*time.Millisecond, 500*time.Millisecond, 0, nil)
-	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
+	synctest.Test(t, func(t *testing.T) {
+		poster := &fakePoster{}
+		pub := &fakePublisher{}
+		sc := NewSaveCoordinator(poster, pub, 30*time.Millisecond, 500*time.Millisecond, 0, nil)
+		sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
-	for i := 0; i < 5; i++ {
-		sc.Request()
-		time.Sleep(5 * time.Millisecond)
-	}
-	time.Sleep(60 * time.Millisecond)
+		for i := 0; i < 5; i++ {
+			sc.Request()
+			time.Sleep(5 * time.Millisecond)
+		}
+		time.Sleep(60 * time.Millisecond)
 
-	if got := poster.Calls(); got != 1 {
-		t.Errorf("Post calls: want 1 after burst, got %d", got)
-	}
+		if got := poster.Calls(); got != 1 {
+			t.Errorf("Post calls: want 1 after burst, got %d", got)
+		}
+	})
 }
 
 func TestSaveCoordinator_MaxWaitCapsDelay(t *testing.T) {
-	poster := &fakePoster{}
-	pub := &fakePublisher{}
-	// Tight maxWait; debounce is larger than the whole test window.
-	sc := NewSaveCoordinator(poster, pub, 500*time.Millisecond, 80*time.Millisecond, 0, nil)
-	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
+	synctest.Test(t, func(t *testing.T) {
+		poster := &fakePoster{}
+		pub := &fakePublisher{}
+		// Tight maxWait; debounce is larger than the whole test window.
+		sc := NewSaveCoordinator(poster, pub, 500*time.Millisecond, 80*time.Millisecond, 0, nil)
+		sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
-	start := time.Now()
-	// Issue Requests faster than debounce so debounce would never fire,
-	// forcing maxWait to kick in.
-	stop := make(chan struct{})
-	go func() {
-		ticker := time.NewTicker(15 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				sc.Request()
-			case <-stop:
-				return
+		start := time.Now()
+		// Issue Requests faster than debounce so debounce would never fire,
+		// forcing maxWait to kick in.
+		stop := make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(15 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					sc.Request()
+				case <-stop:
+					return
+				}
 			}
+		}()
+
+		// Wait a bit longer than maxWait.
+		time.Sleep(140 * time.Millisecond)
+		close(stop)
+
+		got := poster.Calls()
+		if got == 0 {
+			t.Errorf("Post calls: want >=1 by maxWait, got 0 after %s", time.Since(start))
 		}
-	}()
-
-	// Wait a bit longer than maxWait.
-	time.Sleep(140 * time.Millisecond)
-	close(stop)
-
-	got := poster.Calls()
-	if got == 0 {
-		t.Errorf("Post calls: want >=1 by maxWait, got 0 after %s", time.Since(start))
-	}
-	if got > 2 {
-		t.Errorf("Post calls: want <=2 within %dms (maxWait=80ms bounded firing), got %d", 140, got)
-	}
+		if got > 2 {
+			t.Errorf("Post calls: want <=2 within %dms (maxWait=80ms bounded firing), got %d", 140, got)
+		}
+	})
 }
 
 func TestSaveCoordinator_PublishesStatusTransitions(t *testing.T) {
-	poster := &fakePoster{sleep: 20 * time.Millisecond}
-	pub := &fakePublisher{}
-	sc := NewSaveCoordinator(poster, pub, 15*time.Millisecond, 100*time.Millisecond, 0, nil)
-	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
+	synctest.Test(t, func(t *testing.T) {
+		poster := &fakePoster{sleep: 20 * time.Millisecond}
+		pub := &fakePublisher{}
+		sc := NewSaveCoordinator(poster, pub, 15*time.Millisecond, 100*time.Millisecond, 0, nil)
+		sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
-	sc.Request()
-	time.Sleep(80 * time.Millisecond)
+		sc.Request()
+		time.Sleep(80 * time.Millisecond)
 
-	// Expected sequence: pending -> saving -> idle. Each transition emits
-	// a resource:invalidated hint with Resource="saveStatus" — we verify
-	// at least three hints fired and that Status() lands on Idle.
-	hints := pub.Hints()
-	if len(hints) < 3 {
-		t.Fatalf("hints: want >=3 (pending+saving+idle), got %d (%v)", len(hints), hints)
-	}
-	for i, h := range hints {
-		if h.Resource != "saveStatus" {
-			t.Errorf("hint[%d].Resource: want saveStatus, got %q", i, h.Resource)
+		// Expected sequence: pending -> saving -> idle. Each transition emits
+		// a resource:invalidated hint with Resource="saveStatus" — we verify
+		// at least three hints fired and that Status() lands on Idle.
+		hints := pub.Hints()
+		if len(hints) < 3 {
+			t.Fatalf("hints: want >=3 (pending+saving+idle), got %d (%v)", len(hints), hints)
 		}
-	}
-	if st := sc.Status(); st.State != SaveStateIdle {
-		t.Errorf("terminal state: want Idle, got %v", st.State)
-	}
+		for i, h := range hints {
+			if h.Resource != "saveStatus" {
+				t.Errorf("hint[%d].Resource: want saveStatus, got %q", i, h.Resource)
+			}
+		}
+		if st := sc.Status(); st.State != SaveStateIdle {
+			t.Errorf("terminal state: want Idle, got %v", st.State)
+		}
+	})
 }
 
 func TestSaveCoordinator_RetryOnFailure(t *testing.T) {
@@ -364,25 +373,27 @@ func TestSaveCoordinator_FlushBypassesDebounce(t *testing.T) {
 }
 
 func TestSaveCoordinator_FlushClearsFailedState(t *testing.T) {
-	poster := &fakePoster{}
-	poster.SetError(errors.New("down"))
+	synctest.Test(t, func(t *testing.T) {
+		poster := &fakePoster{}
+		poster.SetError(errors.New("down"))
 
-	pub := &fakePublisher{}
-	sc := NewSaveCoordinator(poster, pub, 10*time.Millisecond, 50*time.Millisecond, 0, nil)
-	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
-	sc.SetRetryPolicy(10*time.Millisecond, 1)
+		pub := &fakePublisher{}
+		sc := NewSaveCoordinator(poster, pub, 10*time.Millisecond, 50*time.Millisecond, 0, nil)
+		sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
+		sc.SetRetryPolicy(10*time.Millisecond, 1)
 
-	sc.Request()
-	time.Sleep(50 * time.Millisecond) // reach Failed state
+		sc.Request()
+		time.Sleep(50 * time.Millisecond) // reach Failed state
 
-	poster.SetError(nil)
-	if err := sc.Flush(context.Background()); err != nil {
-		t.Fatalf("Flush after Failed: %v", err)
-	}
+		poster.SetError(nil)
+		if err := sc.Flush(context.Background()); err != nil {
+			t.Fatalf("Flush after Failed: %v", err)
+		}
 
-	if st := sc.Status(); st.State != SaveStateIdle {
-		t.Errorf("state after Flush success: want Idle, got %v", st.State)
-	}
+		if st := sc.Status(); st.State != SaveStateIdle {
+			t.Errorf("state after Flush success: want Idle, got %v", st.State)
+		}
+	})
 }
 
 func TestSaveCoordinator_FlushFailureGoesToFailed(t *testing.T) {
@@ -450,178 +461,194 @@ func TestSaveCoordinator_FlushConcurrentWithInFlightFire(t *testing.T) {
 }
 
 func TestSaveCoordinator_StatusSnapshot(t *testing.T) {
-	poster := &fakePoster{}
-	pub := &fakePublisher{}
-	sc := NewSaveCoordinator(poster, pub, 20*time.Millisecond, 100*time.Millisecond, 0, nil)
-	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
+	synctest.Test(t, func(t *testing.T) {
+		poster := &fakePoster{}
+		pub := &fakePublisher{}
+		sc := NewSaveCoordinator(poster, pub, 20*time.Millisecond, 100*time.Millisecond, 0, nil)
+		sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
-	// Fresh coordinator: Idle, 0 pending.
-	if st := sc.Status(); st.State != SaveStateIdle || st.PendingCount != 0 {
-		t.Errorf("fresh: want Idle/0, got %v/%d", st.State, st.PendingCount)
-	}
+		// Fresh coordinator: Idle, 0 pending.
+		if st := sc.Status(); st.State != SaveStateIdle || st.PendingCount != 0 {
+			t.Errorf("fresh: want Idle/0, got %v/%d", st.State, st.PendingCount)
+		}
 
-	sc.Request()
-	sc.Request()
-	st := sc.Status()
-	if st.State != SaveStatePending {
-		t.Errorf("after Request: want Pending, got %v", st.State)
-	}
-	if st.PendingCount != 2 {
-		t.Errorf("PendingCount: want 2, got %d", st.PendingCount)
-	}
+		sc.Request()
+		sc.Request()
+		st := sc.Status()
+		if st.State != SaveStatePending {
+			t.Errorf("after Request: want Pending, got %v", st.State)
+		}
+		if st.PendingCount != 2 {
+			t.Errorf("PendingCount: want 2, got %d", st.PendingCount)
+		}
 
-	// Let Save fire.
-	time.Sleep(50 * time.Millisecond)
-	if st := sc.Status(); st.State != SaveStateIdle {
-		t.Errorf("after fire: want Idle, got %v", st.State)
-	}
+		// Let Save fire.
+		time.Sleep(50 * time.Millisecond)
+		if st := sc.Status(); st.State != SaveStateIdle {
+			t.Errorf("after fire: want Idle, got %v", st.State)
+		}
+	})
 }
 
 // --- Post-save settle tests (fire path) ---
 
 func TestSaveCoordinator_fire_OnSuccess_InvalidatesRunningConfig(t *testing.T) {
-	poster := &fakePoster{}
-	pub := &fakePublisher{}
-	inv := &mockInvalidator{}
-	sc := NewSaveCoordinator(poster, pub, 10*time.Millisecond, 100*time.Millisecond,
-		20*time.Millisecond, inv)
-	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
+	synctest.Test(t, func(t *testing.T) {
+		poster := &fakePoster{}
+		pub := &fakePublisher{}
+		inv := &mockInvalidator{}
+		sc := NewSaveCoordinator(poster, pub, 10*time.Millisecond, 100*time.Millisecond,
+			20*time.Millisecond, inv)
+		sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
-	sc.Request()
-	// debounce 10ms + post 0ms + settle 20ms = ~30ms. Wait 100ms for safety.
-	time.Sleep(100 * time.Millisecond)
+		sc.Request()
+		// debounce 10ms + post 0ms + settle 20ms = ~30ms. Wait 100ms for safety.
+		time.Sleep(100 * time.Millisecond)
 
-	if got := inv.Calls(); got != 1 {
-		t.Errorf("invalidator calls: want 1, got %d", got)
-	}
+		if got := inv.Calls(); got != 1 {
+			t.Errorf("invalidator calls: want 1, got %d", got)
+		}
+	})
 }
 
 func TestSaveCoordinator_fire_OnSuccess_SettlesBeforeInvalidate(t *testing.T) {
-	poster := &fakePoster{}
-	pub := &fakePublisher{}
-	inv := &mockInvalidator{}
-	settle := 50 * time.Millisecond
-	sc := NewSaveCoordinator(poster, pub, 5*time.Millisecond, 100*time.Millisecond,
-		settle, inv)
-	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
+	synctest.Test(t, func(t *testing.T) {
+		poster := &fakePoster{}
+		pub := &fakePublisher{}
+		inv := &mockInvalidator{}
+		settle := 50 * time.Millisecond
+		sc := NewSaveCoordinator(poster, pub, 5*time.Millisecond, 100*time.Millisecond,
+			settle, inv)
+		sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
-	t0 := time.Now()
-	sc.Request()
-	time.Sleep(150 * time.Millisecond)
+		t0 := time.Now()
+		sc.Request()
+		time.Sleep(150 * time.Millisecond)
 
-	if inv.Calls() != 1 {
-		t.Fatalf("invalidator should be called once, got %d", inv.Calls())
-	}
-	elapsed := inv.CalledAt().Sub(t0)
-	// debounce 5ms + (instant POST) + settle 50ms = >= 55ms.
-	// Allow lower bound a few ms below to absorb scheduler jitter on slow CI.
-	if elapsed < settle {
-		t.Errorf("invalidate fired too early: elapsed %s, want >= %s", elapsed, settle)
-	}
+		if inv.Calls() != 1 {
+			t.Fatalf("invalidator should be called once, got %d", inv.Calls())
+		}
+		elapsed := inv.CalledAt().Sub(t0)
+		// debounce 5ms + (instant POST) + settle 50ms = >= 55ms.
+		// Allow lower bound a few ms below to absorb scheduler jitter on slow CI.
+		if elapsed < settle {
+			t.Errorf("invalidate fired too early: elapsed %s, want >= %s", elapsed, settle)
+		}
+	})
 }
 
 func TestSaveCoordinator_fire_OnSuccess_PublishesSettledHint(t *testing.T) {
-	poster := &fakePoster{}
-	pub := &fakePublisher{}
-	inv := &mockInvalidator{}
-	sc := NewSaveCoordinator(poster, pub, 5*time.Millisecond, 100*time.Millisecond,
-		10*time.Millisecond, inv)
-	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
+	synctest.Test(t, func(t *testing.T) {
+		poster := &fakePoster{}
+		pub := &fakePublisher{}
+		inv := &mockInvalidator{}
+		sc := NewSaveCoordinator(poster, pub, 5*time.Millisecond, 100*time.Millisecond,
+			10*time.Millisecond, inv)
+		sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
-	sc.Request()
-	time.Sleep(80 * time.Millisecond)
+		sc.Request()
+		time.Sleep(80 * time.Millisecond)
 
-	// Filter for save-settled hint specifically — fire() also publishes
-	// state-change hints via setStateLocked.
-	var settled int
-	for _, h := range pub.Hints() {
-		if h.Resource == "saveStatus" && h.Reason == "save-settled" {
-			settled++
+		// Filter for save-settled hint specifically — fire() also publishes
+		// state-change hints via setStateLocked.
+		var settled int
+		for _, h := range pub.Hints() {
+			if h.Resource == "saveStatus" && h.Reason == "save-settled" {
+				settled++
+			}
 		}
-	}
-	if settled != 1 {
-		t.Errorf("save-settled hints: want 1, got %d (all hints: %+v)",
-			settled, pub.Hints())
-	}
+		if settled != 1 {
+			t.Errorf("save-settled hints: want 1, got %d (all hints: %+v)",
+				settled, pub.Hints())
+		}
+	})
 }
 
 func TestSaveCoordinator_fire_OnFailure_DoesNotInvalidate(t *testing.T) {
-	poster := &fakePoster{}
-	poster.SetError(errors.New("boom"))
-	pub := &fakePublisher{}
-	inv := &mockInvalidator{}
-	sc := NewSaveCoordinator(poster, pub, 5*time.Millisecond, 100*time.Millisecond,
-		10*time.Millisecond, inv)
-	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
-	sc.SetRetryPolicy(50*time.Millisecond, 0) // disable retry — single attempt then fail
+	synctest.Test(t, func(t *testing.T) {
+		poster := &fakePoster{}
+		poster.SetError(errors.New("boom"))
+		pub := &fakePublisher{}
+		inv := &mockInvalidator{}
+		sc := NewSaveCoordinator(poster, pub, 5*time.Millisecond, 100*time.Millisecond,
+			10*time.Millisecond, inv)
+		sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
+		sc.SetRetryPolicy(50*time.Millisecond, 0) // disable retry — single attempt then fail
 
-	sc.Request()
-	time.Sleep(100 * time.Millisecond)
+		sc.Request()
+		time.Sleep(100 * time.Millisecond)
 
-	if got := inv.Calls(); got != 0 {
-		t.Errorf("invalidator should not be called on failure, got %d calls", got)
-	}
+		if got := inv.Calls(); got != 0 {
+			t.Errorf("invalidator should not be called on failure, got %d calls", got)
+		}
+	})
 }
 
 func TestSaveCoordinator_fire_ZeroSettleDelay_SkipsSettle(t *testing.T) {
-	poster := &fakePoster{}
-	pub := &fakePublisher{}
-	inv := &mockInvalidator{}
-	sc := NewSaveCoordinator(poster, pub, 5*time.Millisecond, 100*time.Millisecond,
-		0, inv) // settleDelay = 0
-	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
+	synctest.Test(t, func(t *testing.T) {
+		poster := &fakePoster{}
+		pub := &fakePublisher{}
+		inv := &mockInvalidator{}
+		sc := NewSaveCoordinator(poster, pub, 5*time.Millisecond, 100*time.Millisecond,
+			0, inv) // settleDelay = 0
+		sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
-	sc.Request()
-	time.Sleep(80 * time.Millisecond)
+		sc.Request()
+		time.Sleep(80 * time.Millisecond)
 
-	if got := inv.Calls(); got != 0 {
-		t.Errorf("settleDelay=0 should skip invalidate, got %d calls", got)
-	}
-	for _, h := range pub.Hints() {
-		if h.Reason == "save-settled" {
-			t.Errorf("settleDelay=0 should not publish save-settled hint, got %+v", h)
+		if got := inv.Calls(); got != 0 {
+			t.Errorf("settleDelay=0 should skip invalidate, got %d calls", got)
 		}
-	}
+		for _, h := range pub.Hints() {
+			if h.Reason == "save-settled" {
+				t.Errorf("settleDelay=0 should not publish save-settled hint, got %+v", h)
+			}
+		}
+	})
 }
 
 func TestSaveCoordinator_fire_NilInvalidator_SkipsSettle(t *testing.T) {
-	poster := &fakePoster{}
-	pub := &fakePublisher{}
-	sc := NewSaveCoordinator(poster, pub, 5*time.Millisecond, 100*time.Millisecond,
-		20*time.Millisecond, nil) // invalidator = nil
-	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
+	synctest.Test(t, func(t *testing.T) {
+		poster := &fakePoster{}
+		pub := &fakePublisher{}
+		sc := NewSaveCoordinator(poster, pub, 5*time.Millisecond, 100*time.Millisecond,
+			20*time.Millisecond, nil) // invalidator = nil
+		sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
-	sc.Request()
-	time.Sleep(80 * time.Millisecond)
+		sc.Request()
+		time.Sleep(80 * time.Millisecond)
 
-	// No invalidator, but also no panic — and no save-settled hint either.
-	for _, h := range pub.Hints() {
-		if h.Reason == "save-settled" {
-			t.Errorf("nil invalidator should not publish save-settled hint, got %+v", h)
+		// No invalidator, but also no panic — and no save-settled hint either.
+		for _, h := range pub.Hints() {
+			if h.Reason == "save-settled" {
+				t.Errorf("nil invalidator should not publish save-settled hint, got %+v", h)
+			}
 		}
-	}
+	})
 }
 
 func TestSaveCoordinator_fire_Retry_InvalidatesOnceAfterFinalSuccess(t *testing.T) {
-	poster := &fakePoster{}
-	pub := &fakePublisher{}
-	inv := &mockInvalidator{}
-	sc := NewSaveCoordinator(poster, pub, 5*time.Millisecond, 100*time.Millisecond,
-		10*time.Millisecond, inv)
-	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
-	sc.SetRetryPolicy(20*time.Millisecond, 3)
+	synctest.Test(t, func(t *testing.T) {
+		poster := &fakePoster{}
+		pub := &fakePublisher{}
+		inv := &mockInvalidator{}
+		sc := NewSaveCoordinator(poster, pub, 5*time.Millisecond, 100*time.Millisecond,
+			10*time.Millisecond, inv)
+		sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
+		sc.SetRetryPolicy(20*time.Millisecond, 3)
 
-	// First attempt fails, second attempt succeeds.
-	poster.SetError(errors.New("transient"))
-	sc.Request()
-	time.Sleep(30 * time.Millisecond) // first fire fails, retry scheduled
+		// First attempt fails, second attempt succeeds.
+		poster.SetError(errors.New("transient"))
+		sc.Request()
+		time.Sleep(30 * time.Millisecond) // first fire fails, retry scheduled
 
-	poster.SetError(nil) // unblock retry
-	time.Sleep(80 * time.Millisecond)
+		poster.SetError(nil) // unblock retry
+		time.Sleep(80 * time.Millisecond)
 
-	if got := inv.Calls(); got != 1 {
-		t.Errorf("invalidator should be called once after final success, got %d", got)
-	}
+		if got := inv.Calls(); got != 1 {
+			t.Errorf("invalidator should be called once after final success, got %d", got)
+		}
+	})
 }
 
 // --- Post-save settle tests (Flush path) ---
@@ -691,39 +718,41 @@ func TestSaveCoordinator_Flush_NilInvalidator_DoesNotPanic(t *testing.T) {
 // риска — ложный ЗЕЛЁНЫЙ, если Flush-POST растянется дольше `retryDelay`
 // (150 мс). При флейке этого класса — первый подозреваемый.
 func TestSaveCoordinator_LateFireDoesNotResurrectRetry(t *testing.T) {
-	poster := &fakePoster{sleep: 60 * time.Millisecond}
-	poster.SetError(errors.New("NDMS отказал"))
-	pub := &fakePublisher{}
-	sc := NewSaveCoordinator(poster, pub, 10*time.Millisecond, 100*time.Millisecond, 0, nil)
-	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
-	// Ретрай ЕСТЬ (иначе гарду нечего защищать) и он ПОЗЖЕ конца Flush:
-	// иначе воскрешённый ретрай приходит, пока Flush ещё в своём POST, и его
-	// глушит ВХОДНОЙ гард — тогда снятие хвостового ничем не проявляется.
-	sc.SetRetryPolicy(150*time.Millisecond, 3)
+	synctest.Test(t, func(t *testing.T) {
+		poster := &fakePoster{sleep: 60 * time.Millisecond}
+		poster.SetError(errors.New("NDMS отказал"))
+		pub := &fakePublisher{}
+		sc := NewSaveCoordinator(poster, pub, 10*time.Millisecond, 100*time.Millisecond, 0, nil)
+		sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
+		// Ретрай ЕСТЬ (иначе гарду нечего защищать) и он ПОЗЖЕ конца Flush:
+		// иначе воскрешённый ретрай приходит, пока Flush ещё в своём POST, и его
+		// глушит ВХОДНОЙ гард — тогда снятие хвостового ничем не проявляется.
+		sc.SetRetryPolicy(150*time.Millisecond, 3)
 
-	sc.Request()
-	waitCalls(t, poster, 1, "fire не вошёл в Post — сценарий не воспроизведён")
-	// Ошибку первой попытки fakePoster снял ДО инкремента счётчика, поэтому
-	// снимать её теперь безопасно: POST от Flush пройдёт успешно (CF6).
-	poster.SetError(nil)
+		sc.Request()
+		waitCalls(t, poster, 1, "fire не вошёл в Post — сценарий не воспроизведён")
+		// Ошибку первой попытки fakePoster снял ДО инкремента счётчика, поэтому
+		// снимать её теперь безопасно: POST от Flush пройдёт успешно (CF6).
+		poster.SetError(nil)
 
-	if err := sc.Flush(context.Background()); err != nil {
-		t.Fatalf("Flush: %v", err)
-	}
-	if st := waitState(t, sc, SaveStateIdle); st.PendingCount != 0 {
-		t.Errorf("pending после Flush: %d, ждали 0", st.PendingCount)
-	}
+		if err := sc.Flush(context.Background()); err != nil {
+			t.Fatalf("Flush: %v", err)
+		}
+		if st := waitState(t, sc, SaveStateIdle); st.PendingCount != 0 {
+			t.Errorf("pending после Flush: %d, ждали 0", st.PendingCount)
+		}
 
-	// Отрицательное утверждение — ждать нечего, поэтому окно фиксированное:
-	// воскрешённый ретрай пришёл бы на 150-й мс от хвоста fire, то есть
-	// внутри окна с запасом.
-	time.Sleep(400 * time.Millisecond)
-	if got := poster.Calls(); got != 2 {
-		t.Errorf("POST'ов %d, ждали 2 (fire + Flush): опоздавший fire воскресил ретрай", got)
-	}
-	if st := sc.Status(); st.State != SaveStateIdle {
-		t.Errorf("итоговое состояние %v, ждали Idle: исход Flush переписан", st.State)
-	}
+		// Отрицательное утверждение — ждать нечего, поэтому окно фиксированное:
+		// воскрешённый ретрай пришёл бы на 150-й мс от хвоста fire, то есть
+		// внутри окна с запасом.
+		time.Sleep(400 * time.Millisecond)
+		if got := poster.Calls(); got != 2 {
+			t.Errorf("POST'ов %d, ждали 2 (fire + Flush): опоздавший fire воскресил ретрай", got)
+		}
+		if st := sc.Status(); st.State != SaveStateIdle {
+			t.Errorf("итоговое состояние %v, ждали Idle: исход Flush переписан", st.State)
+		}
+	})
 }
 
 // fire, диспетчеризованный таймером, пока Flush держит свой POST, не шлёт
@@ -732,26 +761,29 @@ func TestSaveCoordinator_LateFireDoesNotResurrectRetry(t *testing.T) {
 // запись, и уступка теряла бы его до следующей правки).
 // Мутация: fire без saveSem → второй POST во время Flush, красный.
 func TestSaveCoordinator_FireDispatchedDuringFlushWaits(t *testing.T) {
-	poster := &fakePoster{sleep: 120 * time.Millisecond}
-	pub := &fakePublisher{}
-	sc := NewSaveCoordinator(poster, pub, 10*time.Millisecond, 100*time.Millisecond, 0, nil)
-	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
+	synctest.Test(t, func(t *testing.T) {
+		poster := &fakePoster{sleep: 120 * time.Millisecond}
+		pub := &fakePublisher{}
+		sc := NewSaveCoordinator(poster, pub, 10*time.Millisecond, 100*time.Millisecond, 0, nil)
+		sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
-	done := make(chan error, 1)
-	go func() { done <- sc.Flush(context.Background()) }()
-	waitCalls(t, poster, 1, "Flush не вошёл в Post")
+		done := make(chan error, 1)
+		go func() { done <- sc.Flush(context.Background()) }()
+		waitCalls(t, poster, 1, "Flush не вошёл в Post")
 
-	// Пока Flush в POST — просим Save: его таймер (10 мс) сработает внутри
-	// окна Flush.
-	sc.Request()
-	time.Sleep(50 * time.Millisecond)
-	if got := poster.Calls(); got != 1 {
-		t.Fatalf("POST'ов %d во время Flush, ждали 1", got)
-	}
-	if err := <-done; err != nil {
-		t.Fatalf("Flush: %v", err)
-	}
-	waitCalls(t, poster, 2, "отложенный Request после Flush не сохранён")
+		// Пока Flush в POST — просим Save: его таймер (10 мс) сработает внутри
+		// окна Flush.
+		sc.Request()
+		time.Sleep(50 * time.Millisecond)
+		if got := poster.Calls(); got != 1 {
+			t.Fatalf("POST'ов %d во время Flush, ждали 1", got)
+		}
+		if err := <-done; err != nil {
+			t.Fatalf("Flush: %v", err)
+		}
+		waitCalls(t, poster, 2, "отложенный Request после Flush не сохранён")
+		waitState(t, sc, SaveStateIdle) // второй POST ещё идёт
+	})
 }
 
 // payloadMentionsIPv6 — команда пришла в v6-форме (внешний ключ "ipv6").

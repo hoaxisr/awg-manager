@@ -28,7 +28,7 @@ func routeCommandsWithConfig(t *testing.T, lines ...string) (*RouteCommands, *fa
 	// Снятие подтверждает интерфейсы записей свежим списком (F546).
 	fg.SetJSON("/show/interface/", `{"PPPoE0":{"id":"PPPoE0"},"Bridge0":{"id":"Bridge0"}}`)
 	poster := &fakePoster{}
-	sc := NewSaveCoordinator(poster, &fakePublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil)
+	sc := NewSaveCoordinator(poster, &fakePublisher{}, time.Hour, time.Hour, 0, nil)
 	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 	q := query.NewQueries(query.Deps{Getter: fg, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
 	return NewRouteCommands(poster, sc, q), poster

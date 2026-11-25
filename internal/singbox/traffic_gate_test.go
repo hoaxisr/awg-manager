@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 )
 
 // safePublisher — fakePublisher из traffic_test.go не потокобезопасен, а здесь
@@ -102,17 +104,12 @@ func TestTrafficAggregator_IdleSkipsPublishButFeedsHistory(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go agg.Run(ctx)
-	time.Sleep(300 * time.Millisecond)
+	testutil.WaitFor(t, func() bool { return sent.Load() >= 5 && feeder.count() >= 3 },
+		"история не наполняется в простое")
 	cancel()
 
-	if sent.Load() < 5 {
-		t.Fatalf("заглушка отправила %d сообщений — тест ничего не проверяет", sent.Load())
-	}
 	if got := pub.count(); got != 0 {
 		t.Errorf("SSE-публикаций %d, ожидалось 0 при закрытой панели", got)
-	}
-	if got := feeder.count(); got < 3 {
-		t.Errorf("подач в историю %d, ожидалось ≥3: история наполняется и в простое", got)
 	}
 }
 
@@ -126,10 +123,6 @@ func TestTrafficAggregator_WatchedPublishes(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go agg.Run(ctx)
-	time.Sleep(300 * time.Millisecond)
+	testutil.WaitFor(t, func() bool { return pub.count() >= 3 }, "при открытой панели публикации не идут")
 	cancel()
-
-	if got := pub.count(); got < 3 {
-		t.Errorf("SSE-публикаций %d, ожидалось ≥3 при открытой панели", got)
-	}
 }

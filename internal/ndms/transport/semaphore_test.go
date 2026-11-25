@@ -6,45 +6,48 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
 func TestSemaphore_LimitsConcurrency(t *testing.T) {
-	sem := NewSemaphore(2)
-	ctx := context.Background()
+	synctest.Test(t, func(t *testing.T) {
+		sem := NewSemaphore(2)
+		ctx := context.Background()
 
-	var inFlight, peak int32
-	release := make(chan struct{})
-	var wg sync.WaitGroup
+		var inFlight, peak int32
+		release := make(chan struct{})
+		var wg sync.WaitGroup
 
-	for i := 0; i < 5; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := sem.Acquire(ctx); err != nil {
-				t.Errorf("Acquire: %v", err)
-				return
-			}
-			cur := atomic.AddInt32(&inFlight, 1)
-			for {
-				p := atomic.LoadInt32(&peak)
-				if cur <= p || atomic.CompareAndSwapInt32(&peak, p, cur) {
-					break
+		for i := 0; i < 5; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if err := sem.Acquire(ctx); err != nil {
+					t.Errorf("Acquire: %v", err)
+					return
 				}
-			}
-			<-release
-			atomic.AddInt32(&inFlight, -1)
-			sem.Release()
-		}()
-	}
+				cur := atomic.AddInt32(&inFlight, 1)
+				for {
+					p := atomic.LoadInt32(&peak)
+					if cur <= p || atomic.CompareAndSwapInt32(&peak, p, cur) {
+						break
+					}
+				}
+				<-release
+				atomic.AddInt32(&inFlight, -1)
+				sem.Release()
+			}()
+		}
 
-	// Let goroutines attempt to grab slots.
-	time.Sleep(30 * time.Millisecond)
-	if got := atomic.LoadInt32(&peak); got != 2 {
-		t.Errorf("peak in-flight: want 2, got %d", got)
-	}
-	close(release)
-	wg.Wait()
+		// Let goroutines attempt to grab slots.
+		time.Sleep(30 * time.Millisecond)
+		if got := atomic.LoadInt32(&peak); got != 2 {
+			t.Errorf("peak in-flight: want 2, got %d", got)
+		}
+		close(release)
+		wg.Wait()
+	})
 }
 
 func TestSemaphore_AcquireRespectsContextCancel(t *testing.T) {

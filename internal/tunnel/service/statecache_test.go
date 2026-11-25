@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
@@ -95,16 +96,18 @@ func TestStateCache_SingleFlightCoalesces(t *testing.T) {
 }
 
 func TestStateCache_TTLExpires(t *testing.T) {
-	mgr := &countingState{}
-	s := newCacheTestService(t, mgr, 50*time.Millisecond)
+	synctest.Test(t, func(t *testing.T) {
+		mgr := &countingState{}
+		s := newCacheTestService(t, mgr, 50*time.Millisecond)
 
-	s.GetState(context.Background(), "t1")
-	s.GetState(context.Background(), "t1") // hit
-	time.Sleep(80 * time.Millisecond)
-	s.GetState(context.Background(), "t1") // miss после TTL
-	if got := mgr.calls.Load(); got != 2 {
-		t.Fatalf("manager calls = %d, want 2", got)
-	}
+		s.GetState(context.Background(), "t1")
+		s.GetState(context.Background(), "t1") // hit
+		time.Sleep(80 * time.Millisecond)
+		s.GetState(context.Background(), "t1") // miss после TTL
+		if got := mgr.calls.Load(); got != 2 {
+			t.Fatalf("manager calls = %d, want 2", got)
+		}
+	})
 }
 
 func TestStateCache_InvalidateForcesFresh(t *testing.T) {
@@ -132,23 +135,25 @@ func TestStateCache_CancelledCallerDoesNotPoison(t *testing.T) {
 }
 
 func TestStateCache_BusEventInvalidates(t *testing.T) {
-	mgr := &countingState{}
-	s := newCacheTestService(t, mgr, 2*time.Second)
-	bus := events.NewBus()
-	s.SetEventBus(bus)
-	t.Cleanup(s.Close)
+	synctest.Test(t, func(t *testing.T) {
+		mgr := &countingState{}
+		s := newCacheTestService(t, mgr, 2*time.Second)
+		bus := events.NewBus()
+		s.SetEventBus(bus)
+		t.Cleanup(s.Close)
 
-	s.GetState(context.Background(), "t1")
-	bus.Publish("tunnel:state", events.TunnelStateEvent{ID: "t1", State: "stopped"})
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
 		s.GetState(context.Background(), "t1")
-		if mgr.calls.Load() >= 2 {
-			return
+		bus.Publish("tunnel:state", events.TunnelStateEvent{ID: "t1", State: "stopped"})
+		deadline := time.Now().Add(time.Second)
+		for time.Now().Before(deadline) {
+			s.GetState(context.Background(), "t1")
+			if mgr.calls.Load() >= 2 {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
 		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("manager calls = %d, want >= 2 после tunnel:state", mgr.calls.Load())
+		t.Fatalf("manager calls = %d, want >= 2 после tunnel:state", mgr.calls.Load())
+	})
 }
 
 type fakeNWGState struct{ info tunnel.StateInfo }
