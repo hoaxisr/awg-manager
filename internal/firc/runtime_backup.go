@@ -106,9 +106,34 @@ func (i *OnDemandInstaller) recoverPendingLocked(ctx context.Context, op *Operat
 		}
 		return errors.New("interrupted runtime install requires recovery before starting FIRC")
 
+	case AbandonedExternalMigration:
+		// Переезда с чужого пакета больше нет, а журнал сборок develop мог
+		// остаться незавершённым. Прерванную на середине установку рантайма
+		// чинит обычное «Восстановить», остальное — не повод держать автостарт.
+		ver := ""
+		if i.packages != nil {
+			ver, _ = i.packages.Version(ctx, RuntimePackageName)
+		}
+		if _, err := os.Lstat(i.layout.FircdBin); err == nil && ver == "" {
+			if err := i.saveOperation(runtimeOperation{Action: "install", Pending: true}); err != nil {
+				return err
+			}
+			return errors.New("interrupted runtime install requires recovery before starting FIRC")
+		}
+		return i.saveOperation(runtimeOperation{Action: AbandonedExternalMigration, Pending: false})
+
 	default:
 		return fmt.Errorf("unknown pending runtime operation %q requires recovery", priorOp.Action)
 	}
+}
+
+// AbandonedExternalMigration — операция переезда с пакета firc из сборок develop.
+const AbandonedExternalMigration = "migrate_external"
+
+// ExternalMigrationBackupDir — копия настроек, которую оставил тот переезд. Сам
+// каталог не трогаем: в нём может быть единственный экземпляр настроек.
+func (i *OnDemandInstaller) ExternalMigrationBackupDir() string {
+	return i.rootPath("/opt/var/cache/awg-manager/firc-runtime/external-migration-backup")
 }
 
 func (i *OnDemandInstaller) isCurrentlyRunning(ctx context.Context, op *Operator) bool {

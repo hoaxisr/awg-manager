@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/firc"
 	"github.com/hoaxisr/awg-manager/internal/logging"
@@ -186,5 +187,31 @@ func TestUplinkCatalog_ForeignFircTargetsHidden(t *testing.T) {
 		if it.Target.Engine == "firc" {
 			t.Errorf("цель стороннего firc в каталоге: %+v", it)
 		}
+	}
+}
+
+// Журнал прерванного переезда сборок develop не блокирует автостарт, в журнале —
+// предупреждение с каталогом копии.
+func TestCompleteFircStartup_AbandonedMigrationWarnsAndStarts(t *testing.T) {
+	a, root, lifecycle, _ := newForeignFircApp(t, "firc")
+	for _, rel := range []string{"opt/lib/opkg/info/firc.list", "opt/bin/fircd"} {
+		if err := os.Remove(filepath.Join(root, rel)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(a.dataDir, "firc-runtime-operation.json"), []byte(`{"action":"migrate_external","pending":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a.completeFircStartup()
+	if lifecycle.Load() == 0 {
+		t.Error("автостарт заблокирован прерванным переездом")
+	}
+	found := false
+	entries, _ := a.loggingService.GetLogs(logging.BucketApp, "", "", "", time.Time{}, 100, 0)
+	for _, e := range entries {
+		found = found || strings.Contains(e.Message, a.fircInstaller.ExternalMigrationBackupDir())
+	}
+	if !found {
+		t.Error("в журнале нет предупреждения с каталогом копии")
 	}
 }

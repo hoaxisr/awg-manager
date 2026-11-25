@@ -736,6 +736,65 @@ func TestForeignFirc_WatchdogReleasesOwnRulesOnceConfirmed(t *testing.T) {
 	probe.assertForeignRulesUntouched(t, "watchdog")
 }
 
+// Прерванный переезд сборок develop не держит автостарт, а копия настроек цела.
+func TestRecoverPending_AbandonedExternalMigration(t *testing.T) {
+	ctx := context.Background()
+	journal := `{"action":"migrate_external","pending":true,"externalPackage":"firc"}`
+	seed := func(t *testing.T) (*OnDemandInstaller, *mockRuntimePackages) {
+		inst, pm, _ := runtimeFixture(t)
+		writeTree(t, inst.layout.RootDir, map[string]string{
+			"opt/etc/awg-manager/firc-runtime-operation.json":                                  journal,
+			"opt/var/cache/awg-manager/firc-runtime/external-migration-backup/blobs/blob-0001": "settings",
+		})
+		return inst, pm
+	}
+	checkBackup := func(t *testing.T, inst *OnDemandInstaller) {
+		t.Helper()
+		raw, err := os.ReadFile(filepath.Join(inst.ExternalMigrationBackupDir(), "blobs/blob-0001"))
+		if err != nil || string(raw) != "settings" {
+			t.Errorf("копия настроек: %q, %v", raw, err)
+		}
+	}
+	t.Run("рантайма нет", func(t *testing.T) {
+		inst, pm := seed(t)
+		if err := inst.RecoverPendingOperationOnStartup(ctx, nil); err != nil {
+			t.Fatalf("recover = %v", err)
+		}
+		if inst.PendingOperationAction() != "" || pm.installs+pm.removes != 0 {
+			t.Fatalf("pending=%q installs=%d removes=%d", inst.PendingOperationAction(), pm.installs, pm.removes)
+		}
+		checkBackup(t, inst)
+	})
+	t.Run("рантайм установлен", func(t *testing.T) {
+		inst, _ := seed(t)
+		if err := os.Remove(inst.operationPath()); err != nil {
+			t.Fatal(err)
+		}
+		if err := inst.Install(ctx); err != nil {
+			t.Fatal(err)
+		}
+		writeTree(t, inst.layout.RootDir, map[string]string{"opt/etc/awg-manager/firc-runtime-operation.json": journal})
+		if err := inst.RecoverPendingOperationOnStartup(ctx, nil); err != nil || inst.PendingOperationAction() != "" {
+			t.Fatalf("recover = %v, pending=%q", err, inst.PendingOperationAction())
+		}
+		checkBackup(t, inst)
+	})
+	t.Run("рантайм встал наполовину", func(t *testing.T) {
+		inst, _ := seed(t)
+		writeTree(t, inst.layout.RootDir, map[string]string{"opt/sbin/fircd": "half"})
+		if err := inst.RecoverPendingOperationOnStartup(ctx, nil); err == nil {
+			t.Fatal("недоустановленный рантайм автостарт не разрешает")
+		}
+		if st := inst.GetInstallStatus(ctx, nil, false); st.State != InstallStateRecoveryNeeded {
+			t.Fatalf("состояние %s, want recovery_required: «Восстановить» должно быть доступно", st.State)
+		}
+		if err := inst.Install(ctx); err != nil {
+			t.Fatalf("восстановление: %v", err)
+		}
+		checkBackup(t, inst)
+	})
+}
+
 func TestForeignFirc_InstallerRefuses(t *testing.T) {
 	ctx := context.Background()
 	for _, tc := range []struct {

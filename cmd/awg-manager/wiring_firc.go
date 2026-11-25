@@ -764,6 +764,7 @@ func (a *app) runFircStartupRecoveryGate() bool {
 		return false
 	}
 	if a.fircInstaller != nil {
+		abandoned := a.fircInstaller.PendingOperationAction() == firc.AbandonedExternalMigration
 		recCtx, recCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		recErr := a.fircInstaller.RecoverPendingOperationOnStartup(recCtx, a.fircOp)
 		recCancel()
@@ -772,6 +773,10 @@ func (a *app) runFircStartupRecoveryGate() bool {
 				a.bootLog.Warn("firc-runtime-recovery", "startup", "firc package operation recovery required; automatic migration/start blocked: "+recErr.Error())
 			}
 			return false
+		}
+		if abandoned && a.bootLog != nil {
+			a.bootLog.Warn("firc-runtime-recovery", "migrate_external",
+				"прерванный перевод пакета firc на рантайм AWGM отменён; копия настроек, если она была сделана, осталась в "+a.fircInstaller.ExternalMigrationBackupDir())
 		}
 	}
 	return true
