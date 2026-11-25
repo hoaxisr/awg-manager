@@ -8011,6 +8011,7 @@
 	"firc_runtime_remove": "Remove AWGM Route",
 	"firc_runtime_release_pending": "A verified runtime package for this version has not been published yet.",
 	"firc_runtime_dependency_warning": "Stop AWGM Route and switch dependent routes using the migration center before modifying the installation.",
+	"firc_runtime_foreign_config": "The configuration of the previous firc is kept in {dir}: its format differs, so AWGM Route started with clean settings. Delete the directory if you do not need it.",
 	"firc_runtime_activation_note": "Installation does not activate routing. Use the migration center under Routing to activate AWGM Route.",
 	"firc_runtime_remove_confirm": "Remove the AWGM Route runtime package and its service files?",
 	"firc_runtime_config_preserved": "Configuration is preserved for reinstallation. Other servers and tunnels are not removed.",

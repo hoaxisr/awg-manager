@@ -559,6 +559,8 @@ export interface FircInstallStatus {
 	unavailableReason?: string;
 	activeEngine: boolean;
 	foreign?: FircForeign;
+	/** Куда отложена конфигурация снятого стороннего firc. */
+	foreignConfigDir?: string;
 	dependentServices?: string[];
 	ndmHookPresent: boolean;
 	fircdPresent: boolean;

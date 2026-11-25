@@ -207,6 +207,9 @@
 		{#if fetchError || actionError || status?.error}
 			<div class="setting-row text-danger" role="alert">{fetchError || actionError || status?.error}</div>
 		{/if}
+		{#if status?.foreignConfigDir}
+			<div class="setting-row text-secondary">{m.firc_runtime_foreign_config({ dir: status.foreignConfigDir })}</div>
+		{/if}
 		<div class="setting-row text-secondary">{m.firc_runtime_activation_note()}</div>
 		{/if}
 	</div>

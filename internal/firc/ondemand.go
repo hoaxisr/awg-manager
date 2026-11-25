@@ -61,6 +61,8 @@ type InstallStatus struct {
 	ActiveEngine      bool         `json:"activeEngine"`
 	DependentServices []string     `json:"dependentServices,omitempty"`
 	Foreign           *ForeignFirc `json:"foreign,omitempty"`
+	// ForeignConfigDir — куда отложена конфигурация снятого стороннего firc.
+	ForeignConfigDir string `json:"foreignConfigDir,omitempty"`
 }
 
 // OnDemandInstaller manages on-demand FIRC binary download, verification, and install/uninstall.
@@ -333,6 +335,7 @@ func (odi *OnDemandInstaller) GetInstallStatus(ctx context.Context, op *Operator
 		Error:             lastErr,
 		ActiveEngine:      active,
 		DependentServices: dependentServices,
+		ForeignConfigDir:  odi.foreignConfigDir(),
 	}
 
 	required := odi.spec.PackageSize*4 + diskReserveBytes

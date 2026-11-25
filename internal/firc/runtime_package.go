@@ -548,6 +548,9 @@ func (i *OnDemandInstaller) packageOperation(ctx context.Context, action string,
 		if err := i.cleanupOrphanedRuntimeFiles(); err != nil {
 			return err
 		}
+		if _, err := i.setAsideForeignConfig(); err != nil {
+			return err
+		}
 	}
 	defer func() {
 		if result == nil || previousVersion == "" {

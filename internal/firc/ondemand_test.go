@@ -562,3 +562,76 @@ func TestOpkgRuntimeManager_LegacyPackageName(t *testing.T) {
 		t.Error("чужой пакет снимается")
 	}
 }
+
+// Файлы снятого стороннего firc откладываются целиком, умолчания кладёт postinst.
+// Свои файлы после снятия рантайма и файлы под стоящим рантаймом не трогаем.
+func TestInstall_SetsAsideForeignConfig(t *testing.T) {
+	ctx := context.Background()
+	const (
+		ownTunnels     = "tunnels:\n- id: t\n  filterExclude: x\n"
+		ownGroups      = "configVersion: 0.8.0\ngroups:\n- id: g\n  list:\n    url: https://example.invalid\n"
+		foreignTunnels = "tunnels:\n- id: t\n  failback: false\n"
+		foreignGroups  = "groups:\n- id: g\n  lists:\n  - id: l\n"
+	)
+	for name, c := range map[string]struct {
+		tunnels, groups string
+		runtime, aside  bool
+	}{
+		"свои":                   {ownTunnels, ownGroups, false, false},
+		"failback":               {foreignTunnels, ownGroups, false, true},
+		"lists":                  {ownTunnels, foreignGroups, false, true},
+		"битый yaml":             {"tunnels: [", foreignGroups[:9] + "[", false, false},
+		"рантайм уже стоит":      {foreignTunnels, foreignGroups, true, false},
+		"файлов туннелей нет":    {"", foreignGroups, false, true},
+		"совсем нет файлов firc": {"", "", false, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			i, pm, _ := runtimeFixture(t)
+			if c.runtime {
+				if err := i.Install(ctx); err != nil {
+					t.Fatal(err)
+				}
+			}
+			want := map[string]string{}
+			for p, body := range map[string]string{
+				i.rootPath(DefaultTunnelsFilePath): c.tunnels,
+				i.layout.GroupsFile:                c.groups,
+				i.layout.ConfigFile:                "httpWeb: {}\n",
+			} {
+				if body == "" {
+					continue
+				}
+				if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				want[filepath.Base(p)] = body
+			}
+			if err := i.Install(ctx); err != nil {
+				t.Fatal(err)
+			}
+			_ = pm
+			dir := i.GetInstallStatus(ctx, nil, false).ForeignConfigDir
+			if (dir != "") != c.aside {
+				t.Fatalf("ForeignConfigDir = %q, want отложено=%v", dir, c.aside)
+			}
+			src := dir
+			if !c.aside {
+				src = filepath.Dir(i.layout.GroupsFile)
+			}
+			for base, body := range want {
+				got, err := os.ReadFile(filepath.Join(src, base))
+				if err != nil || string(got) != body {
+					t.Errorf("%s: %q, %v", base, got, err)
+				}
+			}
+			if c.aside {
+				if _, err := os.Stat(i.rootPath(DefaultTunnelsFilePath)); !os.IsNotExist(err) {
+					t.Errorf("tunnels.yaml остался: %v", err)
+				}
+			}
+		})
+	}
+}
