@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 )
 
 // TestXrayInterop: настоящий клиент Xray через наш вход REALITY и C-демон до
@@ -35,12 +37,7 @@ func TestXrayInterop(t *testing.T) {
 			}
 			defer srv.Stop()
 			_, port, _ := net.SplitHostPort(srv.Addr())
-			ln, err := net.Listen("tcp", "127.0.0.1:0")
-			if err != nil {
-				t.Fatal(err)
-			}
-			socks := ln.Addr().String()
-			_ = ln.Close()
+			socks := testutil.FreeAddr(t)
 			_, socksPort, _ := net.SplitHostPort(socks)
 			cfg := fmt.Sprintf(`{"inbounds":[{"listen":"127.0.0.1","port":%s,"protocol":"socks"}],
 "outbounds":[{"protocol":"vless","settings":{"vnext":[{"address":"127.0.0.1","port":%s,"users":[{"id":"%s","encryption":"none"}]}]},

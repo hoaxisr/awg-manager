@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -189,24 +190,26 @@ func TestDelayChecker_TicksTunnelsAndSubActiveTags(t *testing.T) {
 }
 
 func TestDelayChecker_Run_CancelsOnCtx(t *testing.T) {
-	clash := &fakeClash{}
-	lister := &fakeDelayLister{}
-	pub := &fakeDelayPublisher{}
-	d := &DelayChecker{
-		clash: clash, lister: lister, publisher: pub,
-		interval: 50 * time.Millisecond,
-		testURL:  "u", timeout: time.Second,
-		inflight: map[string]bool{},
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Millisecond)
-	defer cancel()
-	done := make(chan struct{})
-	go func() { d.Run(ctx); close(done) }()
-	select {
-	case <-done:
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("Run did not exit on ctx cancel")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		clash := &fakeClash{}
+		lister := &fakeDelayLister{}
+		pub := &fakeDelayPublisher{}
+		d := &DelayChecker{
+			clash: clash, lister: lister, publisher: pub,
+			interval: 50 * time.Millisecond,
+			testURL:  "u", timeout: time.Second,
+			inflight: map[string]bool{},
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Millisecond)
+		defer cancel()
+		done := make(chan struct{})
+		go func() { d.Run(ctx); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("Run did not exit on ctx cancel")
+		}
+	})
 }
 
 func TestDelayChecker_CheckOne_RetryThenSuccess(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/events"
@@ -48,71 +49,75 @@ func (m *mockHandshake) set(ids ...string) {
 }
 
 func TestMonitor_TriggersMatrixOnRunningEvent(t *testing.T) {
-	bus := events.NewBus()
-	matrix := &mockMatrix{}
-	hs := &mockHandshake{}
-	hs.set("awg0") // рукопожатие уже есть — ждать нечего
+	synctest.Test(t, func(t *testing.T) {
+		bus := events.NewBus()
+		matrix := &mockMatrix{}
+		hs := &mockHandshake{}
+		hs.set("awg0") // рукопожатие уже есть — ждать нечего
 
-	mon := NewMonitor(bus, matrix, hs, nil)
-	mon.Start()
-	defer mon.Stop()
+		mon := NewMonitor(bus, matrix, hs, nil)
+		mon.Start()
+		defer mon.Stop()
 
-	// Wait for listener to subscribe before publishing.
-	deadline := time.After(time.Second)
-	for bus.SubscriberCount() == 0 {
-		select {
-		case <-deadline:
-			t.Fatal("timed out waiting for subscriber")
-		default:
-			time.Sleep(5 * time.Millisecond)
+		// Wait for listener to subscribe before publishing.
+		deadline := time.After(time.Second)
+		for bus.SubscriberCount() == 0 {
+			select {
+			case <-deadline:
+				t.Fatal("timed out waiting for subscriber")
+			default:
+				time.Sleep(5 * time.Millisecond)
+			}
 		}
-	}
 
-	bus.Publish("tunnel:state", events.TunnelStateEvent{
-		ID:    "awg0",
-		State: "running",
+		bus.Publish("tunnel:state", events.TunnelStateEvent{
+			ID:    "awg0",
+			State: "running",
+		})
+
+		// Первый опрос рукопожатий идёт на первом тике handshakePoll; равный ему
+		// дедлайн давал гонку двух таймеров и флейк (F364). Свойство теста от
+		// тайминга не зависит — запас с кратным перекрытием.
+		deadline = time.After(3 * handshakePoll)
+		for matrix.calls.Load() == 0 {
+			select {
+			case <-deadline:
+				t.Fatal("RunOnce was never invoked after running event")
+			default:
+				time.Sleep(10 * time.Millisecond)
+			}
+		}
 	})
-
-	// Первый опрос рукопожатий идёт на первом тике handshakePoll; равный ему
-	// дедлайн давал гонку двух таймеров и флейк (F364). Свойство теста от
-	// тайминга не зависит — запас с кратным перекрытием.
-	deadline = time.After(3 * handshakePoll)
-	for matrix.calls.Load() == 0 {
-		select {
-		case <-deadline:
-			t.Fatal("RunOnce was never invoked after running event")
-		default:
-			time.Sleep(10 * time.Millisecond)
-		}
-	}
 }
 
 func TestMonitor_IgnoresNonRunningStateEvents(t *testing.T) {
-	bus := events.NewBus()
-	matrix := &mockMatrix{}
-	mon := NewMonitor(bus, matrix, nil, nil)
-	mon.Start()
-	defer mon.Stop()
+	synctest.Test(t, func(t *testing.T) {
+		bus := events.NewBus()
+		matrix := &mockMatrix{}
+		mon := NewMonitor(bus, matrix, nil, nil)
+		mon.Start()
+		defer mon.Stop()
 
-	deadline := time.After(time.Second)
-	for bus.SubscriberCount() == 0 {
-		select {
-		case <-deadline:
-			t.Fatal("timed out waiting for subscriber")
-		default:
-			time.Sleep(5 * time.Millisecond)
+		deadline := time.After(time.Second)
+		for bus.SubscriberCount() == 0 {
+			select {
+			case <-deadline:
+				t.Fatal("timed out waiting for subscriber")
+			default:
+				time.Sleep(5 * time.Millisecond)
+			}
 		}
-	}
 
-	bus.Publish("tunnel:state", events.TunnelStateEvent{
-		ID:    "awg0",
-		State: "stopped",
+		bus.Publish("tunnel:state", events.TunnelStateEvent{
+			ID:    "awg0",
+			State: "stopped",
+		})
+
+		time.Sleep(80 * time.Millisecond)
+		if matrix.calls.Load() != 0 {
+			t.Fatalf("expected no RunOnce for non-running state, got %d", matrix.calls.Load())
+		}
 	})
-
-	time.Sleep(80 * time.Millisecond)
-	if matrix.calls.Load() != 0 {
-		t.Fatalf("expected no RunOnce for non-running state, got %d", matrix.calls.Load())
-	}
 }
 
 // Подъём пачки туннелей обязан дать РОВНО ОДИН прогон матрицы. Прежде на каждое
@@ -120,51 +125,53 @@ func TestMonitor_IgnoresNonRunningStateEvents(t *testing.T) {
 // туннелям: пять штук давали пять проходов, то есть 25 зондов вместо пяти, и
 // для метода "http" каждый зонд — TLS-рукопожатие.
 func TestMonitor_BatchOfTunnelsRunsMatrixOnce(t *testing.T) {
-	bus := events.NewBus()
-	matrix := &mockMatrix{}
-	hs := &mockHandshake{}
+	synctest.Test(t, func(t *testing.T) {
+		bus := events.NewBus()
+		matrix := &mockMatrix{}
+		hs := &mockHandshake{}
 
-	ids := []string{"awg0", "awg1", "awg2", "awg3", "awg4"}
-	hs.set(ids...)
+		ids := []string{"awg0", "awg1", "awg2", "awg3", "awg4"}
+		hs.set(ids...)
 
-	mon := NewMonitor(bus, matrix, hs, nil)
-	mon.Start()
-	defer mon.Stop()
+		mon := NewMonitor(bus, matrix, hs, nil)
+		mon.Start()
+		defer mon.Stop()
 
-	deadline := time.After(time.Second)
-	for bus.SubscriberCount() == 0 {
-		select {
-		case <-deadline:
-			t.Fatal("подписчик так и не появился")
-		default:
-			time.Sleep(5 * time.Millisecond)
+		deadline := time.After(time.Second)
+		for bus.SubscriberCount() == 0 {
+			select {
+			case <-deadline:
+				t.Fatal("подписчик так и не появился")
+			default:
+				time.Sleep(5 * time.Millisecond)
+			}
 		}
-	}
 
-	for _, id := range ids {
-		bus.Publish("tunnel:state", events.TunnelStateEvent{ID: id, State: "running"})
-	}
-
-	deadline = time.After(5 * time.Second)
-	for matrix.calls.Load() == 0 {
-		select {
-		case <-deadline:
-			t.Fatal("прогон матрицы не случился")
-		default:
-			time.Sleep(10 * time.Millisecond)
+		for _, id := range ids {
+			bus.Publish("tunnel:state", events.TunnelStateEvent{ID: id, State: "running"})
 		}
-	}
 
-	// Дать возможность лишним прогонам проявиться, если коалесцирование сломано.
-	time.Sleep(500 * time.Millisecond)
+		deadline = time.After(5 * time.Second)
+		for matrix.calls.Load() == 0 {
+			select {
+			case <-deadline:
+				t.Fatal("прогон матрицы не случился")
+			default:
+				time.Sleep(10 * time.Millisecond)
+			}
+		}
 
-	if got := matrix.calls.Load(); got != 1 {
-		t.Errorf("прогонов матрицы %d, ожидался 1 на пачку из %d туннелей", got, len(ids))
-	}
-	// Выборка состояния — одна на шаг опроса, а не на туннель.
-	if got := hs.calls.Load(); got > 2 {
-		t.Errorf("выборок рукопожатий %d, ожидалось ≤2 (по одной на шаг)", got)
-	}
+		// Дать возможность лишним прогонам проявиться, если коалесцирование сломано.
+		time.Sleep(500 * time.Millisecond)
+
+		if got := matrix.calls.Load(); got != 1 {
+			t.Errorf("прогонов матрицы %d, ожидался 1 на пачку из %d туннелей", got, len(ids))
+		}
+		// Выборка состояния — одна на шаг опроса, а не на туннель.
+		if got := hs.calls.Load(); got > 2 {
+			t.Errorf("выборок рукопожатий %d, ожидалось ≤2 (по одной на шаг)", got)
+		}
+	})
 }
 
 // Туннель, рукопожавший позже остальных (типично после ребута — поднимаются не
@@ -172,94 +179,98 @@ func TestMonitor_BatchOfTunnelsRunsMatrixOnce(t *testing.T) {
 // карточка показывает «нет связи» до планового прогона: минуту при открытой
 // панели, до десяти минут при закрытой.
 func TestMonitor_LateTunnelStillGetsRun(t *testing.T) {
-	bus := events.NewBus()
-	matrix := &mockMatrix{}
-	hs := &mockHandshake{}
-	hs.set("fast") // «slow» рукопожмёт позже
+	synctest.Test(t, func(t *testing.T) {
+		bus := events.NewBus()
+		matrix := &mockMatrix{}
+		hs := &mockHandshake{}
+		hs.set("fast") // «slow» рукопожмёт позже
 
-	mon := NewMonitor(bus, matrix, hs, nil)
-	mon.Start()
-	defer mon.Stop()
+		mon := NewMonitor(bus, matrix, hs, nil)
+		mon.Start()
+		defer mon.Stop()
 
-	deadline := time.After(time.Second)
-	for bus.SubscriberCount() == 0 {
-		select {
-		case <-deadline:
-			t.Fatal("подписчик так и не появился")
-		default:
-			time.Sleep(5 * time.Millisecond)
+		deadline := time.After(time.Second)
+		for bus.SubscriberCount() == 0 {
+			select {
+			case <-deadline:
+				t.Fatal("подписчик так и не появился")
+			default:
+				time.Sleep(5 * time.Millisecond)
+			}
 		}
-	}
 
-	bus.Publish("tunnel:state", events.TunnelStateEvent{ID: "fast", State: "running"})
-	bus.Publish("tunnel:state", events.TunnelStateEvent{ID: "slow", State: "running"})
+		bus.Publish("tunnel:state", events.TunnelStateEvent{ID: "fast", State: "running"})
+		bus.Publish("tunnel:state", events.TunnelStateEvent{ID: "slow", State: "running"})
 
-	// Первый прогон — за быстрый.
-	deadline = time.After(8 * time.Second)
-	for matrix.calls.Load() < 1 {
-		select {
-		case <-deadline:
-			t.Fatal("прогона за быстрый туннель не случилось")
-		default:
-			time.Sleep(10 * time.Millisecond)
+		// Первый прогон — за быстрый.
+		deadline = time.After(8 * time.Second)
+		for matrix.calls.Load() < 1 {
+			select {
+			case <-deadline:
+				t.Fatal("прогона за быстрый туннель не случилось")
+			default:
+				time.Sleep(10 * time.Millisecond)
+			}
 		}
-	}
 
-	// Медленный подъехал — ожидание должно ещё идти.
-	hs.set("slow")
+		// Медленный подъехал — ожидание должно ещё идти.
+		hs.set("slow")
 
-	deadline = time.After(8 * time.Second)
-	for matrix.calls.Load() < 2 {
-		select {
-		case <-deadline:
-			t.Fatalf("прогонов %d — медленный туннель брошен", matrix.calls.Load())
-		default:
-			time.Sleep(10 * time.Millisecond)
+		deadline = time.After(8 * time.Second)
+		for matrix.calls.Load() < 2 {
+			select {
+			case <-deadline:
+				t.Fatalf("прогонов %d — медленный туннель брошен", matrix.calls.Load())
+			default:
+				time.Sleep(10 * time.Millisecond)
+			}
 		}
-	}
+	})
 }
 
 // Stop() не должен ждать окончания прогона матрицы: он синхронный и учтён в wg,
 // а на роутере init-скрипт не станет ждать полминуты и пришлёт SIGKILL.
 func TestMonitor_StopDoesNotBlockOnMatrixRun(t *testing.T) {
-	bus := events.NewBus()
-	release := make(chan struct{})
-	defer close(release)
-	matrix := &blockingMatrix{release: release}
-	hs := &mockHandshake{}
-	hs.set("awg0")
+	synctest.Test(t, func(t *testing.T) {
+		bus := events.NewBus()
+		release := make(chan struct{})
+		defer close(release)
+		matrix := &blockingMatrix{release: release}
+		hs := &mockHandshake{}
+		hs.set("awg0")
 
-	mon := NewMonitor(bus, matrix, hs, nil)
-	mon.Start()
+		mon := NewMonitor(bus, matrix, hs, nil)
+		mon.Start()
 
-	deadline := time.After(time.Second)
-	for bus.SubscriberCount() == 0 {
-		select {
-		case <-deadline:
-			t.Fatal("подписчик так и не появился")
-		default:
-			time.Sleep(5 * time.Millisecond)
+		deadline := time.After(time.Second)
+		for bus.SubscriberCount() == 0 {
+			select {
+			case <-deadline:
+				t.Fatal("подписчик так и не появился")
+			default:
+				time.Sleep(5 * time.Millisecond)
+			}
 		}
-	}
-	bus.Publish("tunnel:state", events.TunnelStateEvent{ID: "awg0", State: "running"})
+		bus.Publish("tunnel:state", events.TunnelStateEvent{ID: "awg0", State: "running"})
 
-	deadline = time.After(8 * time.Second)
-	for matrix.entered.Load() == 0 {
-		select {
-		case <-deadline:
-			t.Fatal("прогон матрицы не начался")
-		default:
-			time.Sleep(10 * time.Millisecond)
+		deadline = time.After(8 * time.Second)
+		for matrix.entered.Load() == 0 {
+			select {
+			case <-deadline:
+				t.Fatal("прогон матрицы не начался")
+			default:
+				time.Sleep(10 * time.Millisecond)
+			}
 		}
-	}
 
-	stopped := make(chan struct{})
-	go func() { mon.Stop(); close(stopped) }()
-	select {
-	case <-stopped:
-	case <-time.After(3 * time.Second):
-		t.Fatal("Stop() завис на прогоне матрицы")
-	}
+		stopped := make(chan struct{})
+		go func() { mon.Stop(); close(stopped) }()
+		select {
+		case <-stopped:
+		case <-time.After(3 * time.Second):
+			t.Fatal("Stop() завис на прогоне матрицы")
+		}
+	})
 }
 
 // blockingMatrix держит прогон, пока его контекст не отменят.

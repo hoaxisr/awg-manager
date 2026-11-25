@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 )
 
 func stubDirectWANSeams(t *testing.T, netfilterDir, hookPath string, execFn func(env []string, name string, args ...string) ([]byte, error)) {
@@ -885,12 +887,7 @@ func TestService_UpdateConfig_FirewallFailureRollsBackPortAndDiskConfig(t *testi
 	// Part B: real NewMtgEngine() verifies the actual live TCP listening socket rolls back to portOld
 	allocValidPort := func(exclude int) int {
 		for range 20 {
-			ln, err := net.Listen("tcp", "127.0.0.1:0")
-			if err != nil {
-				t.Fatalf("listen ephemeral port: %v", err)
-			}
-			p := ln.Addr().(*net.TCPAddr).Port
-			_ = ln.Close()
+			p := testutil.FreePort(t)
 			if p != exclude && ValidateDirectPort(p) == nil {
 				return p
 			}

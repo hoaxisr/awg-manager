@@ -13,6 +13,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 )
 
 // fakeTerminalManager — минимальный terminal.Manager для теста прокси:
@@ -79,12 +80,9 @@ func startFakeTtyd(t *testing.T) int {
 // TestTerminalWS_KeepalivePings — прокси должен слать WS-ping'и клиенту,
 // чтобы промежуточные прокси (KeenDNS и т.п.) не рвали idle-соединение (#588).
 func TestTerminalWS_KeepalivePings(t *testing.T) {
-	oldInterval := terminalPingInterval
-	terminalPingInterval = 30 * time.Millisecond
-	defer func() { terminalPingInterval = oldInterval }()
-
 	mgr := &fakeTerminalManager{port: startFakeTtyd(t), installed: true}
 	h := NewTerminalHandler(mgr, nil)
+	h.pingInterval = 30 * time.Millisecond
 	srv := httptest.NewServer(http.HandlerFunc(h.WebSocket))
 	defer srv.Close()
 
@@ -128,14 +126,7 @@ func TestTerminalWS_KeepalivePings(t *testing.T) {
 		t.Fatal("нет эха от fake-ttyd через прокси")
 	}
 
-	// Ждём до 2с (интервал 30мс): должно прийти хотя бы 2 ping'а, соединение живо.
-	deadline := time.Now().Add(2 * time.Second)
-	for pings.Load() < 2 && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
-	if got := pings.Load(); got < 2 {
-		t.Fatalf("прокси не шлёт keepalive-ping'и: получено %d", got)
-	}
+	testutil.WaitFor(t, func() bool { return pings.Load() >= 2 }, "прокси не шлёт keepalive-ping'и")
 
 	// Соединение по-прежнему работает после пингов.
 	if err := conn.Write(ctx, websocket.MessageBinary, []byte("still-alive")); err != nil {
@@ -159,17 +150,13 @@ func TestTerminalWS_KeepalivePings(t *testing.T) {
 // (спящая вкладка), должен быть отключён: сессия закрывается и освобождает
 // single-session слот, иначе реконнект вечно ловил бы 409.
 func TestTerminalWS_MissedPongClosesSession(t *testing.T) {
-	oldInterval, oldTimeout := terminalPingInterval, terminalPongTimeout
-	terminalPingInterval = 30 * time.Millisecond
-	terminalPongTimeout = 100 * time.Millisecond
-	defer func() { terminalPingInterval, terminalPongTimeout = oldInterval, oldTimeout }()
-
 	mgr := &fakeTerminalManager{port: startFakeTtyd(t), installed: true}
 	h := NewTerminalHandler(mgr, nil)
+	h.pingInterval, h.pongTimeout = 30*time.Millisecond, 100*time.Millisecond
 	srv := httptest.NewServer(http.HandlerFunc(h.WebSocket))
 	defer srv.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), &websocket.DialOptions{
 		OnPingReceived: func(context.Context, []byte) bool {
@@ -193,19 +180,12 @@ func TestTerminalWS_MissedPongClosesSession(t *testing.T) {
 	}()
 
 	select {
-	case <-readDone:
-		// ок — сервер разорвал соединение
-	case <-time.After(3 * time.Second):
+	case <-readDone: // сервер разорвал соединение
+	case <-time.After(time.Minute):
 		t.Fatal("сервер не закрыл сессию при отсутствии pong")
 	}
-
-	deadline := time.Now().Add(2 * time.Second)
-	for mgr.HasActiveSession() && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
-	if mgr.HasActiveSession() {
-		t.Fatal("sessionActive не освобождён после разрыва по missed pong")
-	}
+	testutil.WaitFor(t, func() bool { return !mgr.HasActiveSession() },
+		"sessionActive не освобождён после разрыва по missed pong")
 }
 
 // nopAppLogger — TerminalHandler.log хранится сырым интерфейсом без nil-гарда,

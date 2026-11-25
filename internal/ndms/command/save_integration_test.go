@@ -12,6 +12,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/ndms/transport"
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 )
 
 // fakeNDMS counts hits per category and returns canonical JSON shapes
@@ -93,22 +94,18 @@ func TestIntegration_SaveSettleInvalidatesRunningConfig(t *testing.T) {
 		t.Fatalf("first Lines should hit NDMS once, got %d", got)
 	}
 
-	// Step 2: trigger save. Wait for: debounce + POST save (100ms slow)
-	// + settle + safety margin.
+	// Step 2: trigger save; the settle step invalidates the cache, so a
+	// re-read eventually reaches NDMS again.
 	sc.Request()
-	time.Sleep(500 * time.Millisecond)
+	testutil.WaitFor(t, func() bool {
+		if _, err := rcStore.Lines(ctx); err != nil {
+			t.Fatalf("Lines after save: %v", err)
+		}
+		return fake.RCHits() == 2
+	}, "running-config так и не перечитан: settle не сбросил кэш")
 
 	if got := fake.SaveHits(); got != 1 {
 		t.Errorf("save POST hits: want 1, got %d", got)
-	}
-
-	// Step 3: re-read running-config — should bypass cache (invalidated
-	// during settle).
-	if _, err := rcStore.Lines(ctx); err != nil {
-		t.Fatalf("second Lines: %v", err)
-	}
-	if got := fake.RCHits(); got != 2 {
-		t.Errorf("second Lines should re-fetch (invalidate happened), got total RC hits %d", got)
 	}
 }
 
@@ -139,7 +136,7 @@ func TestIntegration_SaveSettleDisabled_NoInvalidate(t *testing.T) {
 	}
 
 	sc.Request()
-	time.Sleep(400 * time.Millisecond)
+	waitState(t, sc, SaveStateIdle)
 
 	if got := fake.SaveHits(); got != 1 {
 		t.Errorf("save hits: want 1, got %d", got)

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -105,23 +106,45 @@ func (o *Operator) TunExternalConfig() (want, known bool) {
 	return o.TunHotReload(), true
 }
 
-// TunHotReload: установлен пиннутый бинарь. Он знает `external_configuration`
-// (адрес tun'а держит NDMS) и переживает SIGHUP с tun-инбаундом, в том числе
-// добавление/удаление инбаунда (стенд 25.09.2026). Чужой или старый бинарь —
-// false: для него остаётся Stop+Start (на 1.14 SIGHUP падал в TUNSETIFF busy).
+// TunHotReload: установлена сборка форка с awgm.28 или пин. Она знает
+// `external_configuration` (адрес tun'а держит NDMS) и переживает SIGHUP с
+// tun-инбаундом, в том числе добавление/удаление инбаунда (стенд 25.09.2026).
+// Только пином ограничиваться нельзя: между обновлением панели и обновлением
+// ядра стоит прежняя сборка, без флага она падает на старте (F911). Чужой или
+// старый бинарь — false: для него остаётся Stop+Start (на 1.14 SIGHUP падал в
+// TUNSETIFF busy).
 //
-// Гейт двойной: пиннутый файл на диске И запущенный процесс — из этого же
+// Гейт двойной: такой файл на диске И запущенный процесс — из этого же
 // файла. Иначе при подмене файла под живым чужим процессом SIGHUP получил бы
 // процесс, не знающий ключа: он отверг бы конфиг, а оркестратор счёл бы его
 // применённым.
 func (o *Operator) TunHotReload() bool {
-	if len(o.singboxFeaturesCached()) == 0 {
+	ctx, cancel := context.WithTimeout(context.Background(), singboxVersionProbeTimeout)
+	defer cancel()
+	v, features := o.detectVersionAndFeaturesCached(ctx)
+	if len(features) == 0 && forkBuild(v) < tunExternalMinBuild {
 		return false
 	}
 	if running, pid := o.proc.IsRunning(); running && !o.exeIs(pid, o.binary) {
 		return false
 	}
 	return true
+}
+
+// tunExternalMinBuild — первая сборка форка с `external_configuration`.
+const tunExternalMinBuild = 28
+
+// forkBuild — номер сборки форка: «42», до переименования «…-awgm.40».
+// Не сборка форка — 0.
+func forkBuild(version string) int {
+	if i := strings.LastIndex(version, "-awgm."); i >= 0 {
+		version = version[i+len("-awgm."):]
+	}
+	n, err := strconv.ParseUint(version, 10, 16)
+	if err != nil {
+		return 0
+	}
+	return int(n)
 }
 
 func (o *Operator) singboxFeaturesCached() []string {

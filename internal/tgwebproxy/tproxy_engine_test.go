@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 )
 
 func TestValidateTproxyFiles_ValidAndInvalid(t *testing.T) {
@@ -47,8 +49,8 @@ func TestValidateTproxyFiles_ValidAndInvalid(t *testing.T) {
 	}
 
 	ep0 := cfg.GetEndpoints()[0]
-	ep0.ListenPort = allocFreeLocalPort(t)
-	ep0.AdminPort = allocFreeLocalPort(t)
+	ep0.ListenPort = testutil.FreePort(t)
+	ep0.AdminPort = testutil.FreePort(t)
 	cfgBytes, err := GenerateEndpointTproxyConfigJSON(ep0, profPath, keyPath)
 	if err != nil {
 		t.Fatalf("GenerateEndpointTproxyConfigJSON: %v", err)
@@ -100,10 +102,10 @@ func TestTproxyEngine_ApplyProfilesUpdateAndStop(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	priListen := allocFreeLocalPort(t)
-	priAdmin := allocFreeLocalPort(t)
-	extraListen := allocFreeLocalPort(t)
-	extraAdmin := allocFreeLocalPort(t)
+	priListen := testutil.FreePort(t)
+	priAdmin := testutil.FreePort(t)
+	extraListen := testutil.FreePort(t)
+	extraAdmin := testutil.FreePort(t)
 
 	cfg := Config{
 		Enabled:       true,

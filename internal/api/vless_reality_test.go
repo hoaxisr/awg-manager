@@ -11,22 +11,12 @@ import (
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/serveringress"
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 	"github.com/hoaxisr/awg-manager/internal/tgwebproxy"
 	"github.com/hoaxisr/awg-manager/internal/vlessserver"
 	"github.com/hoaxisr/awg-manager/internal/xhttpserver"
 	"github.com/xtls/reality"
 )
-
-func freeAPITestPort(t *testing.T) int {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("alloc free port: %v", err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
-	return port
-}
 
 func setupRealityAPITestHandler(t *testing.T) (*VlessServerHandler, *vlessserver.Service) {
 	t.Helper()
@@ -44,7 +34,7 @@ func setupRealityAPITestHandler(t *testing.T) (*VlessServerHandler, *vlessserver
 
 	cfg := svc.GetConfig()
 	cfg.Enabled = false
-	cfg.ListenPort = freeAPITestPort(t)
+	cfg.ListenPort = testutil.FreePort(t)
 	if err := svc.UpdateConfig(cfg); err != nil {
 		t.Fatalf("init UpdateConfig: %v", err)
 	}
@@ -86,7 +76,7 @@ func TestRealityRoute_GetUpdateReset(t *testing.T) {
 	}
 
 	// 2. POST update (save keys & port without enabling runtime yet)
-	port := freeAPITestPort(t)
+	port := testutil.FreePort(t)
 	body, _ := json.Marshal(map[string]any{
 		"port":      port,
 		"transport": "tcp",
@@ -149,7 +139,7 @@ func TestRealityRoute_QuickSetupPreserveClientsAndOutboundMode(t *testing.T) {
 		reality.GlobalPostHandshakeRecordsLens.Store(key, []int{})
 	}
 
-	port := freeAPITestPort(t)
+	port := testutil.FreePort(t)
 	reqBody, _ := json.Marshal(map[string]any{
 		"client_remark":             "AnotherClient",
 		"preserve_existing_clients": true,
@@ -205,7 +195,7 @@ func TestRealityRoute_QuickSetupDisableOtherServiceAndRollbackOnFailure(t *testi
 	svcFail.SetTestRuntimeHook(func(xhttpserver.Config) error {
 		return errors.New("injected xray start failure")
 	})
-	badPort := freeAPITestPort(t)
+	badPort := testutil.FreePort(t)
 	failBody, _ := json.Marshal(map[string]any{
 		"client_remark": "ShouldBeRolledBack",
 		"outbound_mode": "direct",
@@ -243,7 +233,7 @@ func TestRealityRoute_QuickSetupDisableOtherServiceAndRollbackOnFailure(t *testi
 	})
 	cfg := svc.GetConfig()
 	cfg.Enabled = false
-	cfg.ListenPort = freeAPITestPort(t)
+	cfg.ListenPort = testutil.FreePort(t)
 	if err := svc.UpdateConfig(cfg); err != nil {
 		t.Fatalf("UpdateConfig: %v", err)
 	}
@@ -259,9 +249,9 @@ func TestRealityRoute_QuickSetupDisableOtherServiceAndRollbackOnFailure(t *testi
 	tgCfg := tgSvc.GetInternalConfig()
 	tgCfg.Enabled = true
 	tgCfg.Scenario = tgwebproxy.ScenarioCDNHTTP
-	tgCfg.ListenPort = freeAPITestPort(t)
-	tgCfg.AdminPort = freeAPITestPort(t)
-	tgCfg.Backend = (&net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: freeAPITestPort(t)}).String()
+	tgCfg.ListenPort = testutil.FreePort(t)
+	tgCfg.AdminPort = testutil.FreePort(t)
+	tgCfg.Backend = (&net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: testutil.FreePort(t)}).String()
 	tgCfg.PublicHostname = "tg.example.com"
 	if err := coord.ApplyTelegramConfig(context.Background(), tgCfg); err != nil {
 		t.Fatalf("ApplyTelegramConfig: %v", err)
@@ -271,7 +261,7 @@ func TestRealityRoute_QuickSetupDisableOtherServiceAndRollbackOnFailure(t *testi
 	}
 
 	h := NewVlessServerHandler(svc, coord)
-	okPort := freeAPITestPort(t)
+	okPort := testutil.FreePort(t)
 	okBody, _ := json.Marshal(map[string]any{
 		"client_remark":         "RealityPhone",
 		"disable_other_service": true,

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 )
 
 func newTestClient(t *testing.T, handler http.Handler) (*Client, *httptest.Server) {
@@ -282,16 +283,14 @@ func TestClient_SemaphoreLimitsConcurrency(t *testing.T) {
 			_ = c.Get(context.Background(), "/show/ignore", &dst)
 		}()
 	}
-	// Let goroutines stack up.
+	testutil.WaitFor(t, func() bool { return atomic.LoadInt32(&peak) >= 3 }, "semaphore should fill")
+	// Окно, в которое проявился бы четвёртый одновременный запрос.
 	time.Sleep(50 * time.Millisecond)
 	close(release)
 	wg.Wait()
 
 	if got := atomic.LoadInt32(&peak); got > 3 {
 		t.Errorf("peak concurrent requests: want <=3, got %d", got)
-	}
-	if got := atomic.LoadInt32(&peak); got < 3 {
-		t.Errorf("peak concurrent requests: semaphore should fill, got %d", got)
 	}
 }
 

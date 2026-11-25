@@ -31,7 +31,7 @@ func TestApplyDiffNWG_InterfaceGone_NoCommands(t *testing.T) {
 	t.Cleanup(srv.Close)
 	f := query.NewFakeNDMS() // Wireguard0 нет
 	q := query.NewQueries(query.Deps{Getter: f, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
-	sc := command.NewSaveCoordinator(f, nopPublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil)
+	sc := command.NewSaveCoordinator(f, nopPublisher{}, time.Hour, time.Hour, 0, nil)
 	sc.SetSaveTimings(command.SaveEventCap, 0, command.SaveAfterRemoval) // без шины событий
 	cmds := command.NewCommands(command.Deps{Poster: f, Save: sc, Queries: q, IsOS5: func() bool { return true }})
 	tr := transport.NewWithURL(srv.URL, transport.NewSemaphore(2))
@@ -71,7 +71,7 @@ func TestReplaceConfigNWG_ListFails_RecordUnchanged(t *testing.T) {
 	t.Cleanup(srv.Close)
 	f := query.NewFakeNDMS(ndms.Interface{ID: "Wireguard0", Type: "Wireguard"})
 	q := query.NewQueries(query.Deps{Getter: f, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
-	sc := command.NewSaveCoordinator(f, nopPublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil)
+	sc := command.NewSaveCoordinator(f, nopPublisher{}, time.Hour, time.Hour, 0, nil)
 	sc.SetSaveTimings(command.SaveEventCap, 0, command.SaveAfterRemoval) // без шины событий
 	cmds := command.NewCommands(command.Deps{Poster: f, Save: sc, Queries: q, IsOS5: func() bool { return true }})
 	tr := transport.NewWithURL(srv.URL, transport.NewSemaphore(2))

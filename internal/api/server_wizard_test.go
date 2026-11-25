@@ -19,6 +19,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/serverwizard"
 	"github.com/hoaxisr/awg-manager/internal/serverwizard/egress"
 	"github.com/hoaxisr/awg-manager/internal/sys/procnet"
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 	"github.com/hoaxisr/awg-manager/internal/tgwebproxy"
 	"github.com/hoaxisr/awg-manager/internal/vlessserver"
 )
@@ -294,8 +295,7 @@ func TestServerWizardHandler_EndToEndFlow(t *testing.T) {
 
 	// 6. Poll Job Status
 	var jobResp serverwizard.JobStatusResponse
-	for i := 0; i < 20; i++ {
-		time.Sleep(50 * time.Millisecond)
+	testutil.WaitFor(t, func() bool {
 		reqJob := httptest.NewRequest(http.MethodGet, "/api/servers/tgwebproxy/wizard/jobs/"+jobID, nil)
 		reqJob.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: sessionID})
 		wJob := httptest.NewRecorder()
@@ -306,10 +306,8 @@ func TestServerWizardHandler_EndToEndFlow(t *testing.T) {
 		}
 		_ = json.Unmarshal(wJob.Body.Bytes(), &jobEnvelope)
 		jobResp = jobEnvelope.Data
-		if jobResp.Phase == serverwizard.JobPhaseSucceeded || jobResp.Phase == serverwizard.JobPhaseFailed {
-			break
-		}
-	}
+		return jobResp.Phase == serverwizard.JobPhaseSucceeded || jobResp.Phase == serverwizard.JobPhaseFailed
+	}, "задание мастера не завершилось")
 	if jobResp.Phase != serverwizard.JobPhaseSucceeded {
 		t.Fatalf("expected job Succeeded, got %s", jobResp.Phase)
 	}
@@ -529,8 +527,7 @@ func TestServerWizardHandler_AuthDisabled_EndToEndAndCSRF(t *testing.T) {
 
 	// 4. Poll GetJob without cookie to completion.
 	var jobResp serverwizard.JobStatusResponse
-	for i := 0; i < 40; i++ {
-		time.Sleep(50 * time.Millisecond)
+	testutil.WaitFor(t, func() bool {
 		reqJob := httptest.NewRequest(http.MethodGet, "/api/servers/tgwebproxy/wizard/jobs/"+jobID, nil)
 		wJob := httptest.NewRecorder()
 		handler.GetJob(wJob, reqJob, "tgwebproxy", jobID)
@@ -543,10 +540,8 @@ func TestServerWizardHandler_AuthDisabled_EndToEndAndCSRF(t *testing.T) {
 		}
 		_ = json.Unmarshal(wJob.Body.Bytes(), &jobEnvelope)
 		jobResp = jobEnvelope.Data
-		if jobResp.Phase == serverwizard.JobPhaseSucceeded || jobResp.Phase == serverwizard.JobPhaseFailed {
-			break
-		}
-	}
+		return jobResp.Phase == serverwizard.JobPhaseSucceeded || jobResp.Phase == serverwizard.JobPhaseFailed
+	}, "задание мастера не завершилось")
 	if jobResp.Phase != serverwizard.JobPhaseSucceeded {
 		t.Fatalf("expected job Succeeded, got %s (%s)", jobResp.Phase, jobResp.Error)
 	}

@@ -195,7 +195,7 @@ func TestRunner_AdoptAll(t *testing.T) {
 		t.Fatalf("конфиг усыновлённого туннеля пропал: %v", err)
 	}
 	// Мёртвый pidfile — убирается.
-	_ = os.WriteFile(filepath.Join(RunDir, "awg22.pid"), []byte("999999"), 0o644)
+	_ = os.WriteFile(filepath.Join(RunDir, "awg22.pid"), []byte("999999999"), 0o644)
 	r2.AdoptAll(func(string) bool { return true })
 	if _, err := os.Stat(filepath.Join(RunDir, "awg22.pid")); !os.IsNotExist(err) {
 		t.Fatal("stale pidfile kept")

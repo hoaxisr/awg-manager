@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
@@ -301,29 +302,31 @@ func TestStart_ArmsProbeHostThenTearsItDown(t *testing.T) {
 // Повторный Start перезаводит таймер: иначе снос от первого запуска срубил бы
 // запись посреди второй проверки.
 func TestStart_ReArmsTeardownTimer(t *testing.T) {
-	stubFirstIPv4(t, func(string) string { return "192.168.7.1" })
-	stubTeardownDelay(t, time.Second)
+	synctest.Test(t, func(t *testing.T) {
+		stubFirstIPv4(t, func(string) string { return "192.168.7.1" })
+		stubTeardownDelay(t, time.Second)
 
-	fake := &fakeNDMS{}
-	ip := &fakeIPHost{entries: map[string]string{probeDomain: "192.168.7.1"}}
-	svc := newTestService(fake, ip)
-	stopTeardown(t, svc)
+		fake := &fakeNDMS{}
+		ip := &fakeIPHost{entries: map[string]string{probeDomain: "192.168.7.1"}}
+		svc := newTestService(fake, ip)
+		stopTeardown(t, svc)
 
-	if _, err := svc.Start(context.Background(), "192.168.7.100"); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-	time.Sleep(400 * time.Millisecond)
-	if _, err := svc.Start(context.Background(), "192.168.7.100"); err != nil {
-		t.Fatalf("Start #2: %v", err)
-	}
-	// Момент, когда таймер ПЕРВОГО запуска уже отработал бы (1.0 с от начала),
-	// а таймер второго — ещё нет (1.4 с).
-	time.Sleep(800 * time.Millisecond)
-	for _, p := range fake.posts() {
-		if isDeletePayload(p) {
-			t.Fatal("запись снесена посреди второй проверки — таймер не перезавели")
+		if _, err := svc.Start(context.Background(), "192.168.7.100"); err != nil {
+			t.Fatalf("Start: %v", err)
 		}
-	}
+		time.Sleep(400 * time.Millisecond)
+		if _, err := svc.Start(context.Background(), "192.168.7.100"); err != nil {
+			t.Fatalf("Start #2: %v", err)
+		}
+		// Момент, когда таймер ПЕРВОГО запуска уже отработал бы (1.0 с от начала),
+		// а таймер второго — ещё нет (1.4 с).
+		time.Sleep(800 * time.Millisecond)
+		for _, p := range fake.posts() {
+			if isDeletePayload(p) {
+				t.Fatal("запись снесена посреди второй проверки — таймер не перезавели")
+			}
+		}
+	})
 }
 
 // Снос, догнавший лок уже после повторного Start, обязан отработать вхолостую.

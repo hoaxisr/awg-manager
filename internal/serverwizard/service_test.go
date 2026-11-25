@@ -24,6 +24,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/serveringress"
 	"github.com/hoaxisr/awg-manager/internal/serverwizard/egress"
 	"github.com/hoaxisr/awg-manager/internal/sys/procnet"
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 	"github.com/hoaxisr/awg-manager/internal/tgwebproxy"
 	"github.com/hoaxisr/awg-manager/internal/vlessserver"
 )
@@ -238,17 +239,7 @@ func TestWizardService_PlanAndApply_HappyPath(t *testing.T) {
 	}
 
 	// 3. Wait for async job completion
-	var jobResp JobStatusResponse
-	for i := 0; i < 20; i++ {
-		time.Sleep(50 * time.Millisecond)
-		jobResp, err = svc.GetJob(ctx, jobID, sessionID)
-		if err != nil {
-			t.Fatalf("failed to poll job: %v", err)
-		}
-		if jobResp.Phase == JobPhaseSucceeded || jobResp.Phase == JobPhaseFailed {
-			break
-		}
-	}
+	jobResp := waitJob(t, svc, jobID, sessionID)
 
 	if jobResp.Phase != JobPhaseSucceeded {
 		t.Fatalf("expected job Succeeded, got %s (err: %s)", jobResp.Phase, jobResp.Error)
@@ -296,17 +287,7 @@ func TestWizardService_StaleFingerprintRejection(t *testing.T) {
 		t.Fatalf("unexpected apply error: %v", err)
 	}
 
-	var jobResp JobStatusResponse
-	for i := 0; i < 20; i++ {
-		time.Sleep(50 * time.Millisecond)
-		jobResp, err = svc.GetJob(ctx, jobID, sessionID)
-		if err != nil {
-			t.Fatalf("failed to poll job: %v", err)
-		}
-		if jobResp.Phase == JobPhaseSucceeded || jobResp.Phase == JobPhaseFailed {
-			break
-		}
-	}
+	jobResp := waitJob(t, svc, jobID, sessionID)
 
 	if jobResp.Phase != JobPhaseFailed || jobResp.ErrorCode != ErrCodePlanStale {
 		t.Fatalf("expected job failed with PLAN_STALE on drifted state, got %+v", jobResp)
@@ -710,13 +691,7 @@ func TestWizardService_KeenDNSCertStatusHonestVerification(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
-	for i := 0; i < 20; i++ {
-		time.Sleep(30 * time.Millisecond)
-		st, _ := svc.GetJob(ctx, jobID, "sess-cert-1")
-		if st.Phase == JobPhaseSucceeded || st.Phase == JobPhaseFailed {
-			break
-		}
-	}
+	waitJob(t, svc, jobID, "sess-cert-1")
 	creds, err := svc.Reveal(ctx, jobID, "sess-cert-1")
 	if err != nil {
 		t.Fatalf("Reveal: %v", err)
@@ -742,13 +717,7 @@ func TestWizardService_KeenDNSCertStatusHonestVerification(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
-	for i := 0; i < 20; i++ {
-		time.Sleep(30 * time.Millisecond)
-		st, _ := svc.GetJob(ctx, jobID2, "sess-cert-2")
-		if st.Phase == JobPhaseSucceeded || st.Phase == JobPhaseFailed {
-			break
-		}
-	}
+	waitJob(t, svc, jobID2, "sess-cert-2")
 	creds2, err := svc.Reveal(ctx, jobID2, "sess-cert-2")
 	if err != nil {
 		t.Fatalf("Reveal: %v", err)
@@ -756,6 +725,21 @@ func TestWizardService_KeenDNSCertStatusHonestVerification(t *testing.T) {
 	if creds2.KeenDNSCertStatus == "ready" || creds2.KeenDNSCertStatus != "invalid" {
 		t.Fatalf("expected KeenDNSCertStatus='invalid' when cert is for wrong hostname despite SSLEnabled=true & RuntimeActive=true, got %q", creds2.KeenDNSCertStatus)
 	}
+}
+
+// waitJob ждёт терминальной фазы задания.
+func waitJob(t *testing.T, svc *WizardService, jobID, sessionID string) JobStatusResponse {
+	t.Helper()
+	var job JobStatusResponse
+	testutil.WaitFor(t, func() bool {
+		job, _ = svc.GetJob(context.Background(), jobID, sessionID)
+		switch job.Phase {
+		case JobPhaseSucceeded, JobPhaseFailed, JobPhaseCancelled, JobPhaseRecoveryRequired:
+			return true
+		}
+		return false
+	}, "задание не дошло до терминальной фазы")
+	return job
 }
 
 func TestWizard_MTProtoDirectOnlyForbidsKeenDNSAndPlansWANFirewall(t *testing.T) {
@@ -1168,17 +1152,7 @@ func TestWizardService_DirectFakeTLS_DesiredAndNoKeenDNSPublication(t *testing.T
 	if err != nil {
 		t.Fatalf("Apply both failed: %v", err)
 	}
-	var jobResp JobStatusResponse
-	for i := 0; i < 30; i++ {
-		time.Sleep(30 * time.Millisecond)
-		jobResp, err = svc.GetJob(ctx, jobID, sessionID)
-		if err != nil {
-			t.Fatalf("GetJob: %v", err)
-		}
-		if jobResp.Phase == JobPhaseSucceeded || jobResp.Phase == JobPhaseFailed {
-			break
-		}
-	}
+	jobResp := waitJob(t, svc, jobID, sessionID)
 	if jobResp.Phase != JobPhaseSucceeded {
 		t.Fatalf("expected both apply succeeded, got %s (%s)", jobResp.Phase, jobResp.Error)
 	}

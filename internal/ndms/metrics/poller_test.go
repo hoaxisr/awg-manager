@@ -8,6 +8,7 @@ import (
 	"math"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/ndms"
@@ -131,224 +132,238 @@ func (f *fakeHistory) Entries() []fakeHistoryEntry {
 }
 
 func TestMetricsPoller_PollsRunningAndPublishes(t *testing.T) {
-	f := newNDMS()
-	f.SetDetail("Wireguard0", json.RawMessage(`{"wireguard":{"peer":[{"public-key":"k","rxbytes":100,"txbytes":200,"last-handshake":5,"online":true,"enabled":true}]}}`))
-	peers, _ := newPeers(f, 1*time.Second)
+	synctest.Test(t, func(t *testing.T) {
+		f := newNDMS()
+		f.SetDetail("Wireguard0", json.RawMessage(`{"wireguard":{"peer":[{"public-key":"k","rxbytes":100,"txbytes":200,"last-handshake":5,"online":true,"enabled":true}]}}`))
+		peers, _ := newPeers(f, 1*time.Second)
 
-	run := &fakeRunningProvider{}
-	run.Set([]InterfaceRef{{ID: "Wireguard0", IsServer: false}})
+		run := &fakeRunningProvider{}
+		run.Set([]InterfaceRef{{ID: "Wireguard0", IsServer: false}})
 
-	pub := &fakeMetricsPublisher{}
-	subs := &fakeSubs{count: 1}
-	history := &fakeHistory{}
+		pub := &fakeMetricsPublisher{}
+		subs := &fakeSubs{count: 1}
+		history := &fakeHistory{}
 
-	p := NewWithInterval(peers, pub, run, subs, NopLogger(), 20*time.Millisecond)
-	p.SetHistoryFeeder(history)
-	p.Start()
-	defer p.Stop()
+		p := NewWithInterval(peers, pub, run, subs, NopLogger(), 20*time.Millisecond)
+		p.SetHistoryFeeder(history)
+		p.Start()
+		defer p.Stop()
 
-	time.Sleep(50 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 
-	evs := pub.Events()
-	if len(evs) == 0 {
-		t.Fatal("no events published")
-	}
-	if evs[0].Type != "tunnel:traffic" {
-		t.Errorf("first event type: %s", evs[0].Type)
-	}
-	payload := evs[0].Data.(map[string]any)
-	if payload["id"] != "Wireguard0" {
-		t.Errorf("id: %v", payload["id"])
-	}
-	if payload["rxBytes"].(int64) != 100 {
-		t.Errorf("rx: %v", payload["rxBytes"])
-	}
-	hs, ok := payload["lastHandshake"].(string)
-	if !ok {
-		t.Fatalf("lastHandshake: want string, got %T", payload["lastHandshake"])
-	}
-	if hs == "" {
-		t.Errorf("lastHandshake: want RFC3339, got empty (secondsAgo=5 should produce timestamp)")
-	}
-	if _, err := time.Parse(time.RFC3339, hs); err != nil {
-		t.Errorf("lastHandshake %q not RFC3339: %v", hs, err)
-	}
-	if _, extra := payload["lastHandshakeSecondsAgo"]; extra {
-		t.Errorf("lastHandshakeSecondsAgo must not be on the wire anymore")
-	}
-	if _, extra := payload["peerCount"]; extra {
-		t.Errorf("peerCount must not be on the wire anymore")
-	}
+		evs := pub.Events()
+		if len(evs) == 0 {
+			t.Fatal("no events published")
+		}
+		if evs[0].Type != "tunnel:traffic" {
+			t.Errorf("first event type: %s", evs[0].Type)
+		}
+		payload := evs[0].Data.(map[string]any)
+		if payload["id"] != "Wireguard0" {
+			t.Errorf("id: %v", payload["id"])
+		}
+		if payload["rxBytes"].(int64) != 100 {
+			t.Errorf("rx: %v", payload["rxBytes"])
+		}
+		hs, ok := payload["lastHandshake"].(string)
+		if !ok {
+			t.Fatalf("lastHandshake: want string, got %T", payload["lastHandshake"])
+		}
+		if hs == "" {
+			t.Errorf("lastHandshake: want RFC3339, got empty (secondsAgo=5 should produce timestamp)")
+		}
+		if _, err := time.Parse(time.RFC3339, hs); err != nil {
+			t.Errorf("lastHandshake %q not RFC3339: %v", hs, err)
+		}
+		if _, extra := payload["lastHandshakeSecondsAgo"]; extra {
+			t.Errorf("lastHandshakeSecondsAgo must not be on the wire anymore")
+		}
+		if _, extra := payload["peerCount"]; extra {
+			t.Errorf("peerCount must not be on the wire anymore")
+		}
 
-	ents := history.Entries()
-	if len(ents) == 0 {
-		t.Fatal("history feed not called")
-	}
-	if ents[0].ID != "Wireguard0" || ents[0].Rx != 100 || ents[0].Tx != 200 {
-		t.Errorf("history entry: %+v", ents[0])
-	}
+		ents := history.Entries()
+		if len(ents) == 0 {
+			t.Fatal("history feed not called")
+		}
+		if ents[0].ID != "Wireguard0" || ents[0].Rx != 100 || ents[0].Tx != 200 {
+			t.Errorf("history entry: %+v", ents[0])
+		}
+	})
 }
 
 func TestMetricsPoller_EmptyPeersCooldown_SkipsSubsequentTicks(t *testing.T) {
-	// Server with no peers returns an empty list. After the first
-	// tick observes this, the poller must skip that interface for
-	// the cooldown period so NDMS isn't hammered every 10s for
-	// nothing.
-	f := newNDMS()
-	f.SetDetail("Wireguard1", json.RawMessage(`{"wireguard":{"peer":[]}}`))
-	peers, ifs := newPeers(f, 1*time.Millisecond)
+	synctest.Test(t, func(t *testing.T) {
+		// Server with no peers returns an empty list. After the first
+		// tick observes this, the poller must skip that interface for
+		// the cooldown period so NDMS isn't hammered every 10s for
+		// nothing.
+		f := newNDMS()
+		f.SetDetail("Wireguard1", json.RawMessage(`{"wireguard":{"peer":[]}}`))
+		peers, ifs := newPeers(f, 1*time.Millisecond)
 
-	run := &fakeRunningProvider{}
-	run.Set([]InterfaceRef{{ID: "Wireguard1", IsServer: false}})
-	dirtyEachTick(run, ifs)
-	lists := f.ListCalls()
+		run := &fakeRunningProvider{}
+		run.Set([]InterfaceRef{{ID: "Wireguard1", IsServer: false}})
+		dirtyEachTick(run, ifs)
+		lists := f.ListCalls()
 
-	pub := &fakeMetricsPublisher{}
-	subs := &fakeSubs{count: 1}
+		pub := &fakeMetricsPublisher{}
+		subs := &fakeSubs{count: 1}
 
-	p := NewWithInterval(peers, pub, run, subs, NopLogger(), 10*time.Millisecond)
-	p.Start()
-	defer p.Stop()
+		p := NewWithInterval(peers, pub, run, subs, NopLogger(), 10*time.Millisecond)
+		p.Start()
+		defer p.Stop()
 
-	// Let at least 6 ticks fire. Without the cooldown, that's 6 RCI
-	// calls. With it, only the first tick hits NDMS and every
-	// following tick is skipped.
-	time.Sleep(80 * time.Millisecond)
+		// Let at least 6 ticks fire. Without the cooldown, that's 6 RCI
+		// calls. With it, only the first tick hits NDMS and every
+		// following tick is skipped.
+		time.Sleep(80 * time.Millisecond)
 
-	calls := f.ListCalls() - lists
-	if calls == 0 {
-		t.Fatal("expected at least one RCI call to prime the empty state")
-	}
-	if calls > 2 {
-		t.Errorf("cooldown not honoured: want at most 2 RCI calls, got %d", calls)
-	}
+		calls := f.ListCalls() - lists
+		if calls == 0 {
+			t.Fatal("expected at least one RCI call to prime the empty state")
+		}
+		if calls > 2 {
+			t.Errorf("cooldown not honoured: want at most 2 RCI calls, got %d", calls)
+		}
+	})
 }
 
 // При закрытой панели поллер РАЗРЕЖАЕТСЯ, а не выключается: он единственный
 // кормилец истории трафика не управляемых системных туннелей, и полный гейт
 // оставлял в графике дыру во всю длину простоя (F352).
 func TestMetricsPoller_IdleStillFeedsHistory(t *testing.T) {
-	f := newNDMS()
-	f.SetDetail("Wireguard0", json.RawMessage(`{"wireguard":{"peer":[{"public-key":"k","rxbytes":10,"txbytes":20,"last-handshake":0,"online":true,"enabled":true}]}}`))
-	peers, _ := newPeers(f, 1*time.Millisecond)
-	run := &fakeRunningProvider{}
-	run.Set([]InterfaceRef{{ID: "Wireguard0"}})
-	history := &fakeHistory{}
+	synctest.Test(t, func(t *testing.T) {
+		f := newNDMS()
+		f.SetDetail("Wireguard0", json.RawMessage(`{"wireguard":{"peer":[{"public-key":"k","rxbytes":10,"txbytes":20,"last-handshake":0,"online":true,"enabled":true}]}}`))
+		peers, _ := newPeers(f, 1*time.Millisecond)
+		run := &fakeRunningProvider{}
+		run.Set([]InterfaceRef{{ID: "Wireguard0"}})
+		history := &fakeHistory{}
 
-	// idleInterval = 12×interval = 60 мс. За 250 мс простоя обязано пройти
-	// хотя бы несколько разрежённых тиков.
-	p := NewWithInterval(peers, &fakeMetricsPublisher{}, run, &fakeSubs{count: 0}, NopLogger(), 5*time.Millisecond)
-	p.SetHistoryFeeder(history)
-	p.Start()
-	defer p.Stop()
+		// idleInterval = 12×interval = 60 мс. За 250 мс простоя обязано пройти
+		// хотя бы несколько разрежённых тиков.
+		p := NewWithInterval(peers, &fakeMetricsPublisher{}, run, &fakeSubs{count: 0}, NopLogger(), 5*time.Millisecond)
+		p.SetHistoryFeeder(history)
+		p.Start()
+		defer p.Stop()
 
-	time.Sleep(250 * time.Millisecond)
+		time.Sleep(250 * time.Millisecond)
 
-	if len(history.Entries()) == 0 {
-		t.Fatal("история не пишется при закрытой панели — дыра в графике системных туннелей")
-	}
+		if len(history.Entries()) == 0 {
+			t.Fatal("история не пишется при закрытой панели — дыра в графике системных туннелей")
+		}
+	})
 }
 
 // Разрежение обязано быть настоящим: без панели тиков должно быть заметно
 // меньше, чем с ней. Иначе экономия, ради которой всё затевалось, исчезает.
 func TestMetricsPoller_IdleIsThinned(t *testing.T) {
-	// Считаем обращения к роутеру, а не записи истории: история кормится только
-	// на смену дайджеста пиров, а он в фейке постоянный.
-	poll := func(clients int) int {
-		f := newNDMS()
-		f.SetDetail("Wireguard0", json.RawMessage(`{"wireguard":{"peer":[{"public-key":"k","rxbytes":10,"txbytes":20,"last-handshake":0,"online":true,"enabled":true}]}}`))
-		peers, ifs := newPeers(f, 1*time.Millisecond)
-		run := &fakeRunningProvider{}
-		run.Set([]InterfaceRef{{ID: "Wireguard0"}})
-		dirtyEachTick(run, ifs)
+	synctest.Test(t, func(t *testing.T) {
+		// Считаем обращения к роутеру, а не записи истории: история кормится только
+		// на смену дайджеста пиров, а он в фейке постоянный.
+		poll := func(clients int) int {
+			f := newNDMS()
+			f.SetDetail("Wireguard0", json.RawMessage(`{"wireguard":{"peer":[{"public-key":"k","rxbytes":10,"txbytes":20,"last-handshake":0,"online":true,"enabled":true}]}}`))
+			peers, ifs := newPeers(f, 1*time.Millisecond)
+			run := &fakeRunningProvider{}
+			run.Set([]InterfaceRef{{ID: "Wireguard0"}})
+			dirtyEachTick(run, ifs)
 
-		p := NewWithInterval(peers, &fakeMetricsPublisher{}, run, &fakeSubs{count: clients}, NopLogger(), 5*time.Millisecond)
-		p.SetHistoryFeeder(&fakeHistory{})
-		p.Start()
-		defer p.Stop()
+			p := NewWithInterval(peers, &fakeMetricsPublisher{}, run, &fakeSubs{count: clients}, NopLogger(), 5*time.Millisecond)
+			p.SetHistoryFeeder(&fakeHistory{})
+			p.Start()
+			defer p.Stop()
 
-		time.Sleep(250 * time.Millisecond)
-		return f.ListCalls()
-	}
+			time.Sleep(250 * time.Millisecond)
+			return f.ListCalls()
+		}
 
-	idle, watched := poll(0), poll(1)
-	if idle == 0 {
-		t.Fatal("простой не должен глушить поллер полностью")
-	}
-	// 12-кратное разрежение; берём запас втрое на дрожание планировщика.
-	if idle*4 > watched {
-		t.Errorf("разрежения нет: в простое %d тиков против %d при открытой панели", idle, watched)
-	}
+		idle, watched := poll(0), poll(1)
+		if idle == 0 {
+			t.Fatal("простой не должен глушить поллер полностью")
+		}
+		// 12-кратное разрежение; берём запас втрое на дрожание планировщика.
+		if idle*4 > watched {
+			t.Errorf("разрежения нет: в простое %d тиков против %d при открытой панели", idle, watched)
+		}
+	})
 }
 
 func TestMetricsPoller_ServerChange_InvokesSnapshotCallback(t *testing.T) {
-	f := newNDMS()
-	f.SetDetail("Wireguard10", json.RawMessage(`{"wireguard":{"peer":[{"public-key":"k","rxbytes":1,"txbytes":2,"last-handshake":0,"online":true,"enabled":true}]}}`))
-	peers, _ := newPeers(f, 1*time.Second)
-	run := &fakeRunningProvider{}
-	run.Set([]InterfaceRef{{ID: "Wireguard10", IsServer: true}})
-	pub := &fakeMetricsPublisher{}
-	subs := &fakeSubs{count: 1}
-	snap := &fakeSnapshotPub{}
+	synctest.Test(t, func(t *testing.T) {
+		f := newNDMS()
+		f.SetDetail("Wireguard10", json.RawMessage(`{"wireguard":{"peer":[{"public-key":"k","rxbytes":1,"txbytes":2,"last-handshake":0,"online":true,"enabled":true}]}}`))
+		peers, _ := newPeers(f, 1*time.Second)
+		run := &fakeRunningProvider{}
+		run.Set([]InterfaceRef{{ID: "Wireguard10", IsServer: true}})
+		pub := &fakeMetricsPublisher{}
+		subs := &fakeSubs{count: 1}
+		snap := &fakeSnapshotPub{}
 
-	p := NewWithInterval(peers, pub, run, subs, NopLogger(), 20*time.Millisecond)
-	p.SetServerSnapshotPublisher(snap)
-	p.Start()
-	defer p.Stop()
+		p := NewWithInterval(peers, pub, run, subs, NopLogger(), 20*time.Millisecond)
+		p.SetServerSnapshotPublisher(snap)
+		p.Start()
+		defer p.Stop()
 
-	time.Sleep(50 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 
-	if snap.Calls() == 0 {
-		t.Fatal("server snapshot callback not invoked for changed server interface")
-	}
-	for _, ev := range pub.Events() {
-		if ev.Type == "server:updated" {
-			t.Errorf("MetricsPoller must not publish server:updated directly, got %+v", ev)
+		if snap.Calls() == 0 {
+			t.Fatal("server snapshot callback not invoked for changed server interface")
 		}
-	}
+		for _, ev := range pub.Events() {
+			if ev.Type == "server:updated" {
+				t.Errorf("MetricsPoller must not publish server:updated directly, got %+v", ev)
+			}
+		}
+	})
 }
 
 func TestMetricsPoller_ServerNilCallback_NoPublish(t *testing.T) {
-	f := newNDMS()
-	f.SetDetail("Wireguard10", json.RawMessage(`{"wireguard":{"peer":[{"public-key":"k","rxbytes":1,"txbytes":2,"last-handshake":0,"online":true,"enabled":true}]}}`))
-	peers, _ := newPeers(f, 1*time.Second)
-	run := &fakeRunningProvider{}
-	run.Set([]InterfaceRef{{ID: "Wireguard10", IsServer: true}})
-	pub := &fakeMetricsPublisher{}
-	subs := &fakeSubs{count: 1}
+	synctest.Test(t, func(t *testing.T) {
+		f := newNDMS()
+		f.SetDetail("Wireguard10", json.RawMessage(`{"wireguard":{"peer":[{"public-key":"k","rxbytes":1,"txbytes":2,"last-handshake":0,"online":true,"enabled":true}]}}`))
+		peers, _ := newPeers(f, 1*time.Second)
+		run := &fakeRunningProvider{}
+		run.Set([]InterfaceRef{{ID: "Wireguard10", IsServer: true}})
+		pub := &fakeMetricsPublisher{}
+		subs := &fakeSubs{count: 1}
 
-	p := NewWithInterval(peers, pub, run, subs, NopLogger(), 20*time.Millisecond)
-	p.Start()
-	defer p.Stop()
+		p := NewWithInterval(peers, pub, run, subs, NopLogger(), 20*time.Millisecond)
+		p.Start()
+		defer p.Stop()
 
-	time.Sleep(50 * time.Millisecond)
-	for _, ev := range pub.Events() {
-		if ev.Type == "server:updated" {
-			t.Errorf("no snapshot callback wired → no server:updated should be published, got %+v", ev)
+		time.Sleep(50 * time.Millisecond)
+		for _, ev := range pub.Events() {
+			if ev.Type == "server:updated" {
+				t.Errorf("no snapshot callback wired → no server:updated should be published, got %+v", ev)
+			}
 		}
-	}
+	})
 }
 
 // F469: туннель публикуется каждый тик и при неизменных данных — событие
 // служит часами графика (точка на событие, скорость по соседним).
 func TestMetricsPoller_TunnelPublishesEveryTick(t *testing.T) {
-	f := newNDMS()
-	f.SetDetail("Wireguard0", json.RawMessage(`{"wireguard":{"peer":[{"public-key":"k","rxbytes":100,"txbytes":200,"last-handshake":5,"online":true,"enabled":true}]}}`))
-	peers, _ := newPeers(f, 1*time.Millisecond)
-	run := &fakeRunningProvider{}
-	run.Set([]InterfaceRef{{ID: "Wireguard0"}})
-	pub := &fakeMetricsPublisher{}
-	subs := &fakeSubs{count: 1}
+	synctest.Test(t, func(t *testing.T) {
+		f := newNDMS()
+		f.SetDetail("Wireguard0", json.RawMessage(`{"wireguard":{"peer":[{"public-key":"k","rxbytes":100,"txbytes":200,"last-handshake":5,"online":true,"enabled":true}]}}`))
+		peers, _ := newPeers(f, 1*time.Millisecond)
+		run := &fakeRunningProvider{}
+		run.Set([]InterfaceRef{{ID: "Wireguard0"}})
+		pub := &fakeMetricsPublisher{}
+		subs := &fakeSubs{count: 1}
 
-	p := NewWithInterval(peers, pub, run, subs, NopLogger(), 10*time.Millisecond)
-	p.Start()
-	defer p.Stop()
+		p := NewWithInterval(peers, pub, run, subs, NopLogger(), 10*time.Millisecond)
+		p.Start()
+		defer p.Stop()
 
-	time.Sleep(80 * time.Millisecond)
+		time.Sleep(80 * time.Millisecond)
 
-	if evs := pub.Events(); len(evs) < 3 {
-		t.Errorf("неизменный туннель: событий %d, ждали на каждом тике (>=3)", len(evs))
-	}
+		if evs := pub.Events(); len(evs) < 3 {
+			t.Errorf("неизменный туннель: событий %d, ждали на каждом тике (>=3)", len(evs))
+		}
+	})
 }
 
 // F469: сервер сравнивается по абсолютному времени рукопожатия. Растущие
@@ -431,83 +446,89 @@ func TestMetricsPoller_Stop_WithoutStart(t *testing.T) {
 // выход — подсказка в шину, где при нуле зрителей никого нет. Туннельные при
 // этом опрашиваться ОБЯЗАНЫ — ради них поллер в простое и не выключен.
 func TestMetricsPoller_IdleSkipsServersButNotTunnels(t *testing.T) {
-	f := newNDMS()
-	peerJSON := `{"wireguard":{"peer":[{"public-key":"k","rxbytes":10,"txbytes":20,"last-handshake":0,"online":true,"enabled":true}]}}`
-	f.SetDetail("Wireguard0", json.RawMessage(peerJSON))
-	f.SetDetail("Wireguard10", json.RawMessage(peerJSON))
-	peers, ifs := newPeers(f, 1*time.Millisecond)
-	run := &fakeRunningProvider{}
-	run.Set([]InterfaceRef{{ID: "Wireguard0"}, {ID: "Wireguard10", IsServer: true}})
-	dirtyEachTick(run, ifs)
-	history := &fakeHistory{}
-	// Список общий на тик, поэтому опрос сервера виден не по NDMS, а по
-	// выходу серверной половины: первое наблюдение сервера — подсказка.
-	snap := &fakeSnapshotPub{}
+	synctest.Test(t, func(t *testing.T) {
+		f := newNDMS()
+		peerJSON := `{"wireguard":{"peer":[{"public-key":"k","rxbytes":10,"txbytes":20,"last-handshake":0,"online":true,"enabled":true}]}}`
+		f.SetDetail("Wireguard0", json.RawMessage(peerJSON))
+		f.SetDetail("Wireguard10", json.RawMessage(peerJSON))
+		peers, ifs := newPeers(f, 1*time.Millisecond)
+		run := &fakeRunningProvider{}
+		run.Set([]InterfaceRef{{ID: "Wireguard0"}, {ID: "Wireguard10", IsServer: true}})
+		dirtyEachTick(run, ifs)
+		history := &fakeHistory{}
+		// Список общий на тик, поэтому опрос сервера виден не по NDMS, а по
+		// выходу серверной половины: первое наблюдение сервера — подсказка.
+		snap := &fakeSnapshotPub{}
 
-	p := NewWithInterval(peers, &fakeMetricsPublisher{}, run, &fakeSubs{count: 0}, NopLogger(), 5*time.Millisecond)
-	p.SetHistoryFeeder(history)
-	p.SetServerSnapshotPublisher(snap)
-	p.Start()
-	defer p.Stop()
+		p := NewWithInterval(peers, &fakeMetricsPublisher{}, run, &fakeSubs{count: 0}, NopLogger(), 5*time.Millisecond)
+		p.SetHistoryFeeder(history)
+		p.SetServerSnapshotPublisher(snap)
+		p.Start()
+		defer p.Stop()
 
-	time.Sleep(250 * time.Millisecond)
+		time.Sleep(250 * time.Millisecond)
 
-	if f.ListCalls() == 0 || len(history.Entries()) == 0 {
-		t.Error("туннель в простое не опрашивается — история трафика встанет")
-	}
-	if got := snap.Calls(); got != 0 {
-		t.Errorf("сервер в простое опрошен (подсказок %d), потребителя у этого нет", got)
-	}
+		if f.ListCalls() == 0 || len(history.Entries()) == 0 {
+			t.Error("туннель в простое не опрашивается — история трафика встанет")
+		}
+		if got := snap.Calls(); got != 0 {
+			t.Errorf("сервер в простое опрошен (подсказок %d), потребителя у этого нет", got)
+		}
+	})
 }
 
 // F546: тик спрашивает пиры у всех ref параллельно, и они делят ОДИН список —
 // ни одного запроса по имени.
 func TestPoller_TickOneListForAllRefs(t *testing.T) {
-	f := newNDMS()
-	peerJSON := `{"wireguard":{"peer":[{"public-key":"k","rxbytes":10,"txbytes":20,"last-handshake":0,"online":true,"enabled":true}]}}`
-	for _, id := range []string{"Wireguard0", "Wireguard1", "Wireguard10"} {
-		f.SetDetail(id, json.RawMessage(peerJSON))
-	}
-	peers, ifs := newPeers(f, time.Millisecond)
-	run := &fakeRunningProvider{}
-	run.Set([]InterfaceRef{{ID: "Wireguard0"}, {ID: "Wireguard1"}, {ID: "Wireguard10", IsServer: true}})
-	p := NewWithInterval(peers, &fakeMetricsPublisher{}, run, &fakeSubs{count: 1}, NopLogger(), time.Second)
+	synctest.Test(t, func(t *testing.T) {
+		f := newNDMS()
+		peerJSON := `{"wireguard":{"peer":[{"public-key":"k","rxbytes":10,"txbytes":20,"last-handshake":0,"online":true,"enabled":true}]}}`
+		for _, id := range []string{"Wireguard0", "Wireguard1", "Wireguard10"} {
+			f.SetDetail(id, json.RawMessage(peerJSON))
+		}
+		peers, ifs := newPeers(f, time.Millisecond)
+		run := &fakeRunningProvider{}
+		run.Set([]InterfaceRef{{ID: "Wireguard0"}, {ID: "Wireguard1"}, {ID: "Wireguard10", IsServer: true}})
+		p := NewWithInterval(peers, &fakeMetricsPublisher{}, run, &fakeSubs{count: 1}, NopLogger(), time.Second)
 
-	p.tick() // bootstrap карты
-	time.Sleep(2 * time.Millisecond)
-	lists := f.ListCalls()
-	ifs.Invalidate("Wireguard0") // наша запись: следующий снимок — свежий список
-	p.tick()
+		p.tick() // bootstrap карты
+		time.Sleep(2 * time.Millisecond)
+		lists := f.ListCalls()
+		ifs.Invalidate("Wireguard0") // наша запись: следующий снимок — свежий список
+		p.tick()
 
-	if got := f.ListCalls() - lists; got != 1 {
-		t.Fatalf("тик на 3 ref: списков %d, want 1", got)
-	}
-	if f.E != 0 || len(f.Posts) != 0 {
-		t.Fatalf("E=%d Posts=%v, want 0/none", f.E, f.Posts)
-	}
+		if got := f.ListCalls() - lists; got != 1 {
+			t.Fatalf("тик на 3 ref: списков %d, want 1", got)
+		}
+		if f.E != 0 || len(f.Posts) != 0 {
+			t.Fatalf("E=%d Posts=%v, want 0/none", f.E, f.Posts)
+		}
+	})
 }
 
 // F469: неизменный сервер даёт ОДНУ подсказку — дальше тишина, хотя
 // «секунды назад» у рукопожатия растут.
 func TestMetricsPoller_UnchangedServerHintsOnce(t *testing.T) {
-	f := newNDMS()
-	f.SetDetail("Wireguard10", json.RawMessage(`{"wireguard":{"peer":[{"public-key":"k","rxbytes":1,"txbytes":2,"last-handshake":30,"online":true,"enabled":true}]}}`))
-	peers, _ := newPeers(f, 1*time.Millisecond)
-	run := &fakeRunningProvider{}
-	run.Set([]InterfaceRef{{ID: "Wireguard10", IsServer: true}})
-	pub := &fakeMetricsPublisher{}
-	subs := &fakeSubs{count: 1}
-	snap := &fakeSnapshotPub{}
+	synctest.Test(t, func(t *testing.T) {
+		f := newNDMS()
+		f.SetDetail("Wireguard10", json.RawMessage(`{"wireguard":{"peer":[{"public-key":"k","rxbytes":1,"txbytes":2,"last-handshake":30,"online":true,"enabled":true}]}}`))
+		peers, _ := newPeers(f, 1*time.Millisecond)
+		run := &fakeRunningProvider{}
+		run.Set([]InterfaceRef{{ID: "Wireguard10", IsServer: true}})
+		pub := &fakeMetricsPublisher{}
+		subs := &fakeSubs{count: 1}
+		snap := &fakeSnapshotPub{}
 
-	p := NewWithInterval(peers, pub, run, subs, NopLogger(), 10*time.Millisecond)
-	p.SetServerSnapshotPublisher(snap)
-	p.Start()
-	defer p.Stop()
+		p := NewWithInterval(peers, pub, run, subs, NopLogger(), 10*time.Millisecond)
+		p.SetServerSnapshotPublisher(snap)
+		p.Start()
+		defer p.Stop()
 
-	time.Sleep(80 * time.Millisecond)
-	if got := snap.Calls(); got != 1 {
-		t.Errorf("неизменный сервер: подсказок %d, ждали 1", got)
-	}
+		time.Sleep(80 * time.Millisecond)
+		if got := snap.Calls(); got != 1 {
+			t.Errorf("неизменный сервер: подсказок %d, ждали 1", got)
+		}
+	})
 }
 
 // R36: зрителей нет — тик берёт снимок списка до SnapshotBackground (общий
@@ -515,32 +536,34 @@ func TestMetricsPoller_UnchangedServerHintsOnce(t *testing.T) {
 // Память старше SnapshotRecent (ожидание 2,1 с): без зрителя 0 списков,
 // со зрителем 1.
 func TestMetricsPoller_IdleTickAcceptsBackgroundSnapshot(t *testing.T) {
-	type rig struct {
-		f     *query.FakeNDMS
-		p     *Poller
-		lists int
-	}
-	mk := func(clients int) *rig {
-		f := newNDMS()
-		f.SetDetail("Wireguard0", json.RawMessage(`{"wireguard":{"peer":[{"public-key":"K","rxbytes":1}]}}`))
-		peers, ifs := newPeers(f, time.Millisecond)
-		if _, err := ifs.List(context.Background()); err != nil {
-			t.Fatal(err)
+	synctest.Test(t, func(t *testing.T) {
+		type rig struct {
+			f     *query.FakeNDMS
+			p     *Poller
+			lists int
 		}
-		run := &fakeRunningProvider{refs: []InterfaceRef{{ID: "Wireguard0"}}}
-		p := NewWithInterval(peers, &fakeMetricsPublisher{}, run, &fakeSubs{count: clients}, NopLogger(), time.Second)
-		return &rig{f: f, p: p, lists: f.ListCalls()}
-	}
-	idle, viewer := mk(0), mk(1)
-	time.Sleep(query.SnapshotRecent + 100*time.Millisecond)
-	idle.p.tick()
-	viewer.p.tick()
-	if n := idle.f.ListCalls() - idle.lists; n != 0 {
-		t.Fatalf("без зрителя: списков %d, want 0 (снимок до SnapshotBackground)", n)
-	}
-	if n := viewer.f.ListCalls() - viewer.lists; n != 1 {
-		t.Fatalf("со зрителем: списков %d, want 1 (SnapshotRecent)", n)
-	}
+		mk := func(clients int) *rig {
+			f := newNDMS()
+			f.SetDetail("Wireguard0", json.RawMessage(`{"wireguard":{"peer":[{"public-key":"K","rxbytes":1}]}}`))
+			peers, ifs := newPeers(f, time.Millisecond)
+			if _, err := ifs.List(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			run := &fakeRunningProvider{refs: []InterfaceRef{{ID: "Wireguard0"}}}
+			p := NewWithInterval(peers, &fakeMetricsPublisher{}, run, &fakeSubs{count: clients}, NopLogger(), time.Second)
+			return &rig{f: f, p: p, lists: f.ListCalls()}
+		}
+		idle, viewer := mk(0), mk(1)
+		time.Sleep(query.SnapshotRecent + 100*time.Millisecond)
+		idle.p.tick()
+		viewer.p.tick()
+		if n := idle.f.ListCalls() - idle.lists; n != 0 {
+			t.Fatalf("без зрителя: списков %d, want 0 (снимок до SnapshotBackground)", n)
+		}
+		if n := viewer.f.ListCalls() - viewer.lists; n != 1 {
+			t.Fatalf("со зрителем: списков %d, want 1 (SnapshotRecent)", n)
+		}
+	})
 }
 
 // stubWg подменяет `wg show <kernel> dump` на время теста.
