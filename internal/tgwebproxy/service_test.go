@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 	tproxyconfig "github.com/hoaxisr/awg-manager/internal/tgwebproxy/tproxy/config"
 	tproxysession "github.com/hoaxisr/awg-manager/internal/tgwebproxy/tproxy/session"
 )
@@ -1281,12 +1282,7 @@ func TestTelegramPrepareCommitAndRollbackCandidate(t *testing.T) {
 	t.Cleanup(func() { _ = svc.mux.Stop() })
 
 	// Reserve a free loopback port for Mux test
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen free port: %v", err)
-	}
-	muxPort := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
+	muxPort := testutil.FreePort(t)
 
 	origCfg := Config{
 		SchemaVersion:  CurrentSchemaVersion,
@@ -1553,67 +1549,6 @@ func TestPresets_FourPresetsAndPerEndpointConfigGen(t *testing.T) {
 	}
 }
 
-var (
-	allocPortMu   sync.Mutex
-	allocPortSeen = map[int]bool{}
-)
-
-func allocFreeLocalPort(t *testing.T) int {
-	t.Helper()
-	var held []net.Listener
-	defer func() {
-		for _, ln := range held {
-			_ = ln.Close()
-		}
-	}()
-	for range 64 {
-		ln, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatalf("listen free port: %v", err)
-		}
-		port := ln.Addr().(*net.TCPAddr).Port
-		allocPortMu.Lock()
-		dup := allocPortSeen[port]
-		if !dup {
-			allocPortSeen[port] = true
-		}
-		allocPortMu.Unlock()
-		held = append(held, ln)
-		if !dup {
-			return port
-		}
-	}
-	t.Fatalf("could not allocate distinct free local port")
-	return 0
-}
-
-func isAddrInUseErr(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "address already in use") ||
-		strings.Contains(msg, "only one usage of each socket address")
-}
-
-func bindFreeLocalPort(t *testing.T, label string, fn func(port int) error) int {
-	t.Helper()
-	var lastErr error
-	for range 16 {
-		port := allocFreeLocalPort(t)
-		err := fn(port)
-		if err == nil {
-			return port
-		}
-		if !isAddrInUseErr(err) {
-			t.Fatalf("%s (port %d): %v", label, port, err)
-		}
-		lastErr = err
-	}
-	t.Fatalf("%s: failed to bind free local port after retries: %v", label, lastErr)
-	return 0
-}
-
 func TestMux_HotRebindListenPortAndBusyPortPreservesOldListener(t *testing.T) {
 	mux := NewMux()
 	defer mux.Stop()
@@ -1621,9 +1556,10 @@ func TestMux_HotRebindListenPortAndBusyPortPreservesOldListener(t *testing.T) {
 	secret := "11112222333344445555666677778888"
 	eps := []WebProxyEndpoint{{ID: "ep1", Hostname: "tg.example.com", ListenPort: 18084, Enabled: true}}
 
-	portA := bindFreeLocalPort(t, "StartWithSecrets portA", func(p int) error {
-		return mux.StartWithSecrets(p, eps, []string{secret})
-	})
+	portA := testutil.FreePort(t)
+	if err := mux.StartWithSecrets(portA, eps, []string{secret}); err != nil {
+		t.Fatalf("StartWithSecrets portA: %v", err)
+	}
 	if mux.ListenPort() != portA {
 		t.Fatalf("expected ListenPort=%d, got %d", portA, mux.ListenPort())
 	}
@@ -1641,9 +1577,10 @@ func TestMux_HotRebindListenPortAndBusyPortPreservesOldListener(t *testing.T) {
 	}
 
 	// Rebind to portB while running
-	portB := bindFreeLocalPort(t, "StartWithSecrets portB", func(p int) error {
-		return mux.StartWithSecrets(p, eps, []string{secret})
-	})
+	portB := testutil.FreePort(t)
+	if err := mux.StartWithSecrets(portB, eps, []string{secret}); err != nil {
+		t.Fatalf("StartWithSecrets portB: %v", err)
+	}
 	if mux.ListenPort() != portB {
 		t.Fatalf("expected ListenPort=%d after rebind, got %d", portB, mux.ListenPort())
 	}
@@ -1692,13 +1629,14 @@ func TestService_ApplyConfigMuxBindFailureRollsBackTransaction(t *testing.T) {
 	svc.mux = NewMux()
 	defer svc.mux.Stop()
 
-	portA := bindFreeLocalPort(t, "initial ApplyManagedIngress", func(p int) error {
-		return svc.ApplyManagedIngress(ManagedIngressConfig{
-			Enabled:        true,
-			ListenPort:     p,
-			PublicHostname: "good.example.com",
-		})
-	})
+	portA := testutil.FreePort(t)
+	if err := svc.ApplyManagedIngress(ManagedIngressConfig{
+		Enabled:        true,
+		ListenPort:     portA,
+		PublicHostname: "good.example.com",
+	}); err != nil {
+		t.Fatalf("initial ApplyManagedIngress: %v", err)
+	}
 	if svc.mux.ListenPort() != portA {
 		t.Fatalf("expected mux on portA %d, got %d", portA, svc.mux.ListenPort())
 	}
@@ -1774,13 +1712,14 @@ func TestService_ExternalBackendEndpointNoWorkerContentionAndHostOnlyMux(t *test
 	go extSrv.Serve(extLn)
 	defer extSrv.Close()
 
-	muxPort := bindFreeLocalPort(t, "ApplyManagedIngress", func(p int) error {
-		return svc.ApplyManagedIngress(ManagedIngressConfig{
-			Enabled:        true,
-			ListenPort:     p,
-			PublicHostname: "primary.example.com",
-		})
-	})
+	muxPort := testutil.FreePort(t)
+	if err := svc.ApplyManagedIngress(ManagedIngressConfig{
+		Enabled:        true,
+		ListenPort:     muxPort,
+		PublicHostname: "primary.example.com",
+	}); err != nil {
+		t.Fatalf("ApplyManagedIngress: %v", err)
+	}
 	secret := "0123456789abcdef0123456789abcdef"
 
 	cfg := Config{

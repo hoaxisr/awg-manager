@@ -62,7 +62,7 @@ func TestGetStatusStoppedSatelliteReadsFiles(t *testing.T) {
 	if err := os.WriteFile(s.statePath, []byte("ENABLED=no\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(s.pidPath, []byte("999999\n"), 0600); err != nil {
+	if err := os.WriteFile(s.pidPath, []byte("999999999\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	st := s.GetStatus(context.Background())

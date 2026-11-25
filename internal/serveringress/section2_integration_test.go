@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,24 +12,14 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/cdndispatcher"
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 	"github.com/hoaxisr/awg-manager/internal/tgwebproxy"
 	"github.com/hoaxisr/awg-manager/internal/vlessserver"
 )
 
-func allocFreePort(t *testing.T) int {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("alloc free port: %v", err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
-	return port
-}
-
 func TestDispatcherMuxTproxyLoopProtection(t *testing.T) {
-	muxPort := allocFreePort(t)
-	dispPort := allocFreePort(t)
+	muxPort := testutil.FreePort(t)
+	dispPort := testutil.FreePort(t)
 
 	// Wire a deliberate runtime loop through Mux -> endpoint -> Dispatcher -> Mux
 	mux := tgwebproxy.NewMux()
@@ -77,7 +66,7 @@ func TestDispatcherMuxTproxyLoopProtection(t *testing.T) {
 }
 
 func TestDispatcherRejectsSelfTargetBeforeApply(t *testing.T) {
-	port := allocFreePort(t)
+	port := testutil.FreePort(t)
 	disp := cdndispatcher.NewWithDataDir(t.TempDir(), cdndispatcher.Config{
 		ListenAddr: fmt.Sprintf("127.0.0.1:%d", port),
 	})
@@ -102,7 +91,7 @@ func TestExecuteIngressTransaction_CoverUpstreamTracksXrayAndIncompleteRollbackS
 	tgMock := &mockTgWebProxy{cfg: tgwebproxy.Config{Secret: "000102030405060708090a0b0c0d0e0f", ListenPort: 8085}}
 	coord := New(dataDir, xrayMock, dispMock, tgMock)
 
-	muxPort := allocFreePort(t)
+	muxPort := testutil.FreePort(t)
 	err := coord.ExecuteIngressTransaction(context.Background(), IngressTransactionParams{
 		TxID:       "tx-tg-only",
 		ServerKind: "tgwebproxy",
@@ -122,7 +111,7 @@ func TestExecuteIngressTransaction_CoverUpstreamTracksXrayAndIncompleteRollbackS
 	}
 
 	// 2. Both mode sets CoverUpstream to Xray listener
-	xrayPort := allocFreePort(t)
+	xrayPort := testutil.FreePort(t)
 	err = coord.ExecuteIngressTransaction(context.Background(), IngressTransactionParams{
 		TxID:       "tx-both",
 		ServerKind: "both",
@@ -137,7 +126,7 @@ func TestExecuteIngressTransaction_CoverUpstreamTracksXrayAndIncompleteRollbackS
 			Enabled:        true,
 			Scenario:       tgwebproxy.ScenarioDual,
 			DirectHost:     "1.2.3.4",
-			DirectPort:     allocFreePort(t),
+			DirectPort:     testutil.FreePort(t),
 			ListenPort:     muxPort,
 			PublicHostname: "tg.example.com",
 		},

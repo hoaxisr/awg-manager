@@ -137,55 +137,39 @@ func TestWANFailureSeriesRetryComesFast(t *testing.T) {
 // a series resets the counter: after two failures and one success the next
 // single failure must not pause the capture.
 //
-// Тест детерминирован по построению: ретраи выключены (wanRetryInterval
-// больше тика монитора), и окно проверки занимает меньше одного тика
-// монитора, поэтому за время наблюдения не может набраться серия из трёх
-// неудач — проверка «паузы нет» не гоняется с самой серией.
+// Вердикты заданы по порядковому номеру проверки, а не часами: пятая проверка
+// стоит до конца теста, и её начало означает, что четвёртая уже применена.
 func TestWANFailureSeriesResetsOnSuccess(t *testing.T) {
 	oldInterval := monitorInterval
-	oldRetry := wanRetryInterval
-	// Тик 50 мс; ретраи выключены (интервал больше тика не взводится —
-	// см. startMonitorLocked: retry берётся только если он короче тика).
-	// Окно наблюдения 120 мс < 2 тиков: максимум одна новая неудача до
-	// следующего тика.
-	monitorInterval = 50 * time.Millisecond
-	wanRetryInterval = 500 * time.Millisecond
-	t.Cleanup(func() {
-		monitorInterval = oldInterval
-		wanRetryInterval = oldRetry
-	})
+	monitorInterval = 5 * time.Millisecond
+	t.Cleanup(func() { monitorInterval = oldInterval })
 	h := newHarness(t, nil)
-	h.probes.setWAN(model.VerdictError)
+	script := []model.Verdict{model.VerdictError, model.VerdictError, model.VerdictReachable, model.VerdictError}
+	applied := make(chan struct{})
+	checks := 0 // только горутина монитора
+	h.probes.wanHook = func(ctx context.Context) model.Verdict {
+		checks++
+		if checks <= len(script) {
+			return script[checks-1]
+		}
+		// После отмены монитор вправе успеть ещё один тик.
+		if checks == len(script)+1 {
+			close(applied)
+		}
+		<-ctx.Done()
+		return model.VerdictError
+	}
+	startsBefore := h.captureStarts()
 	if _, err := h.engine.PatchConfig([]byte(`{"wanMonitorEnabled":true}`)); err != nil {
 		t.Fatal(err)
 	}
-	h.waitFor(func() bool { return h.engine.wanFailureCount() >= 2 })
-	h.probes.setWAN(model.VerdictReachable)
-	h.waitFor(func() bool { return h.engine.wanFailureCount() == 0 })
-	// Сброс должен оставить capture живым: счётчик обнулён, пауза не
-	// ставилась ни в первой серии, ни при сбросе.
-	if _, paused := h.engine.wanSnapshot(); paused {
-		t.Fatal("reset paused the capture")
+	<-applied
+	if count, paused := h.engine.wanSnapshot(); paused || count != 1 {
+		t.Fatalf("after E,E,ok,E: paused=%v count=%d, want a live capture and a series of 1", paused, count)
 	}
-	startsBefore := h.captureStarts()
-	h.probes.setWAN(model.VerdictError)
-	// Первая неудача новой серии: паузы быть не должно. За окно 120 мс
-	// (2 тика по 50 мс + запас) серия может дорасти максимум до 2 —
-	// pauseCaptureLocked недостижим, опрос флага безопасен от гонки.
-	deadline := time.Now().Add(120 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		if count, paused := h.engine.wanSnapshot(); paused {
-			t.Fatalf("single failure after a reset paused the capture (count=%d)", count)
-		}
-		if h.captureStarts() > startsBefore {
-			t.Fatal("capture was restarted after a single failure")
-		}
-		if count, _ := h.engine.wanSnapshot(); count >= 2 {
-			return // the new series is growing: the reset really happened
-		}
-		time.Sleep(5 * time.Millisecond)
+	if h.captureStarts() != startsBefore {
+		t.Fatal("capture was restarted without a pause")
 	}
-	t.Fatal("failure series did not restart after a successful check")
 }
 
 // TestWANPausedResumesOnFirstSuccess preserves the resume semantics inside

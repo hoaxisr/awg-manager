@@ -33,7 +33,7 @@ type TerminalStartResponse struct {
 // Пропавший pong (terminalPongTimeout) = мёртвый клиент: сессию закрываем,
 // чтобы освободить single-session слот для реконнекта (фронт ретраит дольше,
 // чем худшее удержание слота: interval+timeout).
-var (
+const (
 	terminalPingInterval = 30 * time.Second
 	terminalPongTimeout  = 10 * time.Second
 )
@@ -42,11 +42,14 @@ var (
 type TerminalHandler struct {
 	manager terminal.Manager
 	log     logging.AppLogger
+
+	pingInterval, pongTimeout time.Duration
 }
 
 // NewTerminalHandler creates a new terminal handler.
 func NewTerminalHandler(manager terminal.Manager, log logging.AppLogger) *TerminalHandler {
-	return &TerminalHandler{manager: manager, log: log}
+	return &TerminalHandler{manager: manager, log: log,
+		pingInterval: terminalPingInterval, pongTimeout: terminalPongTimeout}
 }
 
 // TerminalStatusResponse represents terminal status.
@@ -243,14 +246,14 @@ func (h *TerminalHandler) WebSocket(w http.ResponseWriter, r *http.Request) {
 	// прокси. Ping ждёт pong — ошибка означает мёртвое соединение, гасим
 	// сессию через proxyCancel (не пишем в errc: там ждут только wsCopy).
 	go func() {
-		ticker := time.NewTicker(terminalPingInterval)
+		ticker := time.NewTicker(h.pingInterval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-proxyCtx.Done():
 				return
 			case <-ticker.C:
-				pingCtx, cancel := context.WithTimeout(proxyCtx, terminalPongTimeout)
+				pingCtx, cancel := context.WithTimeout(proxyCtx, h.pongTimeout)
 				err := clientConn.Ping(pingCtx)
 				cancel()
 				if err != nil {

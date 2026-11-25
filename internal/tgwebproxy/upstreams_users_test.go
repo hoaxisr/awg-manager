@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 )
 
 func TestNormalizeMTProtoSecret(t *testing.T) {
@@ -320,12 +322,7 @@ func startMinimalSocks5Server(t *testing.T, wantUser, wantPass string) (string, 
 
 func TestMtgUpstreamPool_FailoverCooldownSocks5AndWeights(t *testing.T) {
 	// 1. Dead primary SOCKS5 + healthy backup SOCKS5 -> automatic failover and cooldown.
-	deadLn, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	deadAddr := deadLn.Addr().String()
-	_ = deadLn.Close()
+	deadAddr := testutil.FreeAddr(t)
 
 	socksAddr, closeSocks := startMinimalSocks5Server(t, "tguser", "tgpass")
 	defer closeSocks()

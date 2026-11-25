@@ -135,6 +135,7 @@ type fakeProbes struct {
 	tunnel     map[string]model.Verdict
 	wan        model.Verdict
 	wanNow     model.Verdict // verdict used only for the fresh pre-commit check
+	wanHook    func(ctx context.Context) model.Verdict
 	directGate *holdGate
 	tunnelGate *holdGate
 }
@@ -226,10 +227,13 @@ func (f *fakeProbes) DirectAndWAN(ctx context.Context, target model.Target, _ st
 	}
 }
 
-func (f *fakeProbes) CheckWAN(context.Context, string, probe.Path) probe.Result {
+func (f *fakeProbes) CheckWAN(ctx context.Context, _ string, _ probe.Path) probe.Result {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	fresh := f.wanNow
+	hook, fresh := f.wanHook, f.wanNow
+	f.mu.Unlock()
+	if hook != nil {
+		fresh = hook(ctx)
+	}
 	if fresh == "" {
 		fresh = model.VerdictReachable
 	}

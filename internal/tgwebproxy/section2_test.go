@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 )
 
 func TestValidatePortsAndUpstreams_RejectsCollisionsAndSelfLoops(t *testing.T) {
@@ -78,9 +80,9 @@ func TestTproxyBuiltinFallbackServes200WithoutXray(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	priListen := allocFreeLocalPort(t)
-	priAdmin := allocFreeLocalPort(t)
-	muxPort := allocFreeLocalPort(t)
+	priListen := testutil.FreePort(t)
+	priAdmin := testutil.FreePort(t)
+	muxPort := testutil.FreePort(t)
 
 	cfg := Config{
 		Enabled:        true,
@@ -170,11 +172,11 @@ func TestRollbackRestoresExtraEndpoints(t *testing.T) {
 	svc.mux = NewMux()
 	t.Cleanup(func() { _ = svc.mux.Stop() })
 
-	priListen := allocFreeLocalPort(t)
-	priAdmin := allocFreeLocalPort(t)
-	extraListen := allocFreeLocalPort(t)
-	extraAdmin := allocFreeLocalPort(t)
-	muxPort := allocFreeLocalPort(t)
+	priListen := testutil.FreePort(t)
+	priAdmin := testutil.FreePort(t)
+	extraListen := testutil.FreePort(t)
+	extraAdmin := testutil.FreePort(t)
+	muxPort := testutil.FreePort(t)
 
 	origCfg := Config{
 		SchemaVersion:  CurrentSchemaVersion,
@@ -208,7 +210,7 @@ func TestRollbackRestoresExtraEndpoints(t *testing.T) {
 	cand := origCfg
 	cand.Endpoints = []WebProxyEndpoint{
 		{ID: "ep-1", Hostname: "new.example.com", ListenPort: priListen, AdminPort: priAdmin, Enabled: true},
-		{ID: "ep-3", Hostname: "new-extra.example.com", ListenPort: allocFreeLocalPort(t), AdminPort: allocFreeLocalPort(t), Enabled: true},
+		{ID: "ep-3", Hostname: "new-extra.example.com", ListenPort: testutil.FreePort(t), AdminPort: testutil.FreePort(t), Enabled: true},
 	}
 
 	txID, err := svc.PrepareCandidate("tx-extra-rb", cand)

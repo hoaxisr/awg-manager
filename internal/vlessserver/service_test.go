@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/vlink"
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 	"github.com/hoaxisr/awg-manager/internal/xhttpserver"
 )
 
@@ -121,17 +122,6 @@ func stageFakeXHTTPDBinary(t *testing.T, dir string) string {
 	return dst
 }
 
-func findFreeLoopbackPort(t *testing.T) int {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
-	return port
-}
-
 func TestService_StatusAndLifecycle_CBackendOnly(t *testing.T) {
 	t.Run("missing_binary_fails_closed", func(t *testing.T) {
 		dataDir := t.TempDir()
@@ -141,7 +131,7 @@ func TestService_StatusAndLifecycle_CBackendOnly(t *testing.T) {
 		t.Setenv("AWGM_DISABLE_C_XHTTPD", "")
 
 		svc := New(dataDir, nil)
-		port := findFreeLoopbackPort(t)
+		port := testutil.FreePort(t)
 		if err := svc.UpdateConfig(Config{
 			Enabled:       false,
 			ListenAddress: "127.0.0.1",
@@ -208,7 +198,7 @@ func TestService_StatusAndLifecycle_CBackendOnly(t *testing.T) {
 		svc := New(dataDir, nil)
 		defer svc.Stop()
 
-		port := findFreeLoopbackPort(t)
+		port := testutil.FreePort(t)
 		if err := svc.UpdateConfig(Config{
 			Enabled:       false,
 			ListenAddress: "127.0.0.1",
@@ -453,7 +443,7 @@ func TestService_LiveRealCDaemon(t *testing.T) {
 	svc := New(dataDir, nil)
 	defer svc.Stop()
 
-	port := findFreeLoopbackPort(t)
+	port := testutil.FreePort(t)
 	if err := svc.UpdateConfig(Config{
 		Enabled:       false,
 		ListenAddress: "127.0.0.1",

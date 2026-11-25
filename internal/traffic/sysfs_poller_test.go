@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -71,68 +72,72 @@ func writeSysfsIface(t *testing.T, root, iface string, rx, tx string) {
 }
 
 func TestSysfsPoller_FeedsHistoryAndPublishes(t *testing.T) {
-	root := t.TempDir()
-	writeSysfsIface(t, root, "nwg0", "1000", "100")
+	synctest.Test(t, func(t *testing.T) {
+		root := t.TempDir()
+		writeSysfsIface(t, root, "nwg0", "1000", "100")
 
-	lister := &fakeTunnelLister{}
-	lister.set(RunningTunnel{ID: "awg0", BackendType: "nativewg", IfaceName: "nwg0"})
+		lister := &fakeTunnelLister{}
+		lister.set(RunningTunnel{ID: "awg0", BackendType: "nativewg", IfaceName: "nwg0"})
 
-	hist := New()
-	t.Cleanup(hist.Stop)
-	defer hist.Stop()
-	pub := &spyPublisher{}
+		hist := New()
+		t.Cleanup(hist.Stop)
+		defer hist.Stop()
+		pub := &spyPublisher{}
 
-	p := newSysfsPoller(lister, hist, pub, &fakeLog{}, nil, root, 20*time.Millisecond)
-	p.Start()
-	defer p.Stop()
+		p := newSysfsPoller(lister, hist, pub, &fakeLog{}, nil, root, 20*time.Millisecond)
+		p.Start()
+		defer p.Stop()
 
-	// First tick stores baseline; subsequent ticks produce rate points.
-	// History.Feed requires dt>0 unix seconds between ticks to emit a
-	// point, so the deadline must be generous enough to cover a one-
-	// second boundary rollover regardless of when the test starts within
-	// the current wall-clock second.
-	time.Sleep(50 * time.Millisecond)
-	writeSysfsIface(t, root, "nwg0", "2000", "200")
-	deadline := time.Now().Add(1500 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		if pub.len() >= 2 && len(hist.Get("awg0", time.Hour, 0)) >= 1 {
-			break
+		// First tick stores baseline; subsequent ticks produce rate points.
+		// History.Feed requires dt>0 unix seconds between ticks to emit a
+		// point, so the deadline must be generous enough to cover a one-
+		// second boundary rollover regardless of when the test starts within
+		// the current wall-clock second.
+		time.Sleep(50 * time.Millisecond)
+		writeSysfsIface(t, root, "nwg0", "2000", "200")
+		deadline := time.Now().Add(1500 * time.Millisecond)
+		for time.Now().Before(deadline) {
+			if pub.len() >= 2 && len(hist.Get("awg0", time.Hour, 0)) >= 1 {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
 		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if got := pub.len(); got < 2 {
-		t.Fatalf("publisher events: want >=2, got %d", got)
-	}
-	pts := hist.Get("awg0", time.Hour, 0)
-	if len(pts) == 0 {
-		t.Fatalf("history points: want >=1, got 0")
-	}
+		if got := pub.len(); got < 2 {
+			t.Fatalf("publisher events: want >=2, got %d", got)
+		}
+		pts := hist.Get("awg0", time.Hour, 0)
+		if len(pts) == 0 {
+			t.Fatalf("history points: want >=1, got 0")
+		}
+	})
 }
 
 func TestSysfsPoller_MissingIfaceSkippedQuietly(t *testing.T) {
-	root := t.TempDir()
-	// No iface files on disk.
+	synctest.Test(t, func(t *testing.T) {
+		root := t.TempDir()
+		// No iface files on disk.
 
-	lister := &fakeTunnelLister{}
-	lister.set(RunningTunnel{ID: "awg0", BackendType: "kernel", IfaceName: "opkgtun0"})
+		lister := &fakeTunnelLister{}
+		lister.set(RunningTunnel{ID: "awg0", BackendType: "kernel", IfaceName: "opkgtun0"})
 
-	hist := New()
-	t.Cleanup(hist.Stop)
-	defer hist.Stop()
-	pub := &spyPublisher{}
-	lg := &fakeLog{}
+		hist := New()
+		t.Cleanup(hist.Stop)
+		defer hist.Stop()
+		pub := &spyPublisher{}
+		lg := &fakeLog{}
 
-	p := newSysfsPoller(lister, hist, pub, lg, nil, root, 20*time.Millisecond)
-	p.Start()
-	time.Sleep(80 * time.Millisecond)
-	p.Stop()
+		p := newSysfsPoller(lister, hist, pub, lg, nil, root, 20*time.Millisecond)
+		p.Start()
+		time.Sleep(80 * time.Millisecond)
+		p.Stop()
 
-	if pub.len() != 0 {
-		t.Errorf("publisher: want 0 events for missing iface, got %d", pub.len())
-	}
-	if lg.warns.Load() != 0 {
-		t.Errorf("log warnings: want 0 (quiet skip), got %d", lg.warns.Load())
-	}
+		if pub.len() != 0 {
+			t.Errorf("publisher: want 0 events for missing iface, got %d", pub.len())
+		}
+		if lg.warns.Load() != 0 {
+			t.Errorf("log warnings: want 0 (quiet skip), got %d", lg.warns.Load())
+		}
+	})
 }
 
 // Работающим поллер считает только поднятый интерфейс: остановленный
@@ -166,21 +171,23 @@ func TestSysfsPoller_DownIfaceSkipped(t *testing.T) {
 }
 
 func TestSysfsPoller_NoRunningTunnelsIsNoop(t *testing.T) {
-	root := t.TempDir()
-	lister := &fakeTunnelLister{}
-	hist := New()
-	t.Cleanup(hist.Stop)
-	defer hist.Stop()
-	pub := &spyPublisher{}
+	synctest.Test(t, func(t *testing.T) {
+		root := t.TempDir()
+		lister := &fakeTunnelLister{}
+		hist := New()
+		t.Cleanup(hist.Stop)
+		defer hist.Stop()
+		pub := &spyPublisher{}
 
-	p := newSysfsPoller(lister, hist, pub, &fakeLog{}, nil, root, 20*time.Millisecond)
-	p.Start()
-	time.Sleep(60 * time.Millisecond)
-	p.Stop()
+		p := newSysfsPoller(lister, hist, pub, &fakeLog{}, nil, root, 20*time.Millisecond)
+		p.Start()
+		time.Sleep(60 * time.Millisecond)
+		p.Stop()
 
-	if pub.len() != 0 {
-		t.Errorf("publisher: want 0 events when no tunnels, got %d", pub.len())
-	}
+		if pub.len() != 0 {
+			t.Errorf("publisher: want 0 events when no tunnels, got %d", pub.len())
+		}
+	})
 }
 
 // TestSysfsPoller_StopWithoutStart guards the error-path in main.go where
@@ -222,51 +229,55 @@ func (f *fakeClients) ClientCount() int { return int(f.n.Load()) }
 // При закрытой панели публикация уходит в никуда, поэтому шаг разрежается —
 // иначе это круглосуточная работа ради данных, которых никто не видит.
 func TestSysfsPoller_IdleThrottles(t *testing.T) {
-	root := t.TempDir()
-	writeSysfsIface(t, root, "nwg0", "1000", "100")
+	synctest.Test(t, func(t *testing.T) {
+		root := t.TempDir()
+		writeSysfsIface(t, root, "nwg0", "1000", "100")
 
-	lister := &fakeTunnelLister{}
-	lister.set(RunningTunnel{ID: "awg0", BackendType: "nativewg", IfaceName: "nwg0"})
-	hist := New()
-	t.Cleanup(hist.Stop)
-	pub := &spyPublisher{}
+		lister := &fakeTunnelLister{}
+		lister.set(RunningTunnel{ID: "awg0", BackendType: "nativewg", IfaceName: "nwg0"})
+		hist := New()
+		t.Cleanup(hist.Stop)
+		pub := &spyPublisher{}
 
-	p := newSysfsPoller(lister, hist, pub, &fakeLog{}, nil, root, 20*time.Millisecond)
-	p.idleInterval = 10 * time.Second  // в окне теста недостижим
-	p.SetClientCounter(&fakeClients{}) // ноль зрителей
-	p.Start()
-	defer p.Stop()
+		p := newSysfsPoller(lister, hist, pub, &fakeLog{}, nil, root, 20*time.Millisecond)
+		p.idleInterval = 10 * time.Second  // в окне теста недостижим
+		p.SetClientCounter(&fakeClients{}) // ноль зрителей
+		p.Start()
+		defer p.Stop()
 
-	time.Sleep(250 * time.Millisecond)
+		time.Sleep(250 * time.Millisecond)
 
-	if got := pub.len(); got != 1 {
-		t.Errorf("публикаций %d, ожидалась 1 (только стартовый тик)", got)
-	}
+		if got := pub.len(); got != 1 {
+			t.Errorf("публикаций %d, ожидалась 1 (только стартовый тик)", got)
+		}
+	})
 }
 
 // Открытая панель возвращает обычный шаг.
 func TestSysfsPoller_ClientRestoresRate(t *testing.T) {
-	root := t.TempDir()
-	writeSysfsIface(t, root, "nwg0", "1000", "100")
+	synctest.Test(t, func(t *testing.T) {
+		root := t.TempDir()
+		writeSysfsIface(t, root, "nwg0", "1000", "100")
 
-	lister := &fakeTunnelLister{}
-	lister.set(RunningTunnel{ID: "awg0", BackendType: "nativewg", IfaceName: "nwg0"})
-	hist := New()
-	t.Cleanup(hist.Stop)
-	pub := &spyPublisher{}
+		lister := &fakeTunnelLister{}
+		lister.set(RunningTunnel{ID: "awg0", BackendType: "nativewg", IfaceName: "nwg0"})
+		hist := New()
+		t.Cleanup(hist.Stop)
+		pub := &spyPublisher{}
 
-	clients := &fakeClients{}
-	clients.n.Store(1)
+		clients := &fakeClients{}
+		clients.n.Store(1)
 
-	p := newSysfsPoller(lister, hist, pub, &fakeLog{}, nil, root, 20*time.Millisecond)
-	p.idleInterval = 10 * time.Second
-	p.SetClientCounter(clients)
-	p.Start()
-	defer p.Stop()
+		p := newSysfsPoller(lister, hist, pub, &fakeLog{}, nil, root, 20*time.Millisecond)
+		p.idleInterval = 10 * time.Second
+		p.SetClientCounter(clients)
+		p.Start()
+		defer p.Stop()
 
-	time.Sleep(250 * time.Millisecond)
+		time.Sleep(250 * time.Millisecond)
 
-	if got := pub.len(); got < 3 {
-		t.Errorf("публикаций %d, ожидалось ≥3: с открытой панелью шаг обычный", got)
-	}
+		if got := pub.len(); got < 3 {
+			t.Errorf("публикаций %d, ожидалось ≥3: с открытой панелью шаг обычный", got)
+		}
+	})
 }

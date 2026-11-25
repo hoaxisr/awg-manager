@@ -362,21 +362,7 @@ func TestWizardFingerprintRevalidatedUnderMutationLock(t *testing.T) {
 	}
 
 	// Poll job runner to ensure asynchronous failure
-	var finalJob JobStatusResponse
-	completed := false
-	for i := 0; i < 40; i++ {
-		time.Sleep(50 * time.Millisecond)
-		job, err := svc.GetJob(ctx, jobID, "session-stale")
-		if err == nil && (job.Phase == JobPhaseSucceeded || job.Phase == JobPhaseFailed) {
-			finalJob = job
-			completed = true
-			break
-		}
-	}
-
-	if !completed {
-		t.Fatalf("job did not complete")
-	}
+	finalJob := waitJob(t, svc, jobID, "session-stale")
 
 	if finalJob.Phase != JobPhaseFailed {
 		t.Fatalf("expected job to fail due to stale fingerprint, got %s", finalJob.Phase)
@@ -563,13 +549,7 @@ func TestSharedIngressTopologyUnion(t *testing.T) {
 	}
 
 	// Wait for Xray job
-	for i := 0; i < 40; i++ {
-		time.Sleep(25 * time.Millisecond)
-		job, _ := svc.GetJob(ctx, jobIDXray, "session-union")
-		if job.Phase == JobPhaseSucceeded {
-			break
-		}
-	}
+	waitJob(t, svc, jobIDXray, "session-union")
 	if xray.cfg.PublicDomain != "xray.example.org" || xray.cfg.ListenPort != 9008 {
 		t.Fatalf("xray config not applied properly: %+v", xray.cfg)
 	}
@@ -595,13 +575,7 @@ func TestSharedIngressTopologyUnion(t *testing.T) {
 	}
 
 	// Wait for TG job
-	for i := 0; i < 40; i++ {
-		time.Sleep(25 * time.Millisecond)
-		job, _ := svc.GetJob(ctx, jobIDTG, "session-union")
-		if job.Phase == JobPhaseSucceeded {
-			break
-		}
-	}
+	waitJob(t, svc, jobIDTG, "session-union")
 
 	// 3. Verify union: Xray settings must NOT be overwritten!
 	if xray.cfg.PublicDomain != "xray.example.org" || xray.cfg.ListenPort != 9008 {
@@ -956,20 +930,7 @@ func TestWizardService_ConsumeErrorAfterCommitBoundary(t *testing.T) {
 	}
 
 	// 4. Poll job status until it reaches terminal phase
-	var finalJob JobStatusResponse
-	completed := false
-	for i := 0; i < 40; i++ {
-		time.Sleep(50 * time.Millisecond)
-		job, err := svc.GetJob(ctx, jobID, "session-consume-err")
-		if err == nil && (job.Phase == JobPhaseRecoveryRequired || job.Phase == JobPhaseFailed || job.Phase == JobPhaseSucceeded) {
-			finalJob = job
-			completed = true
-			break
-		}
-	}
-	if !completed {
-		t.Fatalf("job did not complete within timeout")
-	}
+	finalJob := waitJob(t, svc, jobID, "session-consume-err")
 
 	// 5. Verify assertions per closure requirements:
 	// a. Coordinator/job transitioned to recovery_required
@@ -1167,23 +1128,8 @@ func TestWizardAcceptance_CustomXrayPath_DispatcherAndReadinessConsistency(t *te
 	}
 
 	// Wait for completion
-	completed := false
-	var lastJob JobStatusResponse
-	for i := 0; i < 80; i++ {
-		time.Sleep(50 * time.Millisecond)
-		job, err := svc.GetJob(ctx, jobID, "session-custom-path")
-		if err == nil {
-			lastJob = job
-			if job.Phase == JobPhaseSucceeded {
-				completed = true
-				break
-			} else if job.Phase == JobPhaseFailed || job.Phase == JobPhaseRecoveryRequired {
-				t.Fatalf("job failed with phase %s: %s (code: %s)", job.Phase, job.Error, job.ErrorCode)
-			}
-		}
-	}
-	if !completed {
-		t.Fatalf("job did not succeed within timeout, last job state: %+v", lastJob)
+	if lastJob := waitJob(t, svc, jobID, "session-custom-path"); lastJob.Phase != JobPhaseSucceeded {
+		t.Fatalf("job did not succeed: %+v", lastJob)
 	}
 
 	// 2. Verify registered dispatcher prefix is canonical without trailing slashes
@@ -1246,15 +1192,8 @@ func TestWizardAcceptance_BuiltinXrayAndFirc_NoExternalXrayOrMihomo(t *testing.T
 		t.Fatalf("Apply failed: %v", err)
 	}
 
-	for i := 0; i < 200; i++ {
-		time.Sleep(25 * time.Millisecond)
-		job, _ := svc.GetJob(ctx, jobID, "session-firc-builtin")
-		if job.Phase == JobPhaseSucceeded {
-			break
-		}
-		if job.Phase == JobPhaseFailed {
-			t.Fatalf("job failed unexpectedly: %s", job.Error)
-		}
+	if job := waitJob(t, svc, jobID, "session-firc-builtin"); job.Phase != JobPhaseSucceeded {
+		t.Fatalf("job failed unexpectedly: %s", job.Error)
 	}
 
 	if xray.cfg.OutboundMode != "router" || !disp.running {
@@ -1318,14 +1257,7 @@ func TestWizardAcceptance_CompositeBoth_AtomicApplyAndRollback(t *testing.T) {
 		t.Fatalf("Apply initiation failed: %v", err)
 	}
 
-	var failedJob JobStatusResponse
-	for i := 0; i < 60; i++ {
-		time.Sleep(25 * time.Millisecond)
-		failedJob, _ = svc.GetJob(ctx, jobIDFail, "session-both-rollback")
-		if failedJob.Phase == JobPhaseCancelled || failedJob.Phase == JobPhaseFailed {
-			break
-		}
-	}
+	failedJob := waitJob(t, svc, jobIDFail, "session-both-rollback")
 	if failedJob.Phase != JobPhaseFailed {
 		t.Fatalf("expected composite job to fail on injected fault, got %s", failedJob.Phase)
 	}
@@ -1368,14 +1300,7 @@ func TestWizardAcceptance_CompositeBoth_AtomicApplyAndRollback(t *testing.T) {
 		t.Fatalf("Apply for both (happy path) failed: %v", err)
 	}
 
-	var finalJob JobStatusResponse
-	for i := 0; i < 60; i++ {
-		time.Sleep(25 * time.Millisecond)
-		finalJob, _ = svc.GetJob(ctx, jobIDOK, "session-both-ok")
-		if finalJob.Phase == JobPhaseSucceeded || finalJob.Phase == JobPhaseFailed {
-			break
-		}
-	}
+	finalJob := waitJob(t, svc, jobIDOK, "session-both-ok")
 	if finalJob.Phase != JobPhaseSucceeded {
 		t.Fatalf("expected composite both job to succeed, got %s: %s", finalJob.Phase, finalJob.Error)
 	}
@@ -1605,14 +1530,7 @@ func TestWizardAcceptance_FircRoutingTransactionRollbackAndRecovery(t *testing.T
 	if err != nil {
 		t.Fatalf("Apply 1 failed: %v", err)
 	}
-	var job1 JobStatusResponse
-	for i := 0; i < 60; i++ {
-		time.Sleep(25 * time.Millisecond)
-		job1, _ = svc.GetJob(ctx, jobID1, "session-firc-tx-1")
-		if job1.Phase == JobPhaseFailed || job1.Phase == JobPhaseSucceeded || job1.Phase == JobPhaseRecoveryRequired {
-			break
-		}
-	}
+	job1 := waitJob(t, svc, jobID1, "session-firc-tx-1")
 	if job1.Phase != JobPhaseFailed {
 		t.Fatalf("expected job1 to fail and roll back cleanly, got phase=%s err=%s", job1.Phase, job1.Error)
 	}
@@ -1639,14 +1557,7 @@ func TestWizardAcceptance_FircRoutingTransactionRollbackAndRecovery(t *testing.T
 	if err != nil {
 		t.Fatalf("Apply 2 failed: %v", err)
 	}
-	var job2 JobStatusResponse
-	for i := 0; i < 60; i++ {
-		time.Sleep(25 * time.Millisecond)
-		job2, _ = svc.GetJob(ctx, jobID2, "session-firc-tx-2")
-		if job2.Phase == JobPhaseFailed || job2.Phase == JobPhaseSucceeded || job2.Phase == JobPhaseRecoveryRequired {
-			break
-		}
-	}
+	job2 := waitJob(t, svc, jobID2, "session-firc-tx-2")
 	if job2.Phase != JobPhaseFailed {
 		t.Fatalf("expected job2 to fail and roll back cleanly, got phase=%s err=%s", job2.Phase, job2.Error)
 	}
@@ -1853,14 +1764,7 @@ func TestWizardAcceptance_FircRoutingTransactionRollbackAndRecovery(t *testing.T
 	if err != nil {
 		t.Fatalf("Apply iptFail failed: %v", err)
 	}
-	var jobIptFail JobStatusResponse
-	for i := 0; i < 60; i++ {
-		time.Sleep(25 * time.Millisecond)
-		jobIptFail, _ = svc.GetJob(ctx, jobIDIptFail, "session-firc-ipt-fail")
-		if jobIptFail.Phase == JobPhaseFailed || jobIptFail.Phase == JobPhaseSucceeded || jobIptFail.Phase == JobPhaseRecoveryRequired {
-			break
-		}
-	}
+	jobIptFail := waitJob(t, svc, jobIDIptFail, "session-firc-ipt-fail")
 	if jobIptFail.Phase != JobPhaseFailed {
 		t.Fatalf("expected job to fail and roll back when iptables -A OUTPUT -j FEXT_OUT fails, got phase=%s err=%s", jobIptFail.Phase, jobIptFail.Error)
 	}
@@ -1914,14 +1818,7 @@ func TestWizardAcceptance_FircRoutingTransactionRollbackAndRecovery(t *testing.T
 	if err != nil {
 		t.Fatalf("Apply 3 failed: %v", err)
 	}
-	var job3 JobStatusResponse
-	for i := 0; i < 60; i++ {
-		time.Sleep(25 * time.Millisecond)
-		job3, _ = svc.GetJob(ctx, jobID3, "session-firc-tx-3")
-		if job3.Phase == JobPhaseFailed || job3.Phase == JobPhaseSucceeded || job3.Phase == JobPhaseRecoveryRequired {
-			break
-		}
-	}
+	job3 := waitJob(t, svc, jobID3, "session-firc-tx-3")
 	if job3.Phase != JobPhaseSucceeded {
 		t.Fatalf("expected job3 to succeed, got phase=%s err=%s", job3.Phase, job3.Error)
 	}
@@ -1959,14 +1856,7 @@ func TestWizardAcceptance_FircRoutingTransactionRollbackAndRecovery(t *testing.T
 	if err != nil {
 		t.Fatalf("Apply 4 failed: %v", err)
 	}
-	var job4 JobStatusResponse
-	for i := 0; i < 60; i++ {
-		time.Sleep(25 * time.Millisecond)
-		job4, _ = svc.GetJob(ctx, jobID4, "session-firc-tx-4")
-		if job4.Phase == JobPhaseFailed || job4.Phase == JobPhaseSucceeded || job4.Phase == JobPhaseRecoveryRequired {
-			break
-		}
-	}
+	job4 := waitJob(t, svc, jobID4, "session-firc-tx-4")
 	if job4.Phase != JobPhaseRecoveryRequired {
 		t.Fatalf("expected job4 phase=%s on FIRC rollback failure, got %s (err=%s)", JobPhaseRecoveryRequired, job4.Phase, job4.Error)
 	}
@@ -2076,13 +1966,7 @@ func TestWizardAcceptance_PreserveExistingCredentialsAndCustomTransport(t *testi
 	if err != nil {
 		t.Fatalf("Apply failed: %v", err)
 	}
-	for i := 0; i < 60; i++ {
-		time.Sleep(25 * time.Millisecond)
-		job, _ := svc.GetJob(ctx, jobID, "session-edit-preserve")
-		if job.Phase == JobPhaseSucceeded || job.Phase == JobPhaseFailed {
-			break
-		}
-	}
+	waitJob(t, svc, jobID, "session-edit-preserve")
 
 	creds, err := svc.Reveal(ctx, jobID, "session-edit-preserve")
 	if err != nil {
@@ -2133,13 +2017,7 @@ func TestWizardAcceptance_PreserveExistingCredentialsAndCustomTransport(t *testi
 	if err != nil {
 		t.Fatalf("Apply switchGet failed: %v", err)
 	}
-	for i := 0; i < 60; i++ {
-		time.Sleep(25 * time.Millisecond)
-		job, _ := svc.GetJob(ctx, jobIDGet, "session-switch-get")
-		if job.Phase == JobPhaseSucceeded || job.Phase == JobPhaseFailed {
-			break
-		}
-	}
+	waitJob(t, svc, jobIDGet, "session-switch-get")
 	if gotTuning := xray.cfg.GetTuning(); gotTuning.UplinkMethod != "GET" {
 		t.Fatalf("expected committed xray.cfg.GetTuning().UplinkMethod='GET' after switching to xhttp_get, got %q", gotTuning.UplinkMethod)
 	}
@@ -2324,13 +2202,7 @@ func TestWizardAcceptance_DirectKeenDNSUsesWebSocketAndStreamOne(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Apply failed: %v", err)
 	}
-	for i := 0; i < 60; i++ {
-		time.Sleep(25 * time.Millisecond)
-		job, _ := svc.GetJob(ctx, jobID, "session-keendns-direct")
-		if job.Phase == JobPhaseSucceeded || job.Phase == JobPhaseFailed {
-			break
-		}
-	}
+	waitJob(t, svc, jobID, "session-keendns-direct")
 
 	if xray.cfg.Mode != "stream-one" || xray.cfg.GetTuning().Preset != "balanced" {
 		t.Fatalf("expected committed Xray stream-one + balanced preset, got mode=%s tuning=%+v", xray.cfg.Mode, xray.cfg.GetTuning())

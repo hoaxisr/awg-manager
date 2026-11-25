@@ -20,41 +20,39 @@ func writeMigrateFile(t *testing.T, path, body string) {
 
 // Процесс под прежним именем гасится, бинарь и meta переезжают на новое имя.
 func TestMigrateLegacyBinaryStopsAndRenames(t *testing.T) {
-	sleep, err := exec.LookPath("sleep")
-	if err != nil {
-		t.Skip("no sleep binary")
-	}
 	dir := t.TempDir()
 	legacy := filepath.Join(dir, "sing-box")
 	binary := filepath.Join(dir, "awgm-box")
 	pidPath := filepath.Join(dir, "sing-box.pid")
-	raw, err := os.ReadFile(sleep)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = os.WriteFile(legacy, raw, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeMigrateFile(t, legacy, "old engine")
 	writeMigrateFile(t, legacy+".meta.json", `{"version":"old"}`)
-	cmd := exec.Command(legacy, "60")
-	if err = cmd.Start(); err != nil {
+	// Движок опознаётся по argv0, поэтому процесс — shell под его именем.
+	// Копия системного sleep не годится: в Ubuntu 26.04 это мультивызовный
+	// uutils, под чужим именем он выходит сразу, и тест зеленел или падал
+	// смотря по тому, успевала ли проба застать умирающий процесс.
+	cmd := &exec.Cmd{Path: "/bin/sh", Args: []string{legacy, "-c", "read line"}}
+	if _, err := cmd.StdinPipe(); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
 	exited := make(chan struct{})
 	go func() { _ = cmd.Wait(); close(exited) }()
-	t.Cleanup(func() { _ = cmd.Process.Kill() })
+	t.Cleanup(func() { _ = cmd.Process.Kill(); <-exited })
 	writeMigrateFile(t, pidPath, strconv.Itoa(cmd.Process.Pid))
-	// Сразу после Start процесс может ещё не опознаваться (exec не закончен):
-	// на роутере старый движок работает давно, здесь — ждём.
+	// Сразу после Start процесс может ещё не опознаваться (ядро заполняет
+	// cmdline уже после точки, где Start возвращается).
 	probe := NewProcess(legacy, "", pidPath)
-	for deadline := time.Now().Add(2 * time.Second); ; {
+	for {
 		if running, _ := probe.IsRunning(); running {
 			break
 		}
-		if time.Now().After(deadline) {
-			t.Fatal("legacy process is not recognised as running")
+		select {
+		case <-exited:
+			t.Fatal("legacy process died before migration")
+		case <-time.After(time.Millisecond):
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
 
 	migrateLegacyBinary(binary, filepath.Join(dir, "config.d"), pidPath, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -67,8 +65,8 @@ func TestMigrateLegacyBinaryStopsAndRenames(t *testing.T) {
 	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
 		t.Fatalf("legacy binary left behind: %v", err)
 	}
-	if b, err := os.ReadFile(binary); err != nil || len(b) != len(raw) {
-		t.Fatalf("binary not renamed: %d bytes, %v", len(b), err)
+	if b, err := os.ReadFile(binary); err != nil || string(b) != "old engine" {
+		t.Fatalf("binary not renamed: %q, %v", b, err)
 	}
 	if b, err := os.ReadFile(binary + ".meta.json"); err != nil || string(b) != `{"version":"old"}` {
 		t.Fatalf("meta not renamed: %q %v", b, err)

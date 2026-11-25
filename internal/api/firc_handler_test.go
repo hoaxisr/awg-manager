@@ -26,6 +26,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/firc"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 )
 
 func TestFircHandler_EndToEnd(t *testing.T) {
@@ -1135,22 +1136,20 @@ func TestFircHandler_ExternalPackageMigrationValidation(t *testing.T) {
 		t.Fatalf("expected 202 external_migration_started, got %d (%s)", recOk.Code, recOk.Body.String())
 	}
 	var finalSt firc.InstallStatus
-	completed := false
-	for range 100 {
+	testutil.WaitFor(t, func() bool {
 		recSt := httptest.NewRecorder()
 		muxOk.ServeHTTP(recSt, httptest.NewRequest(http.MethodGet, "/api/firc/install-status", nil))
 		var env struct {
 			Data firc.InstallStatus `json:"data"`
 		}
-		if json.Unmarshal(recSt.Body.Bytes(), &env) == nil && !env.Data.Busy {
-			finalSt = env.Data
-			completed = true
-			break
+		if json.Unmarshal(recSt.Body.Bytes(), &env) != nil || env.Data.Busy {
+			return false
 		}
-		time.Sleep(15 * time.Millisecond)
-	}
-	if !completed || finalSt.ExternalPackage != "" || finalSt.ExternalMigratable || finalSt.InstalledVersion != "0.8.0-awgm.4" || finalSt.State != firc.InstallStateInstalled {
-		t.Fatalf("unexpected post-migration install-status (completed=%v): %+v", completed, finalSt)
+		finalSt = env.Data
+		return true
+	}, "миграция не завершилась")
+	if finalSt.ExternalPackage != "" || finalSt.ExternalMigratable || finalSt.InstalledVersion != "0.8.0-awgm.4" || finalSt.State != firc.InstallStateInstalled {
+		t.Fatalf("unexpected post-migration install-status: %+v", finalSt)
 	}
 	if gotConf, err := os.ReadFile(filepath.Join(rootOk, "opt", "etc", "firc", "firc.conf")); err != nil || string(gotConf) != "configVersion: 0.7.0\ncustomSetting: keep\n" {
 		t.Fatalf("firc.conf not preserved across API migration: got=%q err=%v", string(gotConf), err)
