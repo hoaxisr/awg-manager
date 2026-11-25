@@ -38,7 +38,7 @@ func nwgOnOracle(t *testing.T) (*nwg.OperatorNativeWG, *query.FakeNDMS, func() [
 	f.SetDetail("Wireguard0", json.RawMessage(`{"link":"up","summary":{"layer":{"conf":"running"}},
 		"wireguard":{"status":"up","peer":[{"online":true,"last-handshake":5}]}}`))
 	q := query.NewQueries(query.Deps{Getter: f, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
-	sc := command.NewSaveCoordinator(f, nopPublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil)
+	sc := command.NewSaveCoordinator(f, nopPublisher{}, time.Hour, time.Hour, 0, nil)
 	sc.SetSaveTimings(command.SaveEventCap, 0, command.SaveAfterRemoval) // без шины событий
 	cmds := command.NewCommands(command.Deps{Poster: f, Save: sc, Queries: q, IsOS5: func() bool { return true }})
 	tr := transport.NewWithURL(srv.URL, transport.NewSemaphore(2))
