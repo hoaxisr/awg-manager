@@ -258,3 +258,16 @@ func TestVerifyRuntimeIPK_LegacyPackageName(t *testing.T) {
 		}
 	}
 }
+
+// VerifyRuntimeIPK сверяет скрипты побайтово, а откат обновления ставит IPK прошлой
+// сборки из кэша: правка скрипта оставит без отката всех, у кого рантайм стоит.
+func TestRuntimeLifecycleScripts_Unchanged(t *testing.T) {
+	for name, c := range map[string]struct{ script, sha string }{
+		"postinst": {runtimePostinst, "b9c318b96ad8f053810b160fd3efe683a364e194a5fca13a9c49939256569dfc"},
+		"prerm":    {runtimePrerm, "fbca96fe6c596b86d5c6e96afe859cb01ebaa140a12d59e6668ed2873f9c2f6d"},
+	} {
+		if got := sha256HexBytes([]byte(c.script)); got != c.sha {
+			t.Errorf("%s изменён: sha256 %s; принимайте и прежний текст", name, got)
+		}
+	}
+}

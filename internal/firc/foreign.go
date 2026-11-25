@@ -22,7 +22,7 @@ import (
 // всех — ForeignDetector; остальной пакет спрашивает CheckNotForeign/ForeignFirc.
 
 // ErrForeignFirc — отказ любой мутации FIRC при установленном стороннем firc.
-var ErrForeignFirc = errors.New("на роутере установлен firc: он управляется своим интерфейсом, AWGM Route панели доступен только там, где firc не установлен")
+var ErrForeignFirc = errors.New("на роутере установлен firc: он управляется своим интерфейсом, AWGM Route доступен только там, где firc не установлен")
 
 // ErrForeignUnknown — не вышло установить, чей firc на роутере. Изменения FIRC
 // закрыты, но свой работающий рантайм остановить и оставить можно как обычно.

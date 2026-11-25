@@ -8015,7 +8015,7 @@
 	"firc_runtime_remove_confirm": "Remove the AWGM Route runtime package and its service files?",
 	"firc_runtime_config_preserved": "Configuration is preserved for reinstallation. Other servers and tunnels are not removed.",
 	"firc_foreign_title": "firc is installed on the router",
-	"firc_foreign_text": "It is managed from its own interface: the panel does not configure it and does not show its tunnels and groups. AWGM Route of the panel is offered only where firc is not installed.",
+	"firc_foreign_text": "It is managed from its own interface: the panel does not configure it and does not show its tunnels and groups. AWGM Route is offered only where firc is not installed.",
 	"firc_foreign_package": "Entware package: {pkg}.",
 	"firc_foreign_binary": "Found {path}, which the panel did not install.",
 	"firc_foreign_conflict": "AWGM Route is selected in the panel — it does not work next to firc, so the panel's routing is off now. The panel does not touch the installed firc.",
