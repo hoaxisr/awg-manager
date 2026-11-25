@@ -2992,7 +2992,6 @@ func (c *Coordinator) ResetTelegram(ctx context.Context, opts ResetOptions) (Res
 			_ = os.Remove(c.journalPath())
 		}
 		c.setRecovery(false, "")
-		c.syncWANIngressFirewall()
 		res.Reset = true
 		return nil
 	})
