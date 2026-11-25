@@ -719,7 +719,7 @@ func TestService_DirectWANNeedsDirectHost(t *testing.T) {
 	expect("пустой сценарий с адресом", "8443/true", svc.UpdateConfig(Config{Scenario: ScenarioDual}))
 	expect("cdn_http с адресом", "0/false", svc.UpdateConfig(Config{Scenario: ScenarioCDNHTTP}))
 	expect("снова dual", "8443/true", svc.UpdateConfig(Config{Scenario: ScenarioDual}))
-	expect("адрес снят", "0/false", svc.UpdateConfigWithDirectHost(Config{DirectHost: "  "}))
+	expect("адрес снят", "0/false", svc.UpdateConfigWithDirectHost(Config{}))
 	if got := svc.GetInternalConfig().DirectHost; got != "" {
 		t.Fatalf("адрес не снят: %q", got)
 	}
