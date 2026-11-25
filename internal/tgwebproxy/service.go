@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -570,6 +571,13 @@ func validateUpstreamsWithEgress(upstreams []UpstreamSpec, validator EgressValid
 	return nil
 }
 
+// needsEgressCheck: доступность выхода важна при включении и при его смене.
+// Остановить прокси и отозвать доступ упавший выход не мешает.
+func needsEgressCheck(old, next Config) bool {
+	return (next.Enabled && !old.Enabled) ||
+		!reflect.DeepEqual(old.EffectiveUpstreams(), next.EffectiveUpstreams())
+}
+
 func (s *Service) applyConfigLocked(newCfg Config) error {
 	return s.applyLocked(newCfg, false)
 }
@@ -587,14 +595,18 @@ func (s *Service) applyLocked(newCfg Config, userEdit bool) error {
 	}
 
 	// 1. Pre-apply Egress & port/upstream validation
+	var checkEgress EgressValidator
+	if needsEgressCheck(s.config, newCfg) {
+		checkEgress = s.egressValidator
+	}
 	if len(newCfg.Upstreams) > 0 {
 		newCfg.Upstreams = NormalizeUpstreams(newCfg.Upstreams)
-		if err := validateUpstreamsWithEgress(newCfg.Upstreams, s.egressValidator); err != nil {
+		if err := validateUpstreamsWithEgress(newCfg.Upstreams, checkEgress); err != nil {
 			return err
 		}
 		newCfg.UpstreamDevice = newCfg.PrimaryUpstreamDevice()
-	} else if s.egressValidator != nil && newCfg.UpstreamDevice != "" {
-		if err := s.egressValidator(newCfg.UpstreamDevice); err != nil {
+	} else if checkEgress != nil && newCfg.UpstreamDevice != "" {
+		if err := checkEgress(newCfg.UpstreamDevice); err != nil {
 			return fmt.Errorf("egress validation failed: %w", err)
 		}
 	}

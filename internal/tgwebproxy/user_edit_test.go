@@ -98,4 +98,55 @@ func TestApplyToRunning_StopsWorkerThatRejectsEdit(t *testing.T) {
 	if err := ws.ApplyToRunning(cfg, true); err == nil || eng.web || !eng.direct {
 		t.Fatalf("tproxy: err=%v web=%v direct=%v", err, eng.web, eng.direct)
 	}
+
+	ws, eng = newFakeWorkers()
+	if err := ws.ApplyToRunning(cfg, true); err != nil || eng.direct || eng.raw || eng.web {
+		t.Fatalf("неработавшие движки подняты: err=%v direct=%v web=%v", err, eng.direct, eng.web)
+	}
+}
+
+// Упавший выход не мешает остановить прокси и отозвать доступ; проверяется он
+// при включении и при смене выхода.
+// Мутации: проверять выход при любой правке; не проверять при включении или
+// смене (applyLocked, PrepareCandidate) → красный.
+func TestEgressValidation_OnlyOnEnableOrChange(t *testing.T) {
+	for _, ups := range [][]UpstreamSpec{nil, {{ID: "up-1", Type: UpstreamTypeDirect, Device: "nwg0", Weight: 1, Enabled: true}}} {
+		svc, _, _ := setupTestService(t)
+		must := func(what string, err error) {
+			t.Helper()
+			if err != nil {
+				t.Fatalf("%s: %v", what, err)
+			}
+		}
+		refused := func(what string, err error) {
+			t.Helper()
+			if err == nil {
+				t.Fatalf("%s: упавший выход принят", what)
+			}
+		}
+		must("UpdateConfig", svc.UpdateConfig(Config{UpstreamDevice: "nwg0", Upstreams: ups}))
+		must("Start", svc.Start())
+		must("CreateUser", svc.CreateUser("гость"))
+
+		svc.egressValidator = func(string) error { return errors.New("интерфейс опущен") }
+		users := svc.GetInternalConfig().Users
+		must("DeleteUser", svc.DeleteUser(users[len(users)-1].ID))
+		must("RotateSecret", svc.RotateSecret())
+		must("UpdateConfig без смены выхода", svc.UpdateConfig(Config{TlsDomain: "www.example.com", UpstreamDevice: "nwg0", Upstreams: ups}))
+		cand := svc.GetInternalConfig()
+		cand.TlsDomain = "www.example.net"
+		_, err := svc.PrepareCandidate("tx-same-egress", cand)
+		must("PrepareCandidate без смены выхода", err)
+		refused("смена выхода", svc.UpdateConfig(Config{UpstreamDevice: "nwg1"}))
+		cand.UpstreamDevice, cand.Upstreams = "nwg1", nil
+		_, err = svc.PrepareCandidate("tx-new-egress", cand)
+		refused("PrepareCandidate со сменой выхода", err)
+
+		must("Stop", svc.Stop())
+		refused("Start", svc.Start())
+		cand = svc.GetInternalConfig()
+		cand.Enabled = true
+		_, err = svc.PrepareCandidate("tx-enable", cand)
+		refused("PrepareCandidate с включением", err)
+	}
 }

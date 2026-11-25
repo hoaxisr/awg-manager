@@ -133,18 +133,18 @@ func (s *Service) PrepareCandidate(txID string, candidate Config) (string, error
 		}
 	}
 
+	var validator EgressValidator
+	if candidate.Enabled && needsEgressCheck(s.config, candidate) {
+		validator = s.egressValidator
+	}
 	if len(candidate.Upstreams) > 0 {
 		candidate.Upstreams = NormalizeUpstreams(candidate.Upstreams)
-		var validator EgressValidator
-		if candidate.Enabled {
-			validator = s.egressValidator
-		}
 		if err := validateUpstreamsWithEgress(candidate.Upstreams, validator); err != nil {
 			return "", err
 		}
 		candidate.UpstreamDevice = candidate.PrimaryUpstreamDevice()
-	} else if candidate.Enabled && s.egressValidator != nil && candidate.UpstreamDevice != "" {
-		if err := s.egressValidator(candidate.UpstreamDevice); err != nil {
+	} else if validator != nil && candidate.UpstreamDevice != "" {
+		if err := validator(candidate.UpstreamDevice); err != nil {
 			return "", fmt.Errorf("egress validation failed: %w", err)
 		}
 	}
