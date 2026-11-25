@@ -306,6 +306,9 @@ func TestForeignFirc_WebPortOnlyWhenConfigSaysSo(t *testing.T) {
 		{"все адреса v4", web(on, "      address: 0.0.0.0\n      port: 8880\n"), 8880, ""},
 		{"конкретный адрес", web(on, "      address: 192.168.1.1\n      port: 8880\n"), 8880, "192.168.1.1"},
 		{"только loopback", web(on, "      address: 127.0.0.1\n      port: 8880\n"), 0, ""},
+		{"localhost", web(on, "      address: localhost\n      port: 8880\n"), 0, ""},
+		{"имя", web(on, "      address: router.lan\n      port: 8880\n"), 8880, "router.lan"},
+		{"чужой URL в адресе", web(on, "      address: \"evil.example/@192.168.1.1\"\n      port: 8880\n"), 0, ""},
 		{"выключен", web("    enabled: false\n", "      port: 666\n"), 0, ""},
 		{"включение не указано", web("", "      port: 666\n"), 0, ""},
 		{"порт не указан", web(on, "      address: 0.0.0.0\n"), 0, ""},
@@ -326,6 +329,26 @@ func TestForeignFirc_WebPortOnlyWhenConfigSaysSo(t *testing.T) {
 				t.Fatalf("ForeignFirc() = %+v, want port=%d host=%q", got, tc.port, tc.host)
 			}
 		})
+	}
+}
+
+func TestForeignWebHost(t *testing.T) {
+	for addr, want := range map[string]string{
+		"192.168.1.1": "192.168.1.1", "fd00::1": "fd00::1", "[fd00::1]": "fd00::1", "router.lan": "router.lan",
+		"firc-box": "firc-box", "": "", "0.0.0.0": "", "::": "", "[::]": "",
+	} {
+		if host, ok := foreignWebHost(addr); !ok || host != want {
+			t.Errorf("foreignWebHost(%q) = %q, %v; want %q", addr, host, ok, want)
+		}
+	}
+	for _, addr := range []string{
+		"localhost", "LOCALHOST", "a.localhost", "localhost.", "127.0.0.1", "127.8.8.8", "::1", "[::1]", "::ffff:127.0.0.1",
+		"127.1", "0x7f.1", "2130706433", "0x7f000001", "fe80::1", "fe80::1%br0", "192.168.1.1%eth0", "[fd00::1", "fd00::1]",
+		"user@host", "host:80", "host/path", "host?x", "host#x", "javascript:alert(1)", "a b", "хост", "a\\b", "-", "a..b", "224.0.0.1",
+	} {
+		if host, ok := foreignWebHost(addr); ok {
+			t.Errorf("foreignWebHost(%q) принят как %q", addr, host)
+		}
 	}
 }
 

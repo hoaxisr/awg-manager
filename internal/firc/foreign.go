@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -227,15 +229,44 @@ func (d *ForeignDetector) describe(f *ForeignFirc) *ForeignFirc {
 	if port < 1 || port > 65535 {
 		return &out
 	}
-	switch host := strings.Trim(strings.TrimSpace(conf.App.HTTPWeb.Host.Address), "[]"); host {
-	case "127.0.0.1", "::1", "localhost":
-		return &out // с другого устройства не открыть
-	case "", "0.0.0.0", "::":
-		out.WebPort = port
-	default:
+	if host, ok := foreignWebHost(conf.App.HTTPWeb.Host.Address); ok {
 		out.WebPort, out.WebHost = port, host
 	}
 	return &out
+}
+
+// foreignHostName — имя хоста, которое браузер не примет за число: последняя
+// метка обязана начинаться с буквы («127.1» и «0x7f.1» — это loopback).
+var foreignHostName = regexp.MustCompile(`^([A-Za-z0-9-]+\.)*[A-Za-z][A-Za-z0-9-]*$`)
+
+// foreignWebHost — хост из чужого конфига, который можно подставить в ссылку:
+// "" — firc слушает все адреса. Адрес, недоступный с другого устройства, и всё,
+// что не похоже на адрес или имя, отбрасываем вместе с портом.
+func foreignWebHost(addr string) (string, bool) {
+	host := strings.TrimSpace(addr)
+	if inner, ok := strings.CutPrefix(host, "["); ok {
+		host, ok = strings.CutSuffix(inner, "]")
+		if !ok {
+			return "", false
+		}
+	}
+	if host == "" {
+		return "", true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsMulticast() {
+			return "", false
+		}
+		if ip.IsUnspecified() {
+			return "", true
+		}
+		return host, true
+	}
+	lower := strings.ToLower(host)
+	if !foreignHostName.MatchString(host) || lower == "localhost" || strings.HasSuffix(lower, ".localhost") {
+		return "", false
+	}
+	return host, true
 }
 
 // CheckNotForeign — отказ, если FIRC на роутере не наш (или владельца не узнать).
