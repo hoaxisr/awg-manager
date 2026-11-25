@@ -55,7 +55,7 @@ func newTestNDMS() (*query.Queries, *command.Commands, *fakePoster, *query.FakeG
 		Logger: query.NopLogger(),
 		IsOS5:  func() bool { return true },
 	})
-	sc := command.NewSaveCoordinator(poster, nopPublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil)
+	sc := command.NewSaveCoordinator(poster, nopPublisher{}, time.Hour, time.Hour, 0, nil)
 	sc.SetSaveTimings(command.SaveEventCap, 0, command.SaveAfterRemoval) // без шины событий
 	c := command.NewCommands(command.Deps{
 		Poster:  poster,

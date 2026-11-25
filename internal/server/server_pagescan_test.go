@@ -20,6 +20,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/pagescan"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 )
 
 type pageScanFixture struct {
@@ -214,12 +215,7 @@ func TestPageScanFircInbound_UsesListenAddress(t *testing.T) {
 
 func TestPageScanProxyLister(t *testing.T) {
 	openPort, authPort, offPort := listenPort(t), listenPort(t), listenPort(t)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	closedPort := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
+	closedPort := testutil.FreePort(t)
 
 	fx := newPageScanFixture(t, "firc", []firc.Tunnel{
 		{ID: "t1", Device: "tunvless0", Description: "DE", Enable: true, Inbounds: []firc.TunnelInbound{

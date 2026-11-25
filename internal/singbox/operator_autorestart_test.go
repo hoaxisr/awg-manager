@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -17,6 +18,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 )
 
 // seedStartSeam wires the startFn test seam and returns counters for the
@@ -781,13 +784,8 @@ func TestOperator_StartAndWait_RetriesOnce(t *testing.T) {
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	clashPort := ln.Addr().(*net.TCPAddr).Port
-	clashAddr := ln.Addr().String()
-	_ = ln.Close()
+	clashPort := testutil.FreePort(t)
+	clashAddr := fmt.Sprintf("127.0.0.1:%d", clashPort)
 
 	if err := os.WriteFile(filepath.Join(cfgDir, "00-base.json"),
 		[]byte(`{"experimental":{"clash_api":{"external_controller":"`+clashAddr+`"}}}`), 0o644); err != nil {

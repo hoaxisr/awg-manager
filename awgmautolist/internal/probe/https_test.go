@@ -73,15 +73,7 @@ func TestHTTPSReachableLargeBody(t *testing.T) {
 }
 
 func TestHTTPSBlockedConnectRefused(t *testing.T) {
-	// Nothing listens on a freshly allocated port after the listener closes.
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	listener.Close()
-
-	got := Check(context.Background(), tcpTarget(t, port), Path{})
+	got := Check(context.Background(), tcpTarget(t, closedPort(t)), Path{})
 	if got.Verdict != model.VerdictBlocked {
 		t.Fatalf("result=%+v, want blocked", got)
 	}

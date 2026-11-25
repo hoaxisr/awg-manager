@@ -4,27 +4,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/serveringress"
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 	"github.com/hoaxisr/awg-manager/internal/vlessserver"
 	"github.com/hoaxisr/awg-manager/internal/xhttpserver"
 	"github.com/xtls/reality"
 )
-
-func freeAPITestPort(t *testing.T) int {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("alloc free port: %v", err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
-	return port
-}
 
 func setupRealityAPITestHandler(t *testing.T) (*VlessServerHandler, *vlessserver.Service) {
 	t.Helper()
@@ -42,7 +31,7 @@ func setupRealityAPITestHandler(t *testing.T) (*VlessServerHandler, *vlessserver
 
 	cfg := svc.GetConfig()
 	cfg.Enabled = false
-	cfg.ListenPort = freeAPITestPort(t)
+	cfg.ListenPort = testutil.FreePort(t)
 	if err := svc.UpdateConfig(cfg); err != nil {
 		t.Fatalf("init UpdateConfig: %v", err)
 	}
@@ -84,7 +73,7 @@ func TestRealityRoute_GetUpdateReset(t *testing.T) {
 	}
 
 	// 2. POST update (save keys & port without enabling runtime yet)
-	port := freeAPITestPort(t)
+	port := testutil.FreePort(t)
 	body, _ := json.Marshal(map[string]any{
 		"port":      port,
 		"transport": "tcp",
@@ -147,7 +136,7 @@ func TestRealityRoute_QuickSetupPreserveClientsAndOutboundMode(t *testing.T) {
 		reality.GlobalPostHandshakeRecordsLens.Store(key, []int{})
 	}
 
-	port := freeAPITestPort(t)
+	port := testutil.FreePort(t)
 	reqBody, _ := json.Marshal(map[string]any{
 		"client_remark":             "AnotherClient",
 		"preserve_existing_clients": true,

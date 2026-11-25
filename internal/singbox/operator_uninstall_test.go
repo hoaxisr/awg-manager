@@ -35,7 +35,7 @@ func seedInstallation(t *testing.T, dir string) (binary, cache string) {
 	if err := os.WriteFile(cache, []byte("fakeip"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "sing-box.pid"), []byte("4242"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "sing-box.pid"), []byte("999999999"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return binary, cache

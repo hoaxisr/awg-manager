@@ -3,21 +3,28 @@ package probe
 import (
 	"net"
 	"sync"
+	"syscall"
 	"testing"
 )
 
-// netListenClosed returns the "host:port" of a listener that was closed
-// again: connecting to it is refused immediately.
-func netListenClosed() (string, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+// closedPort returns a port that refuses connections until the test ends: the
+// socket stays bound but never listens, so nobody else can take the number.
+// Listen(":0") + Close would leave it to any parallel test process.
+func closedPort(t *testing.T) int {
+	t.Helper()
+	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
 	if err != nil {
-		return "", err
+		t.Fatal(err)
 	}
-	addr := listener.Addr().String()
-	if err := listener.Close(); err != nil {
-		return "", err
+	t.Cleanup(func() { _ = syscall.Close(fd) })
+	if err := syscall.Bind(fd, &syscall.SockaddrInet4{Addr: [4]byte{127, 0, 0, 1}}); err != nil {
+		t.Fatal(err)
 	}
-	return addr, nil
+	sa, err := syscall.Getsockname(fd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sa.(*syscall.SockaddrInet4).Port
 }
 
 // blockingListener returns a TCP listener that accepts connections and never

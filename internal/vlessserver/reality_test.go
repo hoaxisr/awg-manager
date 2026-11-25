@@ -3,7 +3,6 @@ package vlessserver
 import (
 	"context"
 	"encoding/json"
-	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -12,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/realityserver"
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 	"github.com/hoaxisr/awg-manager/internal/xhttpserver"
 	"github.com/xtls/reality"
 )
@@ -207,17 +207,6 @@ func TestBuildRealityShareLinksFormats(t *testing.T) {
 	}
 }
 
-func freeTCPPort(t *testing.T) int {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("alloc free port: %v", err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
-	return port
-}
-
 func TestUpdateRealityReset(t *testing.T) {
 	preseedRealityRecordCache(t, "dest.test:443", "dest.test")
 	s := newRealityTestService(t)
@@ -228,12 +217,12 @@ func TestUpdateRealityReset(t *testing.T) {
 	}
 	cfg := s.GetConfig()
 	cfg.Enabled = true
-	cfg.ListenPort = freeTCPPort(t)
+	cfg.ListenPort = testutil.FreePort(t)
 	if err := s.UpdateConfig(cfg); err != nil {
 		t.Fatalf("UpdateConfig: %v", err)
 	}
 
-	port := freeTCPPort(t)
+	port := testutil.FreePort(t)
 	enabled := true
 	dest := "dest.test:443"
 	st, err := s.UpdateReality(RealityUpdate{Enabled: &enabled, Port: &port, Dest: &dest})
@@ -274,12 +263,7 @@ func TestRealityPathServedByDaemon(t *testing.T) {
 	s := newRealityTestService(t)
 	var got xhttpserver.Config
 	s.SetTestRuntimeHook(func(cfg xhttpserver.Config) error { got = cfg; return nil })
-	ln, err := net.Listen("tcp", "0.0.0.0:0")
-	if err != nil {
-		t.Skip(err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
+	port := testutil.FreePort(t)
 	priv, _, _ := realityserver.GenerateKeyPair()
 	sid, _ := realityserver.GenerateShortID()
 

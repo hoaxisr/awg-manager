@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 	"github.com/hoaxisr/awg-manager/internal/xhttpserver"
 	"github.com/hoaxisr/awg-manager/internal/xhttpserver/xhttptest"
 )
@@ -65,10 +66,6 @@ func runFPCHelperProcess(mode string) {
 		os.Exit(1)
 	}
 	defer ln.Close()
-	if mode == "crash_shortly" {
-		time.Sleep(180 * time.Millisecond)
-		os.Exit(3)
-	}
 	for {
 		c, err := ln.Accept()
 		if err != nil {
@@ -299,7 +296,7 @@ func TestMandatoryCFPCAndNoGoFallback(t *testing.T) {
 	})
 
 	t.Run("repeated_isAlive_and_fast_restart_after_daemon_crash", func(t *testing.T) {
-		crashBin := makeFakeFPCBinary(t, "crash_shortly")
+		crashBin := makeFakeFPCBinary(t, "ok")
 		t.Setenv("AWGM_DISABLE_C_FPC", "0")
 		t.Setenv("AWGM_C_FPC_BIN", crashBin)
 		crashSpec := spec
@@ -314,18 +311,18 @@ func TestMandatoryCFPCAndNoGoFallback(t *testing.T) {
 			t.Fatalf("invalid initial port %d", port1)
 		}
 
-		// Wait for the fake daemon to exit after startup readiness
-		time.Sleep(320 * time.Millisecond)
-
 		globalMu.Lock()
 		inst := globalInstances[crashSpec.Key]
 		globalMu.Unlock()
 		if inst == nil {
 			t.Fatalf("expected instance in globalInstances")
 		}
-		if inst.isAlive() {
-			t.Fatalf("expected first isAlive() after crash to return false")
+		// Крах по команде теста, а не по часам: демон, умирающий сам, под
+		// нагрузкой успевает умереть ещё до готовности.
+		if err := inst.cmd.Process.Kill(); err != nil {
+			t.Fatal(err)
 		}
+		testutil.WaitFor(t, func() bool { return !inst.isAlive() }, "isAlive() не заметил краха демона")
 		if inst.isAlive() {
 			t.Fatalf("expected second isAlive() after crash to still return false (closed doneCh)")
 		}
@@ -333,8 +330,8 @@ func TestMandatoryCFPCAndNoGoFallback(t *testing.T) {
 		// Verify stop() on already-exited daemon returns immediately without 1s channel stall
 		tStop := time.Now()
 		inst.stop()
-		if stopElapsed := time.Since(tStop); stopElapsed >= 250*time.Millisecond {
-			t.Fatalf("inst.stop() stalled %v cleaning up exited daemon (expected < 250ms)", stopElapsed)
+		if stopElapsed := time.Since(tStop); stopElapsed >= time.Second {
+			t.Fatalf("inst.stop() stalled %v cleaning up exited daemon", stopElapsed)
 		}
 
 		// Switch to healthy binary and ensure EnsureEndpoint replaces the exited instance cleanly
@@ -433,7 +430,7 @@ func TestCClientToCBackendEndToEndAndRevocation(t *testing.T) {
 	}
 
 	srv := xhttpserver.New(xhttpserver.Config{
-		ListenAddr: "127.0.0.1:0",
+		ListenAddr: testutil.FreeAddr(t),
 		BinaryPath: cServerBin,
 		ConfigPath: filepath.Join(t.TempDir(), "awgm-xhttpd-e2e.conf"),
 		PathPrefix: "/cdn-bridge",
@@ -585,7 +582,7 @@ func TestUniversalHTTPMethodsAndAutoFallback_CClientToCBackend(t *testing.T) {
 	}
 
 	srv := xhttpserver.New(xhttpserver.Config{
-		ListenAddr: "127.0.0.1:0",
+		ListenAddr: testutil.FreeAddr(t),
 		BinaryPath: cServerBin,
 		ConfigPath: filepath.Join(t.TempDir(), "awgm-xhttpd-universal.conf"),
 		PathPrefix: "/cdn-bridge",

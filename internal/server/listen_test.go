@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 )
 
 // newListenTestServer — минимальный Server для тестов listen.go: только
@@ -18,19 +19,6 @@ func newListenTestServer(t *testing.T) *Server {
 		appLog:     logging.NewScopedLogger(nil, logging.GroupServer, logging.SubHTTP),
 		httpServer: &http.Server{Handler: http.NewServeMux()},
 	}
-}
-
-// freeTCPPort выделяет свободный порт (bind :0 → close). Небольшая гонка
-// между close и повторным bind допустима для юнит-теста.
-func freeTCPPort(t *testing.T) int {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	ln.Close()
-	return port
 }
 
 func dialOK(t *testing.T, port int) bool {
@@ -74,7 +62,7 @@ func shutdownListeners(s *Server) {
 func TestListen_BeginThenConfirm(t *testing.T) {
 	s := newListenTestServer(t)
 	defer shutdownListeners(s)
-	p1, p2 := freeTCPPort(t), freeTCPPort(t)
+	p1, p2 := testutil.FreePort(t), testutil.FreePort(t)
 	bindInitial(t, s, p1)
 
 	token, deadline, addrs, err := s.BeginListenChange(p2, nil)
@@ -105,7 +93,7 @@ func TestListen_BeginThenConfirm(t *testing.T) {
 func TestListen_RevertRestoresPreviousBind(t *testing.T) {
 	s := newListenTestServer(t)
 	defer shutdownListeners(s)
-	p1, p2 := freeTCPPort(t), freeTCPPort(t)
+	p1, p2 := testutil.FreePort(t), testutil.FreePort(t)
 	bindInitial(t, s, p1)
 
 	token, _, _, err := s.BeginListenChange(p2, nil)
@@ -135,7 +123,7 @@ func TestListen_RevertRestoresPreviousBind(t *testing.T) {
 func TestListen_BeginFailureKeepsOldBind(t *testing.T) {
 	s := newListenTestServer(t)
 	defer shutdownListeners(s)
-	p1 := freeTCPPort(t)
+	p1 := testutil.FreePort(t)
 	bindInitial(t, s, p1)
 
 	blocker, err := net.Listen("tcp", "127.0.0.1:0")
@@ -161,7 +149,7 @@ func TestListen_BeginFailureKeepsOldBind(t *testing.T) {
 func TestListen_PendingGuards(t *testing.T) {
 	s := newListenTestServer(t)
 	defer shutdownListeners(s)
-	p1, p2, p3 := freeTCPPort(t), freeTCPPort(t), freeTCPPort(t)
+	p1, p2, p3 := testutil.FreePort(t), testutil.FreePort(t), testutil.FreePort(t)
 	bindInitial(t, s, p1)
 
 	token, _, _, err := s.BeginListenChange(p2, nil)
@@ -229,7 +217,7 @@ func TestResolveListenAddrs_AllMissingFallsBackToWildcard(t *testing.T) {
 func TestListen_HealNarrowsWildcardFallback(t *testing.T) {
 	s := newListenTestServer(t)
 	defer shutdownListeners(s)
-	port := freeTCPPort(t)
+	port := testutil.FreePort(t)
 	s.listen.mu.Lock()
 	if _, err := s.applyListenLocked([]string{fmt.Sprintf("0.0.0.0:%d", port)}, true); err != nil {
 		s.listen.mu.Unlock()
@@ -254,7 +242,7 @@ func TestListen_HealNarrowsWildcardFallback(t *testing.T) {
 func TestListen_BeginChangeFromWildcardToInterfaceSamePort(t *testing.T) {
 	s := newListenTestServer(t)
 	defer shutdownListeners(s)
-	port := freeTCPPort(t)
+	port := testutil.FreePort(t)
 	bindInitial(t, s, port) // пустой список интерфейсов = 0.0.0.0
 
 	token, _, addrs, err := s.BeginListenChange(port, []string{"lo"})
@@ -281,7 +269,7 @@ func TestListen_BeginChangeFromWildcardToInterfaceSamePort(t *testing.T) {
 func TestListen_RevertKeepsCurrentWhenOldAddrStolen(t *testing.T) {
 	s := newListenTestServer(t)
 	defer shutdownListeners(s)
-	p1, p2 := freeTCPPort(t), freeTCPPort(t)
+	p1, p2 := testutil.FreePort(t), testutil.FreePort(t)
 	bindInitial(t, s, p1)
 
 	token, _, _, err := s.BeginListenChange(p2, nil)
