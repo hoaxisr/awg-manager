@@ -7,6 +7,7 @@
 	import type { TgWebProxyConfig, TgWebProxyStatus, TelegramUpstream, WebProxyEndpoint } from '$lib/types';
 	import type { KeenDNSDiscovery } from '$lib/types/serverWizard';
 	import { Button, Modal } from '$lib/components/ui';
+	import { isValidMtprotoDirectPort } from '../external-access/externalAccessModel';
 	import TgProxySettingsGeneral from './TgProxySettingsGeneral.svelte';
 	import TgProxySecurityPane from './TgProxySecurityPane.svelte';
 	import TgProxyDiagnosticsPane from './TgProxyDiagnosticsPane.svelte';
@@ -113,6 +114,12 @@
 		const draftError = upstreamsDraftError(editUpstreams);
 		if (draftError) {
 			notifications.error(draftError);
+			return;
+		}
+		// Сохранённый прежде порт сохранению не мешает, новый обязан быть допустимым.
+		const port = editConfig.direct_port;
+		if (port && port !== config?.direct_port && !isValidMtprotoDirectPort(port)) {
+			notifications.error(m.servers_ext_wiz_s3_direct_port_invalid());
 			return;
 		}
 		saveConfigLoading = true;

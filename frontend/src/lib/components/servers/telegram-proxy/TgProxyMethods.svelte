@@ -3,7 +3,7 @@
 	import { m } from '$lib/i18n';
 	import type { TgWebProxyConfig, TgWebProxyStatus } from '$lib/types';
 	import { EXTERNAL_ACCESS_LABELS } from '../external-access/connectionLabels';
-	import { formatDomainList } from '../external-access/externalAccessModel';
+	import { directWanState, formatDomainList } from '../external-access/externalAccessModel';
 	import { cleanEndpointDescription } from './tgProxyModel';
 	import { Smartphone, Globe } from 'lucide-svelte';
 
@@ -15,6 +15,8 @@
 	}
 
 	let { config, status, expectsMt, expectsWeb }: Props = $props();
+
+	let wanState = $derived(directWanState(config?.scenario, config?.direct_host, config?.direct_port));
 </script>
 
 <section class="methods-grid">
@@ -37,6 +39,11 @@
 					{config?.direct_host ? `${config.direct_host}:${config?.direct_port || 8443}` : m.servers_tg_method_no_address()}
 				</span>
 			</div>
+			{#if status?.direct_wan_error}
+				<p class="method-desc method-error" role="alert">{m.servers_tg_direct_wan_error({ error: status.direct_wan_error })}</p>
+			{:else if config?.enabled && wanState === 'no_host'}
+				<p class="method-desc">{m.servers_tg_direct_wan_no_host({ port: config.direct_port || 8443 })}</p>
+			{/if}
 		</div>
 	{/if}
 
@@ -139,6 +146,11 @@
 		font-size: 11.5px;
 		color: var(--color-text-secondary);
 		line-height: 1.4;
+	}
+
+	.method-error {
+		color: var(--color-error);
+		overflow-wrap: anywhere;
 	}
 
 	.method-footer {

@@ -6,7 +6,7 @@
 	import type { KeenDNSDiscovery } from '$lib/types/serverWizard';
 	import { Button, IconButton } from '$lib/components/ui';
 	import TelegramUpstreamsEditor from '../TelegramUpstreamsEditor.svelte';
-	import { isCloudKeenDNSHost } from '../external-access/externalAccessModel';
+	import { directWanState, isCloudKeenDNSHost } from '../external-access/externalAccessModel';
 	import {
 		WEBPROXY_PRESETS,
 		getPresetMeta,
@@ -44,6 +44,10 @@
 	let isCloudDirectHost = $derived(
 		editConfig.scenario !== 'cdn_http' &&
 			isCloudKeenDNSHost(editConfig.direct_host, keenDNSBaseDomain, keenDNSBaseIsDirect)
+	);
+
+	let wanState = $derived(
+		directWanState(editConfig.scenario, editConfig.direct_host, editConfig.direct_port)
 	);
 
 	function applyEndpointPreset(ep: WebProxyEndpoint, presetId: TgNetworkPreset, idx: number) {
@@ -121,9 +125,24 @@
 		</label>
 		<label class="form-field">
 			<span class="field-label">{m.servers_tg_direct_port_label()}</span>
-			<input type="number" bind:value={editConfig.direct_port} class="text-input" placeholder="8443" />
+			<input
+				type="number"
+				min="1024"
+				max="65535"
+				bind:value={editConfig.direct_port}
+				class="text-input"
+				class:input-error={wanState === 'bad_port'}
+				placeholder="8443"
+			/>
 		</label>
 	</div>
+	{#if wanState === 'bad_port'}
+		<span class="field-hint port-error" role="alert">{m.servers_ext_wiz_s3_direct_port_invalid()} {m.servers_tg_direct_wan_bad_port()}</span>
+	{:else if wanState === 'opens'}
+		<span class="field-hint">{m.servers_tg_direct_wan_opens({ port: editConfig.direct_port || 8443 })}</span>
+	{:else if wanState === 'no_host'}
+		<span class="field-hint">{m.servers_tg_direct_wan_no_host({ port: editConfig.direct_port || 8443 })}</span>
+	{/if}
 
 	<TelegramUpstreamsEditor bind:upstreams={editUpstreams} {egressOptions} />
 
@@ -259,6 +278,10 @@
 		padding: 6px 10px;
 		font-size: 13px;
 		color: var(--color-text-primary);
+	}
+
+	.field-hint.port-error {
+		color: var(--color-error);
 	}
 
 	.text-input.input-error {

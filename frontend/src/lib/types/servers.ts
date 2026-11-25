@@ -429,6 +429,8 @@ export interface TgWebProxyStatus {
 	legacy_active?: boolean;
 	legacy_expires_at?: string;
 	legacy_expired_pending_reconcile?: boolean;
+	/** Сбой правила WAN-файрвола прямого порта MTProto. */
+	direct_wan_error?: string;
 	/** Connection links are intentionally absent; use revealTgWebProxySecret(). */
 	web_proxies?: WebProxyStatusLink[];
 	users?: TelegramUser[];
