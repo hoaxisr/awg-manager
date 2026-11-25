@@ -2,6 +2,7 @@ package tgwebproxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -133,6 +134,25 @@ func (ws *WorkerSupervisor) CheckReadiness(cfg Config) error {
 		}
 	}
 	return nil
+}
+
+// RestoreConfig возвращает движкам прежнюю конфигурацию. Движок, который до
+// транзакции не работал, не запускается: его старт мог бы провалить откат.
+// Apply, а не Restart: тот поднял бы последнюю, отвергнутую конфигурацию.
+func (ws *WorkerSupervisor) RestoreConfig(prev Config, states map[string]WorkerProcessState) error {
+	if ws == nil {
+		return nil
+	}
+	stopped := prev
+	stopped.Enabled = false
+	mtgCfg, tproxyCfg := prev, prev
+	if !states[workerDirect].Running && !states[workerRaw].Running {
+		mtgCfg = stopped
+	}
+	if !states[workerTproxy].Running {
+		tproxyCfg = stopped
+	}
+	return errors.Join(ws.mtg.Apply(mtgCfg), ws.tproxy.Apply(tproxyCfg))
 }
 
 func (ws *WorkerSupervisor) RestoreWorkerStates(states map[string]WorkerProcessState) error {

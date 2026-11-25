@@ -435,8 +435,10 @@ func (s *Service) CommitPrepared(txID string) error {
 		}
 	}
 
+	if err := s.syncDirectWANFirewallLocked(candidate); err != nil && opensDirectWANAnew(manifest.OldConfig, candidate) {
+		return rollbackAndJoin(fmt.Errorf("открыть порт MTProto на WAN: %w", err))
+	}
 	s.config = candidate
-	_ = s.syncDirectWANFirewallLocked(candidate)
 
 	// 3. Mark manifest active
 	manifest.State = "active"

@@ -29,13 +29,15 @@ func verifyTgChecks(t *testing.T, svc *WizardService) map[string]VerificationChe
 // красный.
 func TestVerify_WANFirewallFollowsDirectHost(t *testing.T) {
 	svc, _, _, tg, _ := setupTestWizard(t)
-	// 70000 — IsDirectWANPortOpen=false вне Keenetic.
-	tg.cfg = tgwebproxy.PublicConfig{Enabled: true, Scenario: "direct_fake_tls", DirectPort: 70000, TlsDomain: "www.google.com"}
-	tg.st = tgwebproxy.Status{DirectOnline: true, DirectPort: 70000, DirectWANError: "xtables lock"}
+	svc.SetDirectWANFirewallChecker(func(int) (tgwebproxy.DirectWANFirewallState, error) {
+		return tgwebproxy.DirectWANFirewallClosed, nil
+	})
+	tg.cfg = tgwebproxy.PublicConfig{Enabled: true, Scenario: "direct_fake_tls", DirectPort: 8443, TlsDomain: "www.google.com"}
+	tg.st = tgwebproxy.Status{DirectOnline: true, DirectPort: 8443, DirectWANError: "xtables lock"}
 	svc.SetKeenDNS(&mockKeenDNSOperator{disc: serveringress.KeenDNSDiscovery{State: "supported", WANAddress: "10.1.1.1", WANPrivate: true}})
 
 	checks := verifyTgChecks(t, svc)
-	if c := checks["tg_mtproto_wan_firewall"]; c.Status != CheckStatusOK || !strings.Contains(c.Message, "прямой адрес не задан") {
+	if c := checks["tg_mtproto_wan_firewall"]; c.Status != CheckStatusNotApplicable || !strings.Contains(c.Message, "прямой адрес не задан") {
 		t.Fatalf("без адреса: %+v", c)
 	}
 	if c, ok := checks["tg_mtproto_wan_ip"]; ok {

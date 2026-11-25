@@ -1196,3 +1196,95 @@ func TestWizardService_DirectFakeTLS_DesiredAndNoKeenDNSPublication(t *testing.T
 		t.Fatalf("unexpected Reveal hosts: PublicHost=%q TgPublicHost=%q", creds.PublicHost, creds.TgPublicHost)
 	}
 }
+
+func TestWizardService_VerifyTelegramWANFirewallStates(t *testing.T) {
+	svc, _, _, tg, _ := setupTestWizard(t)
+	ctx := context.Background()
+
+	svc.SetDialTimeout(func(network, address string, timeout time.Duration) (net.Conn, error) {
+		return &mockTestConn{}, nil
+	})
+	tg.st = tgwebproxy.Status{
+		Installed:       true,
+		InstalledTelemt: true,
+		DirectOnline:    true,
+		DirectPort:      8443,
+	}
+	tg.cfg = tgwebproxy.PublicConfig{
+		Enabled:    true,
+		Scenario:   "direct_fake_tls",
+		DirectHost: "203.0.113.10",
+		DirectPort: 8443,
+		TlsDomain:  "www.google.com",
+	}
+
+	findFWCheck := func(checks []VerificationCheck) (VerificationCheck, bool) {
+		for _, c := range checks {
+			if c.ID == "tg_mtproto_wan_firewall" {
+				return c, true
+			}
+		}
+		return VerificationCheck{}, false
+	}
+
+	// 1. Open -> CheckStatusOK
+	svc.SetDirectWANFirewallChecker(func(port int) (tgwebproxy.DirectWANFirewallState, error) {
+		return tgwebproxy.DirectWANFirewallOpen, nil
+	})
+	repOpen, err := svc.Verify(ctx, "tgwebproxy")
+	if err != nil {
+		t.Fatalf("Verify open: %v", err)
+	}
+	chkOpen, ok := findFWCheck(repOpen.Checks)
+	if !ok || chkOpen.Status != CheckStatusOK || repOpen.OverallStatus != CheckStatusOK {
+		t.Fatalf("expected Open->OK check and overall OK, got check=%+v overall=%q", chkOpen, repOpen.OverallStatus)
+	}
+
+	// 2. Closed -> CheckStatusWarning with VerifyCategoryFirewall
+	svc.SetDirectWANFirewallChecker(func(port int) (tgwebproxy.DirectWANFirewallState, error) {
+		return tgwebproxy.DirectWANFirewallClosed, nil
+	})
+	repClosed, err := svc.Verify(ctx, "tgwebproxy")
+	if err != nil {
+		t.Fatalf("Verify closed: %v", err)
+	}
+	chkClosed, ok := findFWCheck(repClosed.Checks)
+	if !ok || chkClosed.Status != CheckStatusWarning || chkClosed.Category != VerifyCategoryFirewall {
+		t.Fatalf("expected Closed->Warning(firewall), got %+v", chkClosed)
+	}
+
+	// 3. NotApplicable (missing netfilter.d) -> CheckStatusNotApplicable, NOT CheckStatusOK, overall_status remains OK
+	svc.SetDirectWANFirewallChecker(func(port int) (tgwebproxy.DirectWANFirewallState, error) {
+		return tgwebproxy.DirectWANFirewallNotApplicable, nil
+	})
+	repNA, err := svc.Verify(ctx, "tgwebproxy")
+	if err != nil {
+		t.Fatalf("Verify not_applicable: %v", err)
+	}
+	chkNA, ok := findFWCheck(repNA.Checks)
+	if !ok || chkNA.Status != CheckStatusNotApplicable {
+		t.Fatalf("expected NotApplicable status, got %+v", chkNA)
+	}
+	if repNA.OverallStatus != CheckStatusOK {
+		t.Fatalf("expected NotApplicable not to downgrade overall status, got %q", repNA.OverallStatus)
+	}
+
+	// 4. Unknown (permission/I/O error on netfilter.d or iptables failure) -> CheckStatusWarning ("Не удалось проверить...")
+	svc.SetDirectWANFirewallChecker(func(port int) (tgwebproxy.DirectWANFirewallState, error) {
+		return tgwebproxy.DirectWANFirewallUnknown, os.ErrPermission
+	})
+	repUnknown, err := svc.Verify(ctx, "tgwebproxy")
+	if err != nil {
+		t.Fatalf("Verify unknown: %v", err)
+	}
+	chkUnknown, ok := findFWCheck(repUnknown.Checks)
+	if !ok || chkUnknown.Status != CheckStatusWarning || chkUnknown.Category != VerifyCategoryFirewall {
+		t.Fatalf("expected Unknown->Warning(firewall), got %+v", chkUnknown)
+	}
+	if !strings.Contains(chkUnknown.Message, "Не удалось проверить") {
+		t.Fatalf("expected Unknown message to report failure to verify, got %q", chkUnknown.Message)
+	}
+	if repUnknown.OverallStatus != CheckStatusWarning {
+		t.Fatalf("expected Unknown check to yield overall warning, got %q", repUnknown.OverallStatus)
+	}
+}

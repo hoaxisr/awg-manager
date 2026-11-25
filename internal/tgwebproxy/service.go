@@ -46,7 +46,7 @@ type Service struct {
 	legacyTimer          *time.Timer
 	onReload             func()
 	directWANFirewall    func(port int, enabled bool) error
-	directWANError       string
+	directWANErr         error
 	appLog               *logging.ScopedLogger
 	egressValidator      EgressValidator
 	tproxyValidator      TproxyValidator
@@ -694,7 +694,6 @@ func (s *Service) applyConfigLocked(newCfg Config) error {
 	}
 
 	s.config = newCfg
-	_ = s.syncDirectWANFirewallLocked(newCfg)
 	s.scheduleLegacyExpiryLocked()
 	go tuneRuntimeNetworkUpstreams(newCfg.EnabledUpstreams())
 	go s.checkUpstreamHealth()
@@ -719,8 +718,8 @@ func (s *Service) SyncDirectWANFirewall() error {
 }
 
 // syncDirectWANFirewallLocked приводит правило WAN к cfg. Ошибка уходит в
-// журнал и в статус (DirectWANError); вызывающие внутри пакета её не
-// возвращают — сбой файрвола не должен откатывать уже применённую конфигурацию.
+// журнал и в статус (DirectWANError). Возвращённую ошибку вызывающий учитывает,
+// только если cfg открывает порт заново (opensDirectWANAnew).
 func (s *Service) syncDirectWANFirewallLocked(cfg Config) error {
 	if s.directWANFirewall == nil {
 		return nil
@@ -729,13 +728,23 @@ func (s *Service) syncDirectWANFirewallLocked(cfg Config) error {
 	if cfg.OpensDirectWAN() {
 		port = cfg.effectiveDirectPort()
 	}
-	err := s.directWANFirewall(port, port > 0)
-	s.directWANError = ""
-	if err != nil {
-		s.directWANError = err.Error()
-		s.appLog.Warn("wan-firewall", "telegram-mtproto", err.Error())
+	s.directWANErr = s.directWANFirewall(port, port > 0)
+	if s.directWANErr != nil {
+		s.appLog.Warn("wan-firewall", "telegram-mtproto", s.directWANErr.Error())
 	}
-	return err
+	return s.directWANErr
+}
+
+// retryDirectWANFirewall повторяет неудачную сверку: на загрузке WAN может быть
+// ещё не поднят, а блокировка xtables — временной. Недопустимый порт повтором
+// не исправить.
+func (s *Service) retryDirectWANFirewall() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.directWANErr == nil || s.recoveryRequired || errors.Is(s.directWANErr, ErrInvalidDirectPort) {
+		return
+	}
+	_ = s.syncDirectWANFirewallLocked(s.config)
 }
 
 func hasTproxyFileChanges(tproxyDir string, files []FilePayload) bool {
@@ -763,6 +772,7 @@ type serviceTxHook struct {
 	tproxyWasRunning bool
 	prevCfg          Config
 	muxWasRunning    bool
+	firewallSynced   bool
 }
 
 func (h *serviceTxHook) CaptureWorkerStates() map[string]WorkerProcessState {
@@ -797,6 +807,12 @@ func (h *serviceTxHook) ApplyWorkers(cfg Config) error {
 			}
 		}
 	}
+	if h.svc != nil {
+		h.firewallSynced = true
+		if err := h.svc.syncDirectWANFirewallLocked(cfg); err != nil && opensDirectWANAnew(h.prevCfg, cfg) {
+			return fmt.Errorf("открыть порт MTProto на WAN: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -821,8 +837,12 @@ func (h *serviceTxHook) CheckReadiness(cfg Config) error {
 func (h *serviceTxHook) RestoreWorkerStates(states map[string]WorkerProcessState) error {
 	var errs []error
 	if h.svc != nil && h.svc.workers != nil {
-		if err := h.svc.workers.RestoreWorkerStates(states); err != nil {
-			errs = append(errs, err)
+		if err := h.svc.workers.RestoreConfig(h.prevCfg, states); err != nil {
+			errs = append(errs, fmt.Errorf("restore workers: %w", err))
+		} else if h.prevCfg.Enabled && h.prevCfg.IsWebEnabled() && h.tproxyChanged && h.tproxyWasRunning {
+			if err := h.svc.workers.RestartWorker(workerTproxy); err != nil {
+				errs = append(errs, fmt.Errorf("restart restored tproxy worker: %w", err))
+			}
 		}
 	}
 	if h.svc != nil && h.svc.mux != nil {
@@ -835,6 +855,9 @@ func (h *serviceTxHook) RestoreWorkerStates(states map[string]WorkerProcessState
 				errs = append(errs, err)
 			}
 		}
+	}
+	if h.firewallSynced && h.svc != nil {
+		_ = h.svc.syncDirectWANFirewallLocked(h.prevCfg)
 	}
 	if len(errs) > 0 {
 		return errors.Join(errs...)
@@ -1758,6 +1781,7 @@ func (s *Service) runBackgroundHealthWorker() {
 			return
 		case <-ticker.C:
 			s.checkUpstreamHealth()
+			s.retryDirectWANFirewall()
 		}
 	}
 }
@@ -2038,7 +2062,10 @@ func (s *Service) GetStatus() Status {
 	workers := s.workers
 	recovery := s.recoveryRequired
 	startupErr := s.lastStartupError
-	directWANErr := s.directWANError
+	directWANErr := ""
+	if s.directWANErr != nil {
+		directWANErr = s.directWANErr.Error()
+	}
 	s.mu.Unlock()
 
 	var directOnline, rawOnline, webProxyOnline bool

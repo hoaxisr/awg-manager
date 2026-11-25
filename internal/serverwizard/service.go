@@ -57,20 +57,21 @@ type WizardCapabilitiesResponse struct {
 }
 
 type WizardService struct {
-	coord        CoordinatorBridge
-	xray         XrayServerComponent
-	tg           TgWebProxyComponent
-	disp         DispatcherComponent
-	preflight    *PreflightEngine
-	fingerprint  *FingerprintEngine
-	planStore    *PlanStore
-	jobRunner    *JobRunner
-	egress       *egress.Adapter
-	keendns      serveringress.KeenDNSOperator
-	dialTimeout  func(network, address string, timeout time.Duration) (net.Conn, error)
-	httpDoer     HTTPDoer
-	lookupHost   func(ctx context.Context, host string) ([]string, error)
-	tlsCertProbe TLSCertProbeFunc
+	coord                    CoordinatorBridge
+	xray                     XrayServerComponent
+	tg                       TgWebProxyComponent
+	disp                     DispatcherComponent
+	preflight                *PreflightEngine
+	fingerprint              *FingerprintEngine
+	planStore                *PlanStore
+	jobRunner                *JobRunner
+	egress                   *egress.Adapter
+	keendns                  serveringress.KeenDNSOperator
+	dialTimeout              func(network, address string, timeout time.Duration) (net.Conn, error)
+	httpDoer                 HTTPDoer
+	lookupHost               func(ctx context.Context, host string) ([]string, error)
+	tlsCertProbe             TLSCertProbeFunc
+	directWANFirewallChecker func(port int) (tgwebproxy.DirectWANFirewallState, error)
 }
 
 // HTTPDoer abstracts HTTP requests for readiness probing and testing.
@@ -122,6 +123,18 @@ func (s *WizardService) SetLookupHost(fn func(ctx context.Context, host string) 
 // SetTLSCertProbe configures a dedicated TLS certificate verification probe for a specific FQDN.
 func (s *WizardService) SetTLSCertProbe(fn TLSCertProbeFunc) {
 	s.tlsCertProbe = fn
+}
+
+// SetDirectWANFirewallChecker configures a custom WAN firewall state probe for testing.
+func (s *WizardService) SetDirectWANFirewallChecker(fn func(port int) (tgwebproxy.DirectWANFirewallState, error)) {
+	s.directWANFirewallChecker = fn
+}
+
+func (s *WizardService) checkDirectWANFirewall(port int) (tgwebproxy.DirectWANFirewallState, error) {
+	if s.directWANFirewallChecker != nil {
+		return s.directWANFirewallChecker(port)
+	}
+	return tgwebproxy.CheckDirectWANFirewall(port)
 }
 
 func (s *WizardService) probeFQDNCertStatus(ctx context.Context, fqdn string) string {

@@ -992,5 +992,5 @@ func (a *app) startIngressServices(recoveryReq bool, recoveryReason string, vles
 	if started {
 		a.bootLog.Info("ingress", "autostart", "ingress services started successfully")
 	}
-	a.ingressCoordinator.SyncWANIngressFirewall()
+	_ = a.ingressCoordinator.SyncWANIngressFirewall() // ошибку пишет в журнал и статус сам сервис
 }

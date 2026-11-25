@@ -1363,17 +1363,21 @@ func (c *Coordinator) IsDispatcherRunning() bool {
 
 // SyncWANIngressFirewall synchronizes WAN firewall ports for MTProto direct ingress
 // when coordinator is not in recovery mode.
-func (c *Coordinator) SyncWANIngressFirewall() {
-	c.syncWANIngressFirewall()
-}
-
-func (c *Coordinator) syncWANIngressFirewall() {
+func (c *Coordinator) SyncWANIngressFirewall() error {
 	if needed, _ := c.IsRecoveryRequired(); needed {
-		return
+		return nil
 	}
 	if syncer, ok := c.tgSvc.(interface{ SyncDirectWANFirewall() error }); ok {
-		_ = syncer.SyncDirectWANFirewall() // ошибку пишет в журнал и статус сам сервис
+		return syncer.SyncDirectWANFirewall()
 	}
+	return nil
+}
+
+// syncWANIngressFirewall — сверка после уже зафиксированной транзакции, отката
+// или сброса. Её ошибка не отменяет сделанное (открытие порта проверено и
+// откатано раньше, в самом сервисе): сервис пишет её в журнал и в статус.
+func (c *Coordinator) syncWANIngressFirewall() {
+	_ = c.SyncWANIngressFirewall()
 }
 
 // HydrateDispatcherRoutes checks if dispatcher routes are configured; if empty,

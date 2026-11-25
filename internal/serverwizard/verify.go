@@ -493,41 +493,7 @@ func (s *WizardService) verifyTelegram(ctx context.Context, checks *[]Verificati
 			})
 		}
 
-		if directHost == "" {
-			*checks = append(*checks, VerificationCheck{
-				ID:            "tg_mtproto_wan_firewall",
-				Service:       "tg_mtproto",
-				Title:         "WAN-фаервол для порта MTProto",
-				Status:        CheckStatusOK,
-				Message:       fmt.Sprintf("TCP-порт %d на WAN не открывается: прямой адрес не задан, MTProto доступен только из локальной сети", directPort),
-				Remediation:   "Если MTProto должен работать из интернета, укажите прямой адрес.",
-				TargetAddress: directTarget,
-			})
-		} else if tgwebproxy.IsDirectWANPortOpen(directPort) {
-			*checks = append(*checks, VerificationCheck{
-				ID:            "tg_mtproto_wan_firewall",
-				Service:       "tg_mtproto",
-				Title:         "WAN-фаервол для порта MTProto",
-				Status:        CheckStatusOK,
-				Message:       fmt.Sprintf("TCP-порт %d открыт в WAN-фаерволе роутера для входящих подключений MTProto", directPort),
-				TargetAddress: fmt.Sprintf("0.0.0.0:%d", directPort),
-			})
-		} else {
-			wanMsg := fmt.Sprintf("TCP-порт %d не обнаружен в правилах WAN-фаервола Keenetic", directPort)
-			if st.DirectWANError != "" {
-				wanMsg += ": " + st.DirectWANError
-			}
-			*checks = append(*checks, VerificationCheck{
-				ID:            "tg_mtproto_wan_firewall",
-				Service:       "tg_mtproto",
-				Title:         "WAN-фаервол для порта MTProto",
-				Status:        CheckStatusWarning,
-				Category:      VerifyCategoryFirewall,
-				Message:       wanMsg,
-				Remediation:   "Перепримените настройки в мастере или перезапустите прокси Telegram для автоматического открытия порта.",
-				TargetAddress: fmt.Sprintf("0.0.0.0:%d", directPort),
-			})
-		}
+		*checks = append(*checks, s.verifyDirectWANFirewall(directHost, directPort, st.DirectWANError))
 	}
 
 	// 2. Web connection (CDN / Web Proxy + :9009 dispatcher) — independent from MTProto
@@ -918,6 +884,46 @@ func (s *WizardService) verifyDomainDNS(ctx context.Context, id, service, title,
 		TargetAddress: domain,
 	})
 	return addrs
+}
+
+func (s *WizardService) verifyDirectWANFirewall(directHost string, port int, lastSyncErr string) VerificationCheck {
+	chk := VerificationCheck{
+		ID:            "tg_mtproto_wan_firewall",
+		Service:       "tg_mtproto",
+		Title:         "WAN-фаервол для порта MTProto",
+		TargetAddress: fmt.Sprintf("0.0.0.0:%d", port),
+	}
+	if directHost == "" {
+		chk.Status = CheckStatusNotApplicable
+		chk.Message = fmt.Sprintf("TCP-порт %d на WAN не открывается: прямой адрес не задан, MTProto доступен только из локальной сети", port)
+		return chk
+	}
+	state, err := s.checkDirectWANFirewall(port)
+	switch state {
+	case tgwebproxy.DirectWANFirewallOpen:
+		chk.Status = CheckStatusOK
+		chk.Message = fmt.Sprintf("TCP-порт %d открыт в WAN-фаерволе роутера для входящих подключений MTProto", port)
+	case tgwebproxy.DirectWANFirewallNotApplicable:
+		chk.Status = CheckStatusNotApplicable
+		chk.Message = "Проверка WAN-фаервола Keenetic неприменима в этой среде (каталог /opt/etc/ndm/netfilter.d отсутствует)"
+	case tgwebproxy.DirectWANFirewallUnknown:
+		chk.Status = CheckStatusWarning
+		chk.Category = VerifyCategoryFirewall
+		chk.Message = "Не удалось проверить правила WAN-фаервола Keenetic"
+		if err != nil {
+			chk.Message += ": " + err.Error()
+		}
+		chk.Remediation = "Проверьте доступность iptables и права доступа к каталогу /opt/etc/ndm/netfilter.d, затем повторите проверку."
+	default:
+		chk.Status = CheckStatusWarning
+		chk.Category = VerifyCategoryFirewall
+		chk.Message = fmt.Sprintf("TCP-порт %d не обнаружен в правилах WAN-фаервола Keenetic", port)
+		if lastSyncErr != "" {
+			chk.Message += ": " + lastSyncErr
+		}
+		chk.Remediation = "Перепримените настройки в мастере или перезапустите прокси Telegram для автоматического открытия порта."
+	}
+	return chk
 }
 
 // verifyDirectHostAddrs сверяет адреса прямого хоста с WAN и предупреждает об

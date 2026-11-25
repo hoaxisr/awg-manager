@@ -1645,11 +1645,12 @@ func TestCoordinator_HydrateDispatcherPreservesXrayPathPrefixWhenRoutesEmpty(t *
 type mockTgWithFWSync struct {
 	*mockTgWebProxy
 	syncCalls int
+	syncErr   error
 }
 
 func (m *mockTgWithFWSync) SyncDirectWANFirewall() error {
 	m.syncCalls++
-	return nil
+	return m.syncErr
 }
 
 func TestExecuteIngressTransaction_DirectFakeTLS_TopologiesAndRoutes(t *testing.T) {
@@ -1782,14 +1783,24 @@ func TestExecuteIngressTransaction_DirectFakeTLS_TopologiesAndRoutes(t *testing.
 
 	// 4. SyncWANIngressFirewall calls SyncDirectWANFirewall when healthy and is a no-op when recoveryNeeded == true
 	syncBeforeHealthy := mockTG.syncCalls
-	coord.SyncWANIngressFirewall()
+	if err := coord.SyncWANIngressFirewall(); err != nil {
+		t.Fatalf("expected SyncWANIngressFirewall to succeed when healthy, got %v", err)
+	}
 	if mockTG.syncCalls != syncBeforeHealthy+1 {
 		t.Fatalf("expected SyncWANIngressFirewall to invoke SyncDirectWANFirewall once when healthy, got delta=%d", mockTG.syncCalls-syncBeforeHealthy)
 	}
 
+	mockTG.syncErr = errors.New("simulated cleanup error")
+	if err := coord.SyncWANIngressFirewall(); err == nil {
+		t.Fatalf("expected SyncWANIngressFirewall to return sync error")
+	}
+	mockTG.syncErr = nil
+
 	syncBefore := mockTG.syncCalls
 	coord.setRecovery(true, "simulated recovery state")
-	coord.SyncWANIngressFirewall()
+	if err := coord.SyncWANIngressFirewall(); err != nil {
+		t.Fatalf("expected SyncWANIngressFirewall under recovery state to be a no-op, got %v", err)
+	}
 	if mockTG.syncCalls != syncBefore {
 		t.Fatalf("expected SyncWANIngressFirewall not to call SyncDirectWANFirewall under recovery state")
 	}
