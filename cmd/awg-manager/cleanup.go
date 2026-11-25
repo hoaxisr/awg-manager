@@ -25,6 +25,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/netdev"
 	"github.com/hoaxisr/awg-manager/internal/obfuscator"
 	"github.com/hoaxisr/awg-manager/internal/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/realityserver"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 	"github.com/hoaxisr/awg-manager/internal/singbox/subscription"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -32,6 +33,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
+	"github.com/hoaxisr/awg-manager/internal/tgwebproxy"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/backend"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/firewall"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/nwg"
@@ -233,6 +235,13 @@ func runCleanup(dataDir string) {
 	nfCtx, nfCancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer nfCancel()
 	router.ReleaseNetfilterForRemoval(nfCtx, router.Deps{AppLog: loggingService})
+
+	// Открытые нами порты на WAN: правила живут в ядре и переживают удаление
+	// пакета, снятие хуков их не убирает.
+	realityserver.SyncWANFirewall(0, false)
+	if err := tgwebproxy.SyncDirectWANFirewall(0, false); err != nil {
+		fmt.Fprintf(os.Stderr, "  Warning: telegram wan firewall: %v\n", err)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
