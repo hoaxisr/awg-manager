@@ -32,13 +32,13 @@ type PageScanInterfaceOptionDTO struct {
 // PageScanProxyOptionDTO mirrors pagescan.ProxyOption for OpenAPI schema generation.
 type PageScanProxyOptionDTO struct {
 	URL   string `json:"url" example:"http://127.0.0.1:1099"`
-	Label string `json:"label" example:"FIRC inbound (127.0.0.1:1099)"`
+	Label string `json:"label" example:"AWGM Route inbound (127.0.0.1:1099)"`
 }
 
 // PageScanOptionsDTO mirrors pagescan.ScanOptionsResult for OpenAPI schema generation.
 type PageScanOptionsDTO struct {
 	DefaultProxy      string                       `json:"defaultProxy,omitempty" example:"http://127.0.0.1:1099"`
-	DefaultProxyLabel string                       `json:"defaultProxyLabel,omitempty" example:"FIRC inbound (127.0.0.1:1099)"`
+	DefaultProxyLabel string                       `json:"defaultProxyLabel,omitempty" example:"AWGM Route inbound (127.0.0.1:1099)"`
 	Proxies           []PageScanProxyOptionDTO     `json:"proxies"`
 	Interfaces        []PageScanInterfaceOptionDTO `json:"interfaces"`
 }
@@ -73,7 +73,7 @@ type PageScanResultDTO struct {
 	ContentType      string                `json:"contentType,omitempty" example:"text/html; charset=utf-8"`
 	FetchVia         string                `json:"fetchVia" example:"direct"`
 	FetchTarget      string                `json:"fetchTarget,omitempty" example:"http://127.0.0.1:1099"`
-	FetchTargetLabel string                `json:"fetchTargetLabel,omitempty" example:"FIRC inbound (127.0.0.1:1099)"`
+	FetchTargetLabel string                `json:"fetchTargetLabel,omitempty" example:"AWGM Route inbound (127.0.0.1:1099)"`
 	DefaultProxy     string                `json:"defaultProxy,omitempty" example:"http://127.0.0.1:1099"`
 	ProxyAvailable   bool                  `json:"proxyAvailable" example:"true"`
 	BodyBytes        int                   `json:"bodyBytes" example:"65536"`

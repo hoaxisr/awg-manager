@@ -176,15 +176,15 @@ func (odi *OnDemandInstaller) SetDependencyChecker(fn func(ctx context.Context) 
 
 var (
 	ErrInstallBusy           = errors.New("firc: install/uninstall operation already in progress")
-	ErrFircActive            = errors.New("firc: cannot uninstall while FIRC is the active routing engine")
-	ErrFircRunning           = errors.New("firc: cannot uninstall while FIRC is running; stop it first")
+	ErrFircActive            = errors.New("firc: cannot uninstall while AWGM Route is the active routing engine")
+	ErrFircRunning           = errors.New("firc: cannot uninstall while AWGM Route is running; stop it first")
 	ErrTunvlessRunning       = errors.New("firc: cannot uninstall while tunvless is running")
-	ErrFircDependencies      = errors.New("firc: cannot uninstall: active services depend on FIRC")
+	ErrFircDependencies      = errors.New("firc: cannot uninstall: active services depend on AWGM Route")
 	ErrInsufficientDisk      = errors.New("firc: insufficient disk space for installation")
 	ErrNoDownloader          = errors.New("firc: downloader not configured")
 	ErrSHA256Mismatch        = errors.New("firc: SHA256 checksum verification failed")
 	ErrReleaseUnavailable    = errors.New("firc: release is not yet published or configured for this architecture")
-	ErrInstallActiveCore     = errors.New("firc: cannot install or upgrade while FIRC is active; switch routing engine first")
+	ErrInstallActiveCore     = errors.New("firc: cannot install or upgrade while AWGM Route is active; switch routing engine first")
 	ErrLayoutIncomplete      = errors.New("firc: package layout verification failed after install")
 	ErrRuntimeNotInstalled   = errors.New("firc: runtime package is not installed; install it first")
 	ErrAlreadyUpToDate       = errors.New("firc: runtime is already at the latest available version")
@@ -278,9 +278,9 @@ func (odi *OnDemandInstaller) GetInstallStatus(ctx context.Context, op *Operator
 	unavailableReason := ""
 	if !available {
 		if strings.TrimSpace(odi.spec.Version) != "" {
-			unavailableReason = "FIRC release v" + odi.spec.Version + " is not yet published on GitHub for " + odi.arch
+			unavailableReason = "AWGM Route release v" + odi.spec.Version + " is not yet published on GitHub for " + odi.arch
 		} else {
-			unavailableReason = "FIRC release is not yet published on GitHub for " + odi.arch
+			unavailableReason = "AWGM Route release is not yet published on GitHub for " + odi.arch
 		}
 	}
 

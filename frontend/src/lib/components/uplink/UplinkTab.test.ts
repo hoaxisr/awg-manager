@@ -226,14 +226,14 @@ describe('UplinkTab', () => {
 			controlledFailback: true,
 			restartScope: 'target',
 			limitation:
-				'FIRC supports manual or controlled return with reconnection; independent candidate probe unavailable',
+				'AWGM Route supports manual or controlled return with reconnection; independent candidate probe unavailable',
 		};
 		vi.mocked(api.uplinkSnapshot).mockResolvedValue(data);
 		render(UplinkTab);
 		await fireEvent.click(await screen.findByText('Изменить'));
 		expect(
 			await screen.findByText(
-				'FIRC поддерживает ручной или контролируемый возврат с переподключением; фоновая проверка резервного канала без переключения недоступна',
+				'AWGM Route поддерживает ручной или контролируемый возврат с переподключением; фоновая проверка резервного канала без переключения недоступна',
 			),
 		).toBeTruthy();
 	});

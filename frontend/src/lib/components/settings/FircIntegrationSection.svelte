@@ -161,7 +161,7 @@
 
 <div class="settings-block">
 	<div class="card">
-		<SettingsSectionLabel label="FIRC" icon={Shield} tone="purple" header />
+		<SettingsSectionLabel label="AWGM Route" icon={Shield} tone="purple" header />
 		{#if status?.foreign}
 		<div class="setting-row">
 			<FircForeignNotice foreign={status.foreign} selected={status.activeEngine} bare />

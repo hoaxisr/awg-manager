@@ -1672,7 +1672,7 @@
 		'awg-system': 'system',
 		'awg-external': 'external',
 		awg3: 'AWG3',
-		'firc-proxy': 'FIRC',
+		'firc-proxy': 'AWGM Route',
 		singbox: 'sing-box',
 		'firc-subscription': m.tunnels_kind_firc_subscription(),
 		'sub-active': m.tunnels_kind_subscription(),

@@ -332,7 +332,7 @@ const runtimePrerm = `#!/bin/sh
 set -e
 # Manager checks dependencies first; refuse external removal of a live runtime.
 if pidof fircd >/dev/null 2>&1 || pidof tunvless >/dev/null 2>&1; then
-  echo "Stop FIRC and its tunnels before removing/upgrading runtime" >&2
+  echo "Stop AWGM Route and its tunnels before removing/upgrading runtime" >&2
   exit 1
 fi
 if [ "$1" = "remove" ]; then

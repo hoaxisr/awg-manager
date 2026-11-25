@@ -1661,7 +1661,7 @@ func (s *Server) fircEgressState(ctx context.Context) (bool, string) {
 		return false, err.Error()
 	}
 	if fircOp.IsRecoveryRequired() {
-		return false, "Маршрутизация FIRC требует восстановления: " + fircOp.RecoveryReason()
+		return false, "Маршрутизация AWGM Route требует восстановления: " + fircOp.RecoveryReason()
 	}
 	if s.settings == nil {
 		return false, "Хранилище настроек недоступно для проверки движка маршрутизации"
@@ -1675,7 +1675,7 @@ func (s *Server) fircEgressState(ctx context.Context) (bool, string) {
 		eng = "sing-box"
 	}
 	if eng != "firc" {
-		return false, "Правила FIRC неактивны (выбран движок " + eng + ")"
+		return false, "Правила AWGM Route неактивны (выбран движок " + eng + ")"
 	}
 	if !fircOp.IsRunning(ctx) {
 		return false, "Служба маршрутизации fircd не запущена"

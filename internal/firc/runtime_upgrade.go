@@ -61,7 +61,7 @@ func (i *OnDemandInstaller) waitRuntimeStopped(ctx context.Context, op *Operator
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return errors.New("FIRC or tunvless remained running after stop")
+			return errors.New("AWGM Route or tunvless remained running after stop")
 		}
 		select {
 		case <-ctx.Done():
@@ -304,7 +304,7 @@ func (i *OnDemandInstaller) upgradeRuntimeLocked(ctx context.Context, op *Operat
 		i.setProgress(0.45)
 		stopped = true
 		if err := op.stopRuntime(ctx); err != nil {
-			return fmt.Errorf("stop active FIRC before runtime upgrade: %w", err)
+			return fmt.Errorf("stop active AWGM Route before runtime upgrade: %w", err)
 		}
 		if err := i.waitRuntimeStopped(ctx, op, 10*time.Second); err != nil {
 			return err
@@ -332,10 +332,10 @@ func (i *OnDemandInstaller) upgradeRuntimeLocked(ctx context.Context, op *Operat
 	i.setProgress(0.88)
 	if wasRunning && !wasDisabled && op != nil {
 		if err := op.startRuntime(ctx); err != nil {
-			return fmt.Errorf("restart FIRC after runtime upgrade: %w", err)
+			return fmt.Errorf("restart AWGM Route after runtime upgrade: %w", err)
 		}
 		if !i.isCurrentlyRunning(ctx, op) {
-			return errors.New("FIRC did not become ready after runtime upgrade")
+			return errors.New("AWGM Route did not become ready after runtime upgrade")
 		}
 	}
 

@@ -30,7 +30,7 @@ func MaterializeOwnedUplinks(ctx context.Context, tunnels []Tunnel, policies []u
 				}
 			}
 			if !allowed {
-				return nil, fmt.Errorf("%w: managed FIRC target %q requires an allowed explicit WAN; disable its policy first", uplink.ErrConflict, t.ID)
+				return nil, fmt.Errorf("%w: managed AWGM Route target %q requires an allowed explicit WAN; disable its policy first", uplink.ErrConflict, t.ID)
 			}
 			if requiresUplinkDNS(*t) {
 				if dns == nil || client == nil {
@@ -42,7 +42,7 @@ func MaterializeOwnedUplinks(ctx context.Context, tunnels []Tunnel, policies []u
 						return nil, err
 					}
 					if health.UplinkDNSVersion < 1 {
-						return nil, fmt.Errorf("%w: FIRC WAN DNS capability required", uplink.ErrUnsupported)
+						return nil, fmt.Errorf("%w: AWGM Route WAN DNS capability required", uplink.ErrUnsupported)
 					}
 					dnsChecked = true
 				}

@@ -103,7 +103,7 @@
 			<div class="title-row-dense">
 				<TunnelTitleRow {title} dotVariant={statusVariant} dotPulse={running} dense staticTitle>
 					{#snippet badges()}
-						<Badge variant="accent" size="sm">FIRC</Badge>
+						<Badge variant="accent" size="sm">AWGM Route</Badge>
 						{#if kind === 'subscription'}
 							<Badge variant="accent" size="sm">{m.tunnels_kind_subscription()}</Badge>
 						{/if}

@@ -2826,12 +2826,12 @@ func (c *Coordinator) ResetVless(ctx context.Context, opts ResetOptions) (ResetR
 		if firc != nil && firc.IsServerRoutingEnabled("vless_xhttp_server") {
 			fircTxID := txID + "-firc"
 			if _, prepErr := firc.PrepareServerRouting(ctx, fircTxID, "vless_xhttp_server", false); prepErr != nil {
-				res.Warnings = append(res.Warnings, fmt.Sprintf("не удалось отключить маршрутизацию VLESS в FIRC: %v", prepErr))
+				res.Warnings = append(res.Warnings, fmt.Sprintf("не удалось отключить маршрутизацию VLESS в AWGM Route: %v", prepErr))
 			} else if commitErr := firc.CommitServerRouting(ctx, fircTxID); commitErr != nil {
 				_ = firc.RollbackServerRouting(ctx, fircTxID)
-				res.Warnings = append(res.Warnings, fmt.Sprintf("не удалось применить сброс маршрутизации VLESS в FIRC: %v", commitErr))
+				res.Warnings = append(res.Warnings, fmt.Sprintf("не удалось применить сброс маршрутизации VLESS в AWGM Route: %v", commitErr))
 			} else if finErr := firc.FinalizeServerRouting(fircTxID); finErr != nil {
-				res.Warnings = append(res.Warnings, fmt.Sprintf("ошибка финализации сброса FIRC: %v", finErr))
+				res.Warnings = append(res.Warnings, fmt.Sprintf("ошибка финализации сброса AWGM Route: %v", finErr))
 			}
 		}
 

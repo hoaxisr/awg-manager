@@ -146,7 +146,7 @@
 		if (kind === 'awg') return 'AWG';
 		if (kind === 'system') return 'AWG';
 		if (kind === 'singbox') return 'Sing-box';
-		if (kind === 'firc') return 'FIRC';
+		if (kind === 'firc') return 'AWGM Route';
 		return 'subscription';
 	});
 

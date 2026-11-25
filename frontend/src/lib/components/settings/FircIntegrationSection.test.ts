@@ -44,7 +44,7 @@ describe('FIRC runtime settings', () => {
 	it('does not offer an unconfigured release', async () => {
 		status.mockResolvedValue({ ...base, state: 'unavailable', available: false });
 		render(FircIntegrationSection);
-		const button = await screen.findByRole('button', { name: /Установить FIRC|Install FIRC/ });
+		const button = await screen.findByRole('button', { name: /Установить AWGM Route|Install AWGM Route/ });
 		await waitFor(() => expect(button).toBeDisabled());
 		expect(install).not.toHaveBeenCalled();
 	});
@@ -62,14 +62,14 @@ describe('FIRC runtime settings', () => {
 		render(FircIntegrationSection);
 		expect(await screen.findByText('0.7.0-1')).toBeInTheDocument();
 		expect(screen.getByText(/0\.8\.0-1/)).toBeInTheDocument();
-		const updateBtn = screen.getByRole('button', { name: /Обновить FIRC|Update FIRC/ });
+		const updateBtn = screen.getByRole('button', { name: /Обновить AWGM Route|Update AWGM Route/ });
 		await waitFor(() => expect(updateBtn).toBeEnabled());
-		expect(screen.getByRole('button', { name: /Удалить FIRC|Remove FIRC/ })).toBeDisabled();
+		expect(screen.getByRole('button', { name: /Удалить AWGM Route|Remove AWGM Route/ })).toBeDisabled();
 	});
 	it('treats accepted install as in progress, not completed', async () => {
 		status.mockResolvedValueOnce(base).mockResolvedValue({ ...base, state: 'installing', busy: true, busyAction: 'install', progress: 0.1 });
 		render(FircIntegrationSection);
-		const button = await screen.findByRole('button', { name: /Установить FIRC|Install FIRC/ });
+		const button = await screen.findByRole('button', { name: /Установить AWGM Route|Install AWGM Route/ });
 		await waitFor(() => expect(button).toBeEnabled());
 		await fireEvent.click(button);
 		await waitFor(() => expect(install).toHaveBeenCalledTimes(1));
@@ -81,7 +81,7 @@ describe('FIRC runtime settings', () => {
 			.mockResolvedValueOnce({ ...base, state: 'recovery_required', fircdPresent: true, error: 'interrupted opkg transaction' })
 			.mockResolvedValue({ ...base, state: 'installing', busy: true, busyAction: 'install', progress: 0.5 });
 		render(FircIntegrationSection);
-		const repairBtn = await screen.findByRole('button', { name: /Восстановить FIRC|Repair FIRC/ });
+		const repairBtn = await screen.findByRole('button', { name: /Восстановить AWGM Route|Repair AWGM Route/ });
 		expect(screen.getByRole('alert')).toHaveTextContent('interrupted opkg transaction');
 		await waitFor(() => expect(repairBtn).toBeEnabled());
 		await fireEvent.click(repairBtn);
@@ -97,7 +97,7 @@ describe('FIRC runtime settings', () => {
 			dependentServices: ['keendns-cloud', 'server-routing:awg'],
 		});
 		render(FircIntegrationSection);
-		const removeBtn = await screen.findByRole('button', { name: /Удалить FIRC|Remove FIRC/ });
+		const removeBtn = await screen.findByRole('button', { name: /Удалить AWGM Route|Remove AWGM Route/ });
 		expect(removeBtn).toBeDisabled();
 		expect(screen.getByText(/keendns-cloud, server-routing:awg/)).toBeInTheDocument();
 	});
@@ -106,11 +106,11 @@ describe('FIRC runtime settings', () => {
 			.mockResolvedValueOnce({ ...base, state: 'installed', installedVersion: '0.7.0-1', fircdPresent: true, tunvlessPresent: true })
 			.mockResolvedValue({ ...base, state: 'uninstalling', busy: true, busyAction: 'uninstall' });
 		render(FircIntegrationSection);
-		const removeBtn = await screen.findByRole('button', { name: /Удалить FIRC|Remove FIRC/ });
+		const removeBtn = await screen.findByRole('button', { name: /Удалить AWGM Route|Remove AWGM Route/ });
 		await waitFor(() => expect(removeBtn).toBeEnabled());
 		await fireEvent.click(removeBtn);
 		expect(await screen.findByText(/Настройки сохранятся|Configuration is preserved/)).toBeInTheDocument();
-		const buttons = screen.getAllByRole('button', { name: /Удалить FIRC|Remove FIRC/ });
+		const buttons = screen.getAllByRole('button', { name: /Удалить AWGM Route|Remove AWGM Route/ });
 		await fireEvent.click(buttons[buttons.length - 1]);
 		await waitFor(() => expect(uninstall).toHaveBeenCalledWith(false));
 	});
@@ -129,7 +129,7 @@ describe('FIRC runtime settings', () => {
 		render(FircIntegrationSection);
 		expect(screen.queryAllByRole('button')).toHaveLength(0);
 		answer(base);
-		await screen.findByRole('button', { name: /Установить FIRC|Install FIRC/ });
+		await screen.findByRole('button', { name: /Установить AWGM Route|Install AWGM Route/ });
 		status.mockResolvedValue({ ...base, state: 'foreign', available: false, foreign: { package: 'firc' } });
 		(fircForeign as never as { set(v: unknown): void }).set({ package: 'firc' });
 		expect(await screen.findByText(m.firc_foreign_text())).toBeInTheDocument();
@@ -149,7 +149,7 @@ describe('FIRC runtime settings', () => {
 			.mockResolvedValueOnce({ ...base, state: 'not_installed', activeEngine: true })
 			.mockResolvedValue({ ...base, state: 'installing', activeEngine: true, busy: true, busyAction: 'install', progress: 0.2 });
 		render(FircIntegrationSection);
-		const installBtn = await screen.findByRole('button', { name: /Установить FIRC|Install FIRC/ });
+		const installBtn = await screen.findByRole('button', { name: /Установить AWGM Route|Install AWGM Route/ });
 		await waitFor(() => expect(installBtn).toBeEnabled());
 		await fireEvent.click(installBtn);
 		await waitFor(() => expect(install).toHaveBeenCalledTimes(1));
@@ -162,8 +162,8 @@ describe('FIRC runtime settings', () => {
 			fircdPresent: true,
 		});
 		render(FircIntegrationSection);
-		const repairBtn = await screen.findByRole('button', { name: /Восстановить FIRC|Repair FIRC/ });
-		const removeBtn = screen.getByRole('button', { name: /Удалить FIRC|Remove FIRC/ });
+		const repairBtn = await screen.findByRole('button', { name: /Восстановить AWGM Route|Repair AWGM Route/ });
+		const removeBtn = screen.getByRole('button', { name: /Удалить AWGM Route|Remove AWGM Route/ });
 		await waitFor(() => expect(repairBtn).toBeEnabled());
 		expect(removeBtn).toBeDisabled();
 	});
@@ -177,15 +177,15 @@ describe('FIRC runtime settings', () => {
 			tunvlessPresent: true,
 		});
 		render(FircIntegrationSection);
-		const installBtn = await screen.findByRole('button', { name: /Установить FIRC|Install FIRC/ });
-		const removeBtn = screen.getByRole('button', { name: /Удалить FIRC|Remove FIRC/ });
+		const installBtn = await screen.findByRole('button', { name: /Установить AWGM Route|Install AWGM Route/ });
+		const removeBtn = screen.getByRole('button', { name: /Удалить AWGM Route|Remove AWGM Route/ });
 		await waitFor(() => expect(installBtn).toBeDisabled());
 		expect(removeBtn).toBeDisabled();
 	});
 	it('renders action error in alert without disabling retry', async () => {
 		install.mockRejectedValueOnce(new Error('temporary opkg lock'));
 		render(FircIntegrationSection);
-		const installBtn = await screen.findByRole('button', { name: /Установить FIRC|Install FIRC/ });
+		const installBtn = await screen.findByRole('button', { name: /Установить AWGM Route|Install AWGM Route/ });
 		await waitFor(() => expect(installBtn).toBeEnabled());
 		await fireEvent.click(installBtn);
 		expect(await screen.findByRole('alert')).toHaveTextContent('temporary opkg lock');
@@ -221,7 +221,7 @@ describe('FIRC runtime settings', () => {
 				tunvlessPresent: true,
 			});
 		render(FircIntegrationSection);
-		const updateBtn = await screen.findByRole('button', { name: /Обновить FIRC|Update FIRC/ });
+		const updateBtn = await screen.findByRole('button', { name: /Обновить AWGM Route|Update AWGM Route/ });
 		await waitFor(() => expect(updateBtn).toBeEnabled());
 		await fireEvent.click(updateBtn);
 
@@ -229,7 +229,7 @@ describe('FIRC runtime settings', () => {
 		expect(screen.getByText(/Dependent services will briefly reconnect.*awg_server, vless_xhttp_server|Зависимые сервисы ненадолго переподключатся.*awg_server, vless_xhttp_server/)).toBeInTheDocument();
 		expect(screen.getByText(/rollback|откатится/i)).toBeInTheDocument();
 
-		const buttons = screen.getAllByRole('button', { name: /Обновить FIRC|Update FIRC/ });
+		const buttons = screen.getAllByRole('button', { name: /Обновить AWGM Route|Update AWGM Route/ });
 		await fireEvent.click(buttons[buttons.length - 1]);
 		await waitFor(() => expect(upgrade).toHaveBeenCalledTimes(1));
 		expect(install).not.toHaveBeenCalled();
@@ -251,7 +251,7 @@ describe('FIRC runtime settings', () => {
 		render(FircIntegrationSection);
 		expect(await screen.findByText('0.8.0-1')).toBeInTheDocument();
 		expect(screen.queryByText(/Доступна:|Available:/)).not.toBeInTheDocument();
-		expect(screen.queryByRole('button', { name: /Обновить FIRC|Update FIRC/ })).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: /Обновить AWGM Route|Update AWGM Route/ })).not.toBeInTheDocument();
 	});
 
 	it('shows available version before initial install when runtime is not installed', async () => {
@@ -263,6 +263,6 @@ describe('FIRC runtime settings', () => {
 		});
 		render(FircIntegrationSection);
 		expect(await screen.findByText(/0\.8\.0-1/)).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: /Установить FIRC|Install FIRC/ })).toBeEnabled();
+		expect(screen.getByRole('button', { name: /Установить AWGM Route|Install AWGM Route/ })).toBeEnabled();
 	});
 });

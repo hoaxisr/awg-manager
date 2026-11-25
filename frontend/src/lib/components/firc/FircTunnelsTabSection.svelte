@@ -245,7 +245,7 @@
 
 	const activeRoutingEngine = $derived(
 		($fircStatus !== null ? $fircStatus.selected : $sbRouterSettings?.routingEngine === 'firc')
-			? 'FIRC'
+			? 'AWGM Route'
 			: 'Sing-box',
 	);
 	const daemonRunning = $derived(Boolean($fircStatus?.running));

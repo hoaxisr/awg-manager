@@ -48,7 +48,7 @@ func (a *app) uplinkCatalog(ctx context.Context) ([]uplink.TargetInfo, error) {
 	if a.fircOp != nil && fircActive && a.fircOp.CheckNotForeign() == nil {
 		list, err := a.fircOp.Client().GetTunnels(ctx)
 		if err != nil {
-			failures = append(failures, fmt.Errorf("FIRC targets: %w", err))
+			failures = append(failures, fmt.Errorf("AWGM Route targets: %w", err))
 		} else {
 			for _, t := range list {
 				label := t.Description
@@ -66,9 +66,9 @@ func (a *app) uplinkCatalog(ctx context.Context) ([]uplink.TargetInfo, error) {
 					reason = "Локальный диагностический SOCKS-вход будет создан при сохранении"
 				}
 				if activeEngine != "firc" {
-					reason = "FIRC сейчас не выбран как активный движок"
+					reason = "AWGM Route сейчас не выбран как активный движок"
 				}
-				add("firc", t.ID, "", label+" · FIRC", reason)
+				add("firc", t.ID, "", label+" · AWGM Route", reason)
 				if !poolInbound {
 					result[len(result)-1].SetupRequired = true
 				}

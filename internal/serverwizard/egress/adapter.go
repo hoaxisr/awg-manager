@@ -183,7 +183,7 @@ func (a *Adapter) checkFircAvailable(ctx context.Context) (bool, string) {
 	fn := a.fircStateProvider
 	a.fircMu.RUnlock()
 	if fn == nil {
-		return false, "Провайдер состояния FIRC не подключён"
+		return false, "Провайдер состояния AWGM Route не подключён"
 	}
 	return fn(ctx)
 }
@@ -298,7 +298,7 @@ func (a *Adapter) ListOptionsForServerWithCurrent(ctx context.Context, serverKin
 	if serverKind != "tgwebproxy" {
 		fircOk, fircDegraded := a.checkFircAvailable(ctx)
 		if !fircOk && fircDegraded == "" {
-			fircDegraded = "Маршрутизация FIRC недоступна"
+			fircDegraded = "Маршрутизация AWGM Route недоступна"
 		}
 		state := EgressStateAvailable
 		if !fircOk {
@@ -538,12 +538,12 @@ func (a *Adapter) Resolve(ctx context.Context, req ResolveRequest) (ResolvedEgre
 
 	if egressID == "firc:router" || egressID == "router" {
 		if serverKind == "tgwebproxy" {
-			return ResolvedEgress{}, errors.New("Telegram Proxy does not support FIRC policy routing; choose direct or a tunnel interface")
+			return ResolvedEgress{}, errors.New("Telegram Proxy does not support AWGM Route policy routing; choose direct or a tunnel interface")
 		}
 		fircOk, fircDegraded := a.checkFircAvailable(ctx)
 		if !fircOk {
 			if fircDegraded == "" {
-				fircDegraded = "FIRC routing is not available"
+				fircDegraded = "AWGM Route routing is not available"
 			}
 			return ResolvedEgress{}, fmt.Errorf("egress firc:router is unavailable: %s", fircDegraded)
 		}
@@ -551,7 +551,7 @@ func (a *Adapter) Resolve(ctx context.Context, req ResolveRequest) (ResolvedEgre
 	}
 
 	if IsLegacyEgress(egressID) {
-		return ResolvedEgress{}, fmt.Errorf("%s (%s): выберите прямой выход (WAN), конкретный туннель или правила маршрутизации (FIRC)", LegacyEgressLabel(), egressID)
+		return ResolvedEgress{}, fmt.Errorf("%s (%s): выберите прямой выход (WAN), конкретный туннель или правила маршрутизации (AWGM Route)", LegacyEgressLabel(), egressID)
 	}
 
 	if tunnels := a.tunnelEntries(ctx); len(tunnels) != 0 {

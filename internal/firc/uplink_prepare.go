@@ -84,7 +84,7 @@ func (a *UplinkAdapter) PrepareUplink(ctx context.Context, t uplink.Target) erro
 	o.mutationMu.Lock()
 	defer o.mutationMu.Unlock()
 	if !o.IsRunning(ctx) {
-		return fmt.Errorf("FIRC is stopped")
+		return fmt.Errorf("AWGM Route is stopped")
 	}
 	tunnels, err := o.Client().GetTunnels(ctx)
 	if err != nil {
@@ -105,7 +105,7 @@ func (a *UplinkAdapter) PrepareUplink(ctx context.Context, t uplink.Target) erro
 	}
 	target := tunnels[index]
 	if !target.Enable {
-		return fmt.Errorf("FIRC tunnel is disabled")
+		return fmt.Errorf("AWGM Route tunnel is disabled")
 	}
 	if requiresUplinkDNS(target) {
 		h, err := o.Client().Ping(ctx)
@@ -113,7 +113,7 @@ func (a *UplinkAdapter) PrepareUplink(ctx context.Context, t uplink.Target) erro
 			return err
 		}
 		if h.UplinkDNSVersion < 1 || a.DNSForDevice == nil {
-			return fmt.Errorf("%w: FIRC WAN DNS capability required", uplink.ErrUnsupported)
+			return fmt.Errorf("%w: AWGM Route WAN DNS capability required", uplink.ErrUnsupported)
 		}
 	}
 	for _, in := range target.Inbounds {
@@ -172,7 +172,7 @@ func (a *UplinkAdapter) PrepareUplink(ctx context.Context, t uplink.Target) erro
 			}
 		}
 	}
-	return fmt.Errorf("diagnostic SOCKS prerequisite was not retained by FIRC")
+	return fmt.Errorf("diagnostic SOCKS prerequisite was not retained by AWGM Route")
 }
 
 // ReleaseUplink removes any auto-created loopback diagnostic SOCKS inbound when

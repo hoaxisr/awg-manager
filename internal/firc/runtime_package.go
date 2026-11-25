@@ -300,7 +300,7 @@ func (i *OnDemandInstaller) cleanupOrphanedRuntimeFiles() error {
 	paths := append(i.runtimeFilePaths(), i.layout.ChecksumManifest)
 	for _, p := range paths {
 		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("remove orphaned FIRC runtime file %s: %w", p, err)
+			return fmt.Errorf("remove orphaned AWGM Route runtime file %s: %w", p, err)
 		}
 	}
 	return nil

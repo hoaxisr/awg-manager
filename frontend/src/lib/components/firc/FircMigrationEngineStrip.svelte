@@ -123,7 +123,7 @@
 
   <div class="eng-card" class:eng-active={activeEngine === 'firc'}>
     <div class="eng-head">
-      <strong>FIRC</strong>
+      <strong>AWGM Route</strong>
       {@render statusBadges(activeEngine === 'firc', fircMissing, fircRunning)}
     </div>
     <div class="eng-meta">

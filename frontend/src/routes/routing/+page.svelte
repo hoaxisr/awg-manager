@@ -386,7 +386,7 @@
         ([
             {
                 id: 'firc',
-                label: 'FIRC',
+                label: 'AWGM Route',
                 badge: $fircHasDraft ? '•' : undefined,
                 badgeTone: $fircHasDraft ? 'warning' : undefined,
             },

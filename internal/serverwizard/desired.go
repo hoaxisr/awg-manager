@@ -363,7 +363,7 @@ func BuildDesiredConfig(ctx context.Context, egressResolver egress.Resolver, req
 				desired.OutboundInterface = ""
 				desired.UpstreamDevice = ""
 			} else if dev == "firc:router" || dev == "router" {
-				return desired, errors.New("resolve telegram egress: режим маршрутизации FIRC не поддерживается для Telegram без явного выбора маршрута")
+				return desired, errors.New("resolve telegram egress: режим маршрутизации AWGM Route не поддерживается для Telegram без явного выбора маршрута")
 			} else if egress.IsLegacyEgress(dev) {
 				return desired, fmt.Errorf("resolve telegram egress: %s (%s)", egress.LegacyEgressLabel(), dev)
 			} else {
@@ -527,7 +527,7 @@ func BuildDesiredConfig(ctx context.Context, egressResolver egress.Resolver, req
 
 	case "both":
 		if (req.UpstreamDevice == "firc:router" || req.UpstreamDevice == "router") && strings.TrimSpace(req.TgUpstreamDevice) == "" {
-			return desired, errors.New("telegram: при выборе правил маршрутизации (FIRC) для VLESS необходимо явно указать маршрут выхода трафика для Telegram (tg_upstream_device)")
+			return desired, errors.New("telegram: при выборе правил маршрутизации (AWGM Route) для VLESS необходимо явно указать маршрут выхода трафика для Telegram (tg_upstream_device)")
 		}
 		xrayDesired, err := BuildDesiredConfig(ctx, egressResolver, req.forXray())
 		if err != nil {

@@ -626,7 +626,7 @@ func (s *WizardService) verifyXrayEgress(ctx context.Context, mode, iface string
 			Status:      CheckStatusBlocked,
 			Category:    VerifyCategoryEgress,
 			Message:     egress.LegacyEgressLabel(),
-			Remediation: "Выберите прямой выход (WAN), конкретный туннель или правила маршрутизации (FIRC).",
+			Remediation: "Выберите прямой выход (WAN), конкретный туннель или правила маршрутизации (AWGM Route).",
 		})
 		return
 	}
@@ -651,13 +651,13 @@ func (s *WizardService) verifyXrayEgress(ctx context.Context, mode, iface string
 				Status:      CheckStatusBlocked,
 				Category:    VerifyCategoryEgress,
 				Message:     fmt.Sprintf("Маршрут выхода недоступен: %v", err),
-				Remediation: "Проверьте активность выбранного туннеля или правил маршрутизации (FIRC).",
+				Remediation: "Проверьте активность выбранного туннеля или правил маршрутизации (AWGM Route).",
 			})
 			return
 		}
 		msg := "Прямой выход в интернет (WAN) активен"
 		if res.Mode == "router" {
-			msg = "Используются правила маршрутизации (FIRC)"
+			msg = "Используются правила маршрутизации (AWGM Route)"
 		} else if res.Mode == "interface" {
 			msg = fmt.Sprintf("Используется туннельный интерфейс %s", res.Interface)
 		}
@@ -678,8 +678,8 @@ func (s *WizardService) verifyXrayEgress(ctx context.Context, mode, iface string
 			Title:       "Маршрут выхода трафика VLESS",
 			Status:      CheckStatusBlocked,
 			Category:    VerifyCategoryEgress,
-			Message:     "Невозможно подтвердить готовность правил маршрутизации (FIRC): провайдер состояния не подключён",
-			Remediation: "Проверьте работу службы FIRC или выберите прямой выход (WAN).",
+			Message:     "Невозможно подтвердить готовность правил маршрутизации (AWGM Route): провайдер состояния не подключён",
+			Remediation: "Проверьте работу службы AWGM Route или выберите прямой выход (WAN).",
 		})
 		return
 	}

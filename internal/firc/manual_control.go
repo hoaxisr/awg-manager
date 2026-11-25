@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-var ErrManuallyDisabled = errors.New("firc: disabled by user; explicitly enable FIRC first")
+var ErrManuallyDisabled = errors.New("firc: disabled by user; explicitly enable AWGM Route first")
 
 // LockRuntimeMutation serializes package operations with migration and process
 // lifecycle. Callers must not call Start/Stop while holding this lock.

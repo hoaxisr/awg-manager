@@ -23,7 +23,7 @@ export interface ExecNotice {
 	recoveryRequired?: boolean;
 }
 
-export const engineLabel = (engine: MigrationEngine): string => (engine === 'sing-box' ? 'Sing-box' : 'FIRC');
+export const engineLabel = (engine: MigrationEngine): string => (engine === 'sing-box' ? 'Sing-box' : 'AWGM Route');
 
 export function isSubscriptionTunnel(tun: FircTunnel): boolean {
 	return (tun.sources ?? []).some((s) => s.kind === 'subscription');

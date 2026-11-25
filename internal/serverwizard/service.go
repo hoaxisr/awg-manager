@@ -542,7 +542,7 @@ func (s *WizardService) buildXrayPlan(desired DesiredWizardConfig, fp string) Ch
 	outboundDesc := "Прямой выход в интернет (WAN)"
 	outboundVal := "direct"
 	if desired.OutboundMode == "router" {
-		outboundDesc = "Маршрутизация исходящего трафика VLESS через правила маршрутизации (FIRC)"
+		outboundDesc = "Маршрутизация исходящего трафика VLESS через правила маршрутизации (AWGM Route)"
 		outboundVal = "firc:router"
 	} else if desired.OutboundMode == "socks" {
 		outboundDesc = egress.LegacyEgressLabel()
