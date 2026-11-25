@@ -560,7 +560,7 @@
     {:else if activeTab === 'zapret'}
         <ZapretTab />
     {:else if activeTab === 'autolist'}
-        <AutolistTab />
+        <AutolistTab {policyDevices} />
     {/if}
     <ModeSwitchHost />
     </div>

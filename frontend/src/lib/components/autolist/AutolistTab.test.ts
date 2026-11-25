@@ -118,6 +118,11 @@ function regexEscape(s: string): string {
 	return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/** Заголовок модалки повторной проверки: «Повторная проверка — <домен>». */
+function recheckTitle(domain: string): string {
+	return `${m.autolist_recheck_title()} — ${domain}`;
+}
+
 beforeEach(() => {
 	vi.stubGlobal('ResizeObserver', class {
 		observe() {}
@@ -445,7 +450,7 @@ describe('AutolistTab — recheck modal', () => {
 		await vi.waitFor(() => expect(recheck).toHaveBeenCalledWith('domain|example.com|tcp|443'));
 		// Свежая длительность direct-проба из ответа сателлита.
 		await vi.waitFor(() => expect(screen.getByText(m.autolist_duration_s({ value: '12.3' }))).toBeTruthy());
-		expect(screen.getByText(m.autolist_recheck_title())).toBeTruthy();
+		expect(screen.getByText(recheckTitle('example.com'))).toBeTruthy();
 	});
 
 	it('does not open the recheck modal while the card action is busy', async () => {
@@ -478,7 +483,7 @@ describe('AutolistTab — recheck modal', () => {
 		await vi.waitFor(() => expect(recheck).toHaveBeenCalledTimes(1));
 
 		// Кнопка «В туннель» из футера модалки.
-		const modal = screen.getByText(m.autolist_recheck_title()).closest('.modal-backdrop') as HTMLElement;
+		const modal = screen.getByText(recheckTitle('example.com')).closest('.modal-backdrop') as HTMLElement;
 		expect(modal).toBeTruthy();
 		const addInModal = within(modal).getByRole('button', { name: m.autolist_action_add() });
 		expect(addInModal).toBeTruthy();
@@ -486,7 +491,7 @@ describe('AutolistTab — recheck modal', () => {
 		await fireEvent.click(addInModal);
 		await vi.waitFor(() => expect(add).toHaveBeenCalledWith('domain|example.com|tcp|443'));
 		// Успех закрывает модалку и обновляет стор.
-		await vi.waitFor(() => expect(screen.queryByText(m.autolist_recheck_title())).toBeNull());
+		await vi.waitFor(() => expect(screen.queryByText(recheckTitle('example.com'))).toBeNull());
 	});
 
 	it('keeps the modal open after a failed recheck-modal action', async () => {
@@ -497,13 +502,13 @@ describe('AutolistTab — recheck modal', () => {
 		render(AutolistTab);
 		await screen.findByText('example.com');
 		await fireEvent.click(screen.getByRole('button', { name: m.autolist_recheck_again() }));
-		await vi.waitFor(() => expect(screen.getByText(m.autolist_recheck_title())).toBeTruthy());
+		await vi.waitFor(() => expect(screen.getByText(recheckTitle('example.com'))).toBeTruthy());
 
-		const modal = screen.getByText(m.autolist_recheck_title()).closest('.modal-backdrop') as HTMLElement;
+		const modal = screen.getByText(recheckTitle('example.com')).closest('.modal-backdrop') as HTMLElement;
 		await fireEvent.click(within(modal).getByRole('button', { name: m.autolist_action_add() }));
 
 		await vi.waitFor(() => expect(notifications.error).toHaveBeenCalledWith('ruleset is locked'));
-		expect(screen.getByText(m.autolist_recheck_title())).toBeTruthy();
+		expect(screen.getByText(recheckTitle('example.com'))).toBeTruthy();
 	});
 
 	it('dismisses a candidate from the modal footer and closes', async () => {
@@ -514,13 +519,13 @@ describe('AutolistTab — recheck modal', () => {
 		render(AutolistTab);
 		await screen.findByText('example.com');
 		await fireEvent.click(screen.getByRole('button', { name: m.autolist_recheck_again() }));
-		await vi.waitFor(() => expect(screen.getByText(m.autolist_recheck_title())).toBeTruthy());
+		await vi.waitFor(() => expect(screen.getByText(recheckTitle('example.com'))).toBeTruthy());
 
-		const modal = screen.getByText(m.autolist_recheck_title()).closest('.modal-backdrop') as HTMLElement;
+		const modal = screen.getByText(recheckTitle('example.com')).closest('.modal-backdrop') as HTMLElement;
 		await fireEvent.click(within(modal).getByRole('button', { name: m.autolist_action_dismiss() }));
 
 		await vi.waitFor(() => expect(dismiss).toHaveBeenCalledWith('domain|example.com|tcp|443'));
-		await vi.waitFor(() => expect(screen.queryByText(m.autolist_recheck_title())).toBeNull());
+		await vi.waitFor(() => expect(screen.queryByText(recheckTitle('example.com'))).toBeNull());
 	});
 
 	it('shows remove instead of add for an added candidate in the modal footer', async () => {
@@ -535,7 +540,7 @@ describe('AutolistTab — recheck modal', () => {
 		await fireEvent.click(screen.getByRole('button', { name: m.autolist_recheck_again() }));
 		await vi.waitFor(() => expect(recheck).toHaveBeenCalledWith('domain|added.example|tcp|443'));
 
-		const modal = screen.getByText(m.autolist_recheck_title()).closest('.modal-backdrop') as HTMLElement;
+		const modal = screen.getByText(recheckTitle('added.example')).closest('.modal-backdrop') as HTMLElement;
 		expect(within(modal).queryByRole('button', { name: m.autolist_action_add() })).toBeNull();
 		expect(within(modal).getByRole('button', { name: m.autolist_action_remove() })).toBeTruthy();
 		await fireEvent.click(within(modal).getByRole('button', { name: m.autolist_action_remove() }));

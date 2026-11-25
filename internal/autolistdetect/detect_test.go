@@ -151,7 +151,9 @@ func TestGetStatusParsesSatelliteSnapshot(t *testing.T) {
 				"tunnel": {"verdict": "not-checked"},
 				"coverage": {"covered": false, "durationMs": 42},
 				"targetInterface": "nwg0",
-				"correlationID": "c-1"
+				"correlationID": "c-1",
+				"clientIP": "192.168.31.144",
+				"clientMAC": "4c:9f:f1:b9:93:e7"
 			}],
 			"history": [{
 				"at": "2026-11-12T10:06:00Z",
@@ -163,6 +165,8 @@ func TestGetStatusParsesSatelliteSnapshot(t *testing.T) {
 				"source": "auto",
 				"interface": "nwg0",
 				"outbound": "awg-main",
+				"clientIP": "192.168.31.144",
+				"clientMAC": "4c:9f:f1:b9:93:e7",
 				"result": "ok"
 			}]
 		}`))
@@ -213,10 +217,16 @@ func TestGetStatusParsesSatelliteSnapshot(t *testing.T) {
 	if cand.Coverage.Covered {
 		t.Fatalf("coverage = %+v", cand.Coverage)
 	}
+	if cand.ClientIP != "192.168.31.144" || cand.ClientMAC != "4c:9f:f1:b9:93:e7" {
+		t.Fatalf("candidate client = %q %q", cand.ClientIP, cand.ClientMAC)
+	}
 	hist := st.History[0]
 	if hist.Action != "added" || hist.Source != "auto" || hist.Interface != "nwg0" ||
 		hist.Outbound != "awg-main" || hist.Result != "ok" || hist.Port != 443 {
 		t.Fatalf("history entry = %+v", hist)
+	}
+	if hist.ClientIP != "192.168.31.144" || hist.ClientMAC != "4c:9f:f1:b9:93:e7" {
+		t.Fatalf("history client = %q %q", hist.ClientIP, hist.ClientMAC)
 	}
 }
 

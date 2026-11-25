@@ -113,6 +113,9 @@ export interface AutolistHistoryEntry {
 	action: string;
 	/** user — ручное действие, auto — автоматическая запись. */
 	source: string;
+	/** Клиент, чей трафик вызвал решение. Пусто у старых записей журнала. */
+	clientIP?: string;
+	clientMAC?: string;
 	interface?: string;
 	outbound?: string;
 	reason?: string;

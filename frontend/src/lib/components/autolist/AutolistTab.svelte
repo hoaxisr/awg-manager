@@ -14,6 +14,7 @@
 		mergeAutolistExclusions,
 	} from './configPayload';
 	import { errorMessage } from '$lib/utils/errorMessage';
+	import { clientName } from './clientName';
 	import RecheckModal from './RecheckModal.svelte';
 	import type {
 		AWGTagInfo,
@@ -24,6 +25,7 @@
 		AutolistConfig,
 		AutolistHistoryEntry,
 		AutolistVerdict,
+		PolicyDevice,
 		RouterInterface,
 		SingboxRouterDNSServer,
 		SingboxRouterDNSGlobals,
@@ -49,6 +51,13 @@
 		Power,
 		ArchiveRestore,
 	} from 'lucide-svelte';
+
+	interface Props {
+		/** Устройства роутера: по ним клиенту-кандидату ищется имя. */
+		policyDevices?: PolicyDevice[];
+	}
+
+	let { policyDevices = [] }: Props = $props();
 
 	let status = $derived($autolistStatus.data);
 	let loading = $derived($autolistStatus.lastFetchedAt === 0 && $autolistStatus.status !== 'error');
@@ -373,6 +382,11 @@
 		if (!t) return '—';
 		const name = t.domain || t.host || t.ip || '—';
 		return `${name} ${t.network.toUpperCase()}/${t.port}`;
+	}
+
+	/** Имя клиента-источника: из hotspot роутера, по MAC, иначе по IP. */
+	function clientLabel(ip?: string, mac?: string): string {
+		return clientName(policyDevices, ip, mac);
 	}
 
 	/** У записи истории цель плоская: домен или IP + протокол/порт. */
@@ -998,6 +1012,9 @@
 				{#if c.clientIP || c.clientMAC}
 					<span>
 						<span class="opacity-60">{m.autolist_details_client()}:</span>
+						{#if clientLabel(c.clientIP, c.clientMAC)}
+							<span>{clientLabel(c.clientIP, c.clientMAC)} · </span>
+						{/if}
 						<span class="font-mono">{[c.clientIP, c.clientMAC].filter(Boolean).join(' · ')}</span>
 					</span>
 				{/if}
@@ -1258,6 +1275,7 @@
 							<tr class="text-left opacity-60 border-b border-base-300">
 								<th class="px-4 py-2.5 font-medium">{m.autolist_history_at()}</th>
 								<th class="px-4 py-2.5 font-medium">{m.autolist_col_target()}</th>
+								<th class="px-4 py-2.5 font-medium">{m.autolist_details_client()}</th>
 								<th class="px-4 py-2.5 font-medium">{m.autolist_col_action()}</th>
 								<th class="px-4 py-2.5 font-medium">{m.autolist_col_source()}</th>
 								<th class="px-4 py-2.5 font-medium">{m.autolist_details_interface()}</th>
@@ -1273,6 +1291,16 @@
 										{historyTargetText(h)}
 										{#if h.host && h.host !== h.domain}
 											<div class="text-xs opacity-50">{h.host}</div>
+										{/if}
+									</td>
+									<td class="px-4 py-2.5">
+										{#if clientLabel(h.clientIP, h.clientMAC)}
+											<div>{clientLabel(h.clientIP, h.clientMAC)}</div>
+											<div class="text-xs opacity-50 font-mono">{[h.clientIP, h.clientMAC].filter(Boolean).join(' · ')}</div>
+										{:else if h.clientIP || h.clientMAC}
+											<div class="font-mono text-xs">{[h.clientIP, h.clientMAC].filter(Boolean).join(' · ')}</div>
+										{:else}
+											—
 										{/if}
 									</td>
 									<td class="px-4 py-2.5">

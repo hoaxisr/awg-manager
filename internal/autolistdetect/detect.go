@@ -143,6 +143,10 @@ type Candidate struct {
 	FirstAt string `json:"firstAt,omitempty"`
 	LastAt  string `json:"lastAt,omitempty"`
 
+	// Клиент, чей трафик вызвал решение: IP и MAC из заголовка кадра.
+	ClientIP  string `json:"clientIP,omitempty"`
+	ClientMAC string `json:"clientMAC,omitempty"`
+
 	Coverage CoverageEvidence `json:"coverage"`
 	Direct   CheckEvidence    `json:"direct"`
 	WAN      CheckEvidence    `json:"wan"`
@@ -159,14 +163,17 @@ type Candidate struct {
 // on which domain/IP with protocol and port, through which interface and
 // outbound, why, and what the write or removal actually resulted in.
 type HistoryEntry struct {
-	At        string `json:"at,omitempty"`
-	Domain    string `json:"domain,omitempty"`
-	Host      string `json:"host,omitempty"`
-	IP        string `json:"ip,omitempty"`
-	Network   string `json:"network,omitempty"`
-	Port      uint16 `json:"port,omitempty"`
-	Action    string `json:"action,omitempty"`
-	Source    string `json:"source,omitempty"`
+	At      string `json:"at,omitempty"`
+	Domain  string `json:"domain,omitempty"`
+	Host    string `json:"host,omitempty"`
+	IP      string `json:"ip,omitempty"`
+	Network string `json:"network,omitempty"`
+	Port    uint16 `json:"port,omitempty"`
+	Action  string `json:"action,omitempty"`
+	Source  string `json:"source,omitempty"`
+	// Клиент, чей трафик вызвал решение. Пусто у старых записей журнала.
+	ClientIP  string `json:"clientIP,omitempty"`
+	ClientMAC string `json:"clientMAC,omitempty"`
 	Interface string `json:"interface,omitempty"`
 	Outbound  string `json:"outbound,omitempty"`
 	Reason    string `json:"reason,omitempty"`

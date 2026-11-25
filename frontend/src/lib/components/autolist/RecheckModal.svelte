@@ -83,6 +83,15 @@
 	/** Отображаемая карточка: свежий результат проверки или входная. */
 	let shown = $derived(result ?? candidate);
 
+	/**
+	 * Заголовок с проверяемым доменом: он известен сразу, до прогона проб.
+	 * Функция, а не $derived: текст должен следовать за языком интерфейса.
+	 */
+	function modalTitle(): string {
+		const name = candidate?.target.domain || candidate?.target.host || candidate?.target.ip;
+		return name ? `${m.autolist_recheck_title()} — ${name}` : m.autolist_recheck_title();
+	}
+
 	function verdictText(v?: string): string {
 		switch (v) {
 			case 'not-checked': return m.autolist_verdict_not_checked();
@@ -125,7 +134,7 @@
 	}
 </script>
 
-<Modal {open} title={m.autolist_recheck_title()} onclose={onclose}>
+<Modal {open} title={modalTitle()} onclose={onclose}>
 	{#if phase === 'running'}
 		<div class="flex flex-col items-center gap-3 py-6" data-testid="recheck-running">
 			<div class="w-8 h-8 border-2 border-primary-500 border-t-transparent rounded-full animate-spin" aria-hidden="true"></div>
