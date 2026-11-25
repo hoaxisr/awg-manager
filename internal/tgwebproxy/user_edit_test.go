@@ -128,7 +128,9 @@ func TestEgressValidation_OnlyOnEnableOrChange(t *testing.T) {
 		must("Start", svc.Start())
 		must("CreateUser", svc.CreateUser("гость"))
 
+		svc.mu.Lock() // проверку читает и фоновая проверка здоровья
 		svc.egressValidator = func(string) error { return errors.New("интерфейс опущен") }
+		svc.mu.Unlock()
 		users := svc.GetInternalConfig().Users
 		must("DeleteUser", svc.DeleteUser(users[len(users)-1].ID))
 		must("RotateSecret", svc.RotateSecret())
