@@ -1270,13 +1270,15 @@
 		line-height: 1.4;
 	}
 
-	/* Подвал не уходит ниже сгиба: прокручивается содержимое шага. */
+	/* Подвал не уходит ниже сгиба: прокручивается содержимое шага. Отступ
+	   закрывает нижний padding тела модалки, иначе под подвалом видна прокрутка. */
 	.ext-wizard :global(> .foot) {
 		position: sticky;
-		bottom: 0;
+		bottom: -1rem;
 		z-index: 1;
+		margin-bottom: -1rem;
+		padding-bottom: 1rem;
 		background: var(--color-bg-secondary);
-		padding-bottom: 0.75rem;
 	}
 
 	:where(.ext-wizard) :global(.step-section) {

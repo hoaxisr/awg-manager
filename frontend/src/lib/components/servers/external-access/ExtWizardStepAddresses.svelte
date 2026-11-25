@@ -502,7 +502,7 @@
 	</button>
 	{#if !showAdvancedAddresses && wantTgDirect && isDirectPortInvalid}
 		<span class="field-error" role="alert">
-			{m.servers_ext_wiz_s3_direct_port()}: {m.servers_ext_wiz_s3_direct_port_invalid()}
+			{m.servers_ext_wiz_s3_direct_port()} {m.servers_ext_wiz_s3_direct_port_invalid()}
 		</span>
 	{/if}
 
@@ -713,6 +713,11 @@
 		gap: 8px;
 		min-width: 0;
 		flex: 1;
+	}
+
+	/* Длинная подпись на 360px шире блока. */
+	.dual-cgnat-warn-body :global(button) {
+		white-space: normal;
 	}
 
 	.advanced-box {
