@@ -475,3 +475,22 @@ func TestDeleteLastUser_SurvivesCandidateStopStartAndReload(t *testing.T) {
 		t.Fatalf("failed RotateSecret mutated users: %+v", svc.GetInternalConfig())
 	}
 }
+
+// Кандидат без пользователей и секрета применяется как есть: секрет чеканят
+// первый запуск, создание пользователя и мастер, а не подготовка.
+// Мутация: вернуть чеканку в PrepareCandidate → красный.
+func TestPrepareCandidate_DoesNotMintSecret(t *testing.T) {
+	svc, _, _ := setupTestService(t)
+	cand := svc.GetInternalConfig()
+	cand.Enabled, cand.Secret, cand.Users = true, "", nil
+	txID, err := svc.PrepareCandidate("tx-no-mint", cand)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.CommitPrepared(txID); err != nil {
+		t.Fatal(err)
+	}
+	if got := svc.GetInternalConfig(); got.Secret != "" || len(got.GetUsers()) != 0 {
+		t.Fatalf("подготовка создала секрет: %+v", got)
+	}
+}

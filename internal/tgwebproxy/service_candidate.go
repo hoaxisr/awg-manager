@@ -86,19 +86,6 @@ func (s *Service) PrepareCandidate(txID string, candidate Config) (string, error
 				break
 			}
 		}
-		// Never mint a default secret when stopping, when the caller explicitly
-		// passes an empty Users slice, or when the stored config already has
-		// 0 users (which reloads as Users: nil, Secret: "" due to omitempty);
-		// otherwise Config.GetUsers() would resurrect a phantom "default" user.
-		if candidate.Secret == "" && len(candidate.Users) == 0 &&
-			candidate.Enabled && candidate.Users == nil &&
-			(len(s.config.Users) > 0 || s.config.Secret != "") {
-			sec, err := randomHexSecret(s.randReader)
-			if err != nil {
-				return "", err
-			}
-			candidate.Secret = sec
-		}
 	}
 	if candidate.SchemaVersion <= 0 {
 		candidate.SchemaVersion = CurrentSchemaVersion
