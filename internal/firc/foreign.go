@@ -22,11 +22,11 @@ import (
 // всех — ForeignDetector; остальной пакет спрашивает CheckNotForeign/ForeignFirc.
 
 // ErrForeignFirc — отказ любой мутации FIRC при установленном стороннем firc.
-var ErrForeignFirc = errors.New("на роутере установлен firc: он управляется своим интерфейсом, движок FIRC панели доступен только там, где firc не установлен")
+var ErrForeignFirc = errors.New("на роутере установлен firc: он управляется своим интерфейсом, AWGM Route доступен только там, где firc не установлен")
 
 // ErrForeignUnknown — не вышло установить, чей firc на роутере. Изменения FIRC
 // закрыты, но свой работающий рантайм остановить и оставить можно как обычно.
-var ErrForeignUnknown = errors.New("не удалось проверить, установлен ли на роутере сторонний firc, поэтому изменения FIRC остановлены: проверьте накопитель и каталог /opt/lib/opkg/info")
+var ErrForeignUnknown = errors.New("не удалось проверить, установлен ли на роутере сторонний firc, поэтому изменения AWGM Route остановлены: проверьте накопитель и каталог /opt/lib/opkg/info")
 
 // ErrRestartRequired — восстановление на старте отложено из-за стороннего firc.
 // Доигрывать его на лету нельзя: «стороннего нет» на секунды видно и посреди
@@ -53,10 +53,9 @@ const (
 )
 
 // ownRuntimePackages — пакеты, чьи файлы firc наши. Пакет awg-manager здесь
-// потому, что сборка BuildTargetIPK кладёт рантайм внутрь него. При
-// переименовании рантайма старое имя awg-firc-runtime остаётся здесь: иначе
-// установленный под ним рантайм станет «сторонним».
-var ownRuntimePackages = map[string]bool{RuntimePackageName: true, "awg-manager": true}
+// потому, что сборка BuildTargetIPK кладёт рантайм внутрь него. Прежнее имя
+// рантайма остаётся: иначе установленный под ним станет «сторонним».
+var ownRuntimePackages = map[string]bool{RuntimePackageName: true, legacyRuntimePackageName: true, "awg-manager": true}
 
 // foreignPackageFiles — файлы, по которым пакет Entware узнаётся как firc.
 var foreignPackageFiles = map[string]bool{

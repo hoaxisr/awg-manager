@@ -204,7 +204,7 @@ describe('FIRC tunnels UI integration', () => {
 		const strip = await screen.findByTestId('firc-runtime-strip');
 		await waitFor(() => {
 			expect(strip).toHaveTextContent(m.firc_engine_label());
-			expect(strip).toHaveTextContent('FIRC');
+			expect(strip).toHaveTextContent('AWGM Route');
 			expect(strip).toHaveTextContent(m.firc_daemon_running());
 			expect(strip).toHaveTextContent('LAT');
 			expect(strip).toHaveTextContent(':1099');
@@ -377,7 +377,7 @@ describe('FIRC tunnels UI integration', () => {
 		expect(screen.getByText('TLS')).toBeInTheDocument();
 		expect(screen.getByText('Hysteria2')).toBeInTheDocument();
 		expect(screen.getByText('QUIC')).toBeInTheDocument();
-		expect(screen.getAllByText('FIRC').length).toBeGreaterThanOrEqual(2);
+		expect(screen.getAllByText('AWGM Route').length).toBeGreaterThanOrEqual(2);
 		expect(screen.getByText('2/2')).toBeInTheDocument();
 		expect(screen.getByText(m.firc_tabs_traffic_while_viewing())).toBeInTheDocument();
 		expect(screen.getByText(m.singbox_tabs_avg_delay())).toBeInTheDocument();
@@ -388,7 +388,7 @@ describe('FIRC tunnels UI integration', () => {
 		});
 		await fireEvent.click(testBtn);
 		expect(
-			await screen.findByText(m.tunnel_test_title({ prefix: 'FIRC', name: 'FIN (Финляндия) (Premium)' })),
+			await screen.findByText(m.tunnel_test_title({ prefix: 'AWGM Route', name: 'FIN (Финляндия) (Premium)' })),
 		).toBeInTheDocument();
 
 		const editBtns = screen.getAllByText(m.common_edit());

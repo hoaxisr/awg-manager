@@ -74,10 +74,9 @@ type OnDemandInstaller struct {
 	progress   float64
 	lastError  string
 
-	arch         string
-	spec         FircBinarySpec
-	fallbackSpec FircBinarySpec
-	layout       PackageLayout
+	arch   string
+	spec   FircBinarySpec
+	layout PackageLayout
 
 	downloader Downloader
 	freeDisk   func(string) (int64, bool)
@@ -144,24 +143,6 @@ func (odi *OnDemandInstaller) SetDownloader(dl Downloader) {
 	odi.downloader = dl
 }
 
-// SetFallbackPackageSpec configures an alternate verified Entware `firc` IPK
-// specification used only when the primary runtime release is unavailable.
-func (odi *OnDemandInstaller) SetFallbackPackageSpec(spec FircBinarySpec) {
-	odi.mu.Lock()
-	odi.fallbackSpec = spec
-	odi.mu.Unlock()
-}
-
-func (odi *OnDemandInstaller) installSpec() (spec FircBinarySpec, fromFallback bool) {
-	if odi.spec.IsAvailable() {
-		return odi.spec, false
-	}
-	if odi.fallbackSpec.IsAvailable() {
-		return odi.fallbackSpec, true
-	}
-	return odi.spec, false
-}
-
 // SetFreeDiskFn overrides the free-disk probe (tests only).
 func (odi *OnDemandInstaller) SetFreeDiskFn(fn func(string) (int64, bool)) {
 	odi.freeDisk = fn
@@ -195,15 +176,15 @@ func (odi *OnDemandInstaller) SetDependencyChecker(fn func(ctx context.Context) 
 
 var (
 	ErrInstallBusy           = errors.New("firc: install/uninstall operation already in progress")
-	ErrFircActive            = errors.New("firc: cannot uninstall while FIRC is the active routing engine")
-	ErrFircRunning           = errors.New("firc: cannot uninstall while FIRC is running; stop it first")
+	ErrFircActive            = errors.New("firc: cannot uninstall while AWGM Route is the active routing engine")
+	ErrFircRunning           = errors.New("firc: cannot uninstall while AWGM Route is running; stop it first")
 	ErrTunvlessRunning       = errors.New("firc: cannot uninstall while tunvless is running")
-	ErrFircDependencies      = errors.New("firc: cannot uninstall: active services depend on FIRC")
+	ErrFircDependencies      = errors.New("firc: cannot uninstall: active services depend on AWGM Route")
 	ErrInsufficientDisk      = errors.New("firc: insufficient disk space for installation")
 	ErrNoDownloader          = errors.New("firc: downloader not configured")
 	ErrSHA256Mismatch        = errors.New("firc: SHA256 checksum verification failed")
 	ErrReleaseUnavailable    = errors.New("firc: release is not yet published or configured for this architecture")
-	ErrInstallActiveCore     = errors.New("firc: cannot install or upgrade while FIRC is active; switch routing engine first")
+	ErrInstallActiveCore     = errors.New("firc: cannot install or upgrade while AWGM Route is active; switch routing engine first")
 	ErrLayoutIncomplete      = errors.New("firc: package layout verification failed after install")
 	ErrRuntimeNotInstalled   = errors.New("firc: runtime package is not installed; install it first")
 	ErrAlreadyUpToDate       = errors.New("firc: runtime is already at the latest available version")
@@ -293,14 +274,13 @@ func (odi *OnDemandInstaller) GetInstallStatus(ctx context.Context, op *Operator
 		lastErr = journal.Error
 	}
 
-	effectiveSpec, _ := odi.installSpec()
-	available := effectiveSpec.IsAvailable()
+	available := odi.spec.IsAvailable()
 	unavailableReason := ""
 	if !available {
 		if strings.TrimSpace(odi.spec.Version) != "" {
-			unavailableReason = "FIRC release v" + odi.spec.Version + " is not yet published on GitHub for " + odi.arch
+			unavailableReason = "AWGM Route release v" + odi.spec.Version + " is not yet published on GitHub for " + odi.arch
 		} else {
-			unavailableReason = "FIRC release is not yet published on GitHub for " + odi.arch
+			unavailableReason = "AWGM Route release is not yet published on GitHub for " + odi.arch
 		}
 	}
 
@@ -332,13 +312,13 @@ func (odi *OnDemandInstaller) GetInstallStatus(ctx context.Context, op *Operator
 	updateAvailable := available &&
 		(state == InstallStateInstalled || state == InstallStateRunning) &&
 		installedVer != "" &&
-		effectiveSpec.Version != "" &&
-		installedVer != effectiveSpec.Version
+		odi.spec.Version != "" &&
+		installedVer != odi.spec.Version
 
 	status := InstallStatus{
 		State:             state,
 		InstalledVersion:  installedVer,
-		AvailableVersion:  effectiveSpec.Version,
+		AvailableVersion:  odi.spec.Version,
 		UpdateAvailable:   updateAvailable,
 		Available:         available,
 		UnavailableReason: unavailableReason,
@@ -355,7 +335,7 @@ func (odi *OnDemandInstaller) GetInstallStatus(ctx context.Context, op *Operator
 		DependentServices: dependentServices,
 	}
 
-	required := effectiveSpec.PackageSize*4 + diskReserveBytes
+	required := odi.spec.PackageSize*4 + diskReserveBytes
 	status.RequiredDiskBytes = required
 	if odi.freeDisk != nil {
 		if free, ok := odi.freeDisk(filepath.Dir(odi.layout.FircdBin)); ok {

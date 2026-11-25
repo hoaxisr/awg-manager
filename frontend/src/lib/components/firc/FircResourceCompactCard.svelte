@@ -119,7 +119,7 @@
 		<div class="title-row">
 			<TunnelTitleRow {title} dotVariant={statusVariant} dotPulse={running} staticTitle>
 				{#snippet badges()}
-					<Badge variant="accent" size="sm">FIRC</Badge>
+					<Badge variant="accent" size="sm">AWGM Route</Badge>
 					{#if kind === 'subscription'}
 						<Badge variant="accent" size="sm">{m.tunnels_kind_subscription()}</Badge>
 					{/if}

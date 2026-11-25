@@ -18,7 +18,7 @@ type UplinkAdapter struct {
 }
 
 func (a *UplinkAdapter) UplinkCapabilities(uplink.Target) uplink.Capabilities {
-	return uplink.Capabilities{ProviderDNS: true, RestartScope: "target", ControlledFailback: true, Limitation: "FIRC supports manual or controlled return with reconnection; independent candidate probe unavailable"}
+	return uplink.Capabilities{ProviderDNS: true, RestartScope: "target", ControlledFailback: true, Limitation: "AWGM Route supports manual or controlled return with reconnection; independent candidate probe unavailable"}
 }
 
 func requiresUplinkDNS(t Tunnel) bool {
@@ -54,10 +54,10 @@ func (a *UplinkAdapter) read(ctx context.Context, t uplink.Target) (Tunnel, Tunn
 		return Tunnel{}, TunnelInbound{}, uplink.ErrUnsupported
 	}
 	if a.Operator == nil || a.Active == nil || !a.Active() {
-		return Tunnel{}, TunnelInbound{}, fmt.Errorf("FIRC is not the active engine")
+		return Tunnel{}, TunnelInbound{}, fmt.Errorf("AWGM Route is not the active engine")
 	}
 	if !a.Operator.IsRunning(ctx) {
-		return Tunnel{}, TunnelInbound{}, fmt.Errorf("FIRC is stopped")
+		return Tunnel{}, TunnelInbound{}, fmt.Errorf("AWGM Route is stopped")
 	}
 	tunnels, err := a.Operator.Client().GetTunnels(ctx)
 	if err != nil {
@@ -73,7 +73,7 @@ func (a *UplinkAdapter) read(ctx context.Context, t uplink.Target) (Tunnel, Tunn
 				return Tunnel{}, TunnelInbound{}, err
 			}
 			if health.UplinkDNSVersion < 1 || a.DNSForDevice == nil {
-				return Tunnel{}, TunnelInbound{}, fmt.Errorf("%w: FIRC runtime with uplinkDnsVersion >= 1 and an explicit WAN DNS catalogue required", uplink.ErrUnsupported)
+				return Tunnel{}, TunnelInbound{}, fmt.Errorf("%w: AWGM Route runtime with uplinkDnsVersion >= 1 and an explicit WAN DNS catalogue required", uplink.ErrUnsupported)
 			}
 		}
 		for _, in := range v.Inbounds {
@@ -83,7 +83,7 @@ func (a *UplinkAdapter) read(ctx context.Context, t uplink.Target) (Tunnel, Tunn
 		}
 		return Tunnel{}, TunnelInbound{}, fmt.Errorf("%w: dedicated local SOCKS inbound with node '*' required", uplink.ErrUnsupported)
 	}
-	return Tunnel{}, TunnelInbound{}, fmt.Errorf("FIRC tunnel not found")
+	return Tunnel{}, TunnelInbound{}, fmt.Errorf("AWGM Route tunnel not found")
 }
 
 func (a *UplinkAdapter) Validate(ctx context.Context, t uplink.Target) error {
@@ -113,7 +113,7 @@ func (a *UplinkAdapter) Activate(ctx context.Context, t uplink.Target, expected,
 		return err
 	}
 	if !v.Enable {
-		return fmt.Errorf("FIRC tunnel is disabled")
+		return fmt.Errorf("AWGM Route tunnel is disabled")
 	}
 	var servers []string
 	if requiresUplinkDNS(v) {
@@ -149,7 +149,7 @@ func (a *UplinkAdapter) Activate(ctx context.Context, t uplink.Target, expected,
 			return err
 		}
 	}
-	return fmt.Errorf("FIRC tunnel disappeared")
+	return fmt.Errorf("AWGM Route tunnel disappeared")
 }
 func (a *UplinkAdapter) Probe(ctx context.Context, t uplink.Target, device string) error {
 	a.Operator.mutationMu.Lock()
@@ -159,7 +159,7 @@ func (a *UplinkAdapter) Probe(ctx context.Context, t uplink.Target, device strin
 		return err
 	}
 	if !v.Enable || v.Uplink.Kind != "iface" || v.Uplink.Ref != device {
-		return fmt.Errorf("FIRC binding changed during probe")
+		return fmt.Errorf("AWGM Route binding changed during probe")
 	}
 	if requiresUplinkDNS(v) {
 		if err := validateEndpointDNS(v.EndpointDNS); err != nil {
@@ -194,10 +194,10 @@ func (a *UplinkAdapter) Probe(ctx context.Context, t uplink.Target, device strin
 					return err
 				}
 				if !fresh.Enable || fresh.Uplink.Kind != "iface" || fresh.Uplink.Ref != device {
-					return fmt.Errorf("FIRC binding changed during probe")
+					return fmt.Errorf("AWGM Route binding changed during probe")
 				}
 				if !reflect.DeepEqual(v, fresh) {
-					return fmt.Errorf("FIRC configuration changed during probe")
+					return fmt.Errorf("AWGM Route configuration changed during probe")
 				}
 				return nil
 			}
@@ -207,7 +207,7 @@ func (a *UplinkAdapter) Probe(ctx context.Context, t uplink.Target, device strin
 		case <-ctx.Done():
 			timer.Stop()
 			if probeErr != nil {
-				return fmt.Errorf("waiting for FIRC SOCKS readiness: %v: %w", probeErr, ctx.Err())
+				return fmt.Errorf("waiting for AWGM Route SOCKS readiness: %v: %w", probeErr, ctx.Err())
 			}
 			return ctx.Err()
 		case <-timer.C:

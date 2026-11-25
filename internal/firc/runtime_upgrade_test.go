@@ -34,7 +34,7 @@ func (m *upgradeMockPackages) Version(_ context.Context, name string) (string, e
 }
 
 func (m *upgradeMockPackages) Install(_ context.Context, p string) error {
-	ver, err := readRuntimeIPKControlVersion(p)
+	_, ver, err := readRuntimeIPKControl(p)
 	if err != nil {
 		return err
 	}

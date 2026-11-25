@@ -135,7 +135,7 @@ func runtimePackageContents(ipkPath, arch, version string) (map[string]runtimeTa
 			fields[key] = strings.TrimSpace(value)
 		}
 	}
-	if fields["Package"] != RuntimePackageName || fields["Architecture"] != arch || fields["Version"] != version {
+	if !isRuntimePackageName(fields["Package"]) || fields["Architecture"] != arch || fields["Version"] != version {
 		return nil, errors.New("runtime package identity/version/architecture mismatch")
 	}
 	// Package relationships can remove or take ownership from unrelated packages.
@@ -386,7 +386,7 @@ func BuildRuntimeIPK(sourceRoot, fircd, tunvless, arch, version, out string) err
 	if err != nil {
 		return err
 	}
-	control := fmt.Sprintf("Package: %s\nVersion: %s\nArchitecture: %s\nDepends: %s\nSection: net\nDescription: FIRC runtime managed by awg-manager\n", RuntimePackageName, version, arch, strings.Join(deps, ", "))
+	control := fmt.Sprintf("Package: %s\nVersion: %s\nArchitecture: %s\nDepends: %s\nSection: net\nDescription: AWGM Route runtime managed by awg-manager\n", RuntimePackageName, version, arch, strings.Join(deps, ", "))
 	ctrl, err := createTarGzFromEntries([]tarMemoryEntry{
 		{name: "control", mode: 0644, data: []byte(control)},
 		{name: "conffiles", mode: 0644, data: []byte{}},

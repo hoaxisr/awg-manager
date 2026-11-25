@@ -186,7 +186,7 @@ func (o *Operator) PurgeFircAndTunnels(
 			var sErr error
 			snap, sErr = o.CreateSystemSnapshot(
 				singboxConfigDir,
-				"Авто-снапшот перед удалением FIRC и его туннелей",
+				"Авто-снапшот перед удалением AWGM Route и его туннелей",
 				"auto-pre-purge",
 				curEng,
 			)

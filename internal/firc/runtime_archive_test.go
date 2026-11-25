@@ -216,3 +216,58 @@ func TestBuildRuntimeIPKUsesVendoredCCoreFirc(t *testing.T) {
 		t.Fatalf("packaged LICENSE does not match c-core/firc/LICENSE")
 	}
 }
+
+// Откат обновления ставит IPK прежней сборки из кэша: он назван по-старому.
+func TestVerifyRuntimeIPK_LegacyPackageName(t *testing.T) {
+	_, ipk := buildTestRuntimeIPKVersion(t, t.TempDir(), "aarch64-3.10", "0.8.0-1", "https://example.invalid/r.ipk")
+	for name, want := range map[string]bool{legacyRuntimePackageName: true, RuntimePackageName: true, "firc": false} {
+		outer, err := readRuntimeTar(ipk, 2*maxRuntimeIPKBytes)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctrl, err := readRuntimeTar(outer["control.tar.gz"].data, 1<<20)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var entries []tarMemoryEntry
+		for _, f := range []string{"control", "conffiles", "postinst", "prerm"} {
+			data := ctrl[f].data
+			if f == "control" {
+				data = []byte(strings.Replace(string(data), "Package: "+RuntimePackageName, "Package: "+name, 1))
+			}
+			entries = append(entries, tarMemoryEntry{name: f, mode: ctrl[f].header.Mode, data: data})
+		}
+		newCtrl, err := createTarGzFromEntries(entries)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pkg, err := createTarGzFromEntries([]tarMemoryEntry{
+			{name: "debian-binary", mode: 0o644, data: outer["debian-binary"].data},
+			{name: "control.tar.gz", mode: 0o644, data: newCtrl},
+			{name: "data.tar.gz", mode: 0o644, data: outer["data.tar.gz"].data},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(t.TempDir(), "r.ipk")
+		if err := os.WriteFile(path, pkg, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := VerifyRuntimeIPK(path, "aarch64-3.10", "0.8.0-1"); (err == nil) != want {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+}
+
+// VerifyRuntimeIPK сверяет скрипты побайтово, а откат обновления ставит IPK прошлой
+// сборки из кэша: правка скрипта оставит без отката всех, у кого рантайм стоит.
+func TestRuntimeLifecycleScripts_Unchanged(t *testing.T) {
+	for name, c := range map[string]struct{ script, sha string }{
+		"postinst": {runtimePostinst, "b9c318b96ad8f053810b160fd3efe683a364e194a5fca13a9c49939256569dfc"},
+		"prerm":    {runtimePrerm, "fbca96fe6c596b86d5c6e96afe859cb01ebaa140a12d59e6668ed2873f9c2f6d"},
+	} {
+		if got := sha256HexBytes([]byte(c.script)); got != c.sha {
+			t.Errorf("%s изменён: sha256 %s; принимайте и прежний текст", name, got)
+		}
+	}
+}

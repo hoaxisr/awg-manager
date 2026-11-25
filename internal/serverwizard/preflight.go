@@ -111,7 +111,7 @@ func (pe *PreflightEngine) Run(ctx context.Context, req WizardPlanRequest) Prefl
 				ID:          "tg_upstream_required",
 				Title:       "Маршрут выхода трафика Telegram",
 				Status:      CheckStatusBlocked,
-				Message:     "Для VLESS выбраны правила маршрутизации (FIRC), но маршрут выхода для Telegram не выбран",
+				Message:     "Для VLESS выбраны правила маршрутизации (AWGM Route), но маршрут выхода для Telegram не выбран",
 				Remediation: "Явно выберите маршрут выхода трафика для прокси Telegram (прямой выход WAN или конкретный туннель).",
 			})
 		}
@@ -477,7 +477,7 @@ func (pe *PreflightEngine) checkTelegram(ctx context.Context, req WizardPlanRequ
 				ID:          "upstream_device",
 				Title:       "Маршрут выхода трафика Telegram",
 				Status:      CheckStatusBlocked,
-				Message:     "Режим маршрутизации FIRC поддерживается только для VLESS (XHTTP); для Telegram выберите прямой выход (WAN) или конкретный туннель",
+				Message:     "Режим маршрутизации AWGM Route поддерживается только для VLESS (XHTTP); для Telegram выберите прямой выход (WAN) или конкретный туннель",
 				Remediation: "Укажите маршрут выхода для Telegram (direct или имя туннельного интерфейса).",
 			})
 		} else if pe.egressAdp != nil {
@@ -635,7 +635,7 @@ func (pe *PreflightEngine) checkXray(ctx context.Context, req WizardPlanRequest,
 			Title:       "Маршрут выхода трафика",
 			Status:      CheckStatusBlocked,
 			Message:     egress.LegacyEgressLabel(),
-			Remediation: "Выберите прямой выход (WAN), конкретный туннель или правила маршрутизации (FIRC).",
+			Remediation: "Выберите прямой выход (WAN), конкретный туннель или правила маршрутизации (AWGM Route).",
 		})
 	} else if pe.egressAdp != nil {
 		res, err := pe.egressAdp.Resolve(ctx, egress.ResolveRequest{
@@ -648,12 +648,12 @@ func (pe *PreflightEngine) checkXray(ctx context.Context, req WizardPlanRequest,
 				Title:       "Маршрут выхода трафика",
 				Status:      CheckStatusBlocked,
 				Message:     fmt.Sprintf("Выбранный маршрут выхода недоступен: %v", err),
-				Remediation: "Выберите доступный маршрут выхода (WAN, активный туннель или правила FIRC).",
+				Remediation: "Выберите доступный маршрут выхода (WAN, активный туннель или правила AWGM Route).",
 			})
 		} else {
 			msg := "Прямой выход в интернет (WAN) готов"
 			if res.Mode == "router" {
-				msg = "Маршрутизация через правила FIRC активна и готова"
+				msg = "Маршрутизация через правила AWGM Route активна и готова"
 			} else if res.Mode == "interface" {
 				msg = fmt.Sprintf("Туннельный интерфейс %s активен и готов", res.Interface)
 			}

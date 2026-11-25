@@ -1371,7 +1371,7 @@ func (op *Operator) CheckDomainsRouting(ctx context.Context, domains []string) m
 						Domain:    dom,
 						Routed:    false,
 						RealIP:    ipStr,
-						Outbound:  "Direct (WAN / вне правил FIRC)",
+						Outbound:  "Direct (WAN / вне правил AWGM Route)",
 						LatencyMs: latency,
 					},
 				}
@@ -1529,7 +1529,7 @@ func (op *Operator) CheckDomainRouting(ctx context.Context, domain string) (*Dom
 			Domain:    domain,
 			Routed:    false,
 			RealIP:    ipStr,
-			Outbound:  "Direct (WAN / вне правил FIRC)",
+			Outbound:  "Direct (WAN / вне правил AWGM Route)",
 			LatencyMs: latency,
 		}, nil
 	}

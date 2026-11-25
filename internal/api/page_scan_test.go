@@ -106,7 +106,7 @@ func TestPageScanHandler_GetOptions(t *testing.T) {
 		ProxyURLProvider: func(context.Context) string { return "http://127.0.0.1:1099" },
 		ProxyLister: func(context.Context) []pagescan.ProxyOption {
 			return []pagescan.ProxyOption{
-				{URL: "http://127.0.0.1:1099", Label: "FIRC inbound (127.0.0.1:1099)"},
+				{URL: "http://127.0.0.1:1099", Label: "AWGM Route inbound (127.0.0.1:1099)"},
 				{URL: "socks5://user:pass@127.0.0.1:1080", Label: "SOCKS5 proxy (:1080)"},
 			}
 		},
@@ -138,7 +138,7 @@ func TestPageScanHandler_GetOptions(t *testing.T) {
 		if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
 			t.Fatalf("decode envelope: %v", err)
 		}
-		if !env.Success || env.Data.DefaultProxy != "http://127.0.0.1:1099" || env.Data.DefaultProxyLabel != "FIRC inbound (127.0.0.1:1099)" {
+		if !env.Success || env.Data.DefaultProxy != "http://127.0.0.1:1099" || env.Data.DefaultProxyLabel != "AWGM Route inbound (127.0.0.1:1099)" {
 			t.Fatalf("unexpected default proxy in options: %+v", env)
 		}
 		if len(env.Data.Proxies) != 2 || env.Data.Proxies[1].URL != "socks5://127.0.0.1:1080" {

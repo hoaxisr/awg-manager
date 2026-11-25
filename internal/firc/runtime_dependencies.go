@@ -22,7 +22,7 @@ func (o *Operator) RuntimeDependents() ([]string, error) {
 	}
 	var ext ExtConfig
 	if err := json.Unmarshal(data, &ext); err != nil {
-		return nil, fmt.Errorf("read FIRC routing dependencies: %w", err)
+		return nil, fmt.Errorf("read AWGM Route routing dependencies: %w", err)
 	}
 	result := slices.Clone(ext.ServerRouting.EnabledServers)
 	for _, id := range []string{"awg_server", "wdtt_server", "freeturn_server", "vless_xhttp_server"} {

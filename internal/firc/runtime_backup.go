@@ -104,7 +104,7 @@ func (i *OnDemandInstaller) recoverPendingLocked(ctx context.Context, op *Operat
 				}
 			}
 		}
-		return errors.New("interrupted runtime install requires recovery before starting FIRC")
+		return errors.New("interrupted runtime install requires recovery before starting AWGM Route")
 
 	case AbandonedExternalMigration:
 		// Переезда с чужого пакета больше нет, а журнал сборок develop мог
@@ -118,7 +118,7 @@ func (i *OnDemandInstaller) recoverPendingLocked(ctx context.Context, op *Operat
 			if err := i.saveOperation(runtimeOperation{Action: "install", Pending: true}); err != nil {
 				return err
 			}
-			return errors.New("interrupted runtime install requires recovery before starting FIRC")
+			return errors.New("interrupted runtime install requires recovery before starting AWGM Route")
 		}
 		return i.saveOperation(runtimeOperation{Action: AbandonedExternalMigration, Pending: false})
 

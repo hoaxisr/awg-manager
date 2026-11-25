@@ -65,8 +65,8 @@ describe('tunnels i18n', () => {
 		await fireEvent.click(screen.getByRole('button', { name: /Создать/ }));
 		expect(screen.getByText('AmneziaWG туннель')).toBeTruthy();
 		expect(screen.getByText('NativeWG или Kernel')).toBeTruthy();
-		expect(screen.getByText('Туннель FIRC')).toBeTruthy();
-		expect(screen.getByText('Подписка FIRC')).toBeTruthy();
+		expect(screen.getByText('Туннель AWGM Route')).toBeTruthy();
+		expect(screen.getByText('Подписка AWGM Route')).toBeTruthy();
 
 		locale.set('en');
 		flushSync();
@@ -74,7 +74,7 @@ describe('tunnels i18n', () => {
 		expect(screen.getByRole('button', { name: /Create/ })).toBeTruthy();
 		expect(screen.getByText('AmneziaWG tunnel')).toBeTruthy();
 		expect(screen.getByText('NativeWG or Kernel')).toBeTruthy();
-		expect(screen.getByText('FIRC tunnel')).toBeTruthy();
-		expect(screen.getByText('FIRC subscription')).toBeTruthy();
+		expect(screen.getByText('AWGM Route tunnel')).toBeTruthy();
+		expect(screen.getByText('AWGM Route subscription')).toBeTruthy();
 	});
 });

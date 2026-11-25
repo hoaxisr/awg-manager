@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerate internal/firc/firc_releases.json from a published awg-firc-runtime release.
+# Regenerate internal/firc/firc_releases.json from a published awgm-route release.
 # Usage:
 #   ./scripts/regen-firc-releases.sh <release-tag>
 # Env:

@@ -2835,7 +2835,7 @@ definitions:
         example: http://127.0.0.1:1099
         type: string
       defaultProxyLabel:
-        example: FIRC inbound (127.0.0.1:1099)
+        example: AWGM Route inbound (127.0.0.1:1099)
         type: string
       interfaces:
         items:
@@ -2857,7 +2857,7 @@ definitions:
   api.PageScanProxyOptionDTO:
     properties:
       label:
-        example: FIRC inbound (127.0.0.1:1099)
+        example: AWGM Route inbound (127.0.0.1:1099)
         type: string
       url:
         example: http://127.0.0.1:1099
@@ -2939,7 +2939,7 @@ definitions:
         example: http://127.0.0.1:1099
         type: string
       fetchTargetLabel:
-        example: FIRC inbound (127.0.0.1:1099)
+        example: AWGM Route inbound (127.0.0.1:1099)
         type: string
       fetchVia:
         example: direct

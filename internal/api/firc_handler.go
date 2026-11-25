@@ -361,7 +361,7 @@ func (h *FircHandler) isExplicitlyUnselected() bool {
 }
 
 func (h *FircHandler) rejectNotSelected(w http.ResponseWriter) {
-	response.ErrorWithStatus(w, http.StatusConflict, "FIRC engine is not selected", "FIRC_NOT_SELECTED")
+	response.ErrorWithStatus(w, http.StatusConflict, "AWGM Route engine is not selected", "FIRC_NOT_SELECTED")
 }
 
 func offlineAutolistStatus() *firc.AutolistStatus {
@@ -586,7 +586,7 @@ func (h *FircHandler) handleUninstall(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(st.DependentServices) > 0 {
 		h.installMu.Unlock()
-		response.ErrorWithStatus(w, http.StatusConflict, fmt.Sprintf("cannot uninstall: services depend on FIRC: %s", strings.Join(st.DependentServices, ", ")), "FIRC_DEPENDENCIES")
+		response.ErrorWithStatus(w, http.StatusConflict, fmt.Sprintf("cannot uninstall: services depend on AWGM Route: %s", strings.Join(st.DependentServices, ", ")), "FIRC_DEPENDENCIES")
 		return
 	}
 	h.installMu.Unlock()

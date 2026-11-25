@@ -142,7 +142,7 @@
 	function cleanTargetTitle(target: UplinkPolicy['target']): string {
 		const raw = targetLabel(target);
 		// Backend appends `" · <engine>"` in RU/EN; strip any known engine suffix cleanly without hardcoded Cyrillic.
-		const engineSuffixRe = /\s+·\s+(?:FIRC|.*sing-box.*|kernel AmneziaWG|native WireGuard|system WireGuard)$/i;
+		const engineSuffixRe = /\s+·\s+(?:AWGM Route|FIRC|.*sing-box.*|kernel AmneziaWG|native WireGuard|system WireGuard)$/i;
 		return raw.replace(engineSuffixRe, '') || raw;
 	}
 
@@ -179,7 +179,7 @@
 	function localizeLimitation(raw: string): string {
 		const normalized = raw.trim().toLowerCase();
 		if (!normalized) return raw;
-		if (normalized.includes('firc supports manual')) return m.uplink_limitation_firc();
+		if (normalized.includes('awgm route supports manual')) return m.uplink_limitation_firc();
 		if (normalized.includes('system wireguard client')) return m.uplink_limitation_system_wireguard();
 		if (normalized.includes('native ndms/asc')) return m.uplink_limitation_managed_wireguard();
 		if (normalized.includes('pre-provisioned linux kernel wireguard')) return m.uplink_limitation_kernel_wireguard();

@@ -97,7 +97,7 @@
 				onTitleClick={onEdit}
 			>
 				{#snippet badges()}
-					<Badge variant="accent" size="sm">FIRC</Badge>
+					<Badge variant="accent" size="sm">AWGM Route</Badge>
 				{/snippet}
 			</TunnelTitleRow>
 			<TunnelMetaText mono>

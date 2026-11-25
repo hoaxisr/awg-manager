@@ -78,7 +78,7 @@
 <div class="firc-runtime-strip" data-testid="firc-runtime-strip">
 	<div class="firc-runtime-pill">
 		<span class="firc-runtime-k">{m.firc_engine_label()}:</span>
-		<Badge variant={activeRoutingEngine === 'FIRC' ? 'accent' : 'default'} size="xs">
+		<Badge variant={activeRoutingEngine === 'AWGM Route' ? 'accent' : 'default'} size="xs">
 			{activeRoutingEngine}
 		</Badge>
 	</div>

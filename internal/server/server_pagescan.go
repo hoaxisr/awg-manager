@@ -368,9 +368,9 @@ func (s *Server) pageScanProxyLister(fircTunnels func(context.Context) []firc.Tu
 					host := s.resolveRouterProxyHost(probeCtx, inb.Listen)
 					if host != "" && probeLocalTCP(host, int(inb.Port)) {
 						proxyURL := "http://" + net.JoinHostPort(host, strconv.Itoa(int(inb.Port)))
-						label := fmt.Sprintf("FIRC %s (:%d)", tName, inb.Port)
+						label := fmt.Sprintf("AWGM Route %s (:%d)", tName, inb.Port)
 						if tName == "" {
-							label = fmt.Sprintf("FIRC inbound (%s:%d)", host, inb.Port)
+							label = fmt.Sprintf("AWGM Route inbound (%s:%d)", host, inb.Port)
 						}
 						add(proxyURL, label)
 					}

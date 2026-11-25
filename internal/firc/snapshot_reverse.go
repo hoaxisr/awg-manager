@@ -1160,9 +1160,9 @@ func (o *Operator) CreateSystemSnapshot(singboxConfigDir, label, trigger, active
 	if strings.TrimSpace(label) == "" {
 		switch trigger {
 		case "auto-pre-migrate":
-			label = "Авто-снапшот перед миграцией Sing-box → FIRC"
+			label = "Авто-снапшот перед миграцией Sing-box → AWGM Route"
 		case "auto-pre-reverse":
-			label = "Авто-снапшот перед обратной миграцией FIRC → Sing-box"
+			label = "Авто-снапшот перед обратной миграцией AWGM Route → Sing-box"
 		case "auto-pre-purge":
 			label = "Авто-снапшот перед удалением движка и его туннелей"
 		default:
@@ -1496,7 +1496,7 @@ func (o *Operator) loadVerifiedSavedSingboxReturnPoint(ctx context.Context, sing
 	if lastValidationErr != nil {
 		return unverifiedSnap, unverifiedEntries, unverifiedSrc, lastValidationErr
 	}
-	return nil, nil, "", fmt.Errorf("%w: no verified pre-FIRC Sing-box return point found", os.ErrNotExist)
+	return nil, nil, "", fmt.Errorf("%w: no verified pre-AWGM Route Sing-box return point found", os.ErrNotExist)
 }
 
 // GetSavedSingboxStatus returns metadata about the saved Sing-box configuration for Scenario 1.
@@ -2933,7 +2933,7 @@ func buildReverseSingboxPayloadsWithWG(
 			if err != nil {
 				msg := fmt.Sprintf("%s (%s): %v", tagBase, src.Name, err)
 				if strictValidation {
-					return nil, nil, nil, nil, nil, fmt.Errorf("cannot convert FIRC tunnel %s: %w", msg, err)
+					return nil, nil, nil, nil, nil, fmt.Errorf("cannot convert AWGM Route tunnel %s: %w", msg, err)
 				}
 				res.Skipped = append(res.Skipped, msg)
 				continue

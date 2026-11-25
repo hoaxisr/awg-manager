@@ -1263,7 +1263,7 @@ func (o *Operator) CheckRuntimeInstalledForSwitch() error {
 		return nil
 	}
 	if _, err := o.validateProductionPreflight(); err != nil {
-		return fmt.Errorf("FIRC runtime is not installed or invalid (install awg-firc-runtime): %w", err)
+		return fmt.Errorf("AWGM Route runtime is not installed or invalid (install awgm-route): %w", err)
 	}
 	return nil
 }
@@ -1907,7 +1907,7 @@ func wrapSyncTunnelError(syncErr error) error {
 	msg := strings.ToLower(syncErr.Error())
 	if strings.Contains(msg, "filterexclude") && strings.Contains(msg, "unknown key") {
 		return &TunnelValidationError{
-			Err: fmt.Errorf("установленная версия fircd не поддерживает filterExclude (обновите awg-firc-runtime или очистите поле «Исключать»): %w", syncErr),
+			Err: fmt.Errorf("установленная версия fircd не поддерживает filterExclude (обновите awgm-route или очистите поле «Исключать»): %w", syncErr),
 		}
 	}
 	return fmt.Errorf("sync tunnels with fircd: %w", syncErr)

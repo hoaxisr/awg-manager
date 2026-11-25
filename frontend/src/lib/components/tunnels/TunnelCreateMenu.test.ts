@@ -52,8 +52,8 @@ describe('TunnelCreateMenu', () => {
 			},
 		});
 		await openMenu();
-		expect(screen.queryByText('Туннель FIRC')).toBeNull();
-		expect(screen.queryByText('Подписка FIRC')).toBeNull();
+		expect(screen.queryByText('Туннель AWGM Route')).toBeNull();
+		expect(screen.queryByText('Подписка AWGM Route')).toBeNull();
 		unmount();
 
 		const onFircTunnel = vi.fn();
@@ -68,14 +68,14 @@ describe('TunnelCreateMenu', () => {
 			},
 		});
 		await openMenu();
-		expect(screen.getByText('Туннель FIRC')).toBeTruthy();
-		expect(screen.getByText('Подписка FIRC')).toBeTruthy();
+		expect(screen.getByText('Туннель AWGM Route')).toBeTruthy();
+		expect(screen.getByText('Подписка AWGM Route')).toBeTruthy();
 
-		await fireEvent.click(screen.getByText('Туннель FIRC'));
+		await fireEvent.click(screen.getByText('Туннель AWGM Route'));
 		expect(onFircTunnel).toHaveBeenCalledOnce();
 
 		await openMenu();
-		await fireEvent.click(screen.getByText('Подписка FIRC'));
+		await fireEvent.click(screen.getByText('Подписка AWGM Route'));
 		expect(onFircSubscription).toHaveBeenCalledOnce();
 	});
 
@@ -94,8 +94,8 @@ describe('TunnelCreateMenu', () => {
 		});
 		await openMenu();
 		expect(screen.getByText('AmneziaWG туннель')).toBeTruthy();
-		expect(screen.getByText('Туннель FIRC')).toBeTruthy();
-		expect(screen.getByText('Подписка FIRC')).toBeTruthy();
+		expect(screen.getByText('Туннель AWGM Route')).toBeTruthy();
+		expect(screen.getByText('Подписка AWGM Route')).toBeTruthy();
 		expect(screen.queryByText('Один сервер')).toBeNull();
 		expect(screen.queryByText('AWG3 endpoint')).toBeNull();
 	});
@@ -115,7 +115,7 @@ describe('TunnelCreateMenu', () => {
 		});
 		await openMenu();
 		const items = screen.getAllByRole('menuitem').map((el) => el.textContent ?? '');
-		const fircIdx = items.findIndex((text) => text.includes('Туннель FIRC'));
+		const fircIdx = items.findIndex((text) => text.includes('Туннель AWGM Route'));
 		const sbIdx = items.findIndex((text) => text.includes('Один сервер'));
 		expect(fircIdx).toBeGreaterThan(0);
 		expect(sbIdx).toBeGreaterThan(fircIdx);

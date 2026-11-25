@@ -2,7 +2,6 @@ package firc
 
 import (
 	"context"
-	"debug/elf"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -1008,37 +1007,37 @@ func TestForeignFirc_InstallerRefuses(t *testing.T) {
 	}
 }
 
-// firc поставили, пока рантайм скачивался под локом: уборка «остатков» снесла бы
-// его файлы. Запасной пакет качается после первой проверки — её одной мало.
+// firc поставили, пока рантайм скачивался под локом (прогрев до лока не удался):
+// уборка «остатков» снесла бы его файлы. Первой проверки мало.
 func TestForeignFirc_AppearsDuringInstallDownload(t *testing.T) {
-	ipk := buildMockEntwareFircIPK(t, "mipsel-3.4", "0.8.0-1", elf.ELFCLASS32, elf.ELFDATA2LSB, elf.EM_MIPS)
-	spec := FircBinarySpec{
-		Version: "0.8.0-1", PackageURL: "https://example.invalid/firc.ipk",
-		PackageSHA256: sha256HexBytes(ipk), PackageSize: int64(len(ipk)),
-	}
+	spec, ipk := buildTestRuntimeIPKVersion(t, t.TempDir(), "aarch64-3.10", "0.8.0-1", "https://example.invalid/runtime.ipk")
 	root := t.TempDir()
-	pm := &mockFallbackRuntimePkgMgr{root: root, arch: "mipsel-3.4", expected: "0.8.0-1"}
-	inst := NewOnDemandInstaller("mipsel-3.4", FircBinarySpec{})
-	inst.SetFallbackPackageSpec(spec)
+	pm := &upgradeMockPackages{root: root, arch: "aarch64-3.10", versions: map[string]string{}}
+	inst := NewOnDemandInstaller("aarch64-3.10", spec)
 	inst.SetPackageLayout(DefaultPackageLayout(root))
 	inst.SetPackageManager(pm)
 	inst.SetFreeDiskFn(func(string) (int64, bool) { return 256 << 20, true })
 	var before map[string]string
-	inst.SetDownloader(&orderedDownloader{
-		blobs: map[string][]byte{spec.PackageURL: ipk},
-		onDownload: func(string) {
-			writeTree(t, root, map[string]string{
-				"opt/lib/opkg/info/firc.list": "/opt/bin/fircd\n",
-				"opt/bin/fircd":               "foreign",
-			})
-			before = treeDigest(t, filepath.Join(root, "opt/bin"))
-		},
-	})
+	downloads := 0
+	dl := &orderedDownloader{blobs: map[string][]byte{spec.PackageURL: ipk}}
+	dl.onDownload = func(string) {
+		if downloads++; downloads == 1 {
+			dl.err = errors.New("сеть")
+			return
+		}
+		dl.err = nil
+		writeTree(t, root, map[string]string{
+			"opt/lib/opkg/info/firc.list": "/opt/bin/fircd\n",
+			"opt/bin/fircd":               "foreign",
+		})
+		before = treeDigest(t, filepath.Join(root, "opt/bin"))
+	}
+	inst.SetDownloader(dl)
 	if err := inst.Install(context.Background()); !errors.Is(err, ErrForeignFirc) {
 		t.Fatalf("Install = %v, want ErrForeignFirc", err)
 	}
-	if before == nil || pm.installs != 0 {
-		t.Fatalf("загрузка была: %v, installs=%d", before != nil, pm.installs)
+	if v := pm.versions[RuntimePackageName]; before == nil || v != "" {
+		t.Fatalf("загрузка под локом была: %v, версия %q", before != nil, v)
 	}
 	assertTreeUntouched(t, "install", before, treeDigest(t, filepath.Join(root, "opt/bin")))
 }

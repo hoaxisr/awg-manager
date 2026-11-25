@@ -506,7 +506,7 @@ describe('FircMigrationWizardModal engine purge & recovery', () => {
 				postFircAction: 'switch_and_uninstall_firc',
 			});
 			expect(notifications.success).toHaveBeenLastCalledWith(
-				expect.stringContaining('FIRC и его туннели удалены'),
+				expect.stringContaining('AWGM Route и его туннели удалены'),
 			);
 			expect(get(fircMigrationModalOpen)).toBe(false);
 		});
