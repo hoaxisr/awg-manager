@@ -23,6 +23,14 @@ describe('setFircServerRoutingEnabled', () => {
 		fircGetStatus.mockResolvedValue({});
 	});
 
+	it('сбой запроса статуса операцию не роняет', async () => {
+		fircGetStatus.mockRejectedValue(new Error('сеть'));
+		fircGetExt.mockResolvedValue({ proxyGroups: [], keenDnsCloud: { enabled: false, proxyGroupId: '', interfaces: [] }, serverRouting: { enabledServers: [] } });
+		fircSaveExt.mockImplementation(async (cfg) => cfg);
+		expect(await setFircServerRoutingEnabled('managed:Wireguard5', true)).not.toBeNull();
+		expect(fircSaveExt).toHaveBeenCalledTimes(1);
+	});
+
 	it('при стороннем firc ничего не сохраняет: настройка sing-box уже записана, отказ был бы ложной ошибкой', async () => {
 		fircGetStatus.mockResolvedValue({ foreign: { package: 'firc' } });
 		expect(await setFircServerRoutingEnabled('managed:Wireguard5', true)).toBeNull();

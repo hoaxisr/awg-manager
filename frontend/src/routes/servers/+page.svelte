@@ -33,7 +33,7 @@
 		persistActiveId,
 	} from '$lib/components/servers/serverRailItems';
 	import type { XrayStatus, TgWebProxyStatus, CDNDispatcherConfig } from '$lib/types';
-	import { fircStatus } from '$lib/stores/firc';
+	import { fircForeign, fircStatus } from '$lib/stores/firc';
 	import { extractFircEnabledServers, getFircEnabledServers, setFircServerRoutingEnabled, type FircInboundServerId } from '$lib/utils/fircServerRouting';
 	import { createIngressMutationLock } from '$lib/utils/ingressMutation';
 	import { serversSkeletonCount, clampSkeletonCount } from '$lib/stores/skeletonCounts';
@@ -157,7 +157,7 @@
 			ingressRefs = next;
 			if (savedExt) {
 				fircEnabledServers = extractFircEnabledServers(savedExt);
-			} else {
+			} else if (!$fircForeign) {
 				fircEnabledServers = enabled
 					? [...new Set([...fircEnabledServers, fircId])]
 					: fircEnabledServers.filter((id) => id !== fircId && !clearLegacy.includes(id));
@@ -182,7 +182,7 @@
 			ingressRefs = next;
 			if (savedExt) {
 				fircEnabledServers = extractFircEnabledServers(savedExt);
-			} else {
+			} else if (!$fircForeign) {
 				fircEnabledServers = enabled
 					? [...new Set([...fircEnabledServers, fircId])]
 					: fircEnabledServers.filter((id) => id !== fircId && !clearLegacy.includes(id));
