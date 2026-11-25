@@ -274,6 +274,9 @@ func (op *Operator) RollbackServerRouting(ctx context.Context, txID string) erro
 	// Каталог firc чужой: начатую до него транзакцию не трогаем, её подберёт
 	// RecoverIncompleteServerRoutingTx на первом запуске без стороннего firc.
 	if op.CheckNotForeign() != nil {
+		if _, err := os.Stat(op.srTxDir(txID)); err == nil {
+			op.deferRecovery()
+		}
 		return nil
 	}
 	txDir := op.srTxDir(txID)
@@ -390,7 +393,11 @@ func (op *Operator) RollbackServerRouting(ctx context.Context, txID string) erro
 
 // FinalizeServerRouting cleans up the transaction snapshot directory after commit boundary.
 func (op *Operator) FinalizeServerRouting(txID string) error {
-	if strings.TrimSpace(txID) == "" || op.configDir == "" || op.CheckNotForeign() != nil {
+	if strings.TrimSpace(txID) == "" || op.configDir == "" {
+		return nil
+	}
+	if op.CheckNotForeign() != nil {
+		op.deferRecovery()
 		return nil
 	}
 	return os.RemoveAll(op.srTxDir(txID))
@@ -400,11 +407,17 @@ func (op *Operator) FinalizeServerRouting(txID string) error {
 //   - Uncommitted ("preparing") transactions are deterministically rolled back to pre-tx state.
 //   - Committed ("committing") transactions past the commit point are reconciled and finalized.
 func (op *Operator) RecoverIncompleteServerRoutingTx(ctx context.Context) error {
-	if op.configDir == "" || op.CheckNotForeign() != nil {
+	if op.configDir == "" {
 		return nil
 	}
 	srRoot := filepath.Join(op.configDir, "sr-tx")
 	entries, err := os.ReadDir(srRoot)
+	if op.CheckNotForeign() != nil {
+		if len(entries) > 0 {
+			op.deferRecovery()
+		}
+		return nil
+	}
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil

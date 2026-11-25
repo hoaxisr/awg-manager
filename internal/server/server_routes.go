@@ -264,32 +264,7 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 				s.serverIngressCoordinator.SetFircRouting(fircOp)
 			}
 			egressAdp.SetFircTunnels(s.listFircEgressTunnels)
-			egressAdp.SetFircStateProvider(func(ctx context.Context) (bool, string) {
-				if err := fircOp.CheckNotForeign(); err != nil {
-					return false, err.Error()
-				}
-				if fircOp.IsRecoveryRequired() {
-					return false, "Маршрутизация FIRC требует восстановления: " + fircOp.RecoveryReason()
-				}
-				if s.settings == nil {
-					return false, "Хранилище настроек недоступно для проверки движка маршрутизации"
-				}
-				st, err := s.settings.Get()
-				if err != nil || st == nil {
-					return false, "Не удалось прочитать настройки маршрутизации"
-				}
-				eng := strings.TrimSpace(st.SingboxRouter.RoutingEngine)
-				if eng == "" {
-					eng = "sing-box"
-				}
-				if eng != "firc" {
-					return false, "Правила FIRC неактивны (выбран движок " + eng + ")"
-				}
-				if !fircOp.IsRunning(ctx) {
-					return false, "Служба маршрутизации fircd не запущена"
-				}
-				return true, ""
-			})
+			egressAdp.SetFircStateProvider(s.fircEgressState)
 		}
 		preflight := serverwizard.NewPreflightEngine(s.vlessServerService, s.cdnDispatcher, s.tgWebProxyService, s.serverIngressCoordinator, egressAdp)
 		fingerprint := serverwizard.NewFingerprintEngine(s.vlessServerService, s.cdnDispatcher, s.tgWebProxyService, s.serverIngressCoordinator, egressAdp)
@@ -1677,6 +1652,35 @@ func (l *lazyHandler) handler() http.Handler {
 		l.h = l.build()
 	}
 	return l.h
+}
+
+// fircEgressState — доступны ли правила FIRC как выход серверов, и почему нет.
+func (s *Server) fircEgressState(ctx context.Context) (bool, string) {
+	fircOp := s.fircHandler.Operator()
+	if err := fircOp.CheckNotForeign(); err != nil {
+		return false, err.Error()
+	}
+	if fircOp.IsRecoveryRequired() {
+		return false, "Маршрутизация FIRC требует восстановления: " + fircOp.RecoveryReason()
+	}
+	if s.settings == nil {
+		return false, "Хранилище настроек недоступно для проверки движка маршрутизации"
+	}
+	st, err := s.settings.Get()
+	if err != nil || st == nil {
+		return false, "Не удалось прочитать настройки маршрутизации"
+	}
+	eng := strings.TrimSpace(st.SingboxRouter.RoutingEngine)
+	if eng == "" {
+		eng = "sing-box"
+	}
+	if eng != "firc" {
+		return false, "Правила FIRC неактивны (выбран движок " + eng + ")"
+	}
+	if !fircOp.IsRunning(ctx) {
+		return false, "Служба маршрутизации fircd не запущена"
+	}
+	return true, ""
 }
 
 func (s *Server) listFircEgressTunnels(ctx context.Context) []routing.TunnelEntry {

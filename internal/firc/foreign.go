@@ -24,6 +24,15 @@ import (
 // ErrForeignFirc — отказ любой мутации FIRC при установленном стороннем firc.
 var ErrForeignFirc = errors.New("на роутере установлен firc: он управляется своим интерфейсом, движок FIRC панели доступен только там, где firc не установлен")
 
+// ErrForeignUnknown — не вышло установить, чей firc на роутере. Изменения FIRC
+// закрыты, но свой работающий рантайм остановить и оставить можно как обычно.
+var ErrForeignUnknown = errors.New("не удалось проверить, установлен ли на роутере сторонний firc, поэтому изменения FIRC остановлены: проверьте накопитель и каталог /opt/lib/opkg/info")
+
+// ErrRestartRequired — восстановление на старте отложено из-за стороннего firc.
+// Доигрывать его на лету нельзя: «стороннего нет» на секунды видно и посреди
+// opkg upgrade, а восстановление переписывает файлы в /opt/etc/firc.
+var ErrRestartRequired = fmt.Errorf("%w: восстановление отложено: на старте файлы firc были чужими или их владелец был неизвестен; перезапустите AWG Manager", ErrRecoveryRequired)
+
 // ForeignFirc описывает найденный сторонний firc.
 type ForeignFirc struct {
 	// Package — пакет Entware, которому принадлежат файлы firc; пусто, если
@@ -44,7 +53,9 @@ const (
 )
 
 // ownRuntimePackages — пакеты, чьи файлы firc наши. Пакет awg-manager здесь
-// потому, что сборка BuildTargetIPK кладёт рантайм внутрь него.
+// потому, что сборка BuildTargetIPK кладёт рантайм внутрь него. При
+// переименовании рантайма старое имя awg-firc-runtime остаётся здесь: иначе
+// установленный под ним рантайм станет «сторонним».
 var ownRuntimePackages = map[string]bool{RuntimePackageName: true, "awg-manager": true}
 
 // foreignPackageFiles — файлы, по которым пакет Entware узнаётся как firc.
@@ -122,7 +133,7 @@ func (d *ForeignDetector) Detect() (*ForeignFirc, error) {
 	d.cached = false
 	found, err := d.scan()
 	if err != nil {
-		return nil, fmt.Errorf("firc: проверка владельца файлов firc: %w", err)
+		return nil, fmt.Errorf("%w (%v)", ErrForeignUnknown, err)
 	}
 	now := time.Now().UnixNano()
 	for _, s := range key {
@@ -283,6 +294,15 @@ func (o *Operator) CheckNotForeign() error {
 	}
 	return nil
 }
+
+// foreignPresent — сторонний точно есть; «владельца не узнать» сюда не входит.
+func (o *Operator) foreignPresent() bool {
+	return errors.Is(o.CheckNotForeign(), ErrForeignFirc)
+}
+
+// deferRecovery отмечает, что восстановление на старте пропущено из-за чужого
+// каталога: до перезапуска мутации и после ухода стороннего закрыты.
+func (o *Operator) deferRecovery() { o.recoveryDeferred.Store(true) }
 
 // ForeignFirc описывает сторонний firc или возвращает nil.
 func (o *Operator) ForeignFirc() *ForeignFirc {

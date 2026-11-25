@@ -36,8 +36,8 @@ func (o *Operator) StopByUser(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := o.CheckNotForeign(); err != nil {
-		return err
+	if o.foreignPresent() {
+		return ErrForeignFirc
 	}
 	if err := os.MkdirAll(o.configDir, 0700); err != nil {
 		return err

@@ -324,7 +324,13 @@ func (o *Operator) cleanupRolledBackMigrationJournal(j *MigrationJournal) error 
 
 func (o *Operator) recoverMigrationJournalOnStartup() {
 	jPath := o.MigrationJournalPath()
-	if jPath == "" || o.CheckNotForeign() != nil {
+	if jPath == "" {
+		return
+	}
+	if o.CheckNotForeign() != nil {
+		if _, err := os.Stat(jPath); err == nil {
+			o.deferRecovery()
+		}
 		return
 	}
 	raw, err := os.ReadFile(jPath)

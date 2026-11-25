@@ -190,6 +190,26 @@ func TestUplinkCatalog_ForeignFircTargetsHidden(t *testing.T) {
 	}
 }
 
+// Чей firc — неизвестно: старт не останавливает демон и не снимает правила —
+// работать может наш рантайм.
+func TestCompleteFircStartup_UnknownOwnerKeepsRuntime(t *testing.T) {
+	a, root, lifecycle, pm := newForeignFircApp(t, "firc")
+	info := filepath.Join(root, "opt/lib/opkg/info")
+	if err := os.Remove(filepath.Join(info, "firc.list")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(info, "broken.list"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var cmds atomic.Int32
+	firc.SetExtIptablesRunner(func(context.Context, ...string) ([]byte, error) { cmds.Add(1); return nil, nil })
+	t.Cleanup(func() { firc.SetExtIptablesRunner(nil) })
+	a.completeFircStartup()
+	if lifecycle.Load() != 0 || cmds.Load() != 0 || pm.installs+pm.removes != 0 {
+		t.Fatalf("демон %d, iptables %d, opkg %d", lifecycle.Load(), cmds.Load(), pm.installs+pm.removes)
+	}
+}
+
 // Журнал прерванного переезда сборок develop не блокирует автостарт, в журнале —
 // предупреждение с каталогом копии.
 func TestCompleteFircStartup_AbandonedMigrationWarnsAndStarts(t *testing.T) {

@@ -1068,6 +1068,8 @@ type Status struct {
 	LastError         string           `json:"lastError,omitempty"`
 	// Foreign — на роутере сторонний firc; остальные поля при нём не заполняются.
 	Foreign *ForeignFirc `json:"foreign,omitempty"`
+	// RestartRequired — восстановление отложено до перезапуска AWG Manager.
+	RestartRequired bool `json:"restartRequired,omitempty"`
 }
 
 // ProxyGroup defines an AWGM-managed fallback group of interfaces (up to 4) for FIRC.

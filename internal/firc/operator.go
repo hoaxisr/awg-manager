@@ -199,6 +199,7 @@ type MigrationJournalCommitFaultHooks struct {
 type Operator struct {
 	foreign                  *ForeignDetector
 	foreignTicks             atomic.Int32
+	recoveryDeferred         atomic.Bool
 	runtimeObs               runtimeObserver
 	mu                       sync.Mutex
 	mutationMu               sync.Mutex
@@ -397,7 +398,7 @@ func (o *Operator) effectiveVarLibDir() string {
 }
 
 func (o *Operator) shouldManageKernelNetfilter() bool {
-	if o == nil || o.CheckNotForeign() != nil {
+	if o == nil || o.foreignPresent() {
 		return false
 	}
 	return o.managesKernelNetfilter()
@@ -981,6 +982,14 @@ func (o *Operator) checkMutationAllowed() error {
 	if err := o.CheckNotForeign(); err != nil {
 		return err
 	}
+	return o.checkRecoveryClear()
+}
+
+// checkRecoveryClear — незавершённое восстановление нашего рантайма.
+func (o *Operator) checkRecoveryClear() error {
+	if o.recoveryDeferred.Load() {
+		return ErrRestartRequired
+	}
 	req, reason := o.RecoveryInfo()
 	if req {
 		return fmt.Errorf("%w: %s", ErrRecoveryRequired, reason)
@@ -1331,6 +1340,7 @@ func (o *Operator) getStatus(ctx context.Context, selected, allowLive bool) Stat
 		RecoveryRequired:  recReq,
 		RecoveryReason:    recReason,
 		RecoveryMarker:    o.RecoveryMarkerInfo(),
+		RestartRequired:   o.recoveryDeferred.Load(),
 		SocketPath:        o.socketPath,
 		DNSProxyEndpoint:  o.DNSProxyEndpoint(),
 		InboundPort:       o.inboundPort,
@@ -1519,7 +1529,7 @@ func (o *Operator) stopRuntime(ctx context.Context) error {
 			cleanupExtNetfilterRules(ctx)
 		}
 	}
-	if o.CheckNotForeign() != nil {
+	if o.foreignPresent() {
 		// Сторонний демон не наш: снимаем только свои цепочки FEXT_* и хук,
 		// чтобы панель могла уйти с движка FIRC.
 		runCleanup()
@@ -2325,8 +2335,12 @@ func (o *Operator) SwitchEngineWithOptions(ctx context.Context, targetEngine str
 	}
 	// Уйти с FIRC при стороннем firc можно всегда: метка восстановления и
 	// журнал относились к нашему рантайму, а файлов firc уход не пишет.
-	if foreign := o.CheckNotForeign(); foreign == nil || normTarget == "firc" {
+	if normTarget == "firc" {
 		if err := o.checkMutationAllowed(); err != nil {
+			return err
+		}
+	} else if !o.foreignPresent() {
+		if err := o.checkRecoveryClear(); err != nil {
 			return err
 		}
 	}
@@ -2491,7 +2505,7 @@ func (o *Operator) SwitchEngineWithOptions(ctx context.Context, targetEngine str
 
 		// Phase R3: restart_previous
 		if previousStopAttempted && prevEngine != normTarget && prevEngine != "mihomo" &&
-			(prevEngine != "firc" || o.CheckNotForeign() == nil) {
+			(prevEngine != "firc" || !o.foreignPresent()) {
 			var cerr error
 			if prevEngine == "firc" {
 				cerr = startAndSyncFirc(false)
@@ -2646,6 +2660,9 @@ func (o *Operator) ReconcileRecovery(ctx context.Context, preferredEngine string
 
 	if err := o.CheckNotForeign(); err != nil {
 		return nil, err
+	}
+	if o.recoveryDeferred.Load() {
+		return nil, ErrRestartRequired
 	}
 	hooks := o.DefaultEngineHooks()
 	for _, ov := range overrideHooks {

@@ -247,7 +247,7 @@ func TestForeignDetector_UnknownOwnerRefuses(t *testing.T) {
 	root := t.TempDir()
 	writeTree(t, root, map[string]string{"opt/lib/opkg/info/x.list/y": "z"})
 	op := NewOperator(Options{ConfigDir: filepath.Join(root, "opt/etc/firc"), Foreign: NewForeignDetector(root)})
-	if err := op.SaveGroupsFile(nil); err == nil || errors.Is(err, ErrForeignFirc) {
+	if err := op.SaveGroupsFile(nil); !errors.Is(err, ErrForeignUnknown) || errors.Is(err, ErrForeignFirc) {
 		t.Fatalf("SaveGroupsFile = %v, want отказ проверки владельца", err)
 	}
 	if _, err := os.Stat(op.GroupsPath()); !os.IsNotExist(err) {
@@ -734,6 +734,175 @@ func TestForeignFirc_WatchdogReleasesOwnRulesOnceConfirmed(t *testing.T) {
 	}
 	assertTreeUntouched(t, "watchdog", before, treeDigest(t, root))
 	probe.assertForeignRulesUntouched(t, "watchdog")
+}
+
+// Сторонний мелькнул на один такт (opkg upgrade нашего пакета) — правила на месте.
+func TestForeignFirc_WatchdogIgnoresSingleTick(t *testing.T) {
+	root := foreignTree(t)
+	op, probe := newForeignOperator(t, root)
+	op.SetForceKernelNetfilter(true)
+	list, bin := filepath.Join(root, "opt/lib/opkg/info/firc.list"), filepath.Join(root, "opt/bin/fircd")
+	blink := func(on bool) {
+		t.Helper()
+		if on {
+			writeTree(t, root, map[string]string{"opt/lib/opkg/info/firc.list": "/opt/bin/fircd\n"})
+		} else if err := os.Remove(list); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Remove(bin); err != nil {
+		t.Fatal(err)
+	}
+	for range 3 { // не подряд: счёт обязан сбрасываться
+		op.releaseExtForForeign(context.Background())
+		blink(false)
+		op.releaseExtForForeign(context.Background())
+		blink(true)
+	}
+	probe.mu.Lock()
+	defer probe.mu.Unlock()
+	if len(probe.cmds) != 0 {
+		t.Fatalf("правила сняты из-за одиночных тактов: %v", probe.cmds)
+	}
+}
+
+// unknownOwner делает список пакета нечитаемым: чей firc — не узнать.
+func unknownOwner(t *testing.T, root string) {
+	t.Helper()
+	if err := os.Remove(filepath.Join(root, "opt/lib/opkg/info/firc.list")); err != nil {
+		t.Fatal(err)
+	}
+	writeTree(t, root, map[string]string{"opt/lib/opkg/info/broken.list/x": ""})
+}
+
+// Владельца не узнать — не «сторонний»: свой рантайм останавливается, с движка
+// FIRC уходят как обычно, сторож правил не снимает, а записи закрыты.
+func TestForeignUnknown_OwnRuntimeStopsAndLeaves(t *testing.T) {
+	ctx := context.Background()
+	stopped := func(t *testing.T, root string, probe *foreignProbe) {
+		t.Helper()
+		ran, _ := os.ReadFile(filepath.Join(root, "opt/etc/init.d/S99firc.ran"))
+		if string(ran) != "stop\n" {
+			t.Errorf("init-скрипт: %q, want stop", ran)
+		}
+		probe.mu.Lock()
+		defer probe.mu.Unlock()
+		if !strings.Contains(strings.Join(probe.cmds, "\n"), "ipset destroy FIRC_") {
+			t.Error("ipset своего рантайма не убраны")
+		}
+	}
+	newOp := func(t *testing.T) (*Operator, *foreignProbe, string) {
+		root := foreignTree(t)
+		unknownOwner(t, root)
+		for _, rel := range []string{"recovery-state.json", "migration-journal.json"} {
+			if err := os.Remove(filepath.Join(root, "opt/etc/firc", rel)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		op, probe := newForeignOperator(t, root)
+		op.SetForceKernelNetfilter(true)
+		return op, probe, root
+	}
+	t.Run("StopByUser", func(t *testing.T) {
+		op, probe, root := newOp(t)
+		if err := op.StopByUser(ctx); err != nil || !op.ManuallyDisabled() {
+			t.Fatalf("StopByUser = %v, disabled=%v", err, op.ManuallyDisabled())
+		}
+		stopped(t, root, probe)
+	})
+	t.Run("SwitchEngine", func(t *testing.T) {
+		op, probe, root := newOp(t)
+		barrier := false
+		SetExtIptablesRunner(func(_ context.Context, args ...string) ([]byte, error) {
+			barrier = barrier || strings.Contains(strings.Join(args, " "), "-N "+cutoverGuardChain)
+			return nil, nil
+		})
+		cur, sbRunning, parked := "firc", false, true
+		hooks := newSection3TestSwitchHooks(&cur, &sbRunning, &parked, nil, nil)
+		if err := op.SwitchEngine(ctx, "sing-box", hooks); err != nil || cur != "sing-box" {
+			t.Fatalf("SwitchEngine = %v, движок %s", err, cur)
+		}
+		if !barrier {
+			t.Error("барьер переключения не ставился")
+		}
+		stopped(t, root, probe)
+		if err := op.SwitchEngine(ctx, "firc", hooks); !errors.Is(err, ErrForeignUnknown) {
+			t.Fatalf("выбор FIRC = %v, want ErrForeignUnknown", err)
+		}
+	})
+	t.Run("метка восстановления уходу мешает, как обычно", func(t *testing.T) {
+		op, _, _ := newOp(t)
+		op.recoveryRequired = true
+		cur, sbRunning, parked := "firc", false, true
+		err := op.SwitchEngine(ctx, "sing-box", newSection3TestSwitchHooks(&cur, &sbRunning, &parked, nil, nil))
+		if !errors.Is(err, ErrRecoveryRequired) || cur != "firc" {
+			t.Fatalf("SwitchEngine = %v, движок %s", err, cur)
+		}
+	})
+	t.Run("сторож", func(t *testing.T) {
+		op, probe, _ := newOp(t)
+		for range 4 {
+			op.releaseExtForForeign(ctx)
+		}
+		if len(probe.cmds) != 0 {
+			t.Fatalf("сторож снял правила: %v", probe.cmds)
+		}
+	})
+}
+
+// Восстановление, пропущенное из-за чужого каталога, не доигрывается на лету и
+// не теряется молча: до перезапуска мутации отказывают с понятным текстом.
+func TestForeignFirc_DeferredRecoveryAsksForRestart(t *testing.T) {
+	ctx := context.Background()
+	leave := func(t *testing.T, root string) {
+		t.Helper()
+		for _, rel := range []string{"opt/lib/opkg/info/firc.list", "opt/bin/fircd"} {
+			if err := os.Remove(filepath.Join(root, rel)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for name, tc := range map[string]struct {
+		drop []string
+		call func(*Operator)
+		want bool
+	}{
+		"журнал миграции":       {[]string{"sr-tx"}, func(*Operator) {}, true},
+		"транзакция на старте":  {[]string{"migration-journal.json"}, func(o *Operator) { _ = o.RecoverIncompleteServerRoutingTx(ctx) }, true},
+		"откат транзакции":      {[]string{"migration-journal.json"}, func(o *Operator) { _ = o.RollbackServerRouting(ctx, "tx-live") }, true},
+		"завершение транзакции": {[]string{"migration-journal.json"}, func(o *Operator) { _ = o.FinalizeServerRouting("tx-live") }, true},
+		"откладывать нечего": {[]string{"migration-journal.json", "sr-tx"}, func(o *Operator) {
+			_ = o.RecoverIncompleteServerRoutingTx(ctx)
+			_ = o.RollbackServerRouting(ctx, "tx-none")
+		}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := foreignTree(t)
+			for _, rel := range append(tc.drop, "recovery-state.json") {
+				if err := os.RemoveAll(filepath.Join(root, "opt/etc/firc", rel)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			op, _ := newForeignOperator(t, root)
+			tc.call(op)
+			leave(t, root)
+			before := treeDigest(t, root)
+			if got := op.GetOfflineStatus(true).RestartRequired; got != tc.want {
+				t.Fatalf("RestartRequired = %v, want %v", got, tc.want)
+			}
+			_, err := op.StageGroupsOffline(nil)
+			if got := errors.Is(err, ErrRestartRequired); got != tc.want {
+				t.Fatalf("StageGroupsOffline = %v", err)
+			}
+			if !tc.want {
+				return
+			}
+			if _, err := op.ReconcileRecovery(ctx, "firc"); !errors.Is(err, ErrRestartRequired) || !strings.Contains(err.Error(), "перезапустите AWG Manager") {
+				t.Fatalf("ReconcileRecovery = %v", err)
+			}
+			assertTreeUntouched(t, name, before, treeDigest(t, root))
+		})
+	}
 }
 
 // Прерванный переезд сборок develop не держит автостарт, а копия настроек цела.

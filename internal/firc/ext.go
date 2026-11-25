@@ -1455,7 +1455,7 @@ func (op *Operator) runExtWatchdogTick(loopCtx context.Context) {
 // ненадолго остаётся без списка файлов. Сторож не гасим: уйдёт сторонний —
 // обычный такт вернёт правила.
 func (op *Operator) releaseExtForForeign(ctx context.Context) {
-	if op.CheckNotForeign() == nil {
+	if !op.foreignPresent() {
 		op.foreignTicks.Store(0)
 		return
 	}

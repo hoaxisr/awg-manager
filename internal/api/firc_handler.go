@@ -263,32 +263,23 @@ var fircEngineExitPaths = map[string]bool{
 	"/api/firc/settings":      true,
 }
 
-// writeForeignFirc отвечает отказом при стороннем firc. false — err о другом.
+// writeForeignFirc отвечает отказом при стороннем firc или неизвестном владельце
+// его файлов. false — err о другом.
 func writeForeignFirc(w http.ResponseWriter, err error) bool {
-	if !errors.Is(err, firc.ErrForeignFirc) {
+	switch {
+	case errors.Is(err, firc.ErrForeignFirc):
+		response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "FIRC_FOREIGN")
+	case errors.Is(err, firc.ErrForeignUnknown):
+		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "FIRC_OWNER_UNKNOWN")
+	default:
 		return false
 	}
-	response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "FIRC_FOREIGN")
 	return true
 }
 
 // rejectForeign отвечает отказом, если FIRC на роутере не наш.
 func (h *FircHandler) rejectForeign(w http.ResponseWriter) bool {
-	err := h.checkNotForeign()
-	if err == nil {
-		return false
-	}
-	if !writeForeignFirc(w, err) {
-		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "FIRC_OWNER_UNKNOWN")
-	}
-	return true
-}
-
-func (h *FircHandler) checkNotForeign() error {
-	if h.op != nil {
-		return h.op.CheckNotForeign()
-	}
-	return nil
+	return h.op != nil && writeForeignFirc(w, h.op.CheckNotForeign())
 }
 
 // refuseForeign закрывает все мутации /api/firc/*, включая прокси /v1. Чтения
@@ -626,7 +617,10 @@ func (h *FircHandler) handleControl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	action := strings.ToLower(strings.TrimSpace(req.Action))
-	if action != "select" && h.rejectForeign(w) {
+	// Остановку выбранного движка проверяет оператор: при неизвестном владельце
+	// свой рантайм останавливается как обычно.
+	stopOwn := action == "stop" && !h.isExplicitlyUnselected()
+	if action != "select" && !stopOwn && h.rejectForeign(w) {
 		return
 	}
 	switch action {
@@ -642,6 +636,9 @@ func (h *FircHandler) handleControl(w http.ResponseWriter, r *http.Request) {
 		h.publishFirc("control-start")
 	case "stop":
 		if err := h.op.StopByUser(r.Context()); err != nil {
+			if writeForeignFirc(w, err) {
+				return
+			}
 			response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "STOP_FAILED")
 			return
 		}

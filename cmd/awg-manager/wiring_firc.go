@@ -206,7 +206,7 @@ func (a *app) buildProductionEngineSwitchHooks() firc.EngineSwitchHooks {
 				return errors.New("sing-box operator is not initialized")
 			}
 			if !a.singboxOp.IsPresent() {
-				if a.fircOp.CheckNotForeign() != nil {
+				if errors.Is(a.fircOp.CheckNotForeign(), firc.ErrForeignFirc) {
 					// Сторонний firc: с движка FIRC уходят и без sing-box —
 					// маршрутизация панели просто выключается.
 					return a.singboxOp.SetStoppedByEngine(false)
@@ -340,7 +340,7 @@ func (a *app) buildProductionEngineSwitchHooks() firc.EngineSwitchHooks {
 	activateTarget := func(ctx context.Context, targetEngine string) error {
 		switch targetEngine {
 		case "sing-box":
-			if a.singboxOp != nil && !a.singboxOp.IsPresent() && a.fircOp.CheckNotForeign() != nil {
+			if a.singboxOp != nil && !a.singboxOp.IsPresent() && errors.Is(a.fircOp.CheckNotForeign(), firc.ErrForeignFirc) {
 				return nil // ушли с FIRC без sing-box (см. startTarget): поднимать нечего
 			}
 			if a.singboxOp != nil {
@@ -785,6 +785,7 @@ func (a *app) runFircStartupRecoveryGate() bool {
 func (a *app) completeFircStartup() {
 	if err := a.fircOp.CheckNotForeign(); err != nil {
 		a.completeForeignFircStartup(err)
+		a.recoverOrphanServerRoutingTx() // под чужим каталогом только отмечает отложенное
 		return
 	}
 	if !a.runFircStartupRecoveryGate() {
@@ -872,6 +873,9 @@ func (a *app) completeForeignFircStartup(reason error) {
 		a.bootLog.Warn("firc", "start", reason.Error())
 	}
 	a.parkSingboxForFirc()
+	if !errors.Is(reason, firc.ErrForeignFirc) {
+		return // чей firc — неизвестно: работающий может быть нашим, не трогаем
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if err := a.fircOp.Stop(ctx); err != nil && a.bootLog != nil {

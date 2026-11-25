@@ -290,3 +290,44 @@ func TestFircForeign_SingboxRouterSwitchRefused(t *testing.T) {
 		t.Fatalf("посторонняя ошибка выдана за сторонний firc: %s", rec.Body.String())
 	}
 }
+
+// Владельца firc не узнать: свой выбранный рантайм останавливается, остальное
+// закрыто понятным текстом.
+func TestFircForeignUnknown_StopOwnAllowedRestExplained(t *testing.T) {
+	unknown := func(t *testing.T, engine string) *foreignFircFixture {
+		f := newForeignFircFixture(t, engine)
+		if err := os.Remove(filepath.Join(f.root, "opt/lib/opkg/info/firc.list")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(f.root, "opt/lib/opkg/info/broken.list"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return f
+	}
+	f := unknown(t, "firc")
+	for _, c := range [][3]string{
+		{"PUT", "/api/firc/v1/groups", `{}`}, {"POST", "/api/firc/install", `{}`}, {"POST", "/api/firc/control", `{"action":"start"}`},
+		{"POST", "/api/firc/engine/switch", `{"engine":"firc"}`},
+	} {
+		rec := f.do(c[0], c[1], c[2])
+		if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "FIRC_OWNER_UNKNOWN") ||
+			!strings.Contains(rec.Body.String(), "/opt/lib/opkg/info") {
+			t.Errorf("%s %s = %d %s", c[0], c[1], rec.Code, rec.Body.String())
+		}
+	}
+	ran := filepath.Join(f.root, "opt/etc/init.d/S99firc.ran")
+	if rec := f.do("POST", "/api/firc/control", `{"action":"stop"}`); rec.Code != http.StatusOK {
+		t.Fatalf("stop = %d %s", rec.Code, rec.Body.String())
+	}
+	if raw, _ := os.ReadFile(ran); string(raw) != "stop\n" {
+		t.Fatalf("init-скрипт: %q", raw)
+	}
+	// Движок не FIRC: работающий firc может быть чужим — не трогаем.
+	f = unknown(t, "sing-box")
+	if rec := f.do("POST", "/api/firc/control", `{"action":"stop"}`); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("stop при sing-box = %d", rec.Code)
+	}
+	if _, err := os.Stat(filepath.Join(f.root, "opt/etc/init.d/S99firc.ran")); !os.IsNotExist(err) {
+		t.Fatal("остановлен firc неизвестного владельца при движке sing-box")
+	}
+}
