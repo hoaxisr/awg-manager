@@ -838,7 +838,7 @@
 			if (isRealityOnly) {
 				return applyPhase === 'review';
 			}
-			return applyPhase === 'review' && Boolean(preflight?.can_proceed && planCurrent);
+			return applyPhase === 'review' && Boolean(preflight?.can_proceed && planRecord);
 		}
 		return false;
 	});

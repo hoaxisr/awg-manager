@@ -121,8 +121,8 @@ describe('ExternalAccessWizard', () => {
 		await waitFor(() => expect(api.applyWizardPlan).toHaveBeenCalledWith('tgwebproxy', 'plan-2'));
 	});
 
-	// Мутации: убрать $effect или сравнение planKey.
-	it('черновик изменился под планом — план строится заново', async () => {
+	// Мутации: убрать $effect или сравнение planKey; не сбрасывать план в начале prepareStep5Plan.
+	it('черновик изменился под планом — план строится заново, при сбое «Применить» недоступна', async () => {
 		let resolveNet: (s: XrayRealityState) => void = () => {};
 		vi.mocked(api.getXrayReality).mockImplementation((refresh) =>
 			refresh ? new Promise((r) => (resolveNet = r)) : Promise.resolve(null as unknown as XrayRealityState)
@@ -134,9 +134,19 @@ describe('ExternalAccessWizard', () => {
 		await toReview();
 		expect(vi.mocked(api.createWizardPlan).mock.calls[0][1].direct_host).toBe('tg.example.com');
 
+		let rejectPreflight: (e: Error) => void = () => {};
+		vi.mocked(api.runWizardPreflight).mockReturnValueOnce(new Promise((_, r) => (rejectPreflight = r)));
 		resolveNet({
 			settings: { enabled: false }, network: { public_host: '', white_ip: true, gray_ip: false, external_ip: '198.51.100.10' },
 		} as unknown as XrayRealityState);
+		await waitFor(() => expect(api.runWizardPreflight).toHaveBeenCalledTimes(2));
+		expect(button(m.common_apply())?.disabled).toBe(true);
+		rejectPreflight(new Error('сеть'));
+		await waitFor(() => expect(button(m.common_back())?.disabled).toBe(false));
+		expect(button(m.common_apply())?.disabled).toBe(true);
+
+		await fireEvent.click(button(m.common_back())!);
+		await next();
 		await waitFor(() => expect(api.createWizardPlan).toHaveBeenCalledTimes(2));
 		expect(vi.mocked(api.createWizardPlan).mock.calls[1][1].direct_host).toBe('198.51.100.10');
 		await waitFor(() => expect(button(m.common_apply())?.disabled).toBe(false));
