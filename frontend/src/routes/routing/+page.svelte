@@ -334,6 +334,11 @@
                     ? { id: 'singbox', label: 'TProxy', badge: singboxRuleCount }
                     : null,
                 showSingboxFakeip ? { id: 'fakeip', label: 'FakeIP' } : null,
+                // Автолист работает с маршрутизацией sing-box, поэтому его
+                // вкладка живёт в той же группе: Sing-box · Автолист.
+                autolistAvailable
+                    ? { id: 'autolist', label: m.routing_page_tab_autolist(), badge: autolistWaitingCount }
+                    : null,
             ] as (TabChildItem | null)[]
         ).filter((c): c is TabChildItem => c !== null),
     );
@@ -367,10 +372,8 @@
                       separatorBefore: true,
                   }
                 : null,
-            // awgmautolist — сателлит автосписка: вкладка expert-уровня.
-            autolistAvailable
-                ? { id: 'autolist', label: m.routing_page_tab_autolist(), badge: autolistWaitingCount, separatorBefore: true }
-                : null,
+            // awgmautolist — сателлит автосписка: живёт в группе Sing-box
+            // (см. singboxMenuChildren), отдельной вкладки нет.
             // Файлы нужны sing-box, но и без него скачанное должно быть видно:
             // только здесь их удаляют и выключают автообновление.
             singboxInstalled || (geoFileCount ?? 0) > 0
