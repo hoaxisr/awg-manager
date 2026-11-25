@@ -1780,10 +1780,14 @@ func (s *Service) runBackgroundHealthWorker() {
 		case <-s.stopCh:
 			return
 		case <-ticker.C:
-			s.checkUpstreamHealth()
-			s.retryDirectWANFirewall()
+			s.backgroundTick()
 		}
 	}
+}
+
+func (s *Service) backgroundTick() {
+	s.checkUpstreamHealth()
+	s.retryDirectWANFirewall()
 }
 
 func (s *Service) Close() error {

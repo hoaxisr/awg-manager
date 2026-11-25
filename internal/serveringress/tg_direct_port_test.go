@@ -53,3 +53,52 @@ func TestApplyDispatcherConfig_ReturnsTelegramUpdateError(t *testing.T) {
 		t.Fatalf("ошибка UpdateConfig потеряна: %v", err)
 	}
 }
+
+// Сверка файрвола после фиксации, отката и сброса не отменяет сделанное.
+// Мутация: возвращать её ошибку из applyLocked, failAndRollback,
+// ApplyDispatcherConfig, ExecuteIngressTransaction или сбросов → красный.
+func TestWANFirewallSyncErrorDoesNotFailCommittedWork(t *testing.T) {
+	tg := &mockTgWithFWSync{
+		mockTgWebProxy: &mockTgWebProxy{cfg: tgwebproxy.Config{Enabled: true, Scenario: tgwebproxy.ScenarioDirectFakeTLS, DirectPort: 8443, ListenPort: 8085}},
+		syncErr:        errors.New("xtables lock"),
+	}
+	coord := New(t.TempDir(), &mockXray{}, &mockDispatcher{}, tg)
+	ctx := context.Background()
+	if err := coord.SetTelegramEnabled(ctx, false); err != nil || tg.cfg.Enabled {
+		t.Fatalf("выключение: err=%v enabled=%v", err, tg.cfg.Enabled)
+	}
+	if err := coord.ApplyDispatcherConfig(ctx, cdndispatcher.Config{}); err != nil {
+		t.Fatalf("ApplyDispatcherConfig: %v", err)
+	}
+	tg.prepError = errors.New("подготовка не удалась")
+	if err := coord.SetTelegramEnabled(ctx, true); !errors.Is(err, tg.prepError) || errors.Is(err, tg.syncErr) {
+		t.Fatalf("откат: %v", err)
+	}
+	if tg.syncCalls < 3 {
+		t.Fatalf("сверок %d", tg.syncCalls)
+	}
+
+	tg.prepError = nil
+	if err := coord.ExecuteIngressTransaction(ctx, IngressTransactionParams{
+		TxID: "tx-fw", ServerKind: "tgwebproxy",
+		Telegram: &IngressTelegramCandidate{Enabled: true, Scenario: tgwebproxy.ScenarioDirectFakeTLS, DirectHost: "203.0.113.10", DirectPort: 8443},
+	}); err != nil {
+		t.Fatalf("ExecuteIngressTransaction: %v", err)
+	}
+
+	resettable := &resettableTg{mockTgWebProxy: tg.mockTgWebProxy}
+	coord = New(t.TempDir(), &resettableXray{mockXray: &mockXray{}}, &mockDispatcher{}, &struct {
+		*resettableTg
+		failingSync
+	}{resettableTg: resettable})
+	if _, err := coord.ResetTelegram(ctx, ResetOptions{}); err != nil || !resettable.resetCalled {
+		t.Fatalf("ResetTelegram: %v", err)
+	}
+	if _, err := coord.ResetVless(ctx, ResetOptions{}); err != nil {
+		t.Fatalf("ResetVless: %v", err)
+	}
+}
+
+type failingSync struct{}
+
+func (failingSync) SyncDirectWANFirewall() error { return errors.New("xtables lock") }

@@ -217,7 +217,7 @@ func TestRetryDirectWANFirewall(t *testing.T) {
 	if err := svc.StartConfigured(); err != nil || calls != 1 {
 		t.Fatalf("StartConfigured: %v, сверок %d", err, calls)
 	}
-	svc.retryDirectWANFirewall()
+	svc.backgroundTick()
 	if calls != 2 || svc.GetStatus().DirectWANError == "" {
 		t.Fatalf("повтор: сверок %d, статус %q", calls, svc.GetStatus().DirectWANError)
 	}
