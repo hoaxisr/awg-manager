@@ -418,7 +418,7 @@ func TestCDaemon_RejectEarlyExitForeignPIDAndMissingCapability(t *testing.T) {
 
 func TestCDaemon_ReloadErrorHandling(t *testing.T) {
 	srv := New(Config{
-		ListenAddr: "127.0.0.1:0",
+		ListenAddr: testutil.FreeAddr(t),
 		Clients:    []string{"41b7ef34-6b19-48f3-8d95-82cf4474e109"},
 	})
 	srv.cConfPath = filepath.Join(t.TempDir(), "reload.conf")

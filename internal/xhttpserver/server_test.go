@@ -62,7 +62,7 @@ func startEchoTCPServer(t *testing.T) (net.IP, uint16, *atomic.Int64, func()) {
 
 func TestXHTTPServer_ConfigValidationAndACLUnit(t *testing.T) {
 	srvEmpty := xhttpserver.New(xhttpserver.Config{
-		ListenAddr: "127.0.0.1:0",
+		ListenAddr: testutil.FreeAddr(t),
 		PathPrefix: "/cdn-bridge",
 		Clients:    nil,
 	})
@@ -71,7 +71,7 @@ func TestXHTTPServer_ConfigValidationAndACLUnit(t *testing.T) {
 	}
 
 	srvInvalid := xhttpserver.New(xhttpserver.Config{
-		ListenAddr: "127.0.0.1:0",
+		ListenAddr: testutil.FreeAddr(t),
 		PathPrefix: "/cdn-bridge",
 		Clients:    []string{"short-panel-id-not-a-uuid"},
 	})
@@ -81,7 +81,7 @@ func TestXHTTPServer_ConfigValidationAndACLUnit(t *testing.T) {
 
 	for _, badProxy := range []string{"not-an-ip", "10.0.0.1/99", "192.168.1.999", "2001:db8::/129"} {
 		srv := xhttpserver.New(xhttpserver.Config{
-			ListenAddr:     "127.0.0.1:0",
+			ListenAddr:     testutil.FreeAddr(t),
 			PathPrefix:     "/cdn-bridge",
 			Clients:        []string{"44444444-5555-6666-7777-888888888888"},
 			TrustedProxies: []string{"127.0.0.1/32", badProxy},
@@ -109,7 +109,7 @@ func TestXHTTPServer_FailClosedValidationAndAuth(t *testing.T) {
 	allowedUUID := "11111111-2222-3333-4444-555555555555"
 	unknownUUID := "99999999-8888-7777-6666-555555555555"
 	srv := newCServer(t, xhttpserver.Config{
-		ListenAddr: "127.0.0.1:0",
+		ListenAddr: testutil.FreeAddr(t),
 		PathPrefix: "/cdn-bridge",
 		Clients:    []string{allowedUUID},
 		Egress: xhttpserver.EgressConfig{
@@ -147,7 +147,7 @@ func TestXHTTPServer_DoSHardeningLimitsAnd413(t *testing.T) {
 
 	clientUUID := "11111111-2222-3333-4444-555555555555"
 	srv := newCServer(t, xhttpserver.Config{
-		ListenAddr: "127.0.0.1:0",
+		ListenAddr: testutil.FreeAddr(t),
 		PathPrefix: "/cdn-bridge",
 		Clients:    []string{clientUUID},
 		Egress: xhttpserver.EgressConfig{
@@ -224,7 +224,7 @@ func TestXHTTPServer_DoSHardeningLimitsAnd413(t *testing.T) {
 func TestXHTTPServer_BoundedPreAuthContractAndAutoExpiry(t *testing.T) {
 	clientUUID := "11111111-2222-3333-4444-555555555555"
 	srv := newCServer(t, xhttpserver.Config{
-		ListenAddr:              "127.0.0.1:0",
+		ListenAddr:              testutil.FreeAddr(t),
 		PathPrefix:              "/cdn-bridge",
 		Clients:                 []string{clientUUID},
 		PreAuthSessionTTL:       120 * time.Millisecond,
@@ -321,7 +321,7 @@ func TestXHTTPServer_TrustedProxyAndSpoofedForwardedFor(t *testing.T) {
 	authPrefix := xhttptest.BuildVLESSReq(t, clientUUID, echoIP, echoPort, nil)[:17]
 
 	srvUntrusted := newCServer(t, xhttpserver.Config{
-		ListenAddr: "127.0.0.1:0",
+		ListenAddr: testutil.FreeAddr(t),
 		PathPrefix: "/cdn-bridge",
 		Clients:    []string{clientUUID},
 		Egress: xhttpserver.EgressConfig{
@@ -361,7 +361,7 @@ func TestXHTTPServer_TrustedProxyAndSpoofedForwardedFor(t *testing.T) {
 	}
 
 	srvTrusted := newCServer(t, xhttpserver.Config{
-		ListenAddr:     "127.0.0.1:0",
+		ListenAddr:     testutil.FreeAddr(t),
 		PathPrefix:     "/cdn-bridge",
 		Clients:        []string{clientUUID},
 		TrustedProxies: []string{"127.0.0.1/32"},
@@ -419,7 +419,7 @@ func TestXHTTPServer_PrivateDestinationACL(t *testing.T) {
 
 	clientUUID := "11111111-2222-3333-4444-555555555555"
 	srv := newCServer(t, xhttpserver.Config{
-		ListenAddr: "127.0.0.1:0",
+		ListenAddr: testutil.FreeAddr(t),
 		PathPrefix: "/cdn-bridge",
 		Clients:    []string{clientUUID},
 		Egress:     xhttpserver.EgressConfig{Mode: "direct"},
@@ -450,7 +450,7 @@ func TestXHTTPServer_PacketUpStreamUpStreamOneAndLargePayload(t *testing.T) {
 
 	clientUUID := "11111111-2222-3333-4444-555555555555"
 	srv := newCServer(t, xhttpserver.Config{
-		ListenAddr: "127.0.0.1:0",
+		ListenAddr: testutil.FreeAddr(t),
 		PathPrefix: "/cdn-bridge",
 		Clients:    []string{clientUUID},
 		Egress: xhttpserver.EgressConfig{
@@ -653,7 +653,7 @@ func TestXHTTPServer_SocksAndInterfaceEgress(t *testing.T) {
 
 	clientUUID := "22222222-3333-4444-5555-666666666666"
 	srv := newCServer(t, xhttpserver.Config{
-		ListenAddr: "127.0.0.1:0",
+		ListenAddr: testutil.FreeAddr(t),
 		PathPrefix: "/cdn-bridge",
 		Clients:    []string{clientUUID},
 		Egress: xhttpserver.EgressConfig{
@@ -714,7 +714,7 @@ func TestXHTTPServer_PathStyleSplitStreamSimulation(t *testing.T) {
 
 	clientUUID := "33333333-4444-5555-6666-777777777777"
 	srv := newCServer(t, xhttpserver.Config{
-		ListenAddr:     "127.0.0.1:0",
+		ListenAddr:     testutil.FreeAddr(t),
 		PathPrefix:     "/cdn-bridge",
 		Clients:        []string{clientUUID},
 		TrustedProxies: []string{"127.0.0.1/32"},
@@ -842,7 +842,7 @@ func TestXHTTPServer_TrustedProxiesFailClosedLiveReload(t *testing.T) {
 
 	clientUUID := "44444444-5555-6666-7777-888888888888"
 	srv := newCServer(t, xhttpserver.Config{
-		ListenAddr:     "127.0.0.1:0",
+		ListenAddr:     testutil.FreeAddr(t),
 		PathPrefix:     "/cdn-bridge",
 		Clients:        []string{clientUUID},
 		TrustedProxies: []string{"127.0.0.1/32"},
@@ -964,7 +964,7 @@ func TestXHTTPServer_ExternalVLESSClientBinaryInterop(t *testing.T) {
 
 	clientUUID := "55555555-6666-7777-8888-999999999999"
 	srv := newCServer(t, xhttpserver.Config{
-		ListenAddr:     "127.0.0.1:0",
+		ListenAddr:     testutil.FreeAddr(t),
 		PathPrefix:     "/cdn-bridge",
 		Clients:        []string{clientUUID},
 		TrustedProxies: []string{"127.0.0.1/32"},
@@ -1048,7 +1048,7 @@ func TestXHTTPServer_VLESSMuxXUDPDNSAndQUICReject(t *testing.T) {
 
 	clientUUID := "11111111-2222-3333-4444-555555555555"
 	srv := newCServer(t, xhttpserver.Config{
-		ListenAddr: "127.0.0.1:0",
+		ListenAddr: testutil.FreeAddr(t),
 		PathPrefix: "/cdn-bridge",
 		Clients:    []string{clientUUID},
 		Egress: xhttpserver.EgressConfig{
@@ -1144,7 +1144,7 @@ func TestXHTTPServer_SlowClientDownlinkDrainAndTrailingCloseNotify(t *testing.T)
 
 	clientUUID := "11111111-2222-3333-4444-555555555555"
 	srv := newCServer(t, xhttpserver.Config{
-		ListenAddr: "127.0.0.1:0",
+		ListenAddr: testutil.FreeAddr(t),
 		PathPrefix: "/cdn-bridge",
 		Clients:    []string{clientUUID},
 		Egress: xhttpserver.EgressConfig{
@@ -1224,7 +1224,7 @@ func TestXHTTPServer_LiveClientUUIDRevocation(t *testing.T) {
 	uuidB := "22222222-3333-4444-5555-666666666666"
 
 	cfg := xhttpserver.Config{
-		ListenAddr: "127.0.0.1:0",
+		ListenAddr: testutil.FreeAddr(t),
 		PathPrefix: "/cdn-bridge",
 		Clients:    []string{uuidA, uuidB},
 		Egress: xhttpserver.EgressConfig{
@@ -1370,7 +1370,7 @@ func TestXHTTPServer_LANPrivateTCPNoPrematureReadTimeout(t *testing.T) {
 	upAddr := ln.Addr().(*net.TCPAddr)
 	clientUUID := "11111111-2222-3333-4444-555555555555"
 	srv := newCServer(t, xhttpserver.Config{
-		ListenAddr: "127.0.0.1:0",
+		ListenAddr: testutil.FreeAddr(t),
 		PathPrefix: "/cdn-bridge",
 		Clients:    []string{clientUUID},
 		Egress: xhttpserver.EgressConfig{

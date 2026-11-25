@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 	"github.com/hoaxisr/awg-manager/internal/xhttpserver"
 	"github.com/hoaxisr/awg-manager/internal/xhttpserver/xhttptest"
 )
@@ -75,7 +76,7 @@ func TestFiniteProto_RoundTripAndAuth_LiveCDaemon(t *testing.T) {
 	}
 
 	srv := newCServer(t, xhttpserver.Config{
-		ListenAddr: "127.0.0.1:0",
+		ListenAddr: testutil.FreeAddr(t),
 		PathPrefix: "/cdn-bridge",
 		Clients:    []string{uuidStr},
 		FiniteCredentials: map[string][]byte{
@@ -254,7 +255,7 @@ func TestFiniteProto_RejectsAllUUIDDerivedVariantsAndWrongKeys_LiveCDaemon(t *te
 	}
 
 	srv := newCServer(t, xhttpserver.Config{
-		ListenAddr: "127.0.0.1:0",
+		ListenAddr: testutil.FreeAddr(t),
 		PathPrefix: "/cdn-bridge",
 		Clients:    []string{uuidStr},
 		FiniteCredentials: map[string][]byte{
@@ -355,7 +356,7 @@ func TestFiniteProto_CredentialRotationAndMultiClient_LiveCDaemon(t *testing.T) 
 	fpClient2, _, secretClient2, _ := xhttpserver.GenerateFPCredentials()
 
 	srv := newCServer(t, xhttpserver.Config{
-		ListenAddr: "127.0.0.1:0",
+		ListenAddr: testutil.FreeAddr(t),
 		PathPrefix: "/cdn-bridge",
 		Clients:    []string{uuidStr},
 		FiniteCredentials: map[string][]byte{
@@ -522,7 +523,7 @@ func TestFiniteProto_TrailingSlashProxyNormalizedPathAuth_LiveCDaemon(t *testing
 	fpClientID, _, fpSecret, _ := xhttpserver.GenerateFPCredentials()
 
 	srv := newCServer(t, xhttpserver.Config{
-		ListenAddr: "127.0.0.1:0",
+		ListenAddr: testutil.FreeAddr(t),
 		PathPrefix: "/cdn-bridge",
 		Clients:    []string{uuidStr},
 		FiniteCredentials: map[string][]byte{
@@ -588,7 +589,7 @@ func TestFiniteProto_UDPOverTCP_LiveCDaemon(t *testing.T) {
 	}
 
 	srv := newCServer(t, xhttpserver.Config{
-		ListenAddr: "127.0.0.1:0",
+		ListenAddr: testutil.FreeAddr(t),
 		PathPrefix: "/cdn-bridge",
 		Clients:    []string{uuidStr},
 		FiniteCredentials: map[string][]byte{
