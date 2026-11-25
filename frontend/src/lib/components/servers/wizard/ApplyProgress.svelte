@@ -12,7 +12,7 @@
 
 	let { job, cancelling = false, oncancel }: Props = $props();
 
-	const isFinished = $derived(job.phase === 'succeeded' || job.phase === 'failed' || job.phase === 'cancelled');
+	const isFinished = $derived(job.phase === 'succeeded' || job.phase === 'failed' || job.phase === 'cancelled' || job.phase === 'recovery_required');
 	const canCancel = $derived(!isFinished && job.phase !== 'committing' && !cancelling);
 </script>
 

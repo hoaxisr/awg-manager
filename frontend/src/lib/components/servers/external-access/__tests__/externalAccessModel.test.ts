@@ -14,6 +14,7 @@ import {
 	computeConfigFingerprint,
 	computeEffectiveVerifyKind,
 	createInitialWizardDraft,
+	directWanState,
 	doesStep2RequireNATConfirm,
 	draftNeedsWebIngress,
 	isCloudKeenDNSHost,
@@ -834,6 +835,7 @@ describe('externalAccessModel', () => {
 		const dualDraft = createInitialWizardDraft({});
 		dualDraft.selectedKind = 'tgwebproxy';
 		dualDraft.tgScenario = 'dual';
+		dualDraft.connectionWay = 'direct';
 		dualDraft.publicDomain = 'edge.example.test, alt.example.test';
 		dualDraft.originHost = '';
 		dualDraft.directHost = '';
@@ -843,6 +845,7 @@ describe('externalAccessModel', () => {
 		const bothDirectDraft = createInitialWizardDraft({});
 		bothDirectDraft.selectedKind = 'both';
 		bothDirectDraft.tgScenario = 'direct_fake_tls';
+		bothDirectDraft.connectionWay = 'direct';
 		bothDirectDraft.publicDomain = 'vless.example.test, backup.example.test';
 		bothDirectDraft.originHost = '';
 		bothDirectDraft.directHost = '';
@@ -1000,6 +1003,30 @@ describe('externalAccessModel', () => {
 		expect(resolveEffectiveMtprotoDirectHost(cloudDual)).toBe(
 			'connect.dacha.example.keenetic.pro'
 		);
+	});
+
+	// Мутации: вернуть publicDomain запасным при external_https; снять проверку порта или адреса.
+	it('прямой адрес: домен за внешним сервисом не запасной, порт открывается только с адресом', () => {
+		const draft = createInitialWizardDraft({});
+		draft.selectedKind = 'tgwebproxy';
+		draft.tgScenario = 'dual';
+		draft.originType = 'public_address';
+		draft.keendnsMode = 'manual';
+		draft.directHost = '';
+		draft.originHost = '';
+		draft.publicDomain = 'cdn.example.com';
+		draft.connectionWay = 'external_https';
+		expect(resolveEffectiveMtprotoDirectHost(draft)).toBe('');
+		draft.originHost = 'router.example.com';
+		expect(resolveEffectiveMtprotoDirectHost(draft)).toBe('router.example.com');
+		draft.originHost = '';
+		draft.connectionWay = 'direct';
+		expect(resolveEffectiveMtprotoDirectHost(draft)).toBe('cdn.example.com');
+
+		expect(directWanState('cdn_http', 'h.example.com', 443)).toBe('unused');
+		expect(directWanState('dual', 'h.example.com', 443)).toBe('bad_port');
+		expect(directWanState('dual', '  ', 8443)).toBe('no_host');
+		expect(directWanState(undefined, 'h.example.com', undefined)).toBe('opens');
 	});
 
 	it('validates MTProto direct ports, overrides cloud flag when WAN is public, keeps Reality-only draft summary clean, and isolates direct_fake_tls CDN profile on xray/both', () => {

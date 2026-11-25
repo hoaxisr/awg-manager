@@ -89,11 +89,16 @@
 
 	let preflight = $state<PreflightResponse | null>(null);
 	let planRecord = $state<ServerPlanRecord | null>(null);
+	let planKey = $state('');
 	let jobStatus = $state<JobStatusResponse | null>(null);
 	let creds = $state<RevealCredentials | null>(null);
 	let revealLoading = $state(false);
 	let cancelling = $state(false);
 	let applyPhase = $state<'review' | 'applying' | 'done'>('review');
+	let jobStopped = $derived(
+		applyPhase === 'applying' &&
+			['failed', 'cancelled', 'recovery_required'].includes(jobStatus?.phase ?? '')
+	);
 	let stopJobPoll: (() => void) | null = null;
 	let initialEditWasTgDirectOnly = $state(false);
 	let initialEditWasRealityOnly = $state(false);
@@ -740,6 +745,22 @@
 		return buildPlanRequestFromDraft(draft);
 	}
 
+	// Имя устройства правится на последнем шаге, план под него обновляет startApply.
+	function requestKey(req: WizardPlanRequest): string {
+		return JSON.stringify({ ...req, client_remark: undefined });
+	}
+
+	let planCurrent = $derived(
+		Boolean(planRecord) && planKey === requestKey(buildPlanRequestFromDraft(draft))
+	);
+
+	// Черновик изменился под готовым планом (фоновая проверка сети) — план заново.
+	$effect(() => {
+		if (open && stepIndex === 4 && applyPhase === 'review' && planRecord && !planCurrent) {
+			untrack(() => void prepareStep5Plan());
+		}
+	});
+
 	let realityStep2Valid = $derived(
 		!usesReality ||
 			(Number.isInteger(Number(realityPort)) &&
@@ -817,26 +838,30 @@
 			if (isRealityOnly) {
 				return applyPhase === 'review';
 			}
-			return applyPhase === 'review' && Boolean(preflight?.can_proceed && planRecord);
+			return applyPhase === 'review' && Boolean(preflight?.can_proceed && planCurrent);
 		}
 		return false;
 	});
 
-	async function prepareStep5Plan() {
+	/** Проверка и план под текущий черновик. Прежние сбрасываются сразу: сбой не оставляет устаревший план. */
+	async function prepareStep5Plan(): Promise<boolean> {
 		planLoading = true;
+		preflight = null;
+		planRecord = null;
 		try {
 			const req = buildRequest();
 			const pre = await api.runWizardPreflight(draft.selectedKind, req);
 			preflight = pre;
 			if (pre.can_proceed) {
 				planRecord = await api.createWizardPlan(draft.selectedKind, req);
-			} else {
-				planRecord = null;
+				planKey = requestKey(req);
 			}
+			return true;
 		} catch (e) {
 			notifications.error(
 				e instanceof Error ? e.message : m.servers_ext_wiz_err_plan()
 			);
+			return false;
 		} finally {
 			planLoading = false;
 		}
@@ -871,9 +896,7 @@
 				}
 				return;
 			}
-			if (!isRealityOnly) {
-				await prepareStep5Plan();
-			}
+			if (!isRealityOnly && !(await prepareStep5Plan())) return;
 			applyPhase = 'review';
 			stepIndex = 4;
 			return;
@@ -994,6 +1017,15 @@
 		}
 	}
 
+	/** Назад к проверке после остановленного применения: план уже использован, нужен новый. */
+	function backToReview() {
+		applyPhase = 'review';
+		jobStatus = null;
+		planRecord = null;
+		preflight = null;
+		void prepareStep5Plan();
+	}
+
 	async function handleCancelJob() {
 		if (!jobStatus) return;
 		cancelling = true;
@@ -1074,7 +1106,13 @@
 			canBack={applyPhase === 'review'}
 			busy={loading}
 			ongo={go}
-			finish={applyPhase === 'review' ? applyAction : applyPhase === 'done' ? doneAction : undefined}
+			finish={applyPhase === 'review'
+				? applyAction
+				: applyPhase === 'done'
+					? doneAction
+					: jobStopped
+						? stoppedAction
+						: undefined}
 		>
 			{#if stepIndex === 0}
 				<ExtWizardStepServices
@@ -1213,6 +1251,11 @@
 	</Button>
 {/snippet}
 
+{#snippet stoppedAction()}
+	<Button variant="ghost" onclick={backToReview}>{m.servers_ext_wiz_back_to_review()}</Button>
+	<Button variant="primary" onclick={onclose}>{m.common_close()}</Button>
+{/snippet}
+
 {#snippet doneAction()}
 	<Button variant="primary" onclick={onclose}>
 		{m.common_close()}
@@ -1225,6 +1268,15 @@
 		color: var(--color-text-muted);
 		margin: 0 0 0.75rem;
 		line-height: 1.4;
+	}
+
+	/* Подвал не уходит ниже сгиба: прокручивается содержимое шага. */
+	.ext-wizard :global(> .foot) {
+		position: sticky;
+		bottom: 0;
+		z-index: 1;
+		background: var(--color-bg-secondary);
+		padding-bottom: 0.75rem;
 	}
 
 	:where(.ext-wizard) :global(.step-section) {

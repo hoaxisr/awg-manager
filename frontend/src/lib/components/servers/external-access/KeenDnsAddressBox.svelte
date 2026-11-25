@@ -111,18 +111,20 @@
 					{/if}
 				</div>
 
-				<div class="keendns-preview-box">
-					<Globe size={15} class="icon-info-soft" />
-					<div>
-						<div class="preview-line">
-							{variant === 'direct' ? m.servers_ext_wiz_kd_preview_direct() : m.servers_ext_wiz_kd_preview_ext()}
-							<strong class="mono">https://{previewFqdn}</strong>
-						</div>
-						<div class="preview-sub">
-							{m.servers_ext_wiz_kd_preview_note_before()} (<code>system.configuration.save</code>){m.servers_ext_wiz_kd_preview_note_after()}
+				{#if !validation.error && !labelConflict}
+					<div class="keendns-preview-box">
+						<Globe size={15} class="icon-info-soft" />
+						<div>
+							<div class="preview-line">
+								{variant === 'direct' ? m.servers_ext_wiz_kd_preview_direct() : m.servers_ext_wiz_kd_preview_ext()}
+								<strong class="mono">https://{previewFqdn}</strong>
+							</div>
+							<div class="preview-sub">
+								{m.servers_ext_wiz_kd_preview_note_before()} (<code>system.configuration.save</code>){m.servers_ext_wiz_kd_preview_note_after()}
+							</div>
 						</div>
 					</div>
-				</div>
+				{/if}
 			</div>
 		{:else}
 			<div class="keendns-unavailable-box">

@@ -89,7 +89,10 @@
 		onswitchtovlessdomain,
 	}: Props = $props();
 
-	let hideCloudFallback = $derived(draft.originType === 'cloud_address' && draft.keendnsMode !== 'manual');
+	// Запасного адреса нет — прямой надо указать.
+	let mustSetDirectHost = $derived(
+		(draft.originType === 'cloud_address' && draft.keendnsMode !== 'manual') || !effectiveDirectHost
+	);
 
 	const TLS_SNI_PRESETS = [
 		{ domain: 'www.google.com', label: 'Google (www.google.com)' },
@@ -431,9 +434,9 @@
 					class="text-input mono"
 					class:input-error={isDirectHostCloudKeenDNS}
 					bind:value={draft.directHost}
-					placeholder={hideCloudFallback
-						? detectedMtprotoDirectDomain || detectedMtprotoWhiteIP || m.servers_ext_wiz_s3_tg_direct_host_ph()
-						: detectedMtprotoDirectDomain || detectedMtprotoWhiteIP || draft.originHost || draft.publicDomain || 'router.example.com'}
+					placeholder={detectedMtprotoDirectDomain ||
+						detectedMtprotoWhiteIP ||
+						(mustSetDirectHost ? m.servers_ext_wiz_s3_tg_direct_host_ph() : effectiveDirectHost)}
 				/>
 				{#if isDirectHostCloudKeenDNS}
 					<div class="cloud-host-error-box">
@@ -458,7 +461,7 @@
 					</div>
 				{/if}
 				<span class="field-hint">
-					{hideCloudFallback ? m.servers_ext_wiz_s3_tg_direct_only_hint() : m.servers_ext_wiz_s3_direct_host_hint()}
+					{mustSetDirectHost ? m.servers_ext_wiz_s3_tg_direct_only_hint() : m.servers_ext_wiz_s3_direct_host_hint()}
 				</span>
 			</div>
 
@@ -497,6 +500,11 @@
 		{/if}
 		<span>{m.servers_ext_wiz_s3_advanced()}</span>
 	</button>
+	{#if !showAdvancedAddresses && wantTgDirect && isDirectPortInvalid}
+		<span class="field-error" role="alert">
+			{m.servers_ext_wiz_s3_direct_port()}: {m.servers_ext_wiz_s3_direct_port_invalid()}
+		</span>
+	{/if}
 
 	{#if showAdvancedAddresses}
 		<div class="advanced-box">

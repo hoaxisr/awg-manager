@@ -616,6 +616,12 @@ label {
 	gap: 0.5rem;
 }
 
+/* Поверх модалки тосты наверху: внизу у неё кнопки. */
+body:has(> .modal-backdrop) .toast-container {
+	top: 4.5rem;
+	bottom: auto;
+}
+
 .toast {
 	padding: 0.75rem 1rem;
 	border-radius: var(--radius);

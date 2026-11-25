@@ -183,6 +183,19 @@ export function isValidMtprotoDirectPort(port: number | string): boolean {
 	return Number.isInteger(n) && n >= 1024 && n <= 65535 && !RESERVED_MTPROTO_DIRECT_PORTS.has(n);
 }
 
+export type DirectWanState = 'unused' | 'no_host' | 'bad_port' | 'opens';
+
+/** Откроется ли прямой порт MTProto на WAN — как решает бэкенд. */
+export function directWanState(
+	scenario?: string,
+	directHost?: string | null,
+	directPort?: number | null
+): DirectWanState {
+	if (scenario === 'cdn_http') return 'unused';
+	if (!isValidMtprotoDirectPort(directPort || 8443)) return 'bad_port';
+	return (directHost || '').trim() ? 'opens' : 'no_host';
+}
+
 export function isTgDirectOnlyDraft(
 	draft: Pick<ExternalAccessWizardDraft, 'selectedKind' | 'tgScenario'>
 ): boolean {
@@ -270,6 +283,7 @@ export function resolveEffectiveMtprotoDirectHost(
 		| 'publicDomain'
 		| 'keendnsMode'
 		| 'originType'
+		| 'connectionWay'
 	>
 ): string {
 	if (isTgDirectOnlyDraft(draft)) {
@@ -280,7 +294,10 @@ export function resolveEffectiveMtprotoDirectHost(
 		if (draft.originType === 'cloud_address' && draft.keendnsMode !== 'manual') {
 			return '';
 		}
-		return draft.originHost.trim() || (draft.publicDomain.split(',')[0] || '').trim();
+		if (draft.originHost.trim()) return draft.originHost.trim();
+		// Домен за внешним сервисом ведёт на его узлы, а не на роутер.
+		if (draft.connectionWay === 'external_https') return '';
+		return (draft.publicDomain.split(',')[0] || '').trim();
 	}
 	return (draft.directHost || draft.originHost).trim();
 }
