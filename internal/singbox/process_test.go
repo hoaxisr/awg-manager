@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -234,7 +235,7 @@ func TestProcess_ReloadRestartsWhenTunPresent(t *testing.T) {
 	dir := t.TempDir()
 	pidPath := filepath.Join(dir, "sing-box.pid")
 	// Seed a dead pid so stopLocked's isAlive poll returns immediately.
-	if err := os.WriteFile(pidPath, []byte("999999"), 0644); err != nil {
+	if err := os.WriteFile(pidPath, []byte("999999999"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -536,56 +537,58 @@ func TestProcess_RapidRestartNoCrossGenerationDelivery(t *testing.T) {
 // AttachIfRunning: живой identity-процесс усыновляется (tail fromEnd),
 // повторный вызов не плодит второй комплект tail'ов (уже attached).
 func TestProcess_AttachIfRunning(t *testing.T) {
-	dir := t.TempDir()
-	p := NewProcess("/bin/true", filepath.Join(dir, "cfg"), filepath.Join(dir, "sing-box.pid"))
-	t.Cleanup(p.Close)
-	p.logDir = dir
-	// Эмулируем «живой процесс»: pid-файл с нашим pid + identity-стаб.
-	if err := os.WriteFile(filepath.Join(dir, "sing-box.pid"), []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
-		t.Fatal(err)
-	}
-	p.matchBinaryFn = func(pid int) bool { return pid == os.Getpid() }
-	var mu sync.Mutex
-	var lines []string
-	p.OnStderrLine = func(l string) { mu.Lock(); lines = append(lines, l); mu.Unlock() }
-	// В err-логе уже есть история — не должна реиграться (fromEnd).
-	if err := os.WriteFile(filepath.Join(dir, procErrLogName), []byte("history\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	adopted, pid := p.AttachIfRunning()
-	if !adopted || pid != os.Getpid() {
-		t.Fatalf("AttachIfRunning = (%v,%d), want (true,%d)", adopted, pid, os.Getpid())
-	}
-	if a2, _ := p.AttachIfRunning(); a2 {
-		t.Fatal("second AttachIfRunning must be no-op false (already attached)")
-	}
-	time.Sleep(700 * time.Millisecond)
-	f, err := os.OpenFile(filepath.Join(dir, procErrLogName), os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.WriteString("live-line\n"); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.Close(); err != nil {
-		t.Fatal(err)
-	}
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		mu.Lock()
-		n := len(lines)
-		mu.Unlock()
-		if n >= 1 || time.Now().After(deadline) {
-			break
+	synctest.Test(t, func(t *testing.T) {
+		dir := t.TempDir()
+		p := NewProcess("/bin/true", filepath.Join(dir, "cfg"), filepath.Join(dir, "sing-box.pid"))
+		t.Cleanup(p.Close)
+		p.logDir = dir
+		// Эмулируем «живой процесс»: pid-файл с нашим pid + identity-стаб.
+		if err := os.WriteFile(filepath.Join(dir, "sing-box.pid"), []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
+			t.Fatal(err)
 		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	if len(lines) != 1 || lines[0] != "live-line" {
-		t.Fatalf("adopted tail lines = %v, want exactly [live-line]", lines)
-	}
+		p.matchBinaryFn = func(pid int) bool { return pid == os.Getpid() }
+		var mu sync.Mutex
+		var lines []string
+		p.OnStderrLine = func(l string) { mu.Lock(); lines = append(lines, l); mu.Unlock() }
+		// В err-логе уже есть история — не должна реиграться (fromEnd).
+		if err := os.WriteFile(filepath.Join(dir, procErrLogName), []byte("history\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		adopted, pid := p.AttachIfRunning()
+		if !adopted || pid != os.Getpid() {
+			t.Fatalf("AttachIfRunning = (%v,%d), want (true,%d)", adopted, pid, os.Getpid())
+		}
+		if a2, _ := p.AttachIfRunning(); a2 {
+			t.Fatal("second AttachIfRunning must be no-op false (already attached)")
+		}
+		time.Sleep(700 * time.Millisecond)
+		f, err := os.OpenFile(filepath.Join(dir, procErrLogName), os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.WriteString("live-line\n"); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
+		deadline := time.Now().Add(3 * time.Second)
+		for {
+			mu.Lock()
+			n := len(lines)
+			mu.Unlock()
+			if n >= 1 || time.Now().After(deadline) {
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if len(lines) != 1 || lines[0] != "live-line" {
+			t.Fatalf("adopted tail lines = %v, want exactly [live-line]", lines)
+		}
+	})
 }
 
 // AttachIfRunning path variant of I1: an adopted generation's tail

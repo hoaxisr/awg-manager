@@ -14,6 +14,7 @@ import (
 	"github.com/hoaxisr/awg-manager/awgmproto"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt"
 	"github.com/hoaxisr/awg-manager/internal/proxyrt/control"
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 )
 
 // fakeLink — скриптованная связь: очередь ответов State.
@@ -1613,6 +1614,7 @@ func TestProc_LogWatcherWakesOncePerFailure(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	appendLine("error 401: Unauthorized")
+	testutil.WaitFor(t, func() bool { return wakes.Load() == 1 }, "первый сбой не разбудил воркер")
 	for i := 0; i < 10; i++ {
 		appendLine("[СТАТИСТИКА] 100 пакетов")
 	}

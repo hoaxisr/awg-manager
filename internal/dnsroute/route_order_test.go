@@ -35,6 +35,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/ndms"
 	"github.com/hoaxisr/awg-manager/internal/ndms/command"
 	"github.com/hoaxisr/awg-manager/internal/ndms/query"
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 )
 
 type fakeRoute struct {
@@ -56,6 +57,8 @@ type fakeGroup struct {
 // (SaveCoordinator.fire), а читает состав сам тест — без синхронизации это
 // гонка данных, падающая под -race независимо от таймингов.
 type fakeRouter struct {
+	saveIdle func() bool // nil — отложенный save сам не срабатывает
+
 	mu     sync.Mutex
 	routes []fakeRoute
 	groups map[string]*fakeGroup
@@ -83,26 +86,14 @@ type fakeRouter struct {
 	toggles int
 }
 
-// waitQuiet ждёт, пока число POST-ов перестанет расти, и возвращает его.
-// Нужен там, где тест меряет «сколько POST-ов сделал следующий шаг»: до него
-// в очереди может лежать отложенный save от предыдущего.
+// waitQuiet ждёт, пока уйдёт отложенный save от предыдущего шага, и возвращает
+// число POST-ов: дальше тест меряет, сколько их сделает следующий шаг.
 func waitQuiet(t *testing.T, r *fakeRouter) int {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	last := r.snapshotCount()
-	stable := time.Now()
-	for time.Now().Before(deadline) {
-		time.Sleep(2 * time.Millisecond)
-		if n := r.snapshotCount(); n != last {
-			last, stable = n, time.Now()
-			continue
-		}
-		if time.Since(stable) > 60*time.Millisecond {
-			return last
-		}
+	if r.saveIdle != nil {
+		testutil.WaitFor(t, r.saveIdle, "отложенный save не ушёл")
 	}
-	t.Fatalf("POST-ы не утихли: %d", last)
-	return last
+	return r.snapshotCount()
 }
 
 func newFakeRouter() *fakeRouter {
@@ -411,7 +402,9 @@ func (r *fakeRouter) assertNoWindow(t *testing.T, groupPrefix string) {
 
 func newServiceWithRouter(t *testing.T, r *fakeRouter) *ServiceImpl {
 	t.Helper()
-	return newServiceOver(t, newOracle4(r), 10*time.Millisecond, time.Second)
+	svc := newServiceOver(t, newOracle4(r), 10*time.Millisecond, time.Second)
+	r.saveIdle = func() bool { return svc.commands.Save.Status().State == command.SaveStateIdle }
+	return svc
 }
 
 // newOracle4 — fakeRouter с оракулом Wireguard0..3: интерфейсы целей

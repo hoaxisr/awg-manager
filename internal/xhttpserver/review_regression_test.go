@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 	"github.com/hoaxisr/awg-manager/internal/xhttpserver"
 	"github.com/hoaxisr/awg-manager/internal/xhttpserver/xhttptest"
 )
@@ -35,7 +36,7 @@ func TestReviewSingleRequestDelayedResponseSurvives(t *testing.T) {
 
 	uuid := "11111111-2222-3333-4444-555555555555"
 	srv := newCServer(t, xhttpserver.Config{
-		ListenAddr:              "127.0.0.1:0",
+		ListenAddr:              testutil.FreeAddr(t),
 		PathPrefix:              "/cdn-bridge",
 		Clients:                 []string{uuid},
 		MaxTotalSessions:        256,
@@ -102,7 +103,7 @@ func TestReviewSustainedRealClientGetWithIdleGapsAndThumbnailBurst(t *testing.T)
 
 	uuid := "11111111-2222-3333-4444-555555555555"
 	srv := newCServer(t, xhttpserver.Config{
-		ListenAddr:              "127.0.0.1:0",
+		ListenAddr:              testutil.FreeAddr(t),
 		PathPrefix:              "/cdn-bridge",
 		Clients:                 []string{uuid},
 		MaxTotalSessions:        256,

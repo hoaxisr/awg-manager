@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net"
 	"net/url"
 	"os"
@@ -39,6 +40,13 @@ const (
 
 	fpKeySize   = 32
 	fpKeyHexLen = 64
+
+	// Диапазон socks-портов демона. Вне ip_local_port_range (49000-61001 на
+	// Keenetic, 32768+ в обычном ядре): эфемерный номер между проверкой и
+	// занятием — а записанный в слоты и между рестартами — мог достаться
+	// исходящему соединению.
+	socksPortMin = 12000
+	socksPortMax = 12999
 )
 
 var (
@@ -852,7 +860,8 @@ func (b *boundedLogBuffer) String() string {
 }
 
 // selectAvailableLoopbackPort chooses candidate if free (without accepting/closing any foreign socket)
-// or allocates a fresh ephemeral loopback port when candidate is occupied by another service.
+// or allocates a fresh port from the fpclient range when candidate is occupied by another service.
+// Caller holds globalMu.
 func selectAvailableLoopbackPort(candidate int) (int, error) {
 	if candidate > 0 && candidate <= 65535 {
 		busyOnProc := false
@@ -872,13 +881,26 @@ func selectAvailableLoopbackPort(candidate int) (int, error) {
 			}
 		}
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, fmt.Errorf("fpclient allocate local socks port: %w", err)
+	taken := make(map[int]bool, len(globalInstances)+len(globalDormant))
+	for _, inst := range globalInstances {
+		taken[inst.spec.SocksPort] = true
 	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
-	return port, nil
+	for _, sp := range globalDormant {
+		taken[sp.SocksPort] = true
+	}
+	n := socksPortMax - socksPortMin + 1
+	off := rand.IntN(n)
+	for i := range n {
+		port := socksPortMin + (off+i)%n
+		if taken[port] {
+			continue
+		}
+		if ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port)); err == nil {
+			_ = ln.Close()
+			return port, nil
+		}
+	}
+	return 0, fmt.Errorf("fpclient: no free local socks port in %d-%d", socksPortMin, socksPortMax)
 }
 
 func startInstanceLocked(spec EndpointSpec) (*runningInstance, error) {

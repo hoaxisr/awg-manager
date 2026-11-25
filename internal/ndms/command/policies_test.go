@@ -11,7 +11,7 @@ import (
 func newTestPolicyCommands(_ *testing.T) (*PolicyCommands, *fakePoster, *SaveCoordinator) {
 	poster := &fakePoster{}
 	pub := &fakePublisher{}
-	sc := NewSaveCoordinator(poster, pub, 500*time.Millisecond, 5*time.Second, 0, nil)
+	sc := NewSaveCoordinator(poster, pub, time.Hour, time.Hour, 0, nil)
 	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 	q := query.NewQueries(query.Deps{Getter: query.NewFakeGetter(), Logger: query.NopLogger(), IsOS5: func() bool { return true }})
 	return NewPolicyCommands(poster, sc, q), poster, sc

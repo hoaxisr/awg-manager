@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 	"github.com/hoaxisr/awg-manager/internal/tgwebproxy/tproxy/config"
 	"github.com/hoaxisr/awg-manager/internal/tgwebproxy/tproxy/frame"
 )
@@ -570,9 +571,14 @@ func TestSessionCloseStopsBackendGoroutines(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("backend connection was not established")
 	}
-	created.Session.mu.Lock()
-	backend := created.Session.streams[14].backend
-	created.Session.mu.Unlock()
+	// Соединение принято ядром раньше, чем набиравшая горутина записала backend.
+	var backend *backendStream
+	testutil.WaitFor(t, func() bool {
+		created.Session.mu.Lock()
+		defer created.Session.mu.Unlock()
+		backend = created.Session.streams[14].backend
+		return backend != nil
+	}, "backend не записан в поток")
 
 	shutdown := make(chan struct{})
 	go func() {

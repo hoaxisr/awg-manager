@@ -28,7 +28,7 @@ func testQueries() *query.Queries {
 func newTestInterfaceCommands(_ *testing.T) (*InterfaceCommands, *fakePoster, *SaveCoordinator, *query.Queries) {
 	poster := &fakePoster{}
 	pub := &fakePublisher{}
-	sc := NewSaveCoordinator(poster, pub, 500*time.Millisecond, 5*time.Second, 0, nil)
+	sc := NewSaveCoordinator(poster, pub, time.Hour, time.Hour, 0, nil)
 	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 	f := query.NewFakeNDMS(ndms.Interface{ID: "OpkgTun0"}, ndms.Interface{ID: "OpkgTun10"})
 	q := query.NewQueries(query.Deps{Getter: f, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
@@ -53,7 +53,7 @@ func newOracleInterfaceCommands(t *testing.T, ifaces ...ndms.Interface) (*Interf
 	t.Helper()
 	f := query.NewFakeNDMS(ifaces...)
 	pub := &fakePublisher{}
-	sc := NewSaveCoordinator(f, pub, 500*time.Millisecond, 5*time.Second, 0, nil)
+	sc := NewSaveCoordinator(f, pub, time.Hour, time.Hour, 0, nil)
 	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 	q := query.NewQueries(query.Deps{Getter: f, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
 	return NewInterfaceCommands(f, sc, q), f, sc, q
@@ -91,7 +91,7 @@ func newTestSave(p Poster) *SaveCoordinator {
 func newOracleCommands(t *testing.T, raw map[string]string, ifaces ...ndms.Interface) (*Commands, *query.FakeNDMS, *query.Queries) {
 	t.Helper()
 	f := query.NewFakeNDMS(ifaces...)
-	sc := NewSaveCoordinator(f, &fakePublisher{}, 500*time.Millisecond, 5*time.Second, 0, nil)
+	sc := NewSaveCoordinator(f, &fakePublisher{}, time.Hour, time.Hour, 0, nil)
 	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 	q := query.NewQueries(query.Deps{Getter: oracleGetter{FakeNDMS: f, raw: raw}, Logger: query.NopLogger(), IsOS5: func() bool { return true }})
 	return NewCommands(Deps{Poster: f, Save: sc, Queries: q, IsOS5: func() bool { return true }}), f, q
@@ -317,7 +317,7 @@ func TestInterfaceCommands_SetMTU(t *testing.T) {
 func TestInterfaceUp_UnknownRecord_NoCredit(t *testing.T) {
 	poster := &fakePoster{}
 	pub := &fakePublisher{}
-	sc := NewSaveCoordinator(poster, pub, 500*time.Millisecond, 5*time.Second, 0, nil)
+	sc := NewSaveCoordinator(poster, pub, time.Hour, time.Hour, 0, nil)
 	sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 	q := testQueries()
 	cmds := NewInterfaceCommands(poster, sc, q)

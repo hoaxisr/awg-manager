@@ -367,10 +367,12 @@ func TestCheckAllNow_SkipsBusyMonitorAndReturnsAtOnce(t *testing.T) {
 		"свободный монитор обязан выполнить проверку по check-now")
 }
 
-// blockingDoer держит HTTP-проверку, пока тест не отпустит release.
-type blockingDoer struct{ release chan struct{} }
+// blockingDoer держит HTTP-проверку, пока тест не отпустит release; entered —
+// проверка дошла до HTTP.
+type blockingDoer struct{ entered, release chan struct{} }
 
 func (d blockingDoer) Do(_ context.Context, _ httpclient.CallConfig) (*httpclient.Result, error) {
+	close(d.entered)
 	<-d.release
 	return &httpclient.Result{Metrics: httpclient.Metrics{HTTPCode: 204}}, nil
 }
@@ -380,21 +382,17 @@ func (d blockingDoer) Do(_ context.Context, _ httpclient.CallConfig) (*httpclien
 func TestStopMonitoring_WaitsForCheckNow(t *testing.T) {
 	orig := httpprobe.Client
 	t.Cleanup(func() { httpprobe.Client = orig })
-	release := make(chan struct{})
-	httpprobe.Client = blockingDoer{release: release}
+	entered, release := make(chan struct{}), make(chan struct{})
+	httpprobe.Client = blockingDoer{entered: entered, release: release}
 	s, m, _, _ := newKernelSensorService(t)
 	m.stopCh = make(chan struct{})
 	s.monitors = map[string]*tunnelMonitor{"awg7": m}
 	s.running = true
 
+	// Занятость tickMu ловить пробным TryLock нельзя: пока его держит проба,
+	// TryLock самого check-now отказывает, и тик молча пропускается.
 	s.CheckAllNow()
-	waitFor(t, func() bool {
-		if m.tickMu.TryLock() {
-			m.tickMu.Unlock()
-			return false
-		}
-		return true
-	}, "check-now обязан взять tickMu")
+	<-entered
 
 	stopped := make(chan struct{})
 	go func() { s.StopMonitoring("awg7"); close(stopped) }()
@@ -404,11 +402,7 @@ func TestStopMonitoring_WaitsForCheckNow(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 	close(release)
-	select {
-	case <-stopped:
-	case <-time.After(time.Second):
-		t.Fatal("StopMonitoring не дождался check-now")
-	}
+	<-stopped
 	if m.tickMu.TryLock() {
 		m.tickMu.Unlock()
 	} else {

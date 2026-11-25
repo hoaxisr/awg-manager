@@ -13,6 +13,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/auth"
 	"github.com/hoaxisr/awg-manager/internal/serveringress"
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 	"github.com/hoaxisr/awg-manager/internal/tgwebproxy"
 )
 
@@ -456,27 +457,16 @@ func TestTgWebProxy_CheckCSRF_MutatingMissingOriginAndReferer(t *testing.T) {
 	}
 }
 
-func freeTCPPortForTest(t *testing.T) int {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen ephemeral port: %v", err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
-	return port
-}
-
 func TestTgWebProxy_RapidStopStartKeepsEnabled(t *testing.T) {
 	handler, svc, _, sessionToken, tempDir := setupTestTgWebProxyHandler(t)
 	coord := serveringress.New(tempDir, nil, nil, svc)
 	handler.SetCoordinator(coord)
 
-	directPort := freeTCPPortForTest(t)
-	listenPort := freeTCPPortForTest(t)
-	epListenPort := freeTCPPortForTest(t)
-	epAdminPort := freeTCPPortForTest(t)
-	rawPort := freeTCPPortForTest(t)
+	directPort := testutil.FreePort(t)
+	listenPort := testutil.FreePort(t)
+	epListenPort := testutil.FreePort(t)
+	epAdminPort := testutil.FreePort(t)
+	rawPort := testutil.FreePort(t)
 
 	initialCfg := svc.GetInternalConfig()
 	initialCfg.Enabled = true

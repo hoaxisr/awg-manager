@@ -2,24 +2,14 @@ package probe
 
 import (
 	"context"
-	"net"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"testing"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/awgmautolist/internal/model"
 )
-
-// netport extracts the numeric port from a "host:port" address string.
-func netport(addr string) (int, error) {
-	_, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return 0, err
-	}
-	return strconv.Atoi(port)
-}
 
 func TestWANAnyNonzeroStatusIsReachable(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -37,11 +27,7 @@ func TestWANAnyNonzeroStatusIsReachable(t *testing.T) {
 }
 
 func TestWANNoResponseIsError(t *testing.T) {
-	addr, err := netListenClosed()
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := CheckWAN(context.Background(), "http://"+addr, Path{})
+	got := CheckWAN(context.Background(), fmt.Sprintf("http://127.0.0.1:%d", closedPort(t)), Path{})
 	if got.Verdict != model.VerdictError {
 		t.Fatalf("result=%+v, want error when nothing answers", got)
 	}
@@ -121,15 +107,7 @@ func TestDirectAndWANBlockedTargetKeepsWANVerdict(t *testing.T) {
 	}))
 	defer wan.Close()
 
-	dead, err := netListenClosed()
-	if err != nil {
-		t.Fatal(err)
-	}
-	port, parseErr := netport(dead)
-	if parseErr != nil {
-		t.Fatal(parseErr)
-	}
-	target, err := model.NewTarget("", "127.0.0.1", model.NetworkTCP, uint16(port))
+	target, err := model.NewTarget("", "127.0.0.1", model.NetworkTCP, uint16(closedPort(t)))
 	if err != nil {
 		t.Fatal(err)
 	}

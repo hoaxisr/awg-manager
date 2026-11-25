@@ -190,3 +190,43 @@ func TestOperator_TunExternalConfig_UnknownVersionDependsOnRunning(t *testing.T)
 		t.Errorf("процесс из файла жив: want=%v known=%v, ожидалось false,false", want, known)
 	}
 }
+
+// Ключ и SIGHUP с tun знает любая сборка форка с awgm.28, а не только пин: иначе
+// панель с новым пином снимала флаг у прежнего ядра, и то падало на старте (F911).
+func TestOperator_TunExternalConfig_OlderForkBuild(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		want    bool
+	}{
+		{"42", true},
+		{"41", true},
+		{"1.15.0-alpha.13-awgm.40", true},
+		{"1.15.0-alpha.8-awgm.28", true},
+		{"1.15.0-alpha.8-awgm.27", false},
+		{"27", false},
+		{"1.15.0-alpha.13", false},
+		{"1.14.0-awg3.5", false},
+		{"1.2.3", false},
+		{"awgm.", false},
+		{"-1", false},
+	} {
+		t.Run(tc.version, func(t *testing.T) {
+			dir := t.TempDir()
+			bin := filepath.Join(dir, "awgm-box")
+			if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			op := NewOperator(OperatorDeps{Dir: dir, Binary: bin})
+			if err := writeSidecar(bin, tc.version); err != nil {
+				t.Fatal(err)
+			}
+			op.resetVersionCache()
+			if want, known := op.TunExternalConfig(); want != tc.want || !known {
+				t.Errorf("want=%v known=%v, ожидалось %v,true", want, known, tc.want)
+			}
+			if got := op.TunHotReload(); got != tc.want {
+				t.Errorf("TunHotReload = %v, ожидалось %v", got, tc.want)
+			}
+		})
+	}
+}

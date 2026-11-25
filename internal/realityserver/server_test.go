@@ -29,6 +29,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 	"github.com/hoaxisr/awg-manager/internal/xhttpserver"
 	"github.com/hoaxisr/awg-manager/internal/xhttpserver/xhttptest"
 	utls "github.com/refraction-networking/utls"
@@ -227,7 +228,7 @@ func startC(t *testing.T) (*xhttpserver.Server, xhttpserver.Config) {
 		t.Skip("awgm-xhttpd integration needs linux")
 	}
 	cfg := xhttpserver.Config{
-		ListenAddr:     "127.0.0.1:0",
+		ListenAddr:     testutil.FreeAddr(t),
 		BinaryPath:     xhttptest.RequireCXHTTPDBinary(t),
 		ConfigPath:     t.TempDir() + "/awgm-xhttpd.conf",
 		PathPrefix:     "/cdn-bridge",

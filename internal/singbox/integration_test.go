@@ -13,6 +13,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 	"github.com/hoaxisr/awg-manager/internal/singbox/vlink"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 )
 
 func TestIntegration_ParseAddValidate(t *testing.T) {
@@ -327,10 +328,8 @@ func TestStaging_FullCycle(t *testing.T) {
 
 	// 7. Wait past debounce window; the orchestrator must have called
 	// Reload (proc was already running, so it SIGHUP's rather than starts).
-	time.Sleep(400 * time.Millisecond)
-	if env.proc.startedOrReloaded() == 0 {
-		t.Error("expected at least one Reload/Start from orchestrator debounce after apply, got none")
-	}
+	testutil.WaitFor(t, func() bool { return env.proc.startedOrReloaded() > 0 },
+		"expected at least one Reload/Start from orchestrator debounce after apply, got none")
 }
 
 // ---------------------------------------------------------------------------
