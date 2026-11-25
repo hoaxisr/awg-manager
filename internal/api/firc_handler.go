@@ -255,8 +255,57 @@ func (h *FircHandler) ReconcileRecovery(ctx context.Context, preferredEngine str
 	return h.op.ReconcileRecovery(ctx, preferredEngine, h.buildEngineSwitchHooks())
 }
 
+// fircEngineExitPaths — ручки, которыми при стороннем firc с движка FIRC уходят:
+// сам уход разрешён, остальное в них отказывает обработчик.
+var fircEngineExitPaths = map[string]bool{
+	"/api/firc/engine/switch": true,
+	"/api/firc/control":       true,
+	"/api/firc/settings":      true,
+}
+
+// writeForeignFirc отвечает отказом при стороннем firc. false — err о другом.
+func writeForeignFirc(w http.ResponseWriter, err error) bool {
+	if !errors.Is(err, firc.ErrForeignFirc) {
+		return false
+	}
+	response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "FIRC_FOREIGN")
+	return true
+}
+
+// rejectForeign отвечает отказом, если FIRC на роутере не наш.
+func (h *FircHandler) rejectForeign(w http.ResponseWriter) bool {
+	err := h.checkNotForeign()
+	if err == nil {
+		return false
+	}
+	if !writeForeignFirc(w, err) {
+		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "FIRC_OWNER_UNKNOWN")
+	}
+	return true
+}
+
+func (h *FircHandler) checkNotForeign() error {
+	if h.op != nil {
+		return h.op.CheckNotForeign()
+	}
+	return nil
+}
+
+// refuseForeign закрывает все мутации /api/firc/*, включая прокси /v1. Чтения
+// проходят: оператор при стороннем firc отдаёт пустое состояние.
+func (h *FircHandler) refuseForeign(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		read := r.Method == http.MethodGet || r.Method == http.MethodHead
+		if !read && !fircEngineExitPaths[r.URL.Path] && h.rejectForeign(w) {
+			return
+		}
+		next(w, r)
+	}
+}
+
 // RegisterRoutes registers all /api/firc/* endpoints on mux.
-func (h *FircHandler) RegisterRoutes(mux *http.ServeMux, guarded func(http.HandlerFunc) http.HandlerFunc) {
+func (h *FircHandler) RegisterRoutes(mux *http.ServeMux, auth func(http.HandlerFunc) http.HandlerFunc) {
+	guarded := func(next http.HandlerFunc) http.HandlerFunc { return auth(h.refuseForeign(next)) }
 	mux.HandleFunc("GET /api/firc/status", guarded(h.handleStatus))
 	mux.HandleFunc("POST /api/firc/control", guarded(h.handleControl))
 	mux.HandleFunc("GET /api/firc/tunnels", guarded(h.handleGetTunnels))
@@ -300,7 +349,6 @@ func (h *FircHandler) RegisterRoutes(mux *http.ServeMux, guarded func(http.Handl
 	mux.HandleFunc("POST /api/firc/install", guarded(h.handleInstall))
 	mux.HandleFunc("POST /api/firc/upgrade", guarded(h.handleUpgrade))
 	mux.HandleFunc("POST /api/firc/uninstall", guarded(h.handleUninstall))
-	mux.HandleFunc("POST /api/firc/migrate-runtime", guarded(h.handleMigrateRuntime))
 }
 
 func (h *FircHandler) isSelected() bool {
@@ -371,10 +419,6 @@ type fircUninstallRequest struct {
 	PurgeConfigs bool `json:"purgeConfigs"`
 }
 
-type fircMigrateRuntimeRequest struct {
-	ReplaceExternalPackage bool `json:"replaceExternalPackage,omitempty"`
-}
-
 func decodeOptionalJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 	if r.Body == nil || r.Body == http.NoBody {
 		return true
@@ -410,11 +454,6 @@ func (h *FircHandler) handleInstall(w http.ResponseWriter, r *http.Request) {
 
 	h.installMu.Lock()
 	st := h.installer.GetInstallStatus(r.Context(), h.op, h.isSelected())
-	if st.ExternalPackage != "" {
-		h.installMu.Unlock()
-		response.ErrorWithStatus(w, http.StatusConflict, fmt.Sprintf("firc runtime belongs to external package %s.list; refusing to overwrite", st.ExternalPackage), "EXTERNAL_PACKAGE_OWNED")
-		return
-	}
 	if !st.Available {
 		h.installMu.Unlock()
 		reason := st.UnavailableReason
@@ -427,16 +466,6 @@ func (h *FircHandler) handleInstall(w http.ResponseWriter, r *http.Request) {
 	if st.Busy {
 		h.installMu.Unlock()
 		response.ErrorWithStatus(w, http.StatusConflict, firc.ErrInstallBusy.Error(), "INSTALL_BUSY")
-		return
-	}
-	if st.State == firc.InstallStateRecoveryNeeded && h.installer.PendingOperationAction() == "migrate_external" {
-		h.installMu.Unlock()
-		if err := h.installer.StartExternalMigration(h.op); err != nil {
-			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "INSTALL_BUSY")
-			return
-		}
-		h.publishFirc("external-migration-started")
-		response.Accepted(w, map[string]string{"status": "external_migration_started"})
 		return
 	}
 	if st.State == firc.InstallStateRunning || (h.op != nil && h.op.IsRunning(r.Context())) {
@@ -478,11 +507,6 @@ func (h *FircHandler) handleUpgrade(w http.ResponseWriter, r *http.Request) {
 
 	h.installMu.Lock()
 	st := h.installer.GetInstallStatus(r.Context(), h.op, h.isSelected())
-	if st.ExternalPackage != "" {
-		h.installMu.Unlock()
-		response.ErrorWithStatus(w, http.StatusConflict, fmt.Sprintf("firc runtime belongs to external package %s.list; migrate to awg-firc-runtime first", st.ExternalPackage), "EXTERNAL_PACKAGE_OWNED")
-		return
-	}
 	if !st.Available {
 		h.installMu.Unlock()
 		reason := st.UnavailableReason
@@ -523,100 +547,6 @@ func (h *FircHandler) handleUpgrade(w http.ResponseWriter, r *http.Request) {
 	response.Accepted(w, map[string]string{"status": "upgrade_started"})
 }
 
-// @Summary Migrate FIRC runtime ownership to awg-firc-runtime
-// @Description Transactionally migrates FIRC ownership from an allowlisted external Entware FIRC package (requires replaceExternalPackage=true) to awg-firc-runtime, preserving configs and runtime state.
-// @Tags firc
-// @Accept json
-// @Produce json
-// @Security CookieAuth
-// @Param request body fircMigrateRuntimeRequest false "Migration options; set replaceExternalPackage=true to replace an external Entware FIRC package"
-// @Success 202 {object} APIEnvelope
-// @Failure 400 {object} APIErrorEnvelope
-// @Failure 409 {object} APIErrorEnvelope
-// @Failure 503 {object} APIErrorEnvelope
-// @Router /firc/migrate-runtime [post]
-func (h *FircHandler) handleMigrateRuntime(w http.ResponseWriter, r *http.Request) {
-	if h.installer == nil {
-		response.ErrorWithStatus(w, http.StatusServiceUnavailable, "firc installer not configured", "UNAVAILABLE")
-		return
-	}
-
-	var req fircMigrateRuntimeRequest
-	if !decodeOptionalJSON(w, r, &req) {
-		return
-	}
-
-	h.installMu.Lock()
-	st := h.installer.GetInstallStatus(r.Context(), h.op, h.isSelected())
-	pendingAction := h.installer.PendingOperationAction()
-	if st.ExternalPackage != "" {
-		if !req.ReplaceExternalPackage {
-			h.installMu.Unlock()
-			response.ErrorWithStatus(w, http.StatusConflict, fmt.Sprintf("firc runtime belongs to external package %s.list; refusing to overwrite", st.ExternalPackage), "EXTERNAL_PACKAGE_OWNED")
-			return
-		}
-		if !st.ExternalMigratable {
-			h.installMu.Unlock()
-			response.ErrorWithStatus(w, http.StatusConflict, fmt.Sprintf("external package %s.list cannot be replaced automatically; remove it manually via opkg before installing awg-firc-runtime", st.ExternalPackage), "EXTERNAL_PACKAGE_UNSUPPORTED")
-			return
-		}
-		if !st.Available {
-			h.installMu.Unlock()
-			reason := st.UnavailableReason
-			if reason == "" {
-				reason = firc.ErrReleaseUnavailable.Error()
-			}
-			response.ErrorWithStatus(w, http.StatusServiceUnavailable, reason, "RELEASE_UNAVAILABLE")
-			return
-		}
-		if st.Busy {
-			h.installMu.Unlock()
-			response.ErrorWithStatus(w, http.StatusConflict, firc.ErrInstallBusy.Error(), "INSTALL_BUSY")
-			return
-		}
-		if len(st.DependentServices) > 0 {
-			h.installMu.Unlock()
-			response.ErrorWithStatus(w, http.StatusConflict, fmt.Sprintf("cannot migrate: services depend on FIRC: %s", strings.Join(st.DependentServices, ", ")), "FIRC_DEPENDENCIES")
-			return
-		}
-		h.installMu.Unlock()
-		if err := h.installer.StartExternalMigration(h.op); err != nil {
-			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "INSTALL_BUSY")
-			return
-		}
-		h.publishFirc("external-migration-started")
-		response.Accepted(w, map[string]string{"status": "external_migration_started"})
-		return
-	}
-
-	if !st.Available {
-		h.installMu.Unlock()
-		reason := st.UnavailableReason
-		if reason == "" {
-			reason = firc.ErrReleaseUnavailable.Error()
-		}
-		response.ErrorWithStatus(w, http.StatusServiceUnavailable, reason, "RELEASE_UNAVAILABLE")
-		return
-	}
-	if st.Busy {
-		h.installMu.Unlock()
-		response.ErrorWithStatus(w, http.StatusConflict, firc.ErrInstallBusy.Error(), "INSTALL_BUSY")
-		return
-	}
-	if st.State == firc.InstallStateRecoveryNeeded && pendingAction == "migrate_external" {
-		h.installMu.Unlock()
-		if err := h.installer.StartExternalMigration(h.op); err != nil {
-			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "INSTALL_BUSY")
-			return
-		}
-		h.publishFirc("external-migration-started")
-		response.Accepted(w, map[string]string{"status": "external_migration_started"})
-		return
-	}
-	h.installMu.Unlock()
-	response.ErrorWithStatus(w, http.StatusConflict, "no FIRC runtime ownership to migrate", "NOTHING_TO_MIGRATE")
-}
-
 // @Summary Remove the FIRC runtime while preserving configuration
 // @Description Accepts an asynchronous operation. Configuration purge is not supported.
 // @Tags firc
@@ -649,11 +579,6 @@ func (h *FircHandler) handleUninstall(w http.ResponseWriter, r *http.Request) {
 	if st.Busy {
 		h.installMu.Unlock()
 		response.ErrorWithStatus(w, http.StatusConflict, firc.ErrInstallBusy.Error(), "INSTALL_BUSY")
-		return
-	}
-	if st.ExternalPackage != "" {
-		h.installMu.Unlock()
-		response.ErrorWithStatus(w, http.StatusConflict, fmt.Sprintf("firc runtime belongs to external package %s.list; refusing to remove", st.ExternalPackage), "EXTERNAL_PACKAGE_OWNED")
 		return
 	}
 
@@ -701,6 +626,9 @@ func (h *FircHandler) handleControl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	action := strings.ToLower(strings.TrimSpace(req.Action))
+	if action != "select" && h.rejectForeign(w) {
+		return
+	}
 	switch action {
 	case "start":
 		if h.isExplicitlyUnselected() {
@@ -751,6 +679,9 @@ func (h *FircHandler) handleControl(w http.ResponseWriter, r *http.Request) {
 		if err := h.SwitchEngineWithOptions(r.Context(), target, firc.EngineSwitchOptions{
 			AuthorizeDisabledStart: strings.EqualFold(target, "firc"),
 		}); err != nil {
+			if writeForeignFirc(w, err) {
+				return
+			}
 			response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "SWITCH_ENGINE_FAILED")
 			return
 		}
@@ -1484,6 +1415,9 @@ func (h *FircHandler) handlePutSettings(w http.ResponseWriter, r *http.Request) 
 		if err := h.SwitchEngineWithOptions(r.Context(), eng, firc.EngineSwitchOptions{
 			AuthorizeDisabledStart: strings.EqualFold(strings.TrimSpace(eng), "firc"),
 		}); err != nil {
+			if writeForeignFirc(w, err) {
+				return
+			}
 			response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "SWITCH_ENGINE_FAILED")
 			return
 		}
@@ -1496,6 +1430,9 @@ func (h *FircHandler) handlePutSettings(w http.ResponseWriter, r *http.Request) 
 		if err := h.SwitchEngineWithOptions(r.Context(), targetEngine, firc.EngineSwitchOptions{
 			AuthorizeDisabledStart: sel,
 		}); err != nil {
+			if writeForeignFirc(w, err) {
+				return
+			}
 			response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "SWITCH_ENGINE_FAILED")
 			return
 		}
@@ -1504,6 +1441,9 @@ func (h *FircHandler) handlePutSettings(w http.ResponseWriter, r *http.Request) 
 		response.Success(w, map[string]interface{}{
 			"selected": h.isSelected(),
 		})
+		return
+	}
+	if h.rejectForeign(w) {
 		return
 	}
 	if h.isExplicitlyUnselected() {
@@ -1551,6 +1491,9 @@ func (h *FircHandler) handleSwitchEngine(w http.ResponseWriter, r *http.Request)
 	}); err != nil {
 		if errors.Is(err, uplink.ErrConflict) {
 			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "UPLINK_POLICY_CONFLICT")
+			return
+		}
+		if writeForeignFirc(w, err) {
 			return
 		}
 		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "SWITCH_ENGINE_FAILED")

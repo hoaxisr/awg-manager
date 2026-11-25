@@ -52,6 +52,9 @@ func (o *Operator) writeMigrationJournalDetailed(
 	if jPath == "" {
 		return false, errors.New("migration journal path is not configured")
 	}
+	if err := o.CheckNotForeign(); err != nil {
+		return false, err
+	}
 	o.mu.Lock()
 	dirHook := o.dirSyncHook
 	o.mu.Unlock()
@@ -321,7 +324,7 @@ func (o *Operator) cleanupRolledBackMigrationJournal(j *MigrationJournal) error 
 
 func (o *Operator) recoverMigrationJournalOnStartup() {
 	jPath := o.MigrationJournalPath()
-	if jPath == "" {
+	if jPath == "" || o.CheckNotForeign() != nil {
 		return
 	}
 	raw, err := os.ReadFile(jPath)

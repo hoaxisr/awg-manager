@@ -45,7 +45,7 @@ func (a *app) uplinkCatalog(ctx context.Context) ([]uplink.TargetInfo, error) {
 			fircActive = true
 		}
 	}
-	if a.fircOp != nil && fircActive {
+	if a.fircOp != nil && fircActive && a.fircOp.CheckNotForeign() == nil {
 		list, err := a.fircOp.Client().GetTunnels(ctx)
 		if err != nil {
 			failures = append(failures, fmt.Errorf("FIRC targets: %w", err))

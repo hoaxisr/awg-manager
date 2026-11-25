@@ -26,16 +26,6 @@ type RuntimePackageManager interface {
 	Version(context.Context, string) (string, error)
 }
 
-// ExternalPackageRemover removes an allowlisted external Entware FIRC package
-// (upstream "firc" or "tunvless") during explicit user-confirmed migration to awg-firc-runtime.
-type ExternalPackageRemover interface {
-	RemoveExternal(ctx context.Context, name string) error
-}
-
-func isAllowedExternalFircPackage(name string) bool {
-	return name == "firc" || name == "tunvless"
-}
-
 // OpkgRuntimeManager never forces ownership conflicts and uses opkg's own lock.
 // No command, package name or installation URL is accepted from the browser.
 type OpkgRuntimeManager struct {
@@ -113,31 +103,6 @@ func (OpkgRuntimeManager) Remove(ctx context.Context, name string) error {
 	return nil
 }
 
-// RemoveExternal uninstalls an allowlisted external FIRC package using plain `opkg remove`
-// (never --force-*), after checking its opkg info list is present.
-func (m OpkgRuntimeManager) RemoveExternal(ctx context.Context, name string) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if !isAllowedExternalFircPackage(name) {
-		return fmt.Errorf("refusing to remove unsupported external FIRC package %q", name)
-	}
-	infoDir := "/opt/lib/opkg/info"
-	if sp := strings.TrimSpace(m.StatusPath); sp != "" {
-		infoDir = filepath.Join(filepath.Dir(sp), "info")
-	}
-	listPath := filepath.Join(infoDir, name+".list")
-	if st, err := os.Stat(listPath); err != nil {
-		return fmt.Errorf("external package list unavailable (%s): %w", listPath, err)
-	} else if st.IsDir() {
-		return fmt.Errorf("invalid external package list path: %s", listPath)
-	}
-	out, err := exec.CommandContext(ctx, "/opt/bin/opkg", "remove", name).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("opkg external package remove (%s): %w: %.2048s", name, err, out)
-	}
-	return nil
-}
 func parseOpkgStatusTuple(statusRaw, version string) (string, error) {
 	tokens := strings.Fields(statusRaw)
 	if len(tokens) != 3 {
@@ -190,7 +155,7 @@ func (m OpkgRuntimeManager) Version(ctx context.Context, name string) (string, e
 
 func (i *OnDemandInstaller) SetPackageManager(p RuntimePackageManager) { i.packages = p }
 func (i *OnDemandInstaller) operationPath() string {
-	return filepath.Join(i.layout.RootDir, "/opt/etc/awg-manager/firc-runtime-operation.json")
+	return i.rootPath(runtimeOperationFile)
 }
 
 type runtimeOperation struct {
@@ -198,7 +163,6 @@ type runtimeOperation struct {
 	Pending         bool   `json:"pending"`
 	PreviousVersion string `json:"previousVersion,omitempty"`
 	TargetVersion   string `json:"targetVersion,omitempty"`
-	ExternalPackage string `json:"externalPackage,omitempty"`
 	Error           string `json:"error,omitempty"`
 }
 
@@ -251,8 +215,8 @@ func (i *OnDemandInstaller) finish(err error) {
 	}
 }
 
-// SetOnFinished задаёт подписчика на завершение установки, обновления,
-// удаления или переноса рантайма — с любым исходом.
+// SetOnFinished задаёт подписчика на завершение установки, обновления
+// или удаления рантайма — с любым исходом.
 func (i *OnDemandInstaller) SetOnFinished(fn func()) {
 	i.mu.Lock()
 	i.onFinished = fn
@@ -289,21 +253,6 @@ func (i *OnDemandInstaller) runtimeFilePaths() []string {
 	}
 }
 
-func lstatExists(p string) bool {
-	_, err := os.Lstat(p)
-	return err == nil
-}
-
-func (i *OnDemandInstaller) hasCompleteUnmanagedRuntime() bool {
-	fircdOK := presentRegular(i.layout.FircdBin) || presentRegular(i.rootPath("/opt/bin/fircd"))
-	tunvlessOK := presentRegular(i.layout.TunvlessBin) || presentRegular(i.rootPath("/opt/bin/tunvless"))
-	return fircdOK &&
-		tunvlessOK &&
-		presentRegular(i.layout.InitScript) &&
-		presentRegular(i.layout.NDMNetfilterHook) &&
-		lstatExists(i.layout.NDMIfLayerHook)
-}
-
 func (i *OnDemandInstaller) cleanupOrphanedRuntimeFiles() error {
 	paths := append(i.runtimeFilePaths(), i.layout.ChecksumManifest)
 	for _, p := range paths {
@@ -327,14 +276,10 @@ func (i *OnDemandInstaller) isRuntimeMissingOrBroken(ctx context.Context, op *Op
 		}
 	}
 	if _, err := os.Stat(i.layout.FircdBin); err != nil {
-		if _, altErr := os.Stat(i.rootPath("/opt/bin/fircd")); altErr != nil {
-			return true
-		}
+		return true
 	}
 	if _, err := os.Stat(i.layout.TunvlessBin); err != nil {
-		if _, altErr := os.Stat(i.rootPath("/opt/bin/tunvless")); altErr != nil {
-			return true
-		}
+		return true
 	}
 	if _, err := os.Stat(i.layout.InitScript); err != nil {
 		return true
@@ -387,6 +332,9 @@ func (i *OnDemandInstaller) packageOperation(ctx context.Context, action string,
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := i.checkNotForeign(); err != nil {
+		return err
+	}
 	if i.engineActiveFn != nil {
 		selected = i.engineActiveFn()
 	}
@@ -413,9 +361,6 @@ func (i *OnDemandInstaller) packageOperation(ctx context.Context, action string,
 			return fmt.Errorf("%w: %s", ErrFircDependencies, strings.Join(deps, ", "))
 		}
 	}
-	if err := i.checkExternalPackageOwnership(); err != nil {
-		return err
-	}
 	if i.packages == nil {
 		return errors.New("firc: runtime package manager unavailable")
 	}
@@ -434,9 +379,6 @@ func (i *OnDemandInstaller) packageOperation(ctx context.Context, action string,
 	priorOperation, journalErr := i.readOperation()
 	if journalErr != nil {
 		return fmt.Errorf("cannot read runtime recovery journal: %w", journalErr)
-	}
-	if priorOperation.Pending && priorOperation.Action == "migrate_external" {
-		return fmt.Errorf("cannot start %q while %q migration requires recovery", action, priorOperation.Action)
 	}
 	if action == "install" {
 		// До отметки Pending: после неё уборка сочла бы операцию незавершённой.
@@ -519,8 +461,6 @@ func (i *OnDemandInstaller) packageOperation(ctx context.Context, action string,
 			previousVersion = ""
 			previousIPK = ""
 		}
-	} else if !priorOperation.Pending && !opkgStatusBroken && i.hasCompleteUnmanagedRuntime() {
-		return errors.New("unmanaged FIRC runtime found; explicit ownership migration required")
 	}
 	stage, err := os.MkdirTemp(cache, "stage-")
 	if err != nil {
@@ -555,6 +495,10 @@ func (i *OnDemandInstaller) packageOperation(ctx context.Context, action string,
 		return err
 	}
 	if err := persistRuntimeIPKCache(cache, data, spec, activeSpec, fromFallback); err != nil {
+		return err
+	}
+	// Загрузка шла минутами: за это время могли поставить сторонний firc.
+	if err := i.checkNotForeign(); err != nil {
 		return err
 	}
 	mutated = true
@@ -772,7 +716,7 @@ func (i *OnDemandInstaller) pruneRuntimeCache(cache string) {
 		name := e.Name()
 		switch {
 		case e.IsDir() && (strings.HasPrefix(name, "stage-") || strings.HasPrefix(name, "upgrade-stage-") ||
-			strings.HasPrefix(name, "ext-migrate-stage-") || strings.HasPrefix(name, ".firc-runtime-verify-")):
+			strings.HasPrefix(name, ".firc-runtime-verify-")):
 		case !e.IsDir() && strings.HasPrefix(name, "runtime-") && strings.HasSuffix(name, ".ipk") && name != keep:
 		default:
 			continue
@@ -790,7 +734,7 @@ func (i *OnDemandInstaller) pruneRuntimeCache(cache string) {
 // прогреваем — он и так идёт под локом.
 func (i *OnDemandInstaller) prewarmVerifiedIPK(ctx context.Context) {
 	spec, fromFallback := i.installSpec()
-	if fromFallback || !spec.IsAvailable() {
+	if fromFallback || !spec.IsAvailable() || i.checkNotForeign() != nil {
 		return
 	}
 	cache := i.rootPath("/opt/var/cache/awg-manager/firc-runtime")

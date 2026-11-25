@@ -255,6 +255,10 @@ func (op *Operator) enrichExtRuntimeStatus(ctx context.Context, ext ExtConfig) E
 }
 
 func (op *Operator) loadExtConfigUnlocked() (ExtConfig, bool) {
+	if op.CheckNotForeign() != nil {
+		// Настройки поверх рантайма при стороннем firc не действуют.
+		return normalizeExtConfig(ExtConfig{GroupLinks: map[string]string{}}), false
+	}
 	data, err := os.ReadFile(op.extConfigPath())
 	if err != nil {
 		return normalizeExtConfig(ExtConfig{GroupLinks: map[string]string{}}), false
@@ -325,6 +329,9 @@ func (op *Operator) SaveExtConfig(ext ExtConfig) error {
 }
 
 func (op *Operator) writeExtConfigLocked(ext ExtConfig) error {
+	if err := op.CheckNotForeign(); err != nil {
+		return err
+	}
 	data, err := json.MarshalIndent(ext, "", "  ")
 	if err != nil {
 		return err
@@ -1401,6 +1408,7 @@ func (op *Operator) runExtWatchdogTick(loopCtx context.Context) {
 	}
 	ctx, cancel := context.WithTimeout(loopCtx, 10*time.Second)
 	defer cancel()
+	op.releaseExtForForeign(ctx)
 	running := op.IsRunning(ctx)
 	// Отменённый такт (остановка сторожа) — не наблюдение: «не запущен»
 	// здесь значит лишь, что пинг прервали.
@@ -1438,6 +1446,29 @@ func (op *Operator) runExtWatchdogTick(loopCtx context.Context) {
 	op.noteRuntimeState(true, kdErr)
 	if !wantKeenDNS || groupsLive {
 		op.maybeResetCloudAgentOnKeenDNSSwitch(ctx, wantKeenDNS, groups)
+	}
+}
+
+// releaseExtForForeign снимает свои цепочки FEXT_* и хук, когда под работающим
+// движком появился сторонний firc: они ссылались на наш рантайм, а действуют уже
+// на чужой. Один раз и с подтверждением — на время opkg upgrade рантайм
+// ненадолго остаётся без списка файлов. Сторож не гасим: уйдёт сторонний —
+// обычный такт вернёт правила.
+func (op *Operator) releaseExtForForeign(ctx context.Context) {
+	if op.CheckNotForeign() == nil {
+		op.foreignTicks.Store(0)
+		return
+	}
+	if op.foreignTicks.Add(1) != runtimeDownConfirmations {
+		return
+	}
+	extNetfilterGen.Add(1)
+	op.netfilterMu.Lock()
+	defer op.netfilterMu.Unlock()
+	if op.isSystemConfigDir() {
+		cleanupExtNetfilter(ctx, "")
+	} else if op.managesKernelNetfilter() {
+		cleanupExtNetfilterRules(ctx)
 	}
 }
 
@@ -1952,7 +1983,7 @@ func (op *Operator) ReleaseCutoverBarrier(ctx context.Context) error {
 	if op.isSystemConfigDir() {
 		_ = os.Remove(cutoverGuardHookPath)
 	}
-	if !op.shouldManageKernelNetfilter() {
+	if !op.managesKernelNetfilter() {
 		return nil
 	}
 	op.netfilterMu.Lock()

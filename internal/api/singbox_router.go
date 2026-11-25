@@ -281,6 +281,9 @@ func (h *SingboxRouterHandler) PolicyTunNATPreview(w http.ResponseWriter, r *htt
 
 func (h *SingboxRouterHandler) handleErr(w http.ResponseWriter, action string, err error) {
 	h.log.Warn(action, "", err.Error())
+	if writeForeignFirc(w, err) {
+		return
+	}
 	switch {
 	case errors.Is(err, router.ErrNetfilterComponentMissing),
 		errors.Is(err, router.ErrIPTablesModTProxyMissing):

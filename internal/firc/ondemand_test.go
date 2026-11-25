@@ -42,9 +42,7 @@ type mockRuntimePackages struct {
 	root, version           string
 	versions                map[string]string
 	installs, removes       int
-	extRemoves              int
 	failInstall, failRemove bool
-	failExtRemove           bool
 	failNextInstall         bool
 	entered, release        chan struct{}
 }
@@ -100,6 +98,9 @@ func (m *mockRuntimePackages) Install(ctx context.Context, p string) error {
 			return err
 		}
 	}
+	if err := writeOwnRuntimeList(m.root); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	m.version = "0.7.0-1"
 	if m.versions != nil {
@@ -126,6 +127,9 @@ func (m *mockRuntimePackages) Remove(_ context.Context, name string) error {
 			return err
 		}
 	}
+	if err := removeOwnRuntimeList(m.root); err != nil {
+		return err
+	}
 	m.version = ""
 	if m.versions != nil {
 		m.versions[RuntimePackageName] = ""
@@ -133,43 +137,25 @@ func (m *mockRuntimePackages) Remove(_ context.Context, name string) error {
 	return nil
 }
 
-func (m *mockRuntimePackages) RemoveExternal(_ context.Context, name string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.extRemoves++
-	if m.failExtRemove {
-		return errors.New("opkg remove external failed")
+// writeOwnRuntimeList — то, что делает opkg: список файлов установленного пакета.
+func writeOwnRuntimeList(root string) error {
+	var list strings.Builder
+	for rel := range runtimePayload {
+		list.WriteString("/" + rel + "\n")
 	}
-	if !isAllowedExternalFircPackage(name) {
-		return errors.New("unsupported external package")
-	}
-	listPath := filepath.Join(m.root, "opt", "lib", "opkg", "info", name+".list")
-	if _, err := os.Stat(listPath); err != nil {
+	p := filepath.Join(root, "opt", "lib", "opkg", "info", RuntimePackageName+".list")
+	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
 		return err
 	}
-	if err := os.Remove(listPath); err != nil {
-		return err
+	return os.WriteFile(p, []byte(list.String()), 0644)
+}
+
+func removeOwnRuntimeList(root string) error {
+	err := os.Remove(filepath.Join(root, "opt", "lib", "opkg", "info", RuntimePackageName+".list"))
+	if os.IsNotExist(err) {
+		return nil
 	}
-	// Remove runtime binaries/hooks and simulate upstream firc prerm wiping /opt/var/lib/firc state.
-	for _, rel := range []string{
-		"opt/bin/fircd",
-		"opt/bin/tunvless",
-		"opt/sbin/fircd",
-		"opt/sbin/tunvless",
-		"opt/etc/init.d/S99firc",
-		"opt/etc/ndm/netfilter.d/100-firc",
-		"opt/etc/ndm/iflayerchanged.d/100-firc",
-		"opt/var/lib/firc/hwid",
-		"opt/var/lib/firc/rci-token",
-		"opt/var/lib/firc/opkgtun",
-	} {
-		_ = os.Remove(filepath.Join(m.root, filepath.FromSlash(rel)))
-	}
-	_ = os.RemoveAll(filepath.Join(m.root, "opt", "var", "lib", "firc", "tunnels"))
-	if m.versions != nil {
-		m.versions[name] = ""
-	}
-	return nil
+	return err
 }
 
 func runtimeFixture(t *testing.T) (*OnDemandInstaller, *mockRuntimePackages, []byte) {
@@ -393,11 +379,11 @@ func TestOnDemandInstaller_ActiveEngineAllowsInstallAndRepairWhenStoppedAndBroke
 func TestOnDemandInstaller_OrphanedLeftoversRepairAndUninstall(t *testing.T) {
 	ctx := context.Background()
 
-	// 1. Partial leftovers (S99firc + regular /opt/bin/fircd, no .list, existing firc.conf) -> Install repairs cleanly.
+	// 1. Partial leftovers (S99firc + tunvless, no .list, existing firc.conf) -> Install repairs cleanly.
 	instRepair, pmRepair, _ := runtimeFixture(t)
 	rootRepair := instRepair.layout.RootDir
 	for rel, content := range map[string]string{
-		"opt/bin/fircd":          "stale-fircd-binary",
+		"opt/bin/tunvless":       "stale-tunvless-binary",
 		"opt/etc/init.d/S99firc": "#!/bin/sh\nexit 0\n",
 		"opt/etc/firc/firc.conf": "user-conf\n",
 	} {
@@ -426,7 +412,7 @@ func TestOnDemandInstaller_OrphanedLeftoversRepairAndUninstall(t *testing.T) {
 	instClean, pmClean, _ := runtimeFixture(t)
 	rootClean := instClean.layout.RootDir
 	for rel, content := range map[string]string{
-		"opt/bin/fircd":                    "stale-fircd-binary",
+		"opt/bin/tunvless":                 "stale-tunvless-binary",
 		"opt/etc/init.d/S99firc":           "#!/bin/sh\nexit 0\n",
 		"opt/etc/ndm/netfilter.d/100-firc": "#!/bin/sh\nexit 0\n",
 		"opt/etc/firc/firc.conf":           "keep-me\n",
@@ -445,7 +431,7 @@ func TestOnDemandInstaller_OrphanedLeftoversRepairAndUninstall(t *testing.T) {
 	if pmClean.removes != 0 {
 		t.Fatalf("expected 0 opkg remove calls when awg-firc-runtime absent, got %d", pmClean.removes)
 	}
-	for _, rel := range []string{"opt/bin/fircd", "opt/etc/init.d/S99firc", "opt/etc/ndm/netfilter.d/100-firc"} {
+	for _, rel := range []string{"opt/bin/tunvless", "opt/etc/init.d/S99firc", "opt/etc/ndm/netfilter.d/100-firc"} {
 		if _, err := os.Lstat(filepath.Join(rootClean, filepath.FromSlash(rel))); !os.IsNotExist(err) {
 			t.Fatalf("expected %s to be removed, stat err=%v", rel, err)
 		}
@@ -455,31 +441,6 @@ func TestOnDemandInstaller_OrphanedLeftoversRepairAndUninstall(t *testing.T) {
 	}
 	if st := instClean.GetInstallStatus(ctx, nil, false); st.State != InstallStateNotInstalled {
 		t.Fatalf("expected State=%q after orphan uninstall, got %+v", InstallStateNotInstalled, st)
-	}
-
-	// 3. Complete unmanaged installation (all 5 runtime files present, no .list) -> still refuses direct overwrite.
-	instUnmanaged, pmUnmanaged, _ := runtimeFixture(t)
-	rootUnmanaged := instUnmanaged.layout.RootDir
-	for rel, content := range map[string]string{
-		"opt/bin/fircd":                         "unmanaged-fircd",
-		"opt/bin/tunvless":                      "unmanaged-tunvless",
-		"opt/etc/init.d/S99firc":                "#!/bin/sh\nexit 0\n",
-		"opt/etc/ndm/netfilter.d/100-firc":      "#!/bin/sh\nexit 0\n",
-		"opt/etc/ndm/iflayerchanged.d/100-firc": "#!/bin/sh\nexit 0\n",
-	} {
-		p := filepath.Join(rootUnmanaged, filepath.FromSlash(rel))
-		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte(content), 0755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := instUnmanaged.Install(ctx); err == nil || !strings.Contains(err.Error(), "unmanaged FIRC runtime found") {
-		t.Fatalf("expected refusal for complete unmanaged runtime, got: %v", err)
-	}
-	if pmUnmanaged.installs != 0 {
-		t.Fatalf("expected 0 opkg installs for complete unmanaged runtime, got %d", pmUnmanaged.installs)
 	}
 }
 
@@ -500,97 +461,14 @@ func TestRuntimeUpgradeFailureRestoresPreviousPackage(t *testing.T) {
 	}
 }
 
-func seedExternalFircTree(t *testing.T, root string) {
-	t.Helper()
-	files := map[string]string{
-		"opt/bin/fircd":                         "elf-fircd",
-		"opt/bin/tunvless":                      "elf-tunvless",
-		"opt/etc/init.d/S99firc":                "#!/bin/sh\nexit 0\n",
-		"opt/etc/ndm/netfilter.d/100-firc":      "#!/bin/sh\nexit 0\n",
-		"opt/etc/ndm/iflayerchanged.d/100-firc": "#!/bin/sh\nexit 0\n",
-		"opt/etc/firc/firc.conf":                "configVersion: 0.7.0\n",
-		"opt/etc/firc/groups.yaml":              "groups: []\n",
-		"opt/lib/opkg/info/firc.list": "/opt/bin/fircd\n" +
-			"/opt/bin/tunvless\n" +
-			"/opt/etc/init.d/S99firc\n" +
-			"/opt/etc/ndm/netfilter.d/100-firc\n" +
-			"/opt/etc/ndm/iflayerchanged.d/100-firc\n",
-	}
-	for rel, content := range files {
-		p := filepath.Join(root, filepath.FromSlash(rel))
-		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
-			t.Fatal(err)
-		}
-		mode := os.FileMode(0644)
-		if strings.Contains(rel, "/bin/") || strings.Contains(rel, "/init.d/") || strings.Contains(rel, "/ndm/") {
-			mode = 0755
-		}
-		if err := os.WriteFile(p, []byte(content), mode); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
-
-func TestOnDemandInstaller_ExternalFircPackageDetectedAndProtected(t *testing.T) {
-	ctx := context.Background()
-	root := t.TempDir()
-	seedExternalFircTree(t, root)
-
-	spec := FircBinarySpec{
-		Version:       "0.8.0-awgm.4",
-		PackageURL:    "https://example.invalid/awg-firc-runtime.ipk",
-		PackageSHA256: strings.Repeat("b", 64),
-		PackageSize:   1024,
-	}
-	inst := NewOnDemandInstaller("mipsel-3.4", spec)
-	inst.SetPackageLayout(DefaultPackageLayout(root))
-	pm := &mockRuntimePackages{
-		root:     root,
-		versions: map[string]string{"firc": "0.8.2-1"},
-	}
-	inst.SetPackageManager(pm)
-	inst.SetFreeDiskFn(func(string) (int64, bool) { return 128 << 20, true })
-
-	st := inst.GetInstallStatus(ctx, nil, false)
-	if st.State != InstallStateInstalled {
-		t.Fatalf("expected state=%q for external firc package, got %+v", InstallStateInstalled, st)
-	}
-	if st.ExternalPackage != "firc" || st.InstalledVersion != "0.8.2-1" {
-		t.Fatalf("expected externalPackage=firc version=0.8.2-1, got %+v", st)
-	}
-	if !st.FircdPresent || !st.TunvlessPresent || !st.InitScriptPresent || !st.NDMHookPresent || !st.ConfigPresent {
-		t.Fatalf("expected all runtime presence flags true, got %+v", st)
-	}
-	if st.FreeDiskBytes != 128<<20 {
-		t.Fatalf("expected freeDisk fallback to probe /opt/bin, got %d", st.FreeDiskBytes)
-	}
-
-	inst.SetFircRunningChecker(func(context.Context) bool { return true })
-	runningSt := inst.GetInstallStatus(ctx, nil, true)
-	if runningSt.State != InstallStateRunning || runningSt.ExternalPackage != "firc" {
-		t.Fatalf("expected running external package status, got %+v", runningSt)
-	}
-
-	inst.SetFircRunningChecker(func(context.Context) bool { return false })
-	if err := inst.Install(ctx); err == nil || !strings.Contains(err.Error(), "external package firc.list") {
-		t.Fatalf("expected Install refusal for external package firc, got %v", err)
-	}
-	if err := inst.Uninstall(ctx, nil, false, false); err == nil || !strings.Contains(err.Error(), "external package firc.list") {
-		t.Fatalf("expected Uninstall refusal for external package firc, got %v", err)
-	}
-	if pm.installs != 0 || pm.removes != 0 {
-		t.Fatalf("unexpected opkg mutations for external package: installs=%d removes=%d", pm.installs, pm.removes)
-	}
-}
-
-func TestOpkgRuntimeManager_ReadsExternalFircVersion(t *testing.T) {
+func TestOpkgRuntimeManager_ReadsInstalledVersion(t *testing.T) {
 	statusPath := filepath.Join(t.TempDir(), "status")
 	statusBody := strings.Join([]string{
 		"Package: busybox",
 		"Version: 1.36.1-1",
 		"Status: install ok installed",
 		"",
-		"Package: firc",
+		"Package: " + RuntimePackageName,
 		"Version: 0.8.2-1",
 		"Depends: libc, libssp",
 		"Status: install user installed",
@@ -602,18 +480,10 @@ func TestOpkgRuntimeManager_ReadsExternalFircVersion(t *testing.T) {
 	}
 
 	pm := OpkgRuntimeManager{StatusPath: statusPath}
-	ver, err := pm.Version(context.Background(), "firc")
-	if err != nil {
-		t.Fatalf("Version(firc): %v", err)
+	if ver, err := pm.Version(context.Background(), RuntimePackageName); err != nil || ver != "0.8.2-1" {
+		t.Fatalf("Version(%s) = %q, %v", RuntimePackageName, ver, err)
 	}
-	if ver != "0.8.2-1" {
-		t.Fatalf("Version(firc) = %q, want %q", ver, "0.8.2-1")
-	}
-	awgVer, err := pm.Version(context.Background(), RuntimePackageName)
-	if err != nil {
-		t.Fatalf("Version(%s): %v", RuntimePackageName, err)
-	}
-	if awgVer != "" {
-		t.Fatalf("expected empty version for absent %s, got %q", RuntimePackageName, awgVer)
+	if ver, err := pm.Version(context.Background(), "absent"); err != nil || ver != "" {
+		t.Fatalf("Version(absent) = %q, %v", ver, err)
 	}
 }

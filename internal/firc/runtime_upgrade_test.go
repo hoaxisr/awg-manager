@@ -74,6 +74,9 @@ func (m *upgradeMockPackages) Install(_ context.Context, p string) error {
 			return err
 		}
 	}
+	if err := writeOwnRuntimeList(m.root); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	if m.versions == nil {
 		m.versions = map[string]string{}
@@ -96,6 +99,9 @@ func (m *upgradeMockPackages) Remove(_ context.Context, name string) error {
 		if err := os.Remove(filepath.Join(m.root, rel)); err != nil && !os.IsNotExist(err) {
 			return err
 		}
+	}
+	if err := removeOwnRuntimeList(m.root); err != nil {
+		return err
 	}
 	if m.versions != nil {
 		m.versions[RuntimePackageName] = ""
@@ -209,12 +215,10 @@ func setupUpgradeFixture(t *testing.T) (
 
 	running = &atomic.Bool{}
 	op = NewOperator(Options{
-		ConfigDir:      filepath.Join(root, "opt", "etc", "firc"),
-		FircdBinary:    filepath.Join(root, "opt", "sbin", "fircd"),
-		AltFircdBinary: filepath.Join(root, "opt", "bin", "fircd"),
-		TunvlessBin:    filepath.Join(root, "opt", "sbin", "tunvless"),
-		AltTunvlessBin: filepath.Join(root, "opt", "bin", "tunvless"),
-		InitScript:     filepath.Join(root, "opt", "etc", "init.d", "S99firc"),
+		ConfigDir:   filepath.Join(root, "opt", "etc", "firc"),
+		FircdBinary: filepath.Join(root, "opt", "sbin", "fircd"),
+		TunvlessBin: filepath.Join(root, "opt", "sbin", "tunvless"),
+		InitScript:  filepath.Join(root, "opt", "etc", "init.d", "S99firc"),
 	})
 	return root, pm, dl, op, running, specV1, specV2, ipkV1, ipkV2
 }
@@ -501,15 +505,5 @@ func TestOnDemandInstaller_UpgradePreconditions(t *testing.T) {
 	instDep.SetDependencyChecker(func(context.Context) ([]string, error) { return nil, depErr })
 	if err := instDep.Upgrade(ctx, opDep); !errors.Is(err, depErr) {
 		t.Fatalf("expected dependency probe error, got %v", err)
-	}
-
-	// 5. External package owned -> refused
-	extRoot := t.TempDir()
-	seedExternalFircTree(t, extRoot)
-	instExt := NewOnDemandInstaller("mipsel-3.4", specV2Real)
-	instExt.SetPackageLayout(DefaultPackageLayout(extRoot))
-	instExt.SetPackageManager(&upgradeMockPackages{root: extRoot, arch: "mipsel-3.4", versions: map[string]string{"firc": "0.8.2-1"}})
-	if err := instExt.Upgrade(ctx, nil); err == nil || !strings.Contains(err.Error(), "external package firc.list") {
-		t.Fatalf("expected external package refusal, got %v", err)
 	}
 }

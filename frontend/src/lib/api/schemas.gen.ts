@@ -4013,7 +4013,6 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /dns-routes/update": v.lazy(() => api_DnsRouteResponse),
 	"POST /external-tunnels/adopt": v.lazy(() => api_APIEnvelope),
 	"POST /firc/install": v.lazy(() => api_APIEnvelope),
-	"POST /firc/migrate-runtime": v.lazy(() => api_APIEnvelope),
 	"POST /firc/uninstall": v.lazy(() => api_APIEnvelope),
 	"POST /firc/upgrade": v.lazy(() => api_APIEnvelope),
 	"POST /geo/files/add": v.lazy(() => api_GeoFileResponse),

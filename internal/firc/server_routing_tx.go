@@ -59,6 +59,11 @@ func (op *Operator) PrepareServerRouting(ctx context.Context, txID string, serve
 	op.mutationMu.Lock()
 	defer op.mutationMu.Unlock()
 
+	if !enabled && op.CheckNotForeign() != nil {
+		// Снимать нечего: при стороннем firc маршрутизация серверов через FIRC
+		// не действует, а сервер должен остаться настраиваемым.
+		return "", nil
+	}
 	if err := op.checkMutationAllowed(); err != nil {
 		return "", err
 	}
@@ -266,6 +271,11 @@ func (op *Operator) RollbackServerRouting(ctx context.Context, txID string) erro
 	op.mutationMu.Lock()
 	defer op.mutationMu.Unlock()
 
+	// Каталог firc чужой: начатую до него транзакцию не трогаем, её подберёт
+	// RecoverIncompleteServerRoutingTx на первом запуске без стороннего firc.
+	if op.CheckNotForeign() != nil {
+		return nil
+	}
 	txDir := op.srTxDir(txID)
 	manifestPath := filepath.Join(txDir, "manifest.json")
 	mBytes, err := os.ReadFile(manifestPath)
@@ -380,7 +390,7 @@ func (op *Operator) RollbackServerRouting(ctx context.Context, txID string) erro
 
 // FinalizeServerRouting cleans up the transaction snapshot directory after commit boundary.
 func (op *Operator) FinalizeServerRouting(txID string) error {
-	if strings.TrimSpace(txID) == "" || op.configDir == "" {
+	if strings.TrimSpace(txID) == "" || op.configDir == "" || op.CheckNotForeign() != nil {
 		return nil
 	}
 	return os.RemoveAll(op.srTxDir(txID))
@@ -390,7 +400,7 @@ func (op *Operator) FinalizeServerRouting(txID string) error {
 //   - Uncommitted ("preparing") transactions are deterministically rolled back to pre-tx state.
 //   - Committed ("committing") transactions past the commit point are reconciled and finalized.
 func (op *Operator) RecoverIncompleteServerRoutingTx(ctx context.Context) error {
-	if op.configDir == "" {
+	if op.configDir == "" || op.CheckNotForeign() != nil {
 		return nil
 	}
 	srRoot := filepath.Join(op.configDir, "sr-tx")

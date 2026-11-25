@@ -265,6 +265,9 @@ func (s *Server) buildRouteHandlers() *routeHandlers {
 			}
 			egressAdp.SetFircTunnels(s.listFircEgressTunnels)
 			egressAdp.SetFircStateProvider(func(ctx context.Context) (bool, string) {
+				if err := fircOp.CheckNotForeign(); err != nil {
+					return false, err.Error()
+				}
 				if fircOp.IsRecoveryRequired() {
 					return false, "Маршрутизация FIRC требует восстановления: " + fircOp.RecoveryReason()
 				}

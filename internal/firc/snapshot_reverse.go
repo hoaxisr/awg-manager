@@ -219,6 +219,9 @@ func (o *Operator) LoadMigrationWizardState() MigrationWizardState {
 
 // SaveMigrationWizardState persists the migration wizard state atomically.
 func (o *Operator) SaveMigrationWizardState(st MigrationWizardState) error {
+	if err := o.CheckNotForeign(); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(o.configDir, 0755); err != nil {
 		return err
 	}
@@ -1147,6 +1150,9 @@ func validateDecodedSnapshotFileContent(scope, relPath string, data []byte) erro
 
 // CreateSystemSnapshot captures a complete snapshot of Sing-box, AWGM routing files, and FIRC configs.
 func (o *Operator) CreateSystemSnapshot(singboxConfigDir, label, trigger, activeEngine string) (*SnapshotMeta, error) {
+	if err := o.CheckNotForeign(); err != nil {
+		return nil, err
+	}
 	now := time.Now()
 	if strings.TrimSpace(trigger) == "" {
 		trigger = "manual"
@@ -1292,6 +1298,9 @@ func (o *Operator) CreateSystemSnapshot(singboxConfigDir, label, trigger, active
 // ("saved-singbox-config.json") before Sing-box -> FIRC or FIRC -> Sing-box migration overwrites
 // Sing-box files, enabling Scenario 1 ("Return to saved Sing-box configuration").
 func (o *Operator) SavePreFircSingboxConfig(singboxConfigDir string, overwrite bool) error {
+	if err := o.CheckNotForeign(); err != nil {
+		return err
+	}
 	if strings.TrimSpace(singboxConfigDir) == "" || strings.TrimSpace(o.configDir) == "" {
 		return nil
 	}
@@ -1619,6 +1628,9 @@ func (o *Operator) GetSystemSnapshotMeta(id string) (*SnapshotMeta, error) {
 
 // DeleteSystemSnapshot deletes a snapshot by ID.
 func (o *Operator) DeleteSystemSnapshot(id string) error {
+	if err := o.CheckNotForeign(); err != nil {
+		return err
+	}
 	trimmed := strings.TrimSpace(id)
 	if !isValidSnapshotID(trimmed) {
 		return fmt.Errorf("invalid snapshot id %q", id)
