@@ -407,3 +407,58 @@ func TestRetryDirectWANFirewall_NoChainIsBounded(t *testing.T) {
 		t.Fatalf("после новой сверки повторов %d", got)
 	}
 }
+
+// Под восстановлением файрвол не трогаем.
+// Мутация: убрать проверку recoveryRequired из SyncDirectWANFirewall или
+// retryDirectWANFirewall → красный.
+func TestDirectWANFirewall_UntouchedUnderRecovery(t *testing.T) {
+	svc, _, _ := setupTestService(t)
+	calls := 0
+	svc.directWANFirewall = func(int, bool) error { calls++; return errors.New("xtables lock") }
+	_ = svc.SyncDirectWANFirewall()
+	svc.mu.Lock()
+	svc.recoveryRequired = true
+	svc.mu.Unlock()
+	if err := svc.SyncDirectWANFirewall(); err != nil {
+		t.Fatal(err)
+	}
+	svc.retryDirectWANFirewall()
+	if calls != 1 {
+		t.Fatalf("вызовов %d, ждали 1", calls)
+	}
+}
+
+// Правило прежней формы (без -i) с тем же портом снимается: иначе порт остался бы
+// открыт и со стороны туннелей.
+// Мутация: сохранять правило без интерфейса → красный.
+func TestSyncDirectWANFirewall_RemovesUnscopedRuleOnSamePort(t *testing.T) {
+	nfDir := filepath.Join(t.TempDir(), "netfilter.d")
+	if err := os.MkdirAll(nfDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	const body = "-p tcp -m tcp --dport 8443 -m comment --comment AWGM_TG_MTPROTO_WAN -j ACCEPT"
+	var deleted []string
+	ndmReadable := true
+	stubDirectWANSeams(t, nfDir, filepath.Join(nfDir, "68.sh"), func(_ []string, name string, args ...string) ([]byte, error) {
+		call := strings.Join(args, " ")
+		switch {
+		case strings.Contains(call, "-S _NDM_INPUT"):
+			if !ndmReadable {
+				return []byte("xtables lock"), errors.New("exit status 4")
+			}
+			return []byte("-A _NDM_INPUT -i ppp0 -j _NDM_IP_PUBLIC\n"), nil
+		case strings.Contains(call, "-S _NDM_IP_PUBLIC"):
+			return []byte("-A _NDM_IP_PUBLIC " + body + "\n-A _NDM_IP_PUBLIC -i ppp0 " + body + "\n"), nil
+		case strings.Contains(call, "-D "):
+			deleted = append(deleted, call[strings.Index(call, "-D "):])
+		}
+		return nil, nil
+	})
+	for _, ndmReadable = range []bool{true, false} {
+		deleted = nil
+		_ = SyncDirectWANFirewall(8443, true)
+		if want := []string{"-D _NDM_IP_PUBLIC " + body}; !reflect.DeepEqual(deleted, want) {
+			t.Fatalf("ndm читается=%v: снято %q, ждали %q", ndmReadable, deleted, want)
+		}
+	}
+}
