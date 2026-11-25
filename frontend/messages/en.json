@@ -502,7 +502,6 @@
 	"settings_page_singbox_removed": "Sing-box removed",
 	"settings_page_singbox_remove_failed": "Failed to remove sing-box",
 	"settings_page_singbox_updated": "Sing-box updated",
-	"settings_page_router_info_updated": "Router information updated",
 	"settings_page_system_info_failed": "Failed to update system information",
 	"settings_page_download_routes_error": "Download routes: {error}",
 	"settings_page_routes_updated_found": "Routes updated: found {tunnels} ({available})",

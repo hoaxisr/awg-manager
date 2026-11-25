@@ -12,15 +12,14 @@ vi.mock('$app/navigation', () => ({ goto: nav.goto }));
 
 const api = vi.hoisted(() => ({
 	getSettings: vi.fn(),
-	getSystemInfo: vi.fn(),
-	checkUpdate: vi.fn(),
 	serverListenConfirm: vi.fn(),
 }));
 vi.mock('$lib/api/client', () => ({ api }));
 
 // Вкладки проверяются своими тестами: здесь — только маршрутизация между ними.
+const mounted = vi.hoisted(() => [] as string[]);
 vi.mock('$lib/components/settings', () => new Proxy({}, {
-	get: (_, name) => (name === 'then' ? undefined : () => {}),
+	get: (_, name) => (name === 'then' ? undefined : () => void mounted.push(String(name))),
 	has: () => true,
 }));
 vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
@@ -37,10 +36,9 @@ const activeTab = (c: Element) => c.querySelector('.overflow-tabs .tab.active:no
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	mounted.length = 0;
 	nav.goto.mockImplementation(async (href: string) => nav.page.set({ url: new URL(href, 'http://router:2222') }));
 	api.getSettings.mockReturnValue(new Promise(() => {}));
-	api.getSystemInfo.mockReturnValue(new Promise(() => {}));
-	api.checkUpdate.mockReturnValue(new Promise(() => {}));
 	api.serverListenConfirm.mockResolvedValue(undefined);
 });
 
@@ -94,5 +92,25 @@ describe('страница настроек: вкладки', () => {
 		await waitFor(() => expect(activeTab(container)).toBe('Система'));
 		nav.page.set({ url: new URL('http://router:2222/settings#awgm-update') });
 		await waitFor(() => expect(activeTab(container)).toBe('Обновления'));
+	});
+
+	// Опросы и подписки вкладки живут, пока она смонтирована.
+	it('смонтирована только активная вкладка, подвал и патруль — всегда', async () => {
+		api.getSettings.mockResolvedValue({});
+		open('/settings?tab=logs');
+		await waitFor(() => expect(mounted).toContain('SettingsLogsTab'));
+		expect(mounted.filter((n) => n.endsWith('Tab'))).toEqual(['SettingsLogsTab']);
+		expect(mounted).toEqual(expect.arrayContaining(['SettingsFooter', 'PukhososPatrol']));
+	});
+
+	it('блок, к которому ведёт ссылка, прокручен и подсвечен после загрузки настроек', async () => {
+		const el = document.body.appendChild(document.createElement('div'));
+		el.id = 'logging';
+		el.scrollIntoView = vi.fn();
+		api.getSettings.mockResolvedValue({});
+		open('/settings#logging');
+		await waitFor(() => expect(el.scrollIntoView).toHaveBeenCalled());
+		expect(el.classList.contains('highlighted')).toBe(true);
+		el.remove();
 	});
 });

@@ -512,7 +512,6 @@
 	"settings_page_singbox_removed": "Sing-box удалён",
 	"settings_page_singbox_remove_failed": "Не удалось удалить sing-box",
 	"settings_page_singbox_updated": "Sing-box обновлён",
-	"settings_page_router_info_updated": "Информация о роутере обновлена",
 	"settings_page_system_info_failed": "Не удалось обновить системную информацию",
 	"settings_page_download_routes_error": "Маршруты загрузок: {error}",
 	"settings_page_routes_updated_found": "Маршруты обновлены: найдено {tunnels} ({available})",
