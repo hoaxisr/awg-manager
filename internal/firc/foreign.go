@@ -53,10 +53,9 @@ const (
 )
 
 // ownRuntimePackages — пакеты, чьи файлы firc наши. Пакет awg-manager здесь
-// потому, что сборка BuildTargetIPK кладёт рантайм внутрь него. При
-// переименовании рантайма старое имя awg-firc-runtime остаётся здесь: иначе
-// установленный под ним рантайм станет «сторонним».
-var ownRuntimePackages = map[string]bool{RuntimePackageName: true, "awg-manager": true}
+// потому, что сборка BuildTargetIPK кладёт рантайм внутрь него. Прежнее имя
+// рантайма остаётся: иначе установленный под ним станет «сторонним».
+var ownRuntimePackages = map[string]bool{RuntimePackageName: true, legacyRuntimePackageName: true, "awg-manager": true}
 
 // foreignPackageFiles — файлы, по которым пакет Entware узнаётся как firc.
 var foreignPackageFiles = map[string]bool{

@@ -360,7 +360,7 @@ jobs:
 
           gh release delete latest --yes --cleanup-tag || true
 
-          PREV_TAG=$(gh release list --limit 30 --json tagName --jq '[.[] | select(.tagName != "latest" and (.tagName | startswith("firc-runtime-") | not))] | .[0].tagName' 2>/dev/null)
+          PREV_TAG=$(gh release list --limit 30 --json tagName --jq '[.[] | select(.tagName != "latest" and (.tagName | test("^(firc-runtime|awgm-route)-") | not))] | .[0].tagName' 2>/dev/null)
 
           EXTRA_FLAGS=()
           if [ -n "${PREV_TAG}" ]; then

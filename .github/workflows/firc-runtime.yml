@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       publish_release:
-        description: "Publish awg-firc-runtime IPKs as an immutable GitHub prerelease"
+        description: "Publish awgm-route IPKs as an immutable GitHub prerelease"
         type: boolean
         default: true
       force_rebuild:
@@ -16,12 +16,12 @@ on:
         description: "Deterministic runtime package version"
         value: ${{ jobs.prepare.outputs.runtime_version }}
       release_tag:
-        description: "GitHub release tag holding awg-firc-runtime assets"
+        description: "GitHub release tag holding awgm-route assets"
         value: ${{ jobs.prepare.outputs.release_tag }}
   workflow_dispatch:
     inputs:
       publish_release:
-        description: "Publish awg-firc-runtime IPKs as an immutable GitHub prerelease"
+        description: "Publish awgm-route IPKs as an immutable GitHub prerelease"
         type: boolean
         default: true
       force_rebuild:
@@ -56,7 +56,7 @@ jobs:
           set -euo pipefail
 
           RUNTIME_VERSION="$(bash scripts/firc-runtime-version.sh)"
-          RELEASE_TAG="firc-runtime-${RUNTIME_VERSION}"
+          RELEASE_TAG="awgm-route-${RUNTIME_VERSION}"
           echo "runtime_version=${RUNTIME_VERSION}" >> "$GITHUB_OUTPUT"
           echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
 
@@ -70,7 +70,7 @@ jobs:
               ASSETS="$(gh release view "${RELEASE_TAG}" --repo "${{ github.repository }}" --json assets --jq '.assets[].name')"
               MISSING=0
               for arch in mipsel-3.4 mips-3.4 aarch64-3.10; do
-                if ! grep -Fxq "awg-firc-runtime_${RUNTIME_VERSION}_${arch}.ipk" <<< "$ASSETS"; then
+                if ! grep -Fxq "awgm-route_${RUNTIME_VERSION}_${arch}.ipk" <<< "$ASSETS"; then
                   MISSING=1
                 fi
               done
@@ -365,12 +365,12 @@ jobs:
         with:
           go-version: 1.26.4
 
-      - name: Package verified awg-firc-runtime IPK
+      - name: Package verified awgm-route IPK
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist
-          IPK_NAME="awg-firc-runtime_${RUNTIME_VERSION}_${{ matrix.arch }}.ipk"
+          IPK_NAME="awgm-route_${RUNTIME_VERSION}_${{ matrix.arch }}.ipk"
           REL_URL="https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/${IPK_NAME}"
 
           FIRC_SOURCE_ROOT="$PWD/c-core/firc" go run -mod=vendor ./cmd/firc-runtime-package \
@@ -391,7 +391,7 @@ jobs:
         with:
           name: firc-runtime-${{ matrix.arch }}
           path: |
-            dist/awg-firc-runtime_${{ needs.prepare.outputs.runtime_version }}_${{ matrix.arch }}.ipk
+            dist/awgm-route_${{ needs.prepare.outputs.runtime_version }}_${{ matrix.arch }}.ipk
             dist/firc_release_${{ matrix.arch }}.json
           if-no-files-found: error
 
@@ -433,7 +433,7 @@ jobs:
             --expected-repo "${{ github.repository }}"
           (
             cd dist
-            sha256sum awg-firc-runtime_${RUNTIME_VERSION}_*.ipk firc_releases.json > SHA256SUMS
+            sha256sum awgm-route_${RUNTIME_VERSION}_*.ipk firc_releases.json > SHA256SUMS
           )
           cat dist/firc_releases.json
 
@@ -453,15 +453,15 @@ jobs:
             exit 0
           fi
           gh release create "${RELEASE_TAG}" \
-            "./dist/awg-firc-runtime_${RUNTIME_VERSION}_aarch64-3.10.ipk" \
-            "./dist/awg-firc-runtime_${RUNTIME_VERSION}_mips-3.4.ipk" \
-            "./dist/awg-firc-runtime_${RUNTIME_VERSION}_mipsel-3.4.ipk" \
+            "./dist/awgm-route_${RUNTIME_VERSION}_aarch64-3.10.ipk" \
+            "./dist/awgm-route_${RUNTIME_VERSION}_mips-3.4.ipk" \
+            "./dist/awgm-route_${RUNTIME_VERSION}_mipsel-3.4.ipk" \
             ./dist/firc_releases.json \
             ./dist/SHA256SUMS \
             --repo "${{ github.repository }}" \
             --target "${{ github.sha }}" \
-            --title "FIRC Runtime ${RUNTIME_VERSION}" \
-            --notes "Automated awg-firc-runtime build (${RUNTIME_VERSION}) from ${GITHUB_SHA:0:12}." \
+            --title "AWGM Route ${RUNTIME_VERSION}" \
+            --notes "Automated awgm-route build (${RUNTIME_VERSION}) from ${GITHUB_SHA:0:12}." \
             --prerelease
 
       - name: Upload merged manifest artifact

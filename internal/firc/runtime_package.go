@@ -13,7 +13,20 @@ import (
 	"time"
 )
 
-const RuntimePackageName = "awg-firc-runtime"
+// RuntimePackageName — пакет рантайма (AWGM Route).
+const RuntimePackageName = "awgm-route"
+
+// legacyRuntimePackageName — имя пакета в сборках develop до 2.21.0. Стоящий под
+// ним рантайм наш: OpkgRuntimeManager читает и снимает его как текущий.
+const legacyRuntimePackageName = "awg-firc-runtime"
+
+func isRuntimePackageName(name string) bool {
+	return name == RuntimePackageName || name == legacyRuntimePackageName
+}
+
+// opkgBin — var для теста.
+var opkgBin = "/opt/bin/opkg" //nolint:gochecknoglobals
+
 const maxRuntimeIPKBytes int64 = 32 << 20
 
 var runtimeVersionPattern = regexp.MustCompile(`^[0-9][A-Za-z0-9.+~_-]{0,95}$`)
@@ -33,7 +46,7 @@ type OpkgRuntimeManager struct {
 }
 
 func (OpkgRuntimeManager) CheckEnvironment() error {
-	info, err := os.Stat("/opt/bin/opkg")
+	info, err := os.Stat(opkgBin)
 	if err != nil {
 		return fmt.Errorf("Entware opkg unavailable: %w", err)
 	}
@@ -43,60 +56,81 @@ func (OpkgRuntimeManager) CheckEnvironment() error {
 	return nil
 }
 
-func readRuntimeIPKControlVersion(ipkPath string) (string, error) {
+func readRuntimeIPKControl(ipkPath string) (name, version string, err error) {
 	raw, err := os.ReadFile(ipkPath)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	outer, err := readRuntimeTar(raw, 2*maxRuntimeIPKBytes)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	ctrlEntry, ok := outer["control.tar.gz"]
 	if !ok {
-		return "", errors.New("missing control.tar.gz in runtime IPK")
+		return "", "", errors.New("missing control.tar.gz in runtime IPK")
 	}
 	ctrl, err := readRuntimeTar(ctrlEntry.data, 1<<20)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	for _, line := range strings.Split(string(ctrl["control"].data), "\n") {
 		key, val, found := strings.Cut(line, ":")
-		if found && strings.TrimSpace(key) == "Version" {
-			return strings.TrimSpace(val), nil
+		switch {
+		case found && strings.TrimSpace(key) == "Package":
+			name = strings.TrimSpace(val)
+		case found && strings.TrimSpace(key) == "Version":
+			version = strings.TrimSpace(val)
 		}
 	}
-	return "", errors.New("missing Version in runtime IPK control")
+	if !isRuntimePackageName(name) || version == "" {
+		return "", "", errors.New("missing Package or Version in runtime IPK control")
+	}
+	return name, version, nil
+}
+
+// installedName — под каким именем рантайм стоит в базе opkg: новое имя, а если
+// его там нет — прежнее. Недоустановленный считается стоящим (verErr).
+func (m OpkgRuntimeManager) installedName(ctx context.Context) (name, version string, err error) {
+	for _, name := range []string{RuntimePackageName, legacyRuntimePackageName} {
+		if v, err := m.packageVersion(ctx, name); v != "" || err != nil {
+			return name, v, err
+		}
+	}
+	return "", "", nil
 }
 
 func (m OpkgRuntimeManager) Install(ctx context.Context, path string) error {
 	if !filepath.IsAbs(path) {
 		return errors.New("runtime package path must be absolute")
 	}
-	targetVer, err := readRuntimeIPKControlVersion(path)
+	targetName, targetVer, err := readRuntimeIPKControl(path)
 	if err != nil {
 		return fmt.Errorf("inspect runtime package before opkg install: %w", err)
 	}
-	installedVer, verErr := m.Version(ctx, RuntimePackageName)
-	if verErr != nil || (installedVer != "" && installedVer == targetVer) {
-		// Same-version repair or half-installed recovery: remove awg-firc-runtime
-		// first (conffiles is empty so user /opt/etc/firc/* configs are untouched)
-		// instead of prohibited reinstall flags, while keeping file-clash checks active.
-		if rmOut, rmErr := exec.CommandContext(ctx, "/opt/bin/opkg", "remove", RuntimePackageName).CombinedOutput(); rmErr != nil && verErr == nil {
-			return fmt.Errorf("opkg runtime remove before repair: %w: %.2048s", rmErr, rmOut)
+	installedName, installedVer, verErr := m.installedName(ctx)
+	if verErr != nil || (installedName != "" && (installedName != targetName || installedVer == targetVer)) {
+		// Same-version repair, half-installed recovery or the pre-rename package
+		// owning the same files: remove it first (conffiles is empty so user
+		// /opt/etc/firc/* configs are untouched) instead of prohibited reinstall
+		// flags, while keeping file-clash checks active.
+		if rmOut, rmErr := exec.CommandContext(ctx, opkgBin, "remove", installedName).CombinedOutput(); rmErr != nil && verErr == nil {
+			return fmt.Errorf("opkg runtime remove before install: %w: %.2048s", rmErr, rmOut)
 		}
 	}
-	out, err := exec.CommandContext(ctx, "/opt/bin/opkg", "install", "--force-downgrade", path).CombinedOutput()
+	out, err := exec.CommandContext(ctx, opkgBin, "install", "--force-downgrade", path).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("opkg runtime install: %w: %.2048s", err, out)
 	}
 	return nil
 }
-func (OpkgRuntimeManager) Remove(ctx context.Context, name string) error {
+func (m OpkgRuntimeManager) Remove(ctx context.Context, name string) error {
 	if name != RuntimePackageName {
 		return errors.New("refusing to remove unrelated package")
 	}
-	out, err := exec.CommandContext(ctx, "/opt/bin/opkg", "remove", name).CombinedOutput()
+	if installed, _, _ := m.installedName(ctx); installed != "" {
+		name = installed
+	}
+	out, err := exec.CommandContext(ctx, opkgBin, "remove", name).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("opkg runtime remove: %w: %.2048s", err, out)
 	}
@@ -123,7 +157,16 @@ func parseOpkgStatusTuple(statusRaw, version string) (string, error) {
 	return "", fmt.Errorf("runtime package requires recovery: %s", statusRaw)
 }
 
+// Version — версия установленного рантайма, в том числе под прежним именем.
 func (m OpkgRuntimeManager) Version(ctx context.Context, name string) (string, error) {
+	if name != RuntimePackageName {
+		return m.packageVersion(ctx, name)
+	}
+	_, version, err := m.installedName(ctx)
+	return version, err
+}
+
+func (m OpkgRuntimeManager) packageVersion(ctx context.Context, name string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -372,7 +415,7 @@ func (i *OnDemandInstaller) packageOperation(ctx context.Context, action string,
 	if purge {
 		return errors.New("firc: runtime removal preserves configuration; full data purge is not supported")
 	}
-	spec, fromFallback := i.installSpec()
+	spec := i.spec
 	if action == "install" && !spec.IsAvailable() {
 		return ErrReleaseUnavailable
 	}
@@ -469,11 +512,10 @@ func (i *OnDemandInstaller) packageOperation(ctx context.Context, action string,
 	defer os.RemoveAll(stage)
 	ipk := filepath.Join(stage, "runtime.ipk")
 	i.setProgress(.1)
-	activeSpec, err := i.prepareVerifiedRuntimeIPK(ctx, cache, stage, ipk, spec, fromFallback)
-	if err != nil {
+	if err := i.prepareVerifiedRuntimeIPK(ctx, cache, ipk, spec); err != nil {
 		return err
 	}
-	payload, err := runtimePackageContents(ipk, i.arch, activeSpec.Version)
+	payload, err := runtimePackageContents(ipk, i.arch, spec.Version)
 	if err != nil {
 		return err
 	}
@@ -485,7 +527,7 @@ func (i *OnDemandInstaller) packageOperation(ctx context.Context, action string,
 	if !ok {
 		return errors.New("cannot verify free space before package activation")
 	}
-	if free < unpacked+2*activeSpec.PackageSize+(16<<20) {
+	if free < unpacked+2*spec.PackageSize+(16<<20) {
 		return ErrInsufficientDisk
 	}
 	i.setProgress(.5)
@@ -494,7 +536,7 @@ func (i *OnDemandInstaller) packageOperation(ctx context.Context, action string,
 	if err != nil {
 		return err
 	}
-	if err := persistRuntimeIPKCache(cache, data, spec, activeSpec, fromFallback); err != nil {
+	if err := persistRuntimeIPKCache(cache, data, spec); err != nil {
 		return err
 	}
 	// Загрузка шла минутами: за это время могли поставить сторонний firc.
@@ -536,13 +578,13 @@ func (i *OnDemandInstaller) packageOperation(ctx context.Context, action string,
 	if err != nil {
 		return err
 	}
-	if version != activeSpec.Version {
-		return fmt.Errorf("installed runtime version %q, expected %q", version, activeSpec.Version)
+	if version != spec.Version {
+		return fmt.Errorf("installed runtime version %q, expected %q", version, spec.Version)
 	}
-	if err := verifyInstalledRuntime(ipk, i.arch, activeSpec.Version, i.layout); err != nil {
+	if err := verifyInstalledRuntime(ipk, i.arch, spec.Version, i.layout); err != nil {
 		return fmt.Errorf("%w: %v", ErrLayoutIncomplete, err)
 	}
-	receipt, err := json.Marshal(activeSpec)
+	receipt, err := json.Marshal(spec)
 	if err != nil {
 		return err
 	}
@@ -550,11 +592,6 @@ func (i *OnDemandInstaller) packageOperation(ctx context.Context, action string,
 		return err
 	}
 	return nil
-}
-
-type fallbackConvertedReceipt struct {
-	SourceSHA256 string         `json:"sourceSha256"`
-	RuntimeSpec  FircBinarySpec `json:"runtimeSpec"`
 }
 
 func downloadRuntimeArtifact(ctx context.Context, dl Downloader, spec FircBinarySpec, destPath string) error {
@@ -583,110 +620,32 @@ func downloadRuntimeArtifact(ctx context.Context, dl Downloader, spec FircBinary
 	return lastErr
 }
 
-func (i *OnDemandInstaller) prepareVerifiedRuntimeIPK(
-	ctx context.Context,
-	cache, stage, ipk string,
-	spec FircBinarySpec,
-	fromFallback bool,
-) (FircBinarySpec, error) {
+// prepareVerifiedRuntimeIPK кладёт проверенный IPK рантайма в ipk: из кэша, если
+// там он же, иначе скачивает.
+func (i *OnDemandInstaller) prepareVerifiedRuntimeIPK(ctx context.Context, cache, ipk string, spec FircBinarySpec) error {
 	verifiedCache := filepath.Join(cache, "verified.ipk")
-	if !fromFallback {
-		if VerifyFileSHA256(verifiedCache, spec.PackageSHA256) == nil {
-			b, err := os.ReadFile(verifiedCache)
-			if err != nil {
-				return FircBinarySpec{}, err
-			}
-			if err := os.WriteFile(ipk, b, 0600); err != nil {
-				return FircBinarySpec{}, err
-			}
-		} else {
-			if err := downloadRuntimeArtifact(ctx, i.downloader, spec, ipk); err != nil {
-				return FircBinarySpec{}, err
-			}
-		}
-		if err := VerifyFileSHA256(ipk, spec.PackageSHA256); err != nil {
-			return FircBinarySpec{}, fmt.Errorf("%w: %v", ErrSHA256Mismatch, err)
-		}
-		if err := VerifyRuntimeIPK(ipk, i.arch, spec.Version); err != nil {
-			return FircBinarySpec{}, err
-		}
-		return spec, nil
-	}
-
-	fallbackReceiptPath := filepath.Join(cache, "fallback-converted.json")
-	if rawRec, err := os.ReadFile(fallbackReceiptPath); err == nil {
-		var rec fallbackConvertedReceipt
-		if json.Unmarshal(rawRec, &rec) == nil &&
-			rec.SourceSHA256 == spec.PackageSHA256 &&
-			rec.RuntimeSpec.IsAvailable() &&
-			rec.RuntimeSpec.Version == spec.Version &&
-			VerifyFileSHA256(verifiedCache, rec.RuntimeSpec.PackageSHA256) == nil &&
-			VerifyRuntimeIPK(verifiedCache, i.arch, rec.RuntimeSpec.Version) == nil {
-			b, rErr := os.ReadFile(verifiedCache)
-			if rErr != nil {
-				return FircBinarySpec{}, rErr
-			}
-			if wErr := os.WriteFile(ipk, b, 0600); wErr != nil {
-				return FircBinarySpec{}, wErr
-			}
-			return rec.RuntimeSpec, nil
-		}
-	}
-
-	upstreamIPK := filepath.Join(stage, "upstream-firc.ipk")
-	if err := downloadRuntimeArtifact(ctx, i.downloader, spec, upstreamIPK); err != nil {
-		return FircBinarySpec{}, err
-	}
-	if err := VerifyFileSHA256(upstreamIPK, spec.PackageSHA256); err != nil {
-		return FircBinarySpec{}, fmt.Errorf("%w: %v", ErrSHA256Mismatch, err)
-	}
-	if err := BuildRuntimeIPKFromEntwareIPK(upstreamIPK, i.arch, spec.Version, ipk); err != nil {
-		return FircBinarySpec{}, err
-	}
-	runtimeSHA, err := ComputeFileSHA256(ipk)
-	if err != nil {
-		return FircBinarySpec{}, err
-	}
-	info, err := os.Stat(ipk)
-	if err != nil {
-		return FircBinarySpec{}, err
-	}
-	activeSpec := FircBinarySpec{
-		Version:       spec.Version,
-		PackageURL:    spec.PackageURL,
-		MirrorURL:     spec.MirrorURL,
-		PackageSHA256: runtimeSHA,
-		PackageSize:   info.Size(),
-	}
-	if !activeSpec.IsAvailable() {
-		return FircBinarySpec{}, errors.New("repackaged runtime IPK metadata invalid")
-	}
-	return activeSpec, nil
-}
-
-func persistRuntimeIPKCache(cache string, data []byte, sourceSpec, activeSpec FircBinarySpec, fromFallback bool) error {
-	if err := atomicWriteYAMLFile(filepath.Join(cache, "verified.ipk"), data, 0600); err != nil {
-		return err
-	}
-	if err := atomicWriteYAMLFile(filepath.Join(cache, "runtime-"+activeSpec.PackageSHA256+".ipk"), data, 0600); err != nil {
-		return err
-	}
-	fallbackPath := filepath.Join(cache, "fallback-converted.json")
-	if fromFallback {
-		raw, err := json.Marshal(fallbackConvertedReceipt{
-			SourceSHA256: sourceSpec.PackageSHA256,
-			RuntimeSpec:  activeSpec,
-		})
+	if VerifyFileSHA256(verifiedCache, spec.PackageSHA256) == nil {
+		b, err := os.ReadFile(verifiedCache)
 		if err != nil {
 			return err
 		}
-		if err := atomicWriteYAMLFile(fallbackPath, raw, 0600); err != nil {
+		if err := os.WriteFile(ipk, b, 0600); err != nil {
 			return err
 		}
-	} else {
-		_ = os.Remove(fallbackPath)
+	} else if err := downloadRuntimeArtifact(ctx, i.downloader, spec, ipk); err != nil {
+		return err
 	}
-	return nil
+	if err := VerifyFileSHA256(ipk, spec.PackageSHA256); err != nil {
+		return fmt.Errorf("%w: %v", ErrSHA256Mismatch, err)
+	}
+	return VerifyRuntimeIPK(ipk, i.arch, spec.Version)
+}
+
+func persistRuntimeIPKCache(cache string, data []byte, spec FircBinarySpec) error {
+	if err := atomicWriteYAMLFile(filepath.Join(cache, "verified.ipk"), data, 0600); err != nil {
+		return err
+	}
+	return atomicWriteYAMLFile(filepath.Join(cache, "runtime-"+spec.PackageSHA256+".ipk"), data, 0600)
 }
 
 // pruneRuntimeCache убирает из кэша рантайма то, что осталось от прошлых
@@ -730,11 +689,10 @@ func (i *OnDemandInstaller) pruneRuntimeCache(cache string) {
 // старт/стоп FIRC и правки маршрутизации. От параллельных операций установщика
 // защищает reserve(). Под локом prepareVerifiedRuntimeIPK находит файл по SHA,
 // проверяет его как обычно и не качает заново. Ошибка здесь не важна: путь
-// под локом повторит загрузку и покажет её. Репак из Entware (fallback) не
-// прогреваем — он и так идёт под локом.
+// под локом повторит загрузку и покажет её.
 func (i *OnDemandInstaller) prewarmVerifiedIPK(ctx context.Context) {
-	spec, fromFallback := i.installSpec()
-	if fromFallback || !spec.IsAvailable() || i.checkNotForeign() != nil {
+	spec := i.spec
+	if !spec.IsAvailable() || i.checkNotForeign() != nil {
 		return
 	}
 	cache := i.rootPath("/opt/var/cache/awg-manager/firc-runtime")

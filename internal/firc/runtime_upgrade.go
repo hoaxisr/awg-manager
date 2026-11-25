@@ -99,7 +99,7 @@ func (i *OnDemandInstaller) upgradeRuntimeLocked(ctx context.Context, op *Operat
 		}
 	}
 
-	spec, fromFallback := i.installSpec()
+	spec := i.spec
 	if !spec.IsAvailable() {
 		return ErrReleaseUnavailable
 	}
@@ -170,15 +170,14 @@ func (i *OnDemandInstaller) upgradeRuntimeLocked(ctx context.Context, op *Operat
 
 	ipk := filepath.Join(stage, "runtime.ipk")
 	i.setProgress(0.1)
-	activeSpec, err := i.prepareVerifiedRuntimeIPK(ctx, cache, stage, ipk, spec, fromFallback)
-	if err != nil {
+	if err := i.prepareVerifiedRuntimeIPK(ctx, cache, ipk, spec); err != nil {
 		return err
 	}
-	if activeSpec.Version == previousVersion {
+	if spec.Version == previousVersion {
 		return ErrAlreadyUpToDate
 	}
 
-	payload, err := runtimePackageContents(ipk, i.arch, activeSpec.Version)
+	payload, err := runtimePackageContents(ipk, i.arch, spec.Version)
 	if err != nil {
 		return err
 	}
@@ -190,7 +189,7 @@ func (i *OnDemandInstaller) upgradeRuntimeLocked(ctx context.Context, op *Operat
 	if !ok {
 		return errors.New("cannot verify free space before package upgrade")
 	}
-	if free < unpacked+2*activeSpec.PackageSize+(16<<20) {
+	if free < unpacked+2*spec.PackageSize+(16<<20) {
 		return ErrInsufficientDisk
 	}
 	i.setProgress(0.35)
@@ -199,7 +198,7 @@ func (i *OnDemandInstaller) upgradeRuntimeLocked(ctx context.Context, op *Operat
 	if err != nil {
 		return err
 	}
-	if err := persistRuntimeIPKCache(cache, ipkData, spec, activeSpec, fromFallback); err != nil {
+	if err := persistRuntimeIPKCache(cache, ipkData, spec); err != nil {
 		return err
 	}
 
@@ -207,7 +206,7 @@ func (i *OnDemandInstaller) upgradeRuntimeLocked(ctx context.Context, op *Operat
 		Action:          "upgrade",
 		Pending:         true,
 		PreviousVersion: previousVersion,
-		TargetVersion:   activeSpec.Version,
+		TargetVersion:   spec.Version,
 	}); err != nil {
 		return err
 	}
@@ -221,7 +220,7 @@ func (i *OnDemandInstaller) upgradeRuntimeLocked(ctx context.Context, op *Operat
 				Action:          "upgrade",
 				Pending:         false,
 				PreviousVersion: previousVersion,
-				TargetVersion:   activeSpec.Version,
+				TargetVersion:   spec.Version,
 			}
 			if result != nil {
 				j.Error = result.Error()
@@ -290,7 +289,7 @@ func (i *OnDemandInstaller) upgradeRuntimeLocked(ctx context.Context, op *Operat
 			Action:          "upgrade",
 			Pending:         mutated && !rollbackOK,
 			PreviousVersion: previousVersion,
-			TargetVersion:   activeSpec.Version,
+			TargetVersion:   spec.Version,
 			Error:           result.Error(),
 		}); saveErr != nil {
 			result = errors.Join(result, fmt.Errorf("persist runtime upgrade rollback journal: %w", saveErr))
@@ -323,10 +322,10 @@ func (i *OnDemandInstaller) upgradeRuntimeLocked(ctx context.Context, op *Operat
 	if err != nil {
 		return err
 	}
-	if version != activeSpec.Version {
-		return fmt.Errorf("upgraded runtime version %q, expected %q", version, activeSpec.Version)
+	if version != spec.Version {
+		return fmt.Errorf("upgraded runtime version %q, expected %q", version, spec.Version)
 	}
-	if err := verifyInstalledRuntime(ipk, i.arch, activeSpec.Version, i.layout); err != nil {
+	if err := verifyInstalledRuntime(ipk, i.arch, spec.Version, i.layout); err != nil {
 		return fmt.Errorf("%w: %v", ErrLayoutIncomplete, err)
 	}
 
@@ -340,7 +339,7 @@ func (i *OnDemandInstaller) upgradeRuntimeLocked(ctx context.Context, op *Operat
 		}
 	}
 
-	receipt, err := json.Marshal(activeSpec)
+	receipt, err := json.Marshal(spec)
 	if err != nil {
 		return err
 	}

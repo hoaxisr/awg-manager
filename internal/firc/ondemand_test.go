@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -485,5 +486,79 @@ func TestOpkgRuntimeManager_ReadsInstalledVersion(t *testing.T) {
 	}
 	if ver, err := pm.Version(context.Background(), "absent"); err != nil || ver != "" {
 		t.Fatalf("Version(absent) = %q, %v", ver, err)
+	}
+}
+
+// Рантайм под прежним именем пакета: виден как установленный, снимается под своим
+// именем, а установка нового сначала снимает его — файлы у обоих одни.
+func TestOpkgRuntimeManager_LegacyPackageName(t *testing.T) {
+	dir := t.TempDir()
+	log := filepath.Join(dir, "opkg.log")
+	fake := filepath.Join(dir, "opkg")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\necho \"$@\" >> "+log+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	orig := opkgBin
+	opkgBin = fake
+	t.Cleanup(func() { opkgBin = orig })
+	status := filepath.Join(dir, "status")
+	setStatus := func(name, version, state string) {
+		t.Helper()
+		body := "Package: busybox\nVersion: 1\nStatus: install ok installed\n\n"
+		if name != "" {
+			body += "Package: " + name + "\nVersion: " + version + "\nStatus: " + state + "\n"
+		}
+		if err := os.WriteFile(status, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	calls := func() []string {
+		t.Helper()
+		b, _ := os.ReadFile(log)
+		_ = os.Remove(log)
+		return strings.Fields(strings.ReplaceAll(strings.TrimSpace(string(b)), " ", "_"))
+	}
+	_, ipk := buildTestRuntimeIPKVersion(t, t.TempDir(), "aarch64-3.10", "0.8.0-1", "https://example.invalid/r.ipk")
+	path := filepath.Join(dir, "r.ipk")
+	if err := os.WriteFile(path, ipk, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pm := OpkgRuntimeManager{StatusPath: status}
+	ctx := context.Background()
+	install := "install_--force-downgrade_" + path
+	const ok = "install user installed"
+
+	for name, c := range map[string]struct {
+		pkg, version, state string
+		want                []string
+	}{
+		"не стоит":              {"", "", "", []string{install}},
+		"прежнее имя":           {legacyRuntimePackageName, "0.7.0-1", ok, []string{"remove_" + legacyRuntimePackageName, install}},
+		"прежнее, битое":        {legacyRuntimePackageName, "0.7.0-1", "install reinstreq half-installed", []string{"remove_" + legacyRuntimePackageName, install}},
+		"новое, старше":         {RuntimePackageName, "0.7.0-1", ok, []string{install}},
+		"новое, та же версия":   {RuntimePackageName, "0.8.0-1", ok, []string{"remove_" + RuntimePackageName, install}},
+		"прежнее, та же версия": {legacyRuntimePackageName, "0.8.0-1", ok, []string{"remove_" + legacyRuntimePackageName, install}},
+	} {
+		setStatus(c.pkg, c.version, c.state)
+		if err := pm.Install(ctx, path); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got := calls(); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: opkg %v, want %v", name, got, c.want)
+		}
+	}
+
+	setStatus(legacyRuntimePackageName, "0.7.0-1", ok)
+	if v, err := pm.Version(ctx, RuntimePackageName); err != nil || v != "0.7.0-1" {
+		t.Errorf("Version = %q, %v", v, err)
+	}
+	if err := pm.Remove(ctx, RuntimePackageName); err != nil {
+		t.Fatal(err)
+	}
+	if got := calls(); !reflect.DeepEqual(got, []string{"remove_" + legacyRuntimePackageName}) {
+		t.Errorf("Remove: opkg %v", got)
+	}
+	if err := pm.Remove(ctx, "busybox"); err == nil {
+		t.Error("чужой пакет снимается")
 	}
 }

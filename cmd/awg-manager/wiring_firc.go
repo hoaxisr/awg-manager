@@ -578,11 +578,6 @@ func (a *app) wireFircEngineCoordinator() {
 	arch := detectArch()
 	spec := firc.EmbeddedFircBinaries[arch]
 	installer := firc.NewOnDemandInstaller(arch, spec)
-	if !spec.IsAvailable() {
-		if fallback, ok := firc.FallbackFircPackages[arch]; ok && fallback.IsAvailable() {
-			installer.SetFallbackPackageSpec(fallback)
-		}
-	}
 	installer.SetRuntimeLocker(a.fircOp.LockRuntimeMutation)
 	if a.downloadSvc != nil {
 		installer.SetDownloader(fircDownloaderAdapter{svc: a.downloadSvc})

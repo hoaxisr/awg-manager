@@ -74,10 +74,9 @@ type OnDemandInstaller struct {
 	progress   float64
 	lastError  string
 
-	arch         string
-	spec         FircBinarySpec
-	fallbackSpec FircBinarySpec
-	layout       PackageLayout
+	arch   string
+	spec   FircBinarySpec
+	layout PackageLayout
 
 	downloader Downloader
 	freeDisk   func(string) (int64, bool)
@@ -142,24 +141,6 @@ func NewOnDemandInstaller(arch string, spec FircBinarySpec) *OnDemandInstaller {
 // SetDownloader sets the HTTP downloader.
 func (odi *OnDemandInstaller) SetDownloader(dl Downloader) {
 	odi.downloader = dl
-}
-
-// SetFallbackPackageSpec configures an alternate verified Entware `firc` IPK
-// specification used only when the primary runtime release is unavailable.
-func (odi *OnDemandInstaller) SetFallbackPackageSpec(spec FircBinarySpec) {
-	odi.mu.Lock()
-	odi.fallbackSpec = spec
-	odi.mu.Unlock()
-}
-
-func (odi *OnDemandInstaller) installSpec() (spec FircBinarySpec, fromFallback bool) {
-	if odi.spec.IsAvailable() {
-		return odi.spec, false
-	}
-	if odi.fallbackSpec.IsAvailable() {
-		return odi.fallbackSpec, true
-	}
-	return odi.spec, false
 }
 
 // SetFreeDiskFn overrides the free-disk probe (tests only).
@@ -293,8 +274,7 @@ func (odi *OnDemandInstaller) GetInstallStatus(ctx context.Context, op *Operator
 		lastErr = journal.Error
 	}
 
-	effectiveSpec, _ := odi.installSpec()
-	available := effectiveSpec.IsAvailable()
+	available := odi.spec.IsAvailable()
 	unavailableReason := ""
 	if !available {
 		if strings.TrimSpace(odi.spec.Version) != "" {
@@ -332,13 +312,13 @@ func (odi *OnDemandInstaller) GetInstallStatus(ctx context.Context, op *Operator
 	updateAvailable := available &&
 		(state == InstallStateInstalled || state == InstallStateRunning) &&
 		installedVer != "" &&
-		effectiveSpec.Version != "" &&
-		installedVer != effectiveSpec.Version
+		odi.spec.Version != "" &&
+		installedVer != odi.spec.Version
 
 	status := InstallStatus{
 		State:             state,
 		InstalledVersion:  installedVer,
-		AvailableVersion:  effectiveSpec.Version,
+		AvailableVersion:  odi.spec.Version,
 		UpdateAvailable:   updateAvailable,
 		Available:         available,
 		UnavailableReason: unavailableReason,
@@ -355,7 +335,7 @@ func (odi *OnDemandInstaller) GetInstallStatus(ctx context.Context, op *Operator
 		DependentServices: dependentServices,
 	}
 
-	required := effectiveSpec.PackageSize*4 + diskReserveBytes
+	required := odi.spec.PackageSize*4 + diskReserveBytes
 	status.RequiredDiskBytes = required
 	if odi.freeDisk != nil {
 		if free, ok := odi.freeDisk(filepath.Dir(odi.layout.FircdBin)); ok {

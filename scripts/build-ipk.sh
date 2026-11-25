@@ -350,7 +350,7 @@ Description: AmneziaWG tunnel manager with web interface
  Includes bundled kernel modules.
 EOF
 
-    # Runtime configuration belongs exclusively to awg-firc-runtime.
+    # Runtime configuration belongs exclusively to awgm-route.
     : > "$IPK_ROOT/CONTROL/conffiles"
 
     cp entware/control/postinst "$IPK_ROOT/CONTROL/"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build custom awg-firc-runtime IPK (fircd + tunvless + S99firc with .awgm-disabled)
+# Build custom awgm-route IPK (fircd + tunvless + S99firc with .awgm-disabled)
 # from FIRC_SOURCE_ROOT using the cached Entware SDK and package via cmd/firc-runtime-package.
 set -euo pipefail
 
@@ -124,7 +124,7 @@ make -j"$(nproc)" -C "$WORK_DIR/src/src/backend-c" \
   "build/${FIRC_BUILD}/fircd"
 
 mkdir -p "$REPO_ROOT/dist"
-OUT_IPK="$REPO_ROOT/dist/awg-firc-runtime_${VERSION}_${ARCH}.ipk"
+OUT_IPK="$REPO_ROOT/dist/awgm-route_${VERSION}_${ARCH}.ipk"
 cd "$REPO_ROOT"
 FIRC_SOURCE_ROOT="$WORK_DIR/src" go run -mod=vendor ./cmd/firc-runtime-package \
   -source "$REPO_ROOT" \
