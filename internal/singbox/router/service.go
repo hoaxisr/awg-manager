@@ -181,6 +181,9 @@ type SingboxController interface {
 	// TunExternalConfig: want — писать ли `external_configuration` (бинарь
 	// знает ключ); known=false — версия бинаря пока не определена.
 	TunExternalConfig() (want, known bool)
+	// ReplySocketIsolated: ответы ядра по UDP не отбирают :53 у ndnproxy —
+	// DNS-RESCUE не нужен.
+	ReplySocketIsolated() bool
 }
 
 // tunExternalConfig — писать ли `external_configuration` в tun-инбаунд:

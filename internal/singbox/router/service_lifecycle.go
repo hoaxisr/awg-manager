@@ -994,7 +994,7 @@ func (s *ServiceImpl) enableLocked(ctx context.Context, clearManualStop bool) er
 	}
 
 	spec := s.buildTproxySpec(ctx, sr, mark, policyMode, wanIPs, qosSpecs)
-	if policyMode && len(spec.LANBridges) == 0 {
+	if policyMode && len(spec.LANBridges) == 0 && s.needDNSRescue() {
 		s.appLog.Warn("discover-lan-bridges", "", "no NDMS hotspot LAN bridges, DNS fallback skipped")
 	}
 	if err := s.deps.IPTables.Install(ctx, spec); err != nil {

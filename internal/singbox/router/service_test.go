@@ -149,6 +149,7 @@ func newTestIPTables(fe *fakeExec) *IPTables {
 // their own callback without touching the rest of the stub.
 type fakeSingbox struct {
 	tunHotReload   bool
+	replyIsolated  bool
 	versionUnknown bool
 
 	dir         string
@@ -231,6 +232,8 @@ func (f *fakeSingbox) CrashStats() (int, string, time.Time) {
 func (f *fakeSingbox) TunExternalConfig() (bool, bool) {
 	return f.tunHotReload, !f.versionUnknown
 }
+
+func (f *fakeSingbox) ReplySocketIsolated() bool { return f.replyIsolated }
 
 // newTestSingbox creates a fakeSingbox backed by a temp directory.
 func newTestSingbox(t *testing.T) *fakeSingbox {

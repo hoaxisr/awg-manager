@@ -134,6 +134,22 @@ func (o *Operator) TunHotReload() bool {
 // tunExternalMinBuild — первая сборка форка с `external_configuration`.
 const tunExternalMinBuild = 28
 
+// ReplySocketIsolated: ответный сокет TPROXY запущенного ядра не занимает адреса
+// роутера и не отбирает у ndnproxy запросы на :53 (F910). Гейт двойной, как у
+// TunHotReload: при подмене файла сокеты держит ещё прежний процесс.
+func (o *Operator) ReplySocketIsolated() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), singboxVersionProbeTimeout)
+	defer cancel()
+	if v, _ := o.detectVersionAndFeaturesCached(ctx); forkBuild(v) < replyIsolatedMinBuild {
+		return false
+	}
+	running, pid := o.proc.IsRunning()
+	return !running || o.exeIs(pid, o.binary)
+}
+
+// replyIsolatedMinBuild — первая сборка форка с ответом с адреса-заглушки.
+const replyIsolatedMinBuild = 44
+
 // forkBuild — номер сборки форка: «42», до переименования «…-awgm.40».
 // Не сборка форка — 0.
 func forkBuild(version string) int {
