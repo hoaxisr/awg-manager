@@ -674,6 +674,15 @@ func validateTopologyAndChains(desired IngressTopology, candXray *vlessserver.Co
 	return nil
 }
 
+// validateTgDirectPort отказывает до журнала и подготовки: откатывать после
+// такого отказа нечего.
+func (c *Coordinator) validateTgDirectPort(candidate *tgwebproxy.Config) error {
+	if candidate == nil || c.tgSvc == nil || candidate.Scenario == tgwebproxy.ScenarioCDNHTTP {
+		return nil
+	}
+	return tgwebproxy.ValidateDirectPortTransition(c.tgSvc.GetInternalConfig(), *candidate)
+}
+
 func (c *Coordinator) applyLocked(ctx context.Context, txID string, desired IngressTopology, candidateXray *vlessserver.Config, candidateTg *tgwebproxy.Config) error {
 	prev := c.getCurrentTopology()
 	if candidateXray != nil {
@@ -681,6 +690,9 @@ func (c *Coordinator) applyLocked(ctx context.Context, txID string, desired Ingr
 		desired.FircServerRouting = candidateXray.Enabled && candidateXray.OutboundMode == "router"
 	}
 	if err := validateTopologyAndChains(desired, candidateXray, candidateTg); err != nil {
+		return err
+	}
+	if err := c.validateTgDirectPort(candidateTg); err != nil {
 		return err
 	}
 	affected := c.calculateAffected(prev, desired)
@@ -1601,6 +1613,7 @@ func (c *Coordinator) ApplyDispatcherConfig(ctx context.Context, cfg cdndispatch
 			}
 		}
 
+		var tgErr error
 		if c.tgSvc != nil {
 			tgCfg := c.tgSvc.GetInternalConfig()
 			if len(tgDomains) > 0 {
@@ -1608,10 +1621,13 @@ func (c *Coordinator) ApplyDispatcherConfig(ctx context.Context, cfg cdndispatch
 			} else {
 				tgCfg.PublicHostname = ""
 			}
-			_ = c.tgSvc.UpdateConfig(tgCfg)
+			tgErr = c.tgSvc.UpdateConfig(tgCfg)
 		}
 
 		c.syncWANIngressFirewall()
+		if tgErr != nil {
+			return fmt.Errorf("маршруты диспетчера сохранены, домены Telegram не обновлены: %w", tgErr)
+		}
 		return nil
 	})
 }
@@ -1797,6 +1813,9 @@ func (c *Coordinator) ExecuteIngressTransaction(ctx context.Context, params Ingr
 		}
 
 		if err := validateTopologyAndChains(desiredTopo, candXray, candTg); err != nil {
+			return err
+		}
+		if err := c.validateTgDirectPort(candTg); err != nil {
 			return err
 		}
 

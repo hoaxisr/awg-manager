@@ -66,6 +66,21 @@ func ValidateDirectPort(port int) error {
 	return nil
 }
 
+// ValidateDirectPortTransition проверяет прямой порт там, где он меняется или
+// где прямое подключение включается. Порт, сохранённый прежней версией, не
+// мешает остальным правкам: удалить пользователя, сменить секрет, остановить.
+func ValidateDirectPortTransition(old, next Config) error {
+	if next.DirectPort != old.DirectPort && next.DirectPort != 0 {
+		return ValidateDirectPort(next.DirectPort)
+	}
+	if next.IsDirectEnabled() && !old.IsDirectEnabled() {
+		if err := ValidateDirectPort(next.effectiveDirectPort()); err != nil {
+			return fmt.Errorf("%w. Смените прямой порт MTProto в настройках Telegram и запустите снова", err)
+		}
+	}
+	return nil
+}
+
 // SyncDirectWANFirewall opens (or closes) the Telegram MTProto Fake-TLS TCP port
 // on Keenetic's WAN firewall (INPUT and _NDM_IP_PUBLIC). Rules carry the dedicated
 // AWGM_TG_MTPROTO_WAN comment and are persisted via an NDM netfilter.d hook so

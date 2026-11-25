@@ -8,6 +8,9 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -858,6 +861,41 @@ func TestTgWebProxy_UpdateConfig_InvalidDirectPortReturns400(t *testing.T) {
 		handler.UpdateConfig(w, req)
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("body=%s: expected 400 Bad Request, got %d: %s", body, w.Code, w.Body.String())
+		}
+	}
+}
+
+// Мутация: убрать ErrInvalidDirectPort из Action → 500.
+func TestTgWebProxyAction_StartWithStoredInvalidPortReturns400(t *testing.T) {
+	handler, svc, _, sessionToken, tempDir := setupTestTgWebProxyHandler(t)
+	cfgPath := filepath.Join(tempDir, "tproxy", "tgwebproxy-settings.json")
+	cfg := svc.GetInternalConfig()
+	cfg.DirectPort = 443
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	legacy := tgwebproxy.New(tempDir, nil)
+	legacy.SetRuntimeDCProbeForTest(func(string) bool { return true })
+	t.Cleanup(func() { _ = legacy.Close() })
+	handler.svc = legacy
+
+	for _, coord := range []*serveringress.Coordinator{nil, serveringress.New(tempDir, nil, nil, legacy)} {
+		handler.coord = nil
+		if coord != nil {
+			handler.SetCoordinator(coord)
+		}
+		w := postTgAction(t, handler, sessionToken, `{"action":"start"}`)
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "Смените прямой порт") {
+			t.Fatalf("coord=%v: ждали 400 с подсказкой, получили %d: %s", coord != nil, w.Code, w.Body.String())
+		}
+		if coord != nil {
+			if need, reason := coord.IsRecoveryRequired(); need {
+				t.Fatalf("отказ по порту увёл координатор в восстановление: %s", reason)
+			}
 		}
 	}
 }

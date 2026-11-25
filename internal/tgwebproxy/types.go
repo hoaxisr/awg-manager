@@ -634,6 +634,13 @@ func (c Config) IsDirectEnabled() bool {
 	return c.Scenario == ScenarioDirectFakeTLS || c.Scenario == ScenarioDual || c.Scenario == ""
 }
 
+func (c Config) effectiveDirectPort() int {
+	if c.DirectPort <= 0 {
+		return DefaultDirectPort
+	}
+	return c.DirectPort
+}
+
 func (c Config) IsRawEnabled() bool {
 	if !c.Enabled {
 		return false

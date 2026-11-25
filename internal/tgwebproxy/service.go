@@ -583,16 +583,6 @@ func (s *Service) applyConfigLocked(newCfg Config) error {
 			return fmt.Errorf("egress validation failed: %w", err)
 		}
 	}
-	if newCfg.IsDirectEnabled() {
-		directPort := newCfg.DirectPort
-		if directPort <= 0 {
-			directPort = DefaultDirectPort
-		}
-		if err := ValidateDirectPort(directPort); err != nil {
-			return err
-		}
-		newCfg.DirectPort = directPort
-	}
 	if err := ValidatePortsAndUpstreams(newCfg); err != nil {
 		return err
 	}
@@ -723,11 +713,7 @@ func (s *Service) syncDirectWANFirewallLocked(cfg Config) {
 		return
 	}
 	if cfg.IsDirectEnabled() {
-		port := cfg.DirectPort
-		if port <= 0 {
-			port = DefaultDirectPort
-		}
-		s.directWANFirewall(port, true)
+		s.directWANFirewall(cfg.effectiveDirectPort(), true)
 		return
 	}
 	s.directWANFirewall(0, false)
@@ -940,18 +926,11 @@ func (s *Service) UpdateConfig(cfg Config) error {
 	if cfg.DirectHost != "" {
 		newCfg.DirectHost = cfg.DirectHost
 	}
-	scenarioUsesDirect := newCfg.Scenario != ScenarioCDNHTTP
 	if cfg.DirectPort != 0 {
-		if scenarioUsesDirect || cfg.DirectPort != s.config.DirectPort {
-			if err := ValidateDirectPort(cfg.DirectPort); err != nil {
-				return err
-			}
-		}
 		newCfg.DirectPort = cfg.DirectPort
-	} else if scenarioUsesDirect && newCfg.DirectPort != 0 {
-		if err := ValidateDirectPort(newCfg.DirectPort); err != nil {
-			return err
-		}
+	}
+	if err := ValidateDirectPortTransition(s.config, newCfg); err != nil {
+		return err
 	}
 	if cfg.Secret != "" && cfg.Secret != s.config.Secret {
 		newCfg.LegacySecret = s.config.Secret
@@ -1390,6 +1369,9 @@ func (s *Service) Start() error {
 
 	newCfg := s.config
 	newCfg.Enabled = true
+	if err := ValidateDirectPortTransition(s.config, newCfg); err != nil {
+		return err
+	}
 
 	if err := s.applyConfigLocked(newCfg); err != nil {
 		return err

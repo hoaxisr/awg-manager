@@ -63,7 +63,7 @@ func (s *Service) PrepareCandidate(txID string, candidate Config) (string, error
 		candidate.DirectPort = DefaultDirectPort
 	}
 	if candidate.Scenario != ScenarioCDNHTTP {
-		if err := ValidateDirectPort(candidate.DirectPort); err != nil {
+		if err := ValidateDirectPortTransition(s.config, candidate); err != nil {
 			return "", err
 		}
 	}

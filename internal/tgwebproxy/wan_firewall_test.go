@@ -300,13 +300,13 @@ func TestService_DirectWANFirewallLifecycle(t *testing.T) {
 		}
 	}
 
-	// applyConfigLocked rejects invalid DirectPort even on Start()
+	// Start() rejects a stored invalid DirectPort
 	svc.mu.Lock()
 	svc.config.Scenario = ScenarioDirectFakeTLS
 	svc.config.DirectPort = 22
 	svc.mu.Unlock()
 	if err := svc.Start(); err == nil {
-		t.Fatalf("expected Start() / applyConfigLocked to reject unsafe DirectPort 22")
+		t.Fatalf("expected Start() to reject unsafe DirectPort 22")
 	}
 	svc.mu.Lock()
 	svc.config.DirectPort = 9443
@@ -544,6 +544,9 @@ func TestDirectPortValidation_ReservedWebUIAndLifecycleFixes(t *testing.T) {
 	if err := svc.UpdateConfig(Config{DirectPort: 2222, TlsDomain: "www.example.com"}); err != nil {
 		t.Fatalf("expected UpdateConfig keeping legacy DirectPort=2222 under cdn_http to succeed, got %v", err)
 	}
+	svc.mu.Lock()
+	svc.config.Enabled = true
+	svc.mu.Unlock()
 	if err := svc.UpdateConfig(Config{Scenario: ScenarioDirectFakeTLS, DirectPort: 2222}); !errors.Is(err, ErrInvalidDirectPort) {
 		t.Fatalf("expected UpdateConfig switching to direct_fake_tls with DirectPort=2222 to fail ErrInvalidDirectPort, got %v", err)
 	}
