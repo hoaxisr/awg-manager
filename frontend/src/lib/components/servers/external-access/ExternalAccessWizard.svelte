@@ -150,8 +150,8 @@
 	let detectedMtprotoDirectDomain = $derived(keenDNSBaseIsDirect ? keenDNSBaseDomain : '');
 	let grayIPDetected = $derived(
 		isGrayIPNetwork({
-			hasRealityNetwork: Boolean(realityState?.network),
 			realityWhiteIP,
+			realityGrayIP: realityState?.network?.gray_ip,
 			wanIPPrivate: keendnsInfo?.wan_ip_private,
 			keendnsEnabled: keendnsInfo?.enabled,
 			keendnsMode: keendnsInfo?.mode,
@@ -412,8 +412,8 @@
 			if (!draft.isEditMode && !userTouchedTgScenario) {
 				const kd = loadedCaps?.keendns ?? null;
 				const grayNow = isGrayIPNetwork({
-					hasRealityNetwork: Boolean(rSt?.network),
-					realityWhiteIP: Boolean(rSt?.network?.white_ip),
+					realityWhiteIP: rSt?.network?.white_ip,
+					realityGrayIP: rSt?.network?.gray_ip,
 					wanIPPrivate: kd?.wan_ip_private,
 					keendnsEnabled: kd?.enabled,
 					keendnsMode: kd?.mode,
@@ -461,8 +461,7 @@
 				stepIndex === 0 &&
 				(draft.selectedKind === 'tgwebproxy' || draft.selectedKind === 'both') &&
 				draft.tgScenario === 'dual' &&
-				fresh.network &&
-				!fresh.network.white_ip
+				fresh.network?.gray_ip
 			) {
 				draft.tgScenario = 'cdn_http';
 				draft.originType = 'cloud_address';

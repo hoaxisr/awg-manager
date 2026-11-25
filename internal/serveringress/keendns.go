@@ -126,8 +126,18 @@ func isValidISPWANInterface(iface *ndms.Interface) bool {
 // It never selects VPN/tunnel interfaces or arbitrary non-WAN interfaces, and
 // returns ("", false) when the WAN address is unknown or unavailable.
 func ResolveWANInfo(ctx context.Context, q *ndmsquery.Queries) (string, bool) {
-	if q == nil || q.Interfaces == nil {
+	iface := ResolveWANInterface(ctx, q)
+	if iface == nil {
 		return "", false
+	}
+	addr := strings.TrimSpace(iface.Address)
+	return addr, IsPrivateOrCGNATIP(addr)
+}
+
+// ResolveWANInterface — интерфейс, чей адрес отдаёт ResolveWANInfo.
+func ResolveWANInterface(ctx context.Context, q *ndmsquery.Queries) *ndms.Interface {
+	if q == nil || q.Interfaces == nil {
+		return nil
 	}
 
 	// 1. Prefer the default-gateway interface from Routes if it is an active ISP WAN
@@ -136,8 +146,7 @@ func ResolveWANInfo(ctx context.Context, q *ndmsquery.Queries) (string, bool) {
 		if defID, err := q.Routes.GetDefaultGatewayInterface(ctx); err == nil && strings.TrimSpace(defID) != "" {
 			if iface, err := q.Interfaces.Get(ctx, strings.TrimSpace(defID)); err == nil && isValidISPWANInterface(iface) {
 				if !strings.EqualFold(iface.State, "down") && !strings.EqualFold(iface.ConfLayer, "disabled") && !strings.EqualFold(iface.IPv4, "disabled") {
-					addr := strings.TrimSpace(iface.Address)
-					return addr, IsPrivateOrCGNATIP(addr)
+					return iface
 				}
 			}
 		}
@@ -147,7 +156,7 @@ func ResolveWANInfo(ctx context.Context, q *ndmsquery.Queries) (string, bool) {
 	// ordered deterministically: Up == true first, then highest NDMS Priority, then ID.
 	wans, err := q.Interfaces.ListWAN(ctx)
 	if err != nil || len(wans) == 0 {
-		return "", false
+		return nil
 	}
 
 	sorted := append([]wan.Interface(nil), wans...)
@@ -173,8 +182,7 @@ func ResolveWANInfo(ctx context.Context, q *ndmsquery.Queries) (string, bool) {
 		if err != nil || !isValidISPWANInterface(iface) {
 			continue
 		}
-		addr := strings.TrimSpace(iface.Address)
-		return addr, IsPrivateOrCGNATIP(addr)
+		return iface
 	}
 
 	// Second pass: WAN interfaces with State == "up" and a valid IPv4 address.
@@ -186,11 +194,10 @@ func ResolveWANInfo(ctx context.Context, q *ndmsquery.Queries) (string, bool) {
 		if err != nil || !isValidISPWANInterface(iface) || !strings.EqualFold(iface.State, "up") {
 			continue
 		}
-		addr := strings.TrimSpace(iface.Address)
-		return addr, IsPrivateOrCGNATIP(addr)
+		return iface
 	}
 
-	return "", false
+	return nil
 }
 
 func (op *NDMSKeenDNSOperator) SetAllowedPorts(ports []int) {

@@ -930,7 +930,6 @@ describe('externalAccessModel', () => {
 		// 1. isGrayIPNetwork
 		expect(
 			isGrayIPNetwork({
-				hasRealityNetwork: true,
 				realityWhiteIP: true,
 				wanIPPrivate: true,
 				keendnsEnabled: true,
@@ -939,9 +938,15 @@ describe('externalAccessModel', () => {
 		).toBe(false);
 		expect(
 			isGrayIPNetwork({
-				hasRealityNetwork: true,
 				realityWhiteIP: false,
+				realityGrayIP: true,
+				wanIPPrivate: false,
 			})
+		).toBe(true);
+		// Неизвестный WAN — не серый сам по себе.
+		expect(isGrayIPNetwork({ realityWhiteIP: false, realityGrayIP: false })).toBe(false);
+		expect(
+			isGrayIPNetwork({ realityWhiteIP: false, realityGrayIP: false, wanIPPrivate: true })
 		).toBe(true);
 		expect(isGrayIPNetwork({ wanIPPrivate: true })).toBe(true);
 		expect(isGrayIPNetwork({ keendnsEnabled: true, keendnsMode: 'cloud' })).toBe(true);

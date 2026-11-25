@@ -6,9 +6,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/serveringress"
 	"github.com/hoaxisr/awg-manager/internal/testing"
 	"github.com/hoaxisr/awg-manager/internal/vlessserver"
 )
+
+// probeExternalIP — подменяется в тестах: проверка ходит в интернет.
+var probeExternalIP = testing.GetWANIPBound
 
 // realityNetworkInfo detects whether the router has a public ("white") IPv4 on
 // its WAN and which host clients should use for the direct REALITY entry.
@@ -23,19 +27,16 @@ func (a *app) realityNetworkInfo(ctx context.Context) vlessserver.RealityNetwork
 				keenDNSDirect = strings.TrimSpace(kd.Domain)
 			}
 		}
-		if addr, err := a.ndmsQueries.WANInterfaceAddress(ctx); err == nil {
-			wanAddr = strings.TrimSpace(addr)
-		}
-		if shouldProbeExternalIP(net.ParseIP(wanAddr)) {
-			if a.ndmsQueries.Routes != nil && a.ndmsQueries.Interfaces != nil {
-				if name, err := a.ndmsQueries.Routes.GetDefaultGatewayInterface(ctx); err == nil && name != "" {
-					wanKernel = a.ndmsQueries.Interfaces.ResolveSystemName(ctx, name)
-				}
-			}
+		// Канал провайдера, а не default-маршрут: тот может идти через VPN, и
+		// адрес туннеля выглядел бы серым WAN.
+		if iface := serveringress.ResolveWANInterface(ctx, a.ndmsQueries); iface != nil {
+			wanAddr = strings.TrimSpace(iface.Address)
+			wanKernel = a.ndmsQueries.Interfaces.ResolveSystemName(ctx, iface.ID)
 		}
 	}
-	if shouldProbeExternalIP(net.ParseIP(wanAddr)) {
-		if ext, err := testing.GetWANIPBound(ctx, wanKernel, nil); err == nil {
+	// Без имени ядра проба ушла бы по default-маршруту, возможно в туннель.
+	if shouldProbeExternalIP(net.ParseIP(wanAddr)) && (wanAddr == "" || wanKernel != "") {
+		if ext, err := probeExternalIP(ctx, wanKernel, nil); err == nil {
 			extIP = strings.TrimSpace(ext)
 		}
 	}
@@ -61,11 +62,13 @@ func classifyRealityNetworkInfo(wanAddr, extIP, keenDNSDirect string) vlessserve
 	case wanIP == nil:
 		info.Reason = "адрес WAN-интерфейса неизвестен"
 	case !isPublicUnicast(wanIP):
+		info.GrayIP = true
 		info.Reason = "на WAN-интерфейсе серый (приватный / CGNAT) адрес " + info.WANAddress
 	case parsedExtIP == nil:
 		info.Reason = "не удалось проверить внешний IP (нет ответа сервисов проверки)"
 		info.WhiteIP = true
 	case !wanIP.Equal(parsedExtIP):
+		info.GrayIP = true
 		info.Reason = "внешний IP " + info.ExternalIP + " не совпадает с адресом WAN " + info.WANAddress + " (NAT у провайдера)"
 	default:
 		info.WhiteIP = true

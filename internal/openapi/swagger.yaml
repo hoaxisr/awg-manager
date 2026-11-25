@@ -9521,6 +9521,9 @@ definitions:
         type: string
       external_ip:
         type: string
+      gray_ip:
+        description: WAN заведомо серый; оба false — адрес неизвестен
+        type: boolean
       keendns_domain:
         type: string
       public_host:

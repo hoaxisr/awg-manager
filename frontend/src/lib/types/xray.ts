@@ -63,6 +63,8 @@ export interface XrayRealityNetwork {
 	external_ip?: string;
 	wan_address?: string;
 	white_ip: boolean;
+	/** WAN заведомо серый; при white_ip=false и gray_ip=false адрес неизвестен. */
+	gray_ip: boolean;
 	reason?: string;
 	checked_at?: string;
 }

@@ -205,14 +205,15 @@ export function pickDefaultMtprotoDirectHost(opts: {
 }
 
 export function isGrayIPNetwork(opts: {
-	hasRealityNetwork?: boolean;
 	realityWhiteIP?: boolean | null;
+	realityGrayIP?: boolean | null;
 	wanIPPrivate?: boolean | null;
 	keendnsEnabled?: boolean;
 	keendnsMode?: string | null;
 }): boolean {
-	if (opts.hasRealityNetwork && opts.realityWhiteIP === true) return false;
-	if (opts.hasRealityNetwork && opts.realityWhiteIP === false) return true;
+	if (opts.realityWhiteIP) return false;
+	// Оба флага сброшены — адрес WAN неизвестен: решают остальные признаки.
+	if (opts.realityGrayIP) return true;
 	if (opts.wanIPPrivate === true) return true;
 	if (opts.wanIPPrivate === false) return false;
 	if (Boolean(opts.keendnsEnabled) && opts.keendnsMode === 'cloud') return true;
