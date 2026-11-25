@@ -6,6 +6,7 @@
 	import { usageLevel } from '$lib/stores/settings';
 	import { isAppearanceSettingsVisible, usageLevelLabel, type UsageLevel } from '$lib/types/usageLevel';
 	import ExperimentalSettingsCard from './ExperimentalSettingsCard.svelte';
+	import LanguageCard from './LanguageCard.svelte';
 	import ServiceActionsCard from './ServiceActionsCard.svelte';
 	import ThemeSchemeCard from './ThemeSchemeCard.svelte';
 	import UsageLevelCard from './UsageLevelCard.svelte';
@@ -19,6 +20,8 @@
 
 	let { editor, expandLevel = false }: Props = $props();
 
+	const showAppearance = $derived(isAppearanceSettingsVisible(editor.settings.usageLevel));
+
 	function selectUsageLevel(level: UsageLevel) {
 		return editor.save(
 			() => api.updateSettings({ usageLevel: level }),
@@ -28,6 +31,7 @@
 	}
 </script>
 
+<!-- Без «Внешнего вида» (уровень «Базовый») вторую колонку занимает язык. -->
 <div class="settings-columns">
 	<div class="settings-column">
 		<UsageLevelCard
@@ -36,14 +40,19 @@
 			onSelect={selectUsageLevel}
 			initialExpanded={expandLevel}
 		/>
+		{#if showAppearance}
+			<LanguageCard />
+		{/if}
 		<ServiceActionsCard />
 		{#if $usageLevel === 'expert' && $experimentalSettingsUnlocked}
 			<ExperimentalSettingsCard />
 		{/if}
 	</div>
-	{#if isAppearanceSettingsVisible(editor.settings.usageLevel)}
-		<div class="settings-column">
+	<div class="settings-column">
+		{#if showAppearance}
 			<ThemeSchemeCard />
-		</div>
-	{/if}
+		{:else}
+			<LanguageCard />
+		{/if}
+	</div>
 </div>

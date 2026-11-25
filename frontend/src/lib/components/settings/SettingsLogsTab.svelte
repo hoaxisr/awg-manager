@@ -4,7 +4,8 @@
 	import { m } from '$lib/i18n';
 	import { usageLevel } from '$lib/stores/settings';
 	import type { Settings } from '$lib/types';
-	import { ScrollText } from 'lucide-svelte';
+	import { Layers, ScrollText } from 'lucide-svelte';
+	import LogBufferSettings from './LogBufferSettings.svelte';
 	import LoggingSettings from './LoggingSettings.svelte';
 	import PingTargetsCard from './PingTargetsCard.svelte';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
@@ -16,6 +17,9 @@
 
 	let { editor }: Props = $props();
 
+	const isExpert = $derived($usageLevel === 'expert');
+	const loggingOn = $derived(editor.settings.logging.enabled);
+
 	function toggleLogging(enabled: boolean) {
 		return editor.save(
 			() => api.updateSettings({ logging: { enabled } }),
@@ -24,7 +28,7 @@
 		);
 	}
 
-	function saveLogging(logging: Settings['logging']) {
+	function saveLogging(logging: Partial<Settings['logging']>) {
 		return editor.save(
 			() => api.updateSettings({ logging }),
 			m.settings_page_logging_saved(),
@@ -41,6 +45,10 @@
 	}
 </script>
 
+{#snippet buffers()}
+	<LogBufferSettings settings={editor.settings} saving={editor.saving} onSave={saveLogging} />
+{/snippet}
+
 <div class="settings-columns">
 	<div class="settings-column">
 		<div class="settings-block">
@@ -52,11 +60,22 @@
 					onToggle={toggleLogging}
 					onSave={saveLogging}
 				/>
+				{#if loggingOn && !isExpert}
+					{@render buffers()}
+				{/if}
 			</div>
 		</div>
 	</div>
-	{#if $usageLevel === 'expert'}
+	{#if isExpert}
 		<div class="settings-column">
+			{#if loggingOn}
+				<div class="settings-block">
+					<div class="card">
+						<SettingsSectionLabel label={m.settings_logging_buffers_title()} icon={Layers} tone="indigo" header />
+						{@render buffers()}
+					</div>
+				</div>
+			{/if}
 			<PingTargetsCard
 				target={editor.settings.pingCheck.defaults.target}
 				url={editor.settings.connectivityCheckUrl}

@@ -767,9 +767,13 @@ label {
 }
 
 @media (min-width: 901px) {
-	.settings-columns {
-		grid-auto-flow: column;
-		grid-auto-columns: minmax(0, 1fr);
+	.settings-columns:has(> .settings-column + .settings-column) {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	/* Карточка на обе колонки — под ними. */
+	.settings-columns > .settings-wide {
+		grid-column: 1 / -1;
 	}
 }
 
@@ -821,6 +825,18 @@ label {
 	border-top: 1px solid var(--border);
 }
 
+/* Список или поле справа от подписи; на телефоне — под ней на всю ширину. */
+.settings-select {
+	width: 180px;
+	flex-shrink: 0;
+}
+
+@media (max-width: 640px) {
+	.settings-select {
+		width: 100%;
+	}
+}
+
 /* Кнопки строки настроек. */
 .setting-actions {
 	display: flex;
@@ -863,8 +879,8 @@ label {
 @media (min-width: 641px) {
 	/* Подпись не уже 12rem: не хватает места — контрол уходит под неё, а не
 	   сжимает её до слова в строке. */
-	.settings-column .setting-row:not(.toggle-inline-row) > *:first-child {
-		flex-basis: 12rem;
+	.settings-columns .setting-row:not(.toggle-inline-row, .component-row) > *:first-child {
+		min-width: min(100%, 12rem);
 	}
 }
 

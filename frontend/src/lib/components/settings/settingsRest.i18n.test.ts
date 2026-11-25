@@ -79,7 +79,7 @@ describe('LoggingSettings i18n', () => {
 		});
 		expect(screen.getByText('Логирование')).toBeTruthy();
 		expect(screen.getByText('Уровень логирования AWGM')).toBeTruthy();
-		expect(screen.getByText('Размер буфера приложения')).toBeTruthy();
+		expect(screen.getByText('Срок хранения')).toBeTruthy();
 		expect(screen.getByText('8 ч')).toBeTruthy();
 
 		locale.set('en');
@@ -87,7 +87,7 @@ describe('LoggingSettings i18n', () => {
 
 		expect(screen.getByText('Logging')).toBeTruthy();
 		expect(screen.getByText('AWGM log level')).toBeTruthy();
-		expect(screen.getByText('Application buffer size')).toBeTruthy();
+		expect(screen.getByText('Retention')).toBeTruthy();
 		expect(screen.getByText('8 h')).toBeTruthy();
 	});
 });

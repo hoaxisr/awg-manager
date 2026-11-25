@@ -34,3 +34,7 @@ export { default as ProxyBinariesCard } from './ProxyBinariesCard.svelte';
 export { default as ProxyBinariesSection } from './ProxyBinariesSection.svelte';
 export { default as ObfuscatorRelayRow } from './ObfuscatorRelayRow.svelte';
 export { default as ZapretCard } from './ZapretCard.svelte';
+export { default as LanguageCard } from './LanguageCard.svelte';
+export { default as HappKeysCard } from './HappKeysCard.svelte';
+export { default as LogBufferSettings } from './LogBufferSettings.svelte';
+export { default as SnapshotsSection } from './SnapshotsSection.svelte';

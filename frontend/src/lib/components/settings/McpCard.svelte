@@ -144,7 +144,7 @@
 
 <div class="setting-row toggle-inline-row">
 	<div class="flex flex-col gap-1">
-		<span class="flex items-center gap-2">
+		<span class="flex flex-wrap items-center gap-2">
 			<span class="font-medium">{m.settings_mcp_access_label()}</span>
 			<Badge variant="accent" size="sm" uppercase>Beta</Badge>
 		</span>
@@ -171,15 +171,18 @@
 		</div>
 
 		<div class="setting-row toggle-inline-row">
-			<span class="font-medium">{m.settings_mcp_keys_label()}</span>
+			<div class="flex flex-col gap-1">
+				<span class="font-medium">{m.settings_mcp_keys_label()}</span>
+				{#if keysLoading}
+					<span class="setting-description">{m.common_loading()}</span>
+				{:else if keys.length === 0}
+					<span class="setting-description">{m.settings_mcp_no_keys()}</span>
+				{/if}
+			</div>
 			<Button variant="secondary" size="md" onclick={openCreate} disabled={saving}>{m.settings_mcp_create_key()}</Button>
 		</div>
-		<div class="setting-row">
-			{#if keysLoading}
-				<span class="setting-description">{m.common_loading()}</span>
-			{:else if keys.length === 0}
-				<span class="setting-description">{m.settings_mcp_no_keys()}</span>
-			{:else}
+		{#if !keysLoading && keys.length > 0}
+			<div class="setting-row">
 				<div class="mcp-keys-table-wrap">
 					<table class="mcp-keys-table w-full text-sm">
 						<thead>
@@ -209,8 +212,8 @@
 						</tbody>
 					</table>
 				</div>
-			{/if}
-		</div>
+			</div>
+		{/if}
 	</div>
 {/if}
 

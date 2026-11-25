@@ -1,13 +1,12 @@
 <!--
-  Карточка «Ключи и API»: API-ключ, MCP-сервер и ключи Happ. Ключ выпускает
-  вкладка (ongenerateApiKey) — он меняет общие настройки.
+  Карточка «Ключи и API»: API-ключ и MCP-сервер. Ключ выпускает вкладка
+  (ongenerateApiKey) — он меняет общие настройки.
 -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import { m } from '$lib/i18n';
 	import { Button } from '$lib/components/ui';
 	import RichText from '$lib/components/ui/RichText.svelte';
-	import HappKeysModal from '$lib/components/subscriptions/HappKeysModal.svelte';
 	import { notifications } from '$lib/stores/notifications';
 	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { KeyRound } from 'lucide-svelte';
@@ -24,8 +23,6 @@
 	}
 
 	let { apiKey, origin, saving = false, ongenerateApiKey, children }: Props = $props();
-
-	let showHappKeysModal = $state(false);
 
 	async function copyApiKey() {
 		const key = (apiKey ?? '').trim();
@@ -74,31 +71,8 @@
 		</div>
 	</div>
 	{@render children()}
-
-	<div class="setting-row">
-		<div class="flex flex-col gap-1">
-			<span class="font-medium">{m.settings_page_happ_label()}</span>
-			<span class="setting-description">
-				{m.settings_page_happ_description()}
-			</span>
-		</div>
-		<Button
-			variant="secondary"
-			size="md"
-			onclick={() => (showHappKeysModal = true)}
-			disabled={saving}
-		>
-			{m.settings_page_happ_manage()}
-		</Button>
-	</div>
-
 	</div>
 </div>
-
-<HappKeysModal
-	bind:open={showHappKeysModal}
-	onclose={() => (showHappKeysModal = false)}
-/>
 
 <style>
 	.api-key-controls {

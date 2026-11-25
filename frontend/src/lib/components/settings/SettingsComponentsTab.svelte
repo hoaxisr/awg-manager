@@ -3,6 +3,7 @@
 	import { api } from '$lib/api/client';
 	import { m } from '$lib/i18n';
 	import { usageLevel } from '$lib/stores/settings';
+	import { singboxStatus } from '$lib/stores/singbox';
 	import { isSectionVisible } from '$lib/types/usageLevel';
 	import FircIntegrationSection from './FircIntegrationSection.svelte';
 	import NdmsProxyRow from './NdmsProxyRow.svelte';
@@ -21,6 +22,9 @@
 	const showSingbox = $derived(isSectionVisible($usageLevel, 'singboxTunnels'));
 	const isExpert = $derived($usageLevel === 'expert');
 
+	// Статус ещё не пришёл — считаем установленным: карточка не перепрыгнет.
+	const singboxTall = $derived(showSingbox && ($singboxStatus.data?.installed ?? true));
+
 	function toggleObfuscatorRelay(process: boolean) {
 		return editor.save(
 			() => api.setObfuscatorRelay(process),
@@ -30,6 +34,8 @@
 	}
 </script>
 
+<!-- Карточка sing-box высока, пока он установлен: FIRC — напротив неё. Иначе
+     FIRC добирает короткую левую колонку. -->
 <div class="settings-columns">
 	<div class="settings-column">
 		{#if showSingbox}
@@ -39,11 +45,16 @@
 				{/if}
 			</SingboxSection>
 		{/if}
-		<FircIntegrationSection />
+		<ZapretCard />
+		{#if !singboxTall}
+			<FircIntegrationSection />
+		{/if}
 	</div>
 	<div class="settings-column">
 		<ProxyBinariesSection phobosKernel={isExpert ? phobosKernel : undefined} />
-		<ZapretCard />
+		{#if singboxTall}
+			<FircIntegrationSection />
+		{/if}
 	</div>
 </div>
 

@@ -1,10 +1,8 @@
 <script lang="ts">
 	import { Modal } from '$lib/components/ui';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
-	import LanguageSettingRow from './LanguageSettingRow.svelte';
-	import DateFormatSettingRow from './DateFormatSettingRow.svelte';
 	import type { UsageLevel } from '$lib/types/usageLevel';
-	import { usageLevelLabel, isAppearanceSettingsVisible } from '$lib/types/usageLevel';
+	import { usageLevelLabel } from '$lib/types/usageLevel';
 	import { m } from '$lib/i18n';
 	import { SlidersHorizontal, ChevronDown, Info, Check } from 'lucide-svelte';
 
@@ -90,11 +88,6 @@
 <div class="settings-block">
 	<div class="card" id="usage-level">
 	<SettingsSectionLabel label={m.settings_general()} icon={SlidersHorizontal} tone="slate" header />
-	<!-- Карточка «Внешний вид» (там язык и формат даты) скрыта ниже её уровня — язык должен быть доступен всегда. -->
-	{#if !isAppearanceSettingsVisible(value)}
-		<LanguageSettingRow />
-		<DateFormatSettingRow />
-	{/if}
 	<div class="setting-row level-header-row">
 		<div class="flex flex-col gap-1">
 			<span class="font-medium">{m.settings_level_title()}</span>

@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, fireEvent } from '@testing-library/svelte';
-import LoggingSettings from './LoggingSettings.svelte';
+import LogBufferSettings from './LogBufferSettings.svelte';
 import type { Settings } from '$lib/types';
 
-describe('LoggingSettings', () => {
+describe('LogBufferSettings', () => {
 	it('после неудачного сохранения показывает сохранённое значение, а не отклонённое', async () => {
 		const settings = {
 			logging: {
@@ -17,15 +17,16 @@ describe('LoggingSettings', () => {
 		} as unknown as Settings;
 		// Страница не смогла сохранить: settings остаются прежними.
 		const onSave = vi.fn(async () => {});
-		const { container } = render(LoggingSettings, {
-			props: { settings, saving: false, onToggle: () => {}, onSave },
+		const { container } = render(LogBufferSettings, {
+			props: { settings, saving: false, onSave },
 		});
 		const input = container.querySelector('.logging-buffer-row input') as HTMLInputElement;
 
 		await fireEvent.input(input, { target: { value: '7000' } });
 		await fireEvent.blur(input);
 
-		expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ appMaxEntries: 7000 }));
+		// Только свои поля: снимок целиком откатил бы уровень, сохранённый рядом.
+		expect(onSave).toHaveBeenCalledWith({ appMaxEntries: 7000, singboxMaxEntries: 5000 });
 		await vi.waitFor(() => expect(input.value).toBe('5000'));
 		expect(settings.logging.appMaxEntries).toBe(5000);
 	});

@@ -8,7 +8,10 @@
 	import { systemInfo } from '$lib/stores/system';
 	import type { SystemInfo } from '$lib/types';
 	import { startVisiblePoll } from '$lib/utils/visiblePoll';
+	import { History } from 'lucide-svelte';
 	import BackupRestoreCard from './BackupRestoreCard.svelte';
+	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
+	import SnapshotsSection from './SnapshotsSection.svelte';
 	import SystemInfoGrid from './SystemInfoGrid.svelte';
 	import type { SettingsEditor } from './settingsEditor.svelte';
 
@@ -17,6 +20,8 @@
 	}
 
 	let { editor }: Props = $props();
+
+	const level = $derived(editor.settings.usageLevel);
 
 	let fetched = $state.raw<SystemInfo | null>(null);
 	// До первого ответа — то, что уже лежит в общем сторе.
@@ -43,22 +48,46 @@
 	onMount(() => startVisiblePoll(fetchSystemInfo, 120_000));
 </script>
 
+<!-- Снимки: на «Базовом» добирают короткую левую колонку (сведений о роутере
+     вдвое меньше), на «Расширенном» — под обеими, на «Продвинутом» — в карточке
+     резервного копирования напротив полных сведений. -->
+{#snippet snapshotsCard()}
+	<div class="settings-block">
+		<div class="card">
+			<SettingsSectionLabel label={m.settings_backup_snapshots_label()} icon={History} tone="teal" header />
+			<SnapshotsSection heading={false} />
+		</div>
+	</div>
+{/snippet}
+
 <div class="settings-columns">
 	<div class="settings-column">
 		{#if info}
 			<SystemInfoGrid
 				systemInfo={info}
-				usageLevel={editor.settings.usageLevel}
+				usageLevel={level}
 				{refreshing}
 				lastUpdated={updatedAt}
 			/>
 		{:else}
 			<LoadingSpinner size="md" />
 		{/if}
+		{#if level === 'basic'}
+			{@render snapshotsCard()}
+		{/if}
 	</div>
 	<div class="settings-column">
 		<div class="settings-block" id="settings-backup">
-			<BackupRestoreCard />
+			<BackupRestoreCard>
+				{#if level === 'expert'}
+					<SnapshotsSection />
+				{/if}
+			</BackupRestoreCard>
 		</div>
 	</div>
+	{#if level === 'advanced'}
+		<div class="settings-wide">
+			{@render snapshotsCard()}
+		</div>
+	{/if}
 </div>

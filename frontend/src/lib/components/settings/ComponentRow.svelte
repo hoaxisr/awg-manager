@@ -85,5 +85,10 @@
 		.component-actions:has(> :global(:nth-child(2))) > :global(*) {
 			flex: 1 1 auto;
 		}
+
+		/* Кнопка в обёртке с подсказкой. */
+		.component-actions > :global(span > .btn) {
+			width: 100%;
+		}
 	}
 </style>

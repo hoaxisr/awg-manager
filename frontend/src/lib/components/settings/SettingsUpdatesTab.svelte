@@ -203,6 +203,9 @@
 				{/if}
 			</div>
 		</div>
+		{#if showDnsRoute && showDownloadRoute}
+			{@render dnsLists()}
+		{/if}
 	</div>
 	<div class="settings-column">
 		<div class="settings-block">
@@ -227,21 +230,28 @@
 				</div>
 			</div>
 		{/if}
-		{#if showDnsRoute}
-			<div class="settings-block">
-				<div class="card">
-					<SettingsSectionLabel label={m.settings_page_dns_lists_title()} icon={ListRestart} tone="indigo" header />
-					<DnsRouteSettings
-						settings={editor.settings}
-						saving={editor.saving}
-						onToggle={toggleDnsAutoRefresh}
-						onSave={saveDnsRouteSettings}
-					/>
-				</div>
-			</div>
-		{/if}
 	</div>
+	<!-- Без «Служебных загрузок» колонки равны и так: списки — под обеими. -->
+	{#if showDnsRoute && !showDownloadRoute}
+		<div class="settings-wide">
+			{@render dnsLists()}
+		</div>
+	{/if}
 </div>
+
+{#snippet dnsLists()}
+	<div class="settings-block">
+		<div class="card">
+			<SettingsSectionLabel label={m.settings_page_dns_lists_title()} icon={ListRestart} tone="indigo" header />
+			<DnsRouteSettings
+				settings={editor.settings}
+				saving={editor.saving}
+				onToggle={toggleDnsAutoRefresh}
+				onSave={saveDnsRouteSettings}
+			/>
+		</div>
+	</div>
+{/snippet}
 
 <DevelopChannelGateModal
 	open={developGateOpen}
