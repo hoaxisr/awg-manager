@@ -15,6 +15,8 @@
 		isRealityOnly: boolean;
 		isTgDirectOnly: boolean;
 		wantXray: boolean;
+		wantTgDirect?: boolean;
+		grayIPDetected?: boolean;
 		realityPort: number;
 		realityState: XrayRealityState | null;
 		realityWhiteIP: boolean;
@@ -25,6 +27,7 @@
 		oncheckreality: () => void;
 		oncheckfacts: () => void;
 		onswitchtowebbridge: () => void;
+		onswitchtowebonly?: () => void;
 	}
 
 	let {
@@ -33,6 +36,8 @@
 		isRealityOnly,
 		isTgDirectOnly,
 		wantXray,
+		wantTgDirect = false,
+		grayIPDetected = false,
 		realityPort,
 		realityState,
 		realityWhiteIP,
@@ -43,6 +48,7 @@
 		oncheckreality,
 		oncheckfacts,
 		onswitchtowebbridge,
+		onswitchtowebonly,
 	}: Props = $props();
 </script>
 
@@ -93,18 +99,14 @@
 						</span>
 					{:else}
 						<AlertTriangle size={15} class="icon-warning-soft" />
-						<div>
+						<div class="warn-banner-body">
 							<span>
 								{m.servers_ext_wiz_s2_tg_ip_not_found({ reason: realityState.network.reason || m.servers_ext_wiz_s2_tg_ip_cgnat_reason() })}
 							</span>
-							<div style="margin-top: 6px;">
-								<button
-									type="button"
-									class="link-btn"
-									onclick={onswitchtowebbridge}
-								>
+							<div>
+								<Button variant="primary" size="sm" onclick={onswitchtowebbridge}>
 									{m.servers_ext_wiz_s2_tg_switch_web()}
-								</button>
+								</Button>
 							</div>
 						</div>
 					{/if}
@@ -116,18 +118,14 @@
 						</span>
 					{:else}
 						<AlertTriangle size={15} class="icon-warning-soft" />
-						<div>
+						<div class="warn-banner-body">
 							<span>
 								{m.servers_ext_wiz_s2_tg_wan_cgnat_before()}<strong class="mono">{keendnsInfo.wan_ip}</strong>{m.servers_ext_wiz_s2_tg_wan_cgnat_after()}
 							</span>
-							<div style="margin-top: 6px;">
-								<button
-									type="button"
-									class="link-btn"
-									onclick={onswitchtowebbridge}
-								>
+							<div>
+								<Button variant="primary" size="sm" onclick={onswitchtowebbridge}>
 									{m.servers_ext_wiz_s2_tg_switch_web()}
-								</button>
+								</Button>
 							</div>
 						</div>
 					{/if}
@@ -345,12 +343,32 @@
 							{/if}
 						</li>
 					</ul>
+					{#if keendnsInfo.wan_ip_private && draft.originType === 'public_address'}
+						<div class="scheme-warn-note">
+							<AlertTriangle size={14} />
+							<span>{m.servers_ext_wiz_s2_public_ip_cgnat_mismatch({ ip: keendnsInfo.wan_ip || '' })}</span>
+						</div>
+					{/if}
 					<div class="facts-scope">
 						{m.servers_ext_wiz_s2_facts_note()}
 					</div>
 				</div>
 			{/if}
 		</div>
+
+		{#if wantTgDirect && (draft.originType === 'cloud_address' || grayIPDetected) && onswitchtowebonly}
+			<div class="reality-wan-box warn">
+				<AlertTriangle size={15} class="icon-warning-soft" />
+				<div class="warn-banner-body">
+					<span>{m.servers_ext_wiz_s2_dual_cgnat_warn()}</span>
+					<div>
+						<Button variant="secondary" size="sm" onclick={onswitchtowebonly}>
+							{m.servers_ext_wiz_s2_switch_web_only()}
+						</Button>
+					</div>
+				</div>
+			</div>
+		{/if}
 
 		{#if wantXray}
 			<label class="reality-opt-box" class:selected={realityMode === 'also'}>
@@ -562,5 +580,11 @@
 	.reality-wan-box.warn {
 		border-color: var(--color-warning-border);
 		background: var(--color-warning-tint);
+	}
+
+	.warn-banner-body {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
 	}
 </style>

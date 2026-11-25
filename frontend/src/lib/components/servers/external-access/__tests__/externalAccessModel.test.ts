@@ -15,9 +15,13 @@ import {
 	computeEffectiveVerifyKind,
 	createInitialWizardDraft,
 	draftNeedsWebIngress,
+	isCloudKeenDNSHost,
 	isDraftEgressValid,
+	isGrayIPNetwork,
 	isTgDirectOnlyDraft,
+	pickDefaultKeenDNSActionMode,
 	pickDefaultMtprotoDirectHost,
+	resolveEffectiveMtprotoDirectHost,
 	shouldKeepExistingSchemeAfterStep1Change,
 	buildPlanRequestFromDraft,
 	validateKeenDNSLabelClient,
@@ -914,5 +918,74 @@ describe('externalAccessModel', () => {
 				keepExistingConnectionScheme: true,
 			})
 		).toBe(true);
+	});
+
+	it('detects gray IP / cloud KeenDNS hosts, picks smart KeenDNS default mode, and avoids cloud 4th-level MTProto fallback', () => {
+		// 1. isGrayIPNetwork
+		expect(
+			isGrayIPNetwork({
+				hasRealityNetwork: true,
+				realityWhiteIP: true,
+				wanIPPrivate: true,
+				keendnsEnabled: true,
+				keendnsMode: 'cloud',
+			})
+		).toBe(false);
+		expect(
+			isGrayIPNetwork({
+				hasRealityNetwork: true,
+				realityWhiteIP: false,
+			})
+		).toBe(true);
+		expect(isGrayIPNetwork({ wanIPPrivate: true })).toBe(true);
+		expect(isGrayIPNetwork({ keendnsEnabled: true, keendnsMode: 'cloud' })).toBe(true);
+		expect(isGrayIPNetwork({})).toBe(false);
+
+		// 2. isCloudKeenDNSHost
+		expect(isCloudKeenDNSHost('vinvanvlad-dacha.crazedns.ru', 'vinvanvlad-dacha.crazedns.ru', false)).toBe(
+			true
+		);
+		expect(
+			isCloudKeenDNSHost('  Connect.VINVANVLAD-DACHA.CRAZEDNS.RU. ', 'vinvanvlad-dacha.crazedns.ru', false)
+		).toBe(true);
+		expect(isCloudKeenDNSHost('vinvanvlad-dacha.crazedns.ru', 'vinvanvlad-dacha.crazedns.ru', true)).toBe(
+			false
+		);
+		expect(isCloudKeenDNSHost('203.0.113.10', 'vinvanvlad-dacha.crazedns.ru', false)).toBe(false);
+		expect(isCloudKeenDNSHost('', 'vinvanvlad-dacha.crazedns.ru', false)).toBe(false);
+
+		// 3. pickDefaultKeenDNSActionMode priority: existing > create > manual
+		expect(
+			pickDefaultKeenDNSActionMode({ keendnsAvailable: true, hasCompatiblePublications: true })
+		).toBe('existing');
+		expect(
+			pickDefaultKeenDNSActionMode({ keendnsAvailable: true, hasCompatiblePublications: false })
+		).toBe('create');
+		expect(
+			pickDefaultKeenDNSActionMode({ keendnsAvailable: false, hasCompatiblePublications: false })
+		).toBe('manual');
+
+		// 4. resolveEffectiveMtprotoDirectHost & buildPlanRequestFromDraft under cloud KeenDNS
+		const cloudDual = createInitialWizardDraft({});
+		cloudDual.selectedKind = 'tgwebproxy';
+		cloudDual.tgScenario = 'dual';
+		cloudDual.originType = 'cloud_address';
+		cloudDual.keendnsMode = 'create';
+		cloudDual.publicDomain = 'connect.vinvanvlad-dacha.crazedns.ru';
+		cloudDual.originHost = 'connect.vinvanvlad-dacha.crazedns.ru';
+		cloudDual.directHost = '';
+		expect(resolveEffectiveMtprotoDirectHost(cloudDual)).toBe('');
+		expect(buildPlanRequestFromDraft(cloudDual).direct_host).toBe('');
+
+		// Explicit directHost overrides even in cloud mode; keendnsMode=manual keeps legacy fallback
+		cloudDual.directHost = '203.0.113.10';
+		expect(resolveEffectiveMtprotoDirectHost(cloudDual)).toBe('203.0.113.10');
+		expect(buildPlanRequestFromDraft(cloudDual).direct_host).toBe('203.0.113.10');
+
+		cloudDual.directHost = '';
+		cloudDual.keendnsMode = 'manual';
+		expect(resolveEffectiveMtprotoDirectHost(cloudDual)).toBe(
+			'connect.vinvanvlad-dacha.crazedns.ru'
+		);
 	});
 });

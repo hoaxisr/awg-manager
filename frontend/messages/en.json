@@ -10325,5 +10325,11 @@
 	"servers_ext_wiz_s5_tg_firewall_text": "TCP port {port} will open automatically in Keenetic's WAN firewall",
 	"servers_ext_wiz_s5_tg_direct_entry": "Direct MTProto entry:",
 	"servers_ext_wiz_s5_port_auto_open": "(port opens in the WAN firewall automatically)",
+	"servers_ext_wiz_s1_white_ip_badge": "Public IP required",
+	"servers_ext_wiz_s2_dual_cgnat_warn": "Direct MTProto is enabled in the selected scenario, but a direct TCP port is unreachable behind a private IP / CGNAT. Switching to Web Bridge only is recommended.",
+	"servers_ext_wiz_s2_switch_web_only": "Use Web Bridge only",
+	"servers_ext_wiz_s2_public_ip_cgnat_mismatch": "Warning: a private WAN IP ({ip}) was detected on the router. Public IP mode works only if ports are forwarded to the router upstream.",
+	"servers_ext_wiz_s3_dual_cgnat_warn": "Behind a private IP / CGNAT (cloud KeenDNS), direct MTProto cannot work through a 4th-level cloud domain. If you do not have a public IP, disable MTProto and keep Web Bridge only.",
+	"servers_ext_wiz_s3_disable_mtproto_btn": "Disable MTProto (Web Bridge only)",
 	"firc_router_view_journal": "Journal"
 }

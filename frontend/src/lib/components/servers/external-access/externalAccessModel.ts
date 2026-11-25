@@ -191,6 +191,65 @@ export function pickDefaultMtprotoDirectHost(opts: {
 	return (opts.whiteIP || '').trim();
 }
 
+export function isGrayIPNetwork(opts: {
+	hasRealityNetwork?: boolean;
+	realityWhiteIP?: boolean | null;
+	wanIPPrivate?: boolean | null;
+	keendnsEnabled?: boolean;
+	keendnsMode?: string | null;
+}): boolean {
+	if (opts.hasRealityNetwork && opts.realityWhiteIP === true) return false;
+	if (opts.hasRealityNetwork && opts.realityWhiteIP === false) return true;
+	if (opts.wanIPPrivate === true) return true;
+	if (Boolean(opts.keendnsEnabled) && opts.keendnsMode === 'cloud') return true;
+	return false;
+}
+
+export function isCloudKeenDNSHost(
+	host?: string | null,
+	baseDomain?: string | null,
+	baseIsDirect?: boolean
+): boolean {
+	const h = (host || '').trim().toLowerCase().replace(/\.$/, '');
+	const base = (baseDomain || '').trim().toLowerCase().replace(/\.$/, '');
+	if (!h || !base || baseIsDirect) return false;
+	return h === base || h.endsWith('.' + base);
+}
+
+export function pickDefaultKeenDNSActionMode(opts: {
+	keendnsAvailable: boolean;
+	hasCompatiblePublications: boolean;
+}): 'existing' | 'create' | 'manual' {
+	if (opts.hasCompatiblePublications) return 'existing';
+	if (opts.keendnsAvailable) return 'create';
+	return 'manual';
+}
+
+export function resolveEffectiveMtprotoDirectHost(
+	draft: Pick<
+		ExternalAccessWizardDraft,
+		| 'selectedKind'
+		| 'tgScenario'
+		| 'directHost'
+		| 'originHost'
+		| 'publicDomain'
+		| 'keendnsMode'
+		| 'originType'
+	>
+): string {
+	if (isTgDirectOnlyDraft(draft)) {
+		return draft.directHost.trim();
+	}
+	if (draft.selectedKind !== 'xray' && draft.tgScenario !== 'cdn_http') {
+		if (draft.directHost.trim()) return draft.directHost.trim();
+		if (draft.originType === 'cloud_address' && draft.keendnsMode !== 'manual') {
+			return '';
+		}
+		return draft.originHost.trim() || (draft.publicDomain.split(',')[0] || '').trim();
+	}
+	return (draft.directHost || draft.originHost).trim();
+}
+
 export function formatDomainList(raw?: string | null): string {
 	if (!raw) return '';
 	return raw
@@ -968,12 +1027,7 @@ export function buildPlanRequestFromDraft(
 	const effectiveTlsDomain =
 		draft.tlsPreset === '__custom__' ? draft.customTlsDomain.trim() : draft.tlsPreset;
 	const effectiveOriginHost = tgDirectOnly ? '' : draft.originHost.trim();
-	const primaryPublicDomain = (draft.publicDomain.split(',')[0] || '').trim();
-	const effectiveDirectHost = tgDirectOnly
-		? draft.directHost.trim()
-		: draft.selectedKind !== 'xray' && draft.tgScenario !== 'cdn_http'
-			? draft.directHost.trim() || draft.originHost.trim() || primaryPublicDomain
-			: (draft.directHost || draft.originHost).trim();
+	const effectiveDirectHost = resolveEffectiveMtprotoDirectHost(draft);
 	const effectiveMode =
 		draft.selectedMode === 'xhttp_get' || draft.preserveTransport
 			? draft.selectedMode

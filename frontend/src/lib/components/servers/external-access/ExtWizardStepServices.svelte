@@ -8,6 +8,8 @@
 	interface Props {
 		draft: ExternalAccessWizardDraft;
 		wantTg: boolean;
+		initializing?: boolean;
+		grayIPDetected?: boolean;
 		otherServiceCurrentlyEnabled: boolean;
 		otherServiceLabel: string;
 		onselectkind: (kind: WizardKind) => void;
@@ -17,6 +19,8 @@
 	let {
 		draft = $bindable(),
 		wantTg,
+		initializing = false,
+		grayIPDetected = false,
 		otherServiceCurrentlyEnabled,
 		otherServiceLabel,
 		onselectkind,
@@ -35,6 +39,7 @@
 			type="button"
 			class="choice-card"
 			class:selected={draft.selectedKind === 'xray'}
+			disabled={initializing}
 			onclick={() => onselectkind('xray')}
 		>
 			<div class="choice-top">
@@ -53,6 +58,7 @@
 			type="button"
 			class="choice-card"
 			class:selected={draft.selectedKind === 'tgwebproxy'}
+			disabled={initializing}
 			onclick={() => onselectkind('tgwebproxy')}
 		>
 			<div class="choice-top">
@@ -71,6 +77,7 @@
 			type="button"
 			class="choice-card"
 			class:selected={draft.selectedKind === 'both'}
+			disabled={initializing}
 			onclick={() => onselectkind('both')}
 		>
 			<div class="choice-top">
@@ -112,11 +119,17 @@
 				type="button"
 				class="choice-card compact"
 				class:selected={draft.tgScenario === 'direct_fake_tls'}
+				disabled={initializing}
 				onclick={() => onselectscenario('direct_fake_tls')}
 			>
 				<div class="choice-top">
 					<span class="choice-title">{m.servers_ext_wiz_s1_tg_direct_title()}</span>
-					<span class="tech-sub-badge">MTProto / Fake-TLS</span>
+					<div class="badges-row">
+						<span class="tech-sub-badge">MTProto / Fake-TLS</span>
+						{#if grayIPDetected}
+							<span class="tech-sub-badge badge-warn">{m.servers_ext_wiz_s1_white_ip_badge()}</span>
+						{/if}
+					</div>
 				</div>
 				<div class="choice-text">
 					{m.servers_ext_wiz_s1_tg_direct_text()}
@@ -127,11 +140,17 @@
 				type="button"
 				class="choice-card compact"
 				class:selected={draft.tgScenario === 'cdn_http'}
+				disabled={initializing}
 				onclick={() => onselectscenario('cdn_http')}
 			>
 				<div class="choice-top">
 					<span class="choice-title">{m.servers_ext_wiz_s1_tg_domain_title()}</span>
-					<span class="tech-sub-badge">{m.servers_ext_wiz_s1_tg_domain_badge()}</span>
+					<div class="badges-row">
+						<span class="tech-sub-badge">{m.servers_ext_wiz_s1_tg_domain_badge()}</span>
+						{#if grayIPDetected}
+							<span class="current-pill">{m.servers_ext_wiz_recommended()}</span>
+						{/if}
+					</div>
 				</div>
 				<div class="choice-text">
 					{m.servers_ext_wiz_s1_tg_domain_text()}
@@ -142,11 +161,17 @@
 				type="button"
 				class="choice-card compact"
 				class:selected={draft.tgScenario === 'dual'}
+				disabled={initializing}
 				onclick={() => onselectscenario('dual')}
 			>
 				<div class="choice-top">
 					<span class="choice-title">{m.servers_ext_wiz_s1_tg_dual_title()}</span>
-					<span class="tech-sub-badge">{m.servers_ext_wiz_s1_tg_dual_badge()}</span>
+					<div class="badges-row">
+						<span class="tech-sub-badge">{m.servers_ext_wiz_s1_tg_dual_badge()}</span>
+						{#if grayIPDetected}
+							<span class="tech-sub-badge badge-warn">{m.servers_ext_wiz_s1_white_ip_badge()}</span>
+						{/if}
+					</div>
 				</div>
 				<div class="choice-text">
 					{m.servers_ext_wiz_s1_tg_dual_text()}
@@ -157,6 +182,13 @@
 </div>
 
 <style>
+	.badges-row {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+		flex-wrap: wrap;
+	}
+
 	.other-service-warning {
 		display: flex;
 		align-items: flex-start;

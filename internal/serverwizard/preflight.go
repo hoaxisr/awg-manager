@@ -202,15 +202,22 @@ func (pe *PreflightEngine) Run(ctx context.Context, req WizardPlanRequest) Prefl
 }
 
 func (pe *PreflightEngine) checkTelegram(ctx context.Context, req WizardPlanRequest, checks *[]PreflightCheck) {
+	scenario := strings.TrimSpace(req.Scenario)
+	if scenario == "" {
+		scenario = "dual"
+	}
+
 	// Binary checks
 	// mtg и tproxy встроены в процесс: внешних бинарей нет, проверять нечего.
-	*checks = append(*checks, PreflightCheck{
-		ID:      "bin_telemt",
-		Title:   "Встроенное ядро mtg (MTProto Fake-TLS)",
-		Status:  CheckStatusOK,
-		Message: "Ядро mtg встроено в процесс awg-manager",
-	})
-	if req.Scenario != "direct_fake_tls" {
+	if scenario != "cdn_http" {
+		*checks = append(*checks, PreflightCheck{
+			ID:      "bin_telemt",
+			Title:   "Встроенное ядро mtg (MTProto Fake-TLS)",
+			Status:  CheckStatusOK,
+			Message: "Ядро mtg встроено в процесс awg-manager",
+		})
+	}
+	if scenario != "direct_fake_tls" {
 		*checks = append(*checks, PreflightCheck{
 			ID:      "bin_tproxy",
 			Title:   "Встроенный Web Proxy (tproxy)",
@@ -220,10 +227,6 @@ func (pe *PreflightEngine) checkTelegram(ctx context.Context, req WizardPlanRequ
 	}
 
 	// Ports checks
-	scenario := strings.TrimSpace(req.Scenario)
-	if scenario == "" {
-		scenario = "dual"
-	}
 	directPort := req.DirectPort
 	if directPort == 0 {
 		directPort = 8443
@@ -367,6 +370,20 @@ func (pe *PreflightEngine) checkTelegram(ctx context.Context, req WizardPlanRequ
 				Message:     fmt.Sprintf("Адрес %s относится к частной/CGNAT подсети — для подключения Telegram из интернета требуется белый IP или прямой домен", req.DirectHost),
 				Remediation: "Укажите белый публичный IP роутера, прямой домен KeenDNS 3-го уровня или переключитесь на сценарий Web Proxy.",
 			})
+		} else if scenario != "cdn_http" && pe.keendns != nil {
+			if disc, err := pe.keendns.Discover(ctx, dispPort); err == nil && disc.State == "supported" && strings.EqualFold(strings.TrimSpace(disc.AccessMode), "cloud") {
+				base := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(disc.BaseFQDN), "."))
+				host := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(req.DirectHost), "."))
+				if base != "" && (host == base || strings.HasSuffix(host, "."+base)) {
+					*checks = append(*checks, PreflightCheck{
+						ID:          "direct_host_keendns_cloud",
+						Title:       "Адрес прямого подключения MTProto",
+						Status:      CheckStatusWarning,
+						Message:     fmt.Sprintf("Домен %s работает в облачном режиме KeenDNS (только HTTP/HTTPS) — прямое TCP-подключение MTProto через него недоступно", req.DirectHost),
+						Remediation: "Укажите белый публичный IP роутера, переведите KeenDNS в режим «Прямой доступ» или выберите сценарий Веб-мост (cdn_http).",
+					})
+				}
+			}
 		}
 	}
 	if scenario != "direct_fake_tls" && req.PublicDomain != "" {

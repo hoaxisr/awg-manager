@@ -19,9 +19,13 @@
 	import {
 		createInitialWizardDraft,
 		buildPlanRequestFromDraft,
+		isCloudKeenDNSHost,
 		isDraftEgressValid,
+		isGrayIPNetwork,
 		isTgDirectOnlyDraft,
+		pickDefaultKeenDNSActionMode,
 		pickDefaultMtprotoDirectHost,
+		resolveEffectiveMtprotoDirectHost,
 		shouldKeepExistingSchemeAfterStep1Change,
 		validateKeenDNSLabelClient,
 		type ExternalAccessInput,
@@ -61,7 +65,13 @@
 	];
 
 	let stepIndex = $state(0);
-	let loading = $state(false);
+	let initializing = $state(false);
+	let capsLoading = $state(false);
+	let planLoading = $state(false);
+	let loading = $derived(initializing || capsLoading || planLoading);
+	let initSeq = 0;
+	let capsSeq = 0;
+	let userTouchedTgScenario = false;
 	let showAdvancedAddresses = $state(false);
 	let showTechnicalPlan = $state(false);
 
@@ -135,6 +145,18 @@
 		)
 	);
 	let detectedMtprotoDirectDomain = $derived(keenDNSBaseIsDirect ? keenDNSBaseDomain : '');
+	let grayIPDetected = $derived(
+		isGrayIPNetwork({
+			hasRealityNetwork: Boolean(realityState?.network),
+			realityWhiteIP,
+			wanIPPrivate: keendnsInfo?.wan_ip_private,
+			keendnsEnabled: keendnsInfo?.enabled,
+			keendnsMode: keendnsInfo?.mode,
+		})
+	);
+	let isDirectHostCloudKeenDNS = $derived(
+		isCloudKeenDNSHost(draft.directHost, keenDNSBaseDomain, keenDNSBaseIsDirect)
+	);
 
 	let otherServiceCurrentlyEnabled = $derived(
 		(draft.selectedKind === 'xray' && draft.tgInitiallyEnabled) ||
@@ -243,6 +265,12 @@
 		if (open) {
 			void initWizard(initialKind);
 		} else {
+			initSeq++;
+			capsSeq++;
+			initializing = false;
+			capsLoading = false;
+			planLoading = false;
+			realityNetChecking = false;
 			stopPolling();
 		}
 	});
@@ -279,11 +307,16 @@
 	}
 
 	async function initWizard(preferredKind?: WizardKind) {
+		const seq = ++initSeq;
+		userTouchedTgScenario = false;
 		stepIndex = 0;
 		applyPhase = 'review';
 		showAdvancedAddresses = false;
 		showTechnicalPlan = false;
 		showRouterFacts = false;
+		caps = null;
+		keendnsInfo = null;
+		realityState = null;
 		preflight = null;
 		planRecord = null;
 		jobStatus = null;
@@ -292,12 +325,14 @@
 		realityResultError = null;
 		realityNetChecking = false;
 
-		loading = true;
+		initializing = true;
 		try {
 			const [input, rSt] = await Promise.all([
 				resolveCurrentInput(),
-				api.getXrayReality(true).catch(() => null),
+				api.getXrayReality(false).catch(() => null),
 			]);
+			if (seq !== initSeq || !open) return;
+
 			const initial = createInitialWizardDraft(input, preferredKind);
 			// Имя первого устройства — данные (уходят на сервер как remark и
 			// правятся в поле ввода), а не подпись: язык момента открытия верен.
@@ -331,9 +366,80 @@
 			} else {
 				realityMode = 'off';
 			}
-			await loadCapabilities(draft.selectedKind);
+			const loadedCaps = await loadCapabilities(draft.selectedKind, seq);
+			if (seq !== initSeq || !open) return;
+
+			if (!draft.isEditMode && !userTouchedTgScenario) {
+				const kd = loadedCaps?.keendns ?? null;
+				const grayNow = isGrayIPNetwork({
+					hasRealityNetwork: Boolean(rSt?.network),
+					realityWhiteIP: Boolean(rSt?.network?.white_ip),
+					wanIPPrivate: kd?.wan_ip_private,
+					keendnsEnabled: kd?.enabled,
+					keendnsMode: kd?.mode,
+				});
+				const kdAvailable = Boolean(
+					kd && kd.enabled && kd.domain && kd.state !== 'unconfigured' && kd.state !== 'unsupported'
+				);
+				const kdHasCompatPubs = Boolean((kd?.publications ?? []).some((p) => p.compatible));
+				if (grayNow && (draft.selectedKind === 'tgwebproxy' || draft.selectedKind === 'both')) {
+					draft.tgScenario = 'cdn_http';
+					draft.originType = 'cloud_address';
+					if (kdAvailable) {
+						draft.connectionWay = 'direct';
+						setKeenDNSActionMode(
+							pickDefaultKeenDNSActionMode({
+								keendnsAvailable: kdAvailable,
+								hasCompatiblePublications: kdHasCompatPubs,
+							})
+						);
+					}
+				}
+			}
 		} finally {
-			loading = false;
+			if (seq === initSeq) {
+				initializing = false;
+			}
+		}
+		if (seq === initSeq && open) {
+			void refreshRealityNetworkInBackground(seq);
+		}
+	}
+
+	async function refreshRealityNetworkInBackground(seq: number) {
+		realityNetChecking = true;
+		try {
+			const fresh = await api.getXrayReality(true).catch(() => null);
+			if (seq !== initSeq || !open || !fresh) return;
+			realityState = fresh;
+			if (wantTgDirect) {
+				prefillMtprotoDirectHostIfEmpty();
+			}
+			if (
+				!draft.isEditMode &&
+				!userTouchedTgScenario &&
+				stepIndex === 0 &&
+				(draft.selectedKind === 'tgwebproxy' || draft.selectedKind === 'both') &&
+				draft.tgScenario === 'dual' &&
+				fresh.network &&
+				!fresh.network.white_ip
+			) {
+				draft.tgScenario = 'cdn_http';
+				draft.originType = 'cloud_address';
+				if (keendnsAvailable) {
+					draft.connectionWay = 'direct';
+					setKeenDNSActionMode(
+						pickDefaultKeenDNSActionMode({
+							keendnsAvailable,
+							hasCompatiblePublications: compatibleKeenDNSPublications.length > 0,
+						})
+					);
+				}
+			}
+		} finally {
+			if (seq === initSeq) {
+				realityNetChecking = false;
+			}
 		}
 	}
 
@@ -351,10 +457,16 @@
 		}
 	}
 
-	async function loadCapabilities(kind: WizardKind) {
-		loading = true;
+	async function loadCapabilities(
+		kind: WizardKind,
+		expectedInitSeq?: number
+	): Promise<CapabilitiesResponse | null> {
+		const reqSeq = ++capsSeq;
+		capsLoading = true;
 		try {
 			const res = await api.getWizardCapabilities(kind);
+			if (reqSeq !== capsSeq) return null;
+			if (expectedInitSeq !== undefined && (expectedInitSeq !== initSeq || !open)) return null;
 			caps = res;
 			if (res.keendns) {
 				keendnsInfo = res.keendns;
@@ -362,12 +474,18 @@
 			if (wantTgDirect) {
 				prefillMtprotoDirectHostIfEmpty();
 			}
+			return res;
 		} catch (e) {
-			notifications.error(
-				e instanceof Error ? e.message : m.servers_ext_wiz_err_caps()
-			);
+			if (reqSeq === capsSeq) {
+				notifications.error(
+					e instanceof Error ? e.message : m.servers_ext_wiz_err_caps()
+				);
+			}
+			return null;
 		} finally {
-			loading = false;
+			if (reqSeq === capsSeq) {
+				capsLoading = false;
+			}
 		}
 	}
 
@@ -376,6 +494,9 @@
 		showRouterFacts = true;
 		try {
 			keendnsInfo = await api.getWizardKeenDNS(draft.selectedKind);
+			if (!draft.isEditMode && keendnsInfo?.wan_ip_private) {
+				draft.originType = 'cloud_address';
+			}
 			if (wantTgDirect) {
 				prefillMtprotoDirectHostIfEmpty();
 			}
@@ -400,6 +521,7 @@
 	}
 
 	function selectServiceKind(kind: WizardKind) {
+		if (initializing) return;
 		draft.selectedKind = kind;
 		draft.disableOtherService = false;
 		if (kind === 'tgwebproxy') {
@@ -426,6 +548,8 @@
 	}
 
 	function selectTgScenario(scenario: string) {
+		if (initializing) return;
+		userTouchedTgScenario = true;
 		draft.tgScenario = scenario;
 		if (draft.selectedKind === 'tgwebproxy' && scenario === 'direct_fake_tls') {
 			draft.keendnsMode = 'manual';
@@ -442,10 +566,24 @@
 	}
 
 	function switchToWebBridgeFromCGNAT() {
+		userTouchedTgScenario = true;
 		draft.tgScenario = 'cdn_http';
 		draft.keepExistingConnectionScheme = false;
 		draft.originType = 'cloud_address';
 		draft.connectionWay = 'direct';
+		draft.directHost = '';
+		setKeenDNSActionMode(
+			pickDefaultKeenDNSActionMode({
+				keendnsAvailable,
+				hasCompatiblePublications: compatibleKeenDNSPublications.length > 0,
+			})
+		);
+	}
+
+	function switchToWebBridgeOnly() {
+		userTouchedTgScenario = true;
+		draft.tgScenario = 'cdn_http';
+		draft.directHost = '';
 	}
 
 	function setKeenDNSActionMode(mode: 'manual' | 'existing' | 'create') {
@@ -586,11 +724,10 @@
 				return false;
 			}
 			if (wantTgDirect) {
-				const firstPhoneDomain = (effectivePhoneDomain.split(',')[0] || '').trim();
-				const dHost =
-					draft.directHost.trim() ||
-					draft.originHost.trim() ||
-					firstPhoneDomain;
+				const dHost = resolveEffectiveMtprotoDirectHost({
+					...draft,
+					publicDomain: effectivePhoneDomain,
+				});
 				const portNum = Number(draft.directPort);
 				if (
 					!dHost ||
@@ -620,7 +757,7 @@
 	});
 
 	async function prepareStep5Plan() {
-		loading = true;
+		planLoading = true;
 		try {
 			const req = buildRequest();
 			const pre = await api.runWizardPreflight(draft.selectedKind, req);
@@ -635,11 +772,28 @@
 				e instanceof Error ? e.message : m.servers_ext_wiz_err_plan()
 			);
 		} finally {
-			loading = false;
+			planLoading = false;
 		}
 	}
 
 	async function handleNext() {
+		if (stepIndex === 1 && !isTgDirectOnly && !isRealityOnly) {
+			if (
+				draft.connectionWay === 'direct' &&
+				draft.keendnsMode === 'manual' &&
+				!draft.publicDomain.trim() &&
+				keendnsAvailable
+			) {
+				setKeenDNSActionMode(
+					pickDefaultKeenDNSActionMode({
+						keendnsAvailable,
+						hasCompatiblePublications: compatibleKeenDNSPublications.length > 0,
+					})
+				);
+			}
+			stepIndex += 1;
+			return;
+		}
 		if (stepIndex < 3) {
 			stepIndex += 1;
 			return;
@@ -691,7 +845,7 @@
 
 	async function startApply() {
 		if (isRealityOnly) {
-			loading = true;
+			planLoading = true;
 			realityResultLink = '';
 			realityResultError = null;
 			try {
@@ -713,12 +867,12 @@
 			} catch (e) {
 				notifications.error(e instanceof Error ? e.message : m.servers_ext_wiz_err_reality_setup());
 			} finally {
-				loading = false;
+				planLoading = false;
 			}
 			return;
 		}
 		if (!planRecord) return;
-		loading = true;
+		planLoading = true;
 		try {
 			// If first client remark was edited in Step 5, refresh plan before apply
 			let activePlanId = planRecord.plan_id;
@@ -744,7 +898,7 @@
 				e instanceof Error ? e.message : m.servers_ext_wiz_err_apply_start()
 			);
 		} finally {
-			loading = false;
+			planLoading = false;
 		}
 	}
 
@@ -857,6 +1011,8 @@
 				<ExtWizardStepServices
 					bind:draft
 					{wantTg}
+					{initializing}
+					{grayIPDetected}
 					{otherServiceCurrentlyEnabled}
 					{otherServiceLabel}
 					onselectkind={selectServiceKind}
@@ -869,6 +1025,8 @@
 					{isRealityOnly}
 					{isTgDirectOnly}
 					{wantXray}
+					{wantTgDirect}
+					{grayIPDetected}
 					{realityPort}
 					{realityState}
 					{realityWhiteIP}
@@ -879,6 +1037,7 @@
 					oncheckreality={() => void checkRealityNetwork()}
 					oncheckfacts={() => void checkRouterFacts()}
 					onswitchtowebbridge={switchToWebBridgeFromCGNAT}
+					onswitchtowebonly={switchToWebBridgeOnly}
 				/>
 			{:else if stepIndex === 2}
 				<ExtWizardStepAddresses
@@ -889,6 +1048,8 @@
 					{wantXray}
 					{wantTgWeb}
 					{wantTgDirect}
+					{grayIPDetected}
+					{isDirectHostCloudKeenDNS}
 					{detectedMtprotoWhiteIP}
 					{keenDNSBaseDomain}
 					{keenDNSBaseIsDirect}
@@ -909,6 +1070,7 @@
 					onsetkeendnsmode={setKeenDNSActionMode}
 					onapplypublication={applyExistingPublication}
 					onsynckeendns={syncKeenDNSToAddresses}
+					onswitchtowebonly={switchToWebBridgeOnly}
 				/>
 			{:else if stepIndex === 3}
 				<ExtWizardStepEgress

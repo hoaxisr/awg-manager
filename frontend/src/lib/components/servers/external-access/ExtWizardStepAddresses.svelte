@@ -1,6 +1,7 @@
 <script lang="ts">
 	// Шаг 3 мастера внешнего доступа: адрес подключения, KeenDNS, порты и Reality.
 	import { m } from '$lib/i18n';
+	import { Button } from '$lib/components/ui';
 	import type { KeenDNSDiscovery, KeenDNSPublication } from '$lib/types/serverWizard';
 	import type { XrayRealityState, XrayRealityTransport } from '$lib/types/xray';
 	import type { ExternalAccessWizardDraft, validateKeenDNSLabelClient } from './externalAccessModel';
@@ -18,6 +19,8 @@
 		wantXray: boolean;
 		wantTgWeb: boolean;
 		wantTgDirect: boolean;
+		grayIPDetected?: boolean;
+		isDirectHostCloudKeenDNS?: boolean;
 		detectedMtprotoWhiteIP: string;
 		keenDNSBaseDomain: string;
 		keenDNSBaseIsDirect: boolean;
@@ -38,6 +41,7 @@
 		onsetkeendnsmode: (mode: KeenDNSMode) => void;
 		onapplypublication: (label: string, fqdn: string) => void;
 		onsynckeendns: () => void;
+		onswitchtowebonly?: () => void;
 	}
 
 	let {
@@ -48,6 +52,8 @@
 		wantXray,
 		wantTgWeb,
 		wantTgDirect,
+		grayIPDetected = false,
+		isDirectHostCloudKeenDNS = false,
 		detectedMtprotoWhiteIP,
 		keenDNSBaseDomain,
 		keenDNSBaseIsDirect,
@@ -68,7 +74,10 @@
 		onsetkeendnsmode,
 		onapplypublication,
 		onsynckeendns,
+		onswitchtowebonly,
 	}: Props = $props();
+
+	let hideCloudFallback = $derived(draft.originType === 'cloud_address' && draft.keendnsMode !== 'manual');
 
 	const TLS_SNI_PRESETS = [
 		{ domain: 'www.google.com', label: 'Google (www.google.com)' },
@@ -103,16 +112,16 @@
 		<div class="origin-box">
 			<div class="origin-header-row">
 				<span class="origin-title">{m.servers_ext_wiz_s3_tg_direct_title()}</span>
-				{#if keenDNSBaseDomain || detectedMtprotoWhiteIP}
+				{#if (keenDNSBaseDomain && keenDNSBaseIsDirect) || detectedMtprotoWhiteIP}
 					<div class="pills-row">
-						{#if keenDNSBaseDomain}
+						{#if keenDNSBaseDomain && keenDNSBaseIsDirect}
 							<button
 								type="button"
 								class="pill-btn"
 								class:active={draft.directHost.trim().toLowerCase() === keenDNSBaseDomain.toLowerCase()}
 								onclick={() => (draft.directHost = keenDNSBaseDomain)}
 							>
-								{m.servers_ext_wiz_s3_tg_3rd_domain_pill({ domain: keenDNSBaseDomain })}{keenDNSBaseIsDirect ? '' : ` ${m.servers_ext_wiz_s3_tg_cloud_suffix()}`}
+								{m.servers_ext_wiz_s3_tg_3rd_domain_pill({ domain: keenDNSBaseDomain })}
 							</button>
 						{/if}
 						{#if detectedMtprotoWhiteIP}
@@ -332,18 +341,31 @@
 
 	{#if wantTgDirect}
 		<div class="origin-box">
+			{#if (draft.originType === 'cloud_address' || grayIPDetected) && onswitchtowebonly}
+				<div class="dual-cgnat-warn-box">
+					<AlertTriangle size={15} class="warn-icon" />
+					<div class="dual-cgnat-warn-body">
+						<span>{m.servers_ext_wiz_s3_dual_cgnat_warn()}</span>
+						<div>
+							<Button variant="secondary" size="sm" onclick={onswitchtowebonly}>
+								{m.servers_ext_wiz_s3_disable_mtproto_btn()}
+							</Button>
+						</div>
+					</div>
+				</div>
+			{/if}
 			<div class="origin-header-row">
 				<span class="origin-title">{m.servers_ext_wiz_s3_tg_direct_title()}</span>
-				{#if keenDNSBaseDomain || detectedMtprotoWhiteIP}
+				{#if (keenDNSBaseDomain && keenDNSBaseIsDirect) || detectedMtprotoWhiteIP}
 					<div class="pills-row">
-						{#if keenDNSBaseDomain}
+						{#if keenDNSBaseDomain && keenDNSBaseIsDirect}
 							<button
 								type="button"
 								class="pill-btn"
 								class:active={draft.directHost.trim().toLowerCase() === keenDNSBaseDomain.toLowerCase()}
 								onclick={() => (draft.directHost = keenDNSBaseDomain)}
 							>
-								{m.servers_ext_wiz_s3_tg_3rd_domain_pill({ domain: keenDNSBaseDomain })}{keenDNSBaseIsDirect ? '' : ` ${m.servers_ext_wiz_s3_tg_cloud_suffix()}`}
+								{m.servers_ext_wiz_s3_tg_3rd_domain_pill({ domain: keenDNSBaseDomain })}
 							</button>
 						{/if}
 						{#if detectedMtprotoWhiteIP}
@@ -369,18 +391,20 @@
 						type="text"
 						class="text-input mono"
 						bind:value={draft.directHost}
-						placeholder={detectedMtprotoDirectDomain || detectedMtprotoWhiteIP || draft.originHost || draft.publicDomain || 'router.example.com'}
+						placeholder={hideCloudFallback
+							? detectedMtprotoDirectDomain || detectedMtprotoWhiteIP || m.servers_ext_wiz_s3_tg_direct_host_ph()
+							: detectedMtprotoDirectDomain || detectedMtprotoWhiteIP || draft.originHost || draft.publicDomain || 'router.example.com'}
 					/>
-					{#if keenDNSBaseDomain && !keenDNSBaseIsDirect}
+					{#if (keenDNSBaseDomain && !keenDNSBaseIsDirect) || isDirectHostCloudKeenDNS}
 						<div class="scheme-warn-note" style="margin-top: 2px;">
 							<AlertTriangle size={14} />
 							<span>
-								{m.servers_ext_wiz_s3_tg_cloud_warn_before()} <strong class="mono">{keenDNSBaseDomain}</strong> {m.servers_ext_wiz_s3_tg_cloud_warn_after()}
+								{m.servers_ext_wiz_s3_tg_cloud_warn_before()} <strong class="mono">{keenDNSBaseDomain || draft.directHost.trim()}</strong> {m.servers_ext_wiz_s3_tg_cloud_warn_after()}
 							</span>
 						</div>
 					{/if}
 					<span class="field-hint">
-						{m.servers_ext_wiz_s3_direct_host_hint()}
+						{hideCloudFallback ? m.servers_ext_wiz_s3_tg_direct_only_hint() : m.servers_ext_wiz_s3_direct_host_hint()}
 					</span>
 				</div>
 
@@ -518,6 +542,25 @@
 		gap: 8px;
 		font-size: 12px;
 		color: var(--color-warning);
+	}
+
+	.dual-cgnat-warn-box {
+		display: flex;
+		align-items: flex-start;
+		gap: 8px;
+		padding: 9px 11px;
+		border-radius: var(--radius-sm);
+		border: 1px solid var(--color-warning-border);
+		background: var(--color-warning-tint);
+		font-size: 12px;
+		line-height: 1.45;
+		color: var(--color-text-primary);
+	}
+
+	.dual-cgnat-warn-body {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
 	}
 
 	.advanced-box {

@@ -10729,5 +10729,11 @@
 	"servers_ext_wiz_s5_tg_firewall_text": "TCP-порт {port} будет автоматически открыт в WAN-фаерволе Keenetic",
 	"servers_ext_wiz_s5_tg_direct_entry": "Прямой вход MTProto:",
 	"servers_ext_wiz_s5_port_auto_open": "(порт откроется в WAN-фаерволе автоматически)",
+	"servers_ext_wiz_s1_white_ip_badge": "Нужен белый IP",
+	"servers_ext_wiz_s2_dual_cgnat_warn": "Выбран сценарий с прямым MTProto, но за серым IP / CGNAT прямой TCP-порт снаружи недоступен. Рекомендуется оставить только Веб-мост (Web Proxy).",
+	"servers_ext_wiz_s2_switch_web_only": "Оставить только Веб-мост",
+	"servers_ext_wiz_s2_public_ip_cgnat_mismatch": "Внимание: на WAN роутера обнаружен серый адрес ({ip}). Режим «Белый IP» сработает только при внешнем пробросе портов до роутера.",
+	"servers_ext_wiz_s3_dual_cgnat_warn": "При сером IP / CGNAT (облачный KeenDNS) прямой MTProto не работает через облачный домен 4-го уровня. Если белого IP нет, отключите MTProto и оставьте только Веб-мост.",
+	"servers_ext_wiz_s3_disable_mtproto_btn": "Отключить MTProto (только Веб-мост)",
 	"firc_router_view_journal": "Журнал"
 }

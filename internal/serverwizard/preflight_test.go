@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/serveringress"
 	"github.com/hoaxisr/awg-manager/internal/sys/procnet"
 	"github.com/hoaxisr/awg-manager/internal/tgwebproxy"
 	"github.com/hoaxisr/awg-manager/internal/vlessserver"
@@ -430,5 +431,136 @@ func TestPreflightEngine_InProcessPIDPortIsolationAndCollisions(t *testing.T) {
 	})
 	if respColl.CanProceed {
 		t.Fatalf("expected dual mode DirectPort == ListenPort (8085) to be BLOCKED")
+	}
+}
+
+func TestPreflightEngine_CdnHTTPAndCloudKeenDNSWarnings(t *testing.T) {
+	xray := &mockXrayReader{}
+	disp := &mockDispReader{}
+	tg := &mockTgReader{
+		st: tgwebproxy.Status{PID: 1234},
+	}
+	rec := &mockRecReader{required: false}
+	engine := NewPreflightEngine(xray, disp, tg, rec, nil)
+	engine.findProcFn = func(procDir, addr string, port int) (procnet.ListenerLookup, error) {
+		return procnet.ListenerLookup{SocketFound: false}, nil
+	}
+
+	ctx := context.Background()
+
+	// 1. cdn_http omits bin_telemt and includes bin_tproxy
+	respCDN := engine.Run(ctx, WizardPlanRequest{
+		Kind:         "tgwebproxy",
+		Scenario:     "cdn_http",
+		PublicDomain: "tg.example.com",
+		ListenPort:   8085,
+		CdnProfileID: "cdn_get",
+	})
+	if !respCDN.CanProceed {
+		t.Fatalf("expected cdn_http preflight CanProceed=true, got %+v", respCDN.Checks)
+	}
+	hasTelemt, hasTproxy := false, false
+	for _, c := range respCDN.Checks {
+		if c.ID == "bin_telemt" {
+			hasTelemt = true
+		}
+		if c.ID == "bin_tproxy" {
+			hasTproxy = true
+		}
+	}
+	if hasTelemt {
+		t.Fatalf("expected cdn_http preflight to omit bin_telemt")
+	}
+	if !hasTproxy {
+		t.Fatalf("expected cdn_http preflight to include bin_tproxy")
+	}
+
+	// 2. Cloud KeenDNS BaseFQDN triggers direct_host_keendns_cloud warning for direct_fake_tls & dual
+	kdCloud := &mockKeenDNSOperator{
+		disc: serveringress.KeenDNSDiscovery{
+			State:      "supported",
+			BaseFQDN:   "vinvanvlad-dacha.crazedns.ru",
+			AccessMode: "cloud",
+		},
+	}
+	engine.SetKeenDNS(kdCloud)
+
+	for _, tc := range []struct {
+		scenario   string
+		directHost string
+		pubDomain  string
+		cdnProfile string
+	}{
+		{
+			scenario:   "direct_fake_tls",
+			directHost: "vinvanvlad-dacha.crazedns.ru",
+			cdnProfile: "direct",
+		},
+		{
+			scenario:   "dual",
+			directHost: "connect.vinvanvlad-dacha.crazedns.ru",
+			pubDomain:  "connect.vinvanvlad-dacha.crazedns.ru",
+			cdnProfile: "cdn_get",
+		},
+	} {
+		resp := engine.Run(ctx, WizardPlanRequest{
+			Kind:         "tgwebproxy",
+			Scenario:     tc.scenario,
+			DirectHost:   tc.directHost,
+			DirectPort:   8443,
+			ListenPort:   8085,
+			PublicDomain: tc.pubDomain,
+			TlsDomain:    "www.google.com",
+			CdnProfileID: tc.cdnProfile,
+		})
+		if !resp.CanProceed || !resp.HasWarnings {
+			t.Fatalf("expected CanProceed=true & HasWarnings=true for %s (%s), got %+v", tc.scenario, tc.directHost, resp)
+		}
+		foundWarn := false
+		for _, c := range resp.Checks {
+			if c.ID == "direct_host_keendns_cloud" && c.Status == CheckStatusWarning {
+				foundWarn = true
+			}
+		}
+		if !foundWarn {
+			t.Fatalf("expected direct_host_keendns_cloud warning for %s (%s), got %+v", tc.scenario, tc.directHost, resp.Checks)
+		}
+	}
+
+	// 3. cdn_http does NOT trigger direct_host_keendns_cloud warning even with leftover DirectHost
+	respCDNLeftover := engine.Run(ctx, WizardPlanRequest{
+		Kind:         "tgwebproxy",
+		Scenario:     "cdn_http",
+		DirectHost:   "connect.vinvanvlad-dacha.crazedns.ru",
+		PublicDomain: "connect.vinvanvlad-dacha.crazedns.ru",
+		ListenPort:   8085,
+		CdnProfileID: "cdn_get",
+	})
+	for _, c := range respCDNLeftover.Checks {
+		if c.ID == "direct_host_keendns_cloud" {
+			t.Fatalf("unexpected direct_host_keendns_cloud warning for cdn_http: %+v", c)
+		}
+	}
+
+	// 4. Direct-mode KeenDNS does NOT trigger direct_host_keendns_cloud warning
+	engine.SetKeenDNS(&mockKeenDNSOperator{
+		disc: serveringress.KeenDNSDiscovery{
+			State:      "supported",
+			BaseFQDN:   "vinvanvlad.crazedns.ru",
+			AccessMode: "direct",
+		},
+	})
+	respDirectMode := engine.Run(ctx, WizardPlanRequest{
+		Kind:         "tgwebproxy",
+		Scenario:     "direct_fake_tls",
+		DirectHost:   "vinvanvlad.crazedns.ru",
+		DirectPort:   8443,
+		TlsDomain:    "www.google.com",
+		CdnProfileID: "direct",
+	})
+	for _, c := range respDirectMode.Checks {
+		if c.ID == "direct_host_keendns_cloud" {
+			t.Fatalf("unexpected direct_host_keendns_cloud warning for direct KeenDNS: %+v", c)
+		}
 	}
 }
