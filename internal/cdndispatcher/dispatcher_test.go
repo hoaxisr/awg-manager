@@ -158,12 +158,11 @@ func TestDispatcherRouting(t *testing.T) {
 }
 
 func TestDispatcherSynchronousStartAndConflict(t *testing.T) {
-	// Find a free port
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	addr := testutil.FreeAddr(t)
+	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		t.Fatalf("failed to find free port: %v", err)
+		t.Fatalf("failed to occupy %s: %v", addr, err)
 	}
-	addr := ln.Addr().String()
 
 	// Try to start dispatcher on the same occupied port
 	d := New(Config{
