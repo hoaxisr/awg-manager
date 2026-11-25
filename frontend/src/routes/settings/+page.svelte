@@ -34,6 +34,7 @@
 	let loading = $state(true);
 	let footerPatrolWidth = $state(0);
 
+	const link = $derived($page.url.pathname === '/settings' ? resolveSettingsLink($page.url) : null);
 	let activeTab = $state<SettingsTab>(resolveSettingsLink($page.url)?.tab ?? 'general');
 	const tabs = $derived([
 		{ id: 'general', label: m.settings_tab_general() },
@@ -53,21 +54,19 @@
 	// переключении. Токен подтверждения адреса панели обязан уйти на бэкенд с
 	// любой вкладки и до загрузки настроек: не дойдёт — адрес откатится.
 	$effect(() => {
-		const url = $page.url;
-		const link = url.pathname === '/settings' ? resolveSettingsLink(url) : null;
-		if (link) void untrack(() => followLink(link));
+		if (!link) return;
+		const opened = link;
+		untrack(() => followLink(opened));
 	});
 
-	async function followLink(link: SettingsLink) {
+	function followLink(link: SettingsLink) {
 		if (link.listenConfirm && link.listenConfirm !== confirmedToken) {
 			confirmedToken = link.listenConfirm;
 			void confirmListenChange(link.listenConfirm);
 		}
 		activeTab = link.tab;
 		target = link;
-		// Сначала Tabs дописывает в адрес вкладку, затем ссылка уходит целиком.
-		await tick();
-		await goto(settingsTabHref(link.tab), { replaceState: true, noScroll: true, keepFocus: true });
+		void goto(settingsTabHref(link.tab), { replaceState: true, noScroll: true, keepFocus: true });
 	}
 
 	async function confirmListenChange(token: string) {
@@ -111,7 +110,9 @@
 
 <PageContainer width="full">
 	<PageHeader title={m.nav_settings()} />
-	<Tabs {tabs} active={activeTab} onchange={selectTab} urlParam="tab" defaultTab="general" />
+	<!-- Пока в адресе ссылка, Tabs его не читает и не пишет: иначе прежняя вкладка
+	     вернулась бы в адрес наперегонки с её разбором. -->
+	<Tabs {tabs} active={activeTab} onchange={selectTab} urlParam={link ? undefined : 'tab'} defaultTab="general" />
 	{#if loading}
 		<div class="flex justify-center py-8">
 			<LoadingSpinner size="md" />

@@ -44,5 +44,11 @@ export function revealSettingsTarget(id: string): void {
 	el.classList.remove('highlighted');
 	void el.offsetWidth; // перезапуск анимации при повторной ссылке
 	el.classList.add('settings-highlight-target', 'highlighted');
-	el.addEventListener('animationend', () => el.classList.remove('highlighted'), { once: true });
+	// animationend всплывает: анимация потомка не должна гасить подсветку.
+	const onEnd = (e: AnimationEvent) => {
+		if (e.target !== el) return;
+		el.classList.remove('highlighted');
+		el.removeEventListener('animationend', onEnd);
+	};
+	el.addEventListener('animationend', onEnd);
 }

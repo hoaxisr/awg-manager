@@ -50,11 +50,14 @@ describe('resolveSettingsLink', () => {
 
 describe('revealSettingsTarget', () => {
 	it('прокручивает и подсвечивает блок; без блока молчит', () => {
-		document.body.innerHTML = '<div id="logging"></div>';
+		document.body.innerHTML = '<div id="logging"><span></span></div>';
 		const el = document.getElementById('logging')!;
 		el.scrollIntoView = vi.fn();
 		revealSettingsTarget('logging');
 		expect(el.scrollIntoView).toHaveBeenCalledOnce();
+		expect(el.classList.contains('highlighted')).toBe(true);
+		// Анимация потомка всплывает, но подсветку не гасит.
+		el.querySelector('span')!.dispatchEvent(new Event('animationend', { bubbles: true }));
 		expect(el.classList.contains('highlighted')).toBe(true);
 		el.dispatchEvent(new Event('animationend'));
 		expect(el.classList.contains('highlighted')).toBe(false);

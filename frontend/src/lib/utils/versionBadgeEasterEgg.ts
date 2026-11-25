@@ -44,8 +44,9 @@ export function handleVersionBadgeClick(options: {
 
 	if (hasUpdate) {
 		// keepFocus: бейдж щёлкают подряд, а сброс фокуса SvelteKit ещё и вернул бы
-		// в адрес якорь, который страница уже разобрала.
-		void goto(UPDATE_SETTINGS_HREF, { keepFocus: true });
+		// в адрес якорь, который страница уже разобрала. replaceState: иначе каждый
+		// щелчок добавлял бы шаг в историю.
+		void goto(UPDATE_SETTINGS_HREF, { keepFocus: true, replaceState: true });
 	}
 
 	if (usageLevel === 'expert') {
