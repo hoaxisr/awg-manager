@@ -1096,7 +1096,6 @@ type GeoFile struct {
 	Size     int64  `json:"size"`
 	TagCount int    `json:"tagCount"`
 	Updated  string `json:"updated,omitempty"`
-	External bool   `json:"external" jsonschema:"a file of another program: read only, never updated"`
 }
 
 // GeoTags is one page of a geo file's tags.

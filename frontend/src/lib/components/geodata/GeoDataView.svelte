@@ -304,9 +304,8 @@
 	}
 
 	function canUpdate(f: GeoFileEntry): boolean {
-		// external — принадлежит другой программе; «локальный» (без url) обновлять неоткуда
-		// (нет источника), иначе «Обновить» затёр бы файл дефолтным Ground-Zerro.
-		if (f.external) return false;
+		// «Локальный» (без url) обновлять неоткуда, иначе «Обновить» затёр бы файл
+		// дефолтным Ground-Zerro.
 		return !!f.url;
 	}
 
@@ -434,17 +433,8 @@
 								{fileName(f.path)}
 							{/if}
 						</button>
-						{#if f.external}
-							<span
-								class="file-external"
-								title={m.geodata_external_title()}
-							>External</span>
-						{/if}
 						<span class="file-meta">{humanSize(f.size)} · {m.routing_singbox_geo_tags_count({ count: f.tagCount })} · {formatRelativeTime(f.updated)}</span>
-						{#if f.external}
-							<!-- External — источник нам неизвестен (в каталоге лишь догадочный
-							     default-URL), показываем только бейдж External -->
-						{:else if f.url}
+						{#if f.url}
 							<IconButton
 								ariaLabel={m.geodata_source_aria()}
 								title={m.geodata_source_title()}
@@ -586,9 +576,7 @@
 	<ConfirmModal
 		open={true}
 		title={m.geodata_delete_title()}
-		message={pd.external
-			? m.geodata_delete_external_message({ file: fileName(pd.path) })
-			: m.geodata_delete_message({ file: fileName(pd.path) })}
+		message={m.geodata_delete_message({ file: fileName(pd.path) })}
 		filePath={pd.path}
 		busy={busy === pd.path}
 		onConfirm={confirmRemove}
@@ -746,18 +734,6 @@
 	.file-local { font-size: 0.75rem; color: var(--text-secondary); }
 	.source-modal { display: flex; flex-direction: column; gap: 0.75rem; }
 	.source-url { word-break: break-all; font-size: 0.8125rem; padding: 0.5rem; background: var(--color-bg-secondary); border-radius: var(--radius-sm); }
-
-	.file-external {
-		font-size: 0.6875rem;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		font-weight: 600;
-		padding: 2px 8px;
-		border-radius: 10px;
-		background: rgba(245, 158, 11, 0.15);
-		color: var(--warning, #f59e0b);
-		cursor: help;
-	}
 
 	.file-actions {
 		display: flex;

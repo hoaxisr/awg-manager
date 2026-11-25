@@ -11,8 +11,6 @@ export interface GeoFileEntry {
 	size: number;
 	tagCount: number;
 	updated: string;
-	/** Файл другой программы: только для чтения, «Удалить» убирает лишь запись. */
-	external?: boolean;
 }
 
 export interface DownloadRoute {

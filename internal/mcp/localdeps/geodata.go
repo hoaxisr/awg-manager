@@ -32,7 +32,7 @@ func (l *Local) ListGeoFiles(context.Context) ([]mcpsrv.GeoFile, error) {
 	}
 	var out []mcpsrv.GeoFile
 	for _, f := range l.c.Geo.List() {
-		g := mcpsrv.GeoFile{Type: token(f.Type), Path: f.Path, Host: hostOf(f.URL), Size: f.Size, TagCount: f.TagCount, External: f.External}
+		g := mcpsrv.GeoFile{Type: token(f.Type), Path: f.Path, Host: hostOf(f.URL), Size: f.Size, TagCount: f.TagCount}
 		if _, err := time.Parse(time.RFC3339, f.Updated); err == nil {
 			g.Updated = f.Updated
 		}

@@ -4413,7 +4413,6 @@
 	"geodata_last_failed": "Failed: {action} ({route})",
 	"geodata_empty": "No files added. Add a URL below.",
 	"geodata_hide_path": "Hide path",
-	"geodata_external_title": "This file belongs to another program — read only",
 	"geodata_source_aria": "Source",
 	"geodata_source_title": "Show source",
 	"geodata_local_title": "Uploaded manually",
@@ -4429,7 +4428,6 @@
 	"geodata_type_hint_prefix": "Type ",
 	"geodata_type_hint_suffix": " must match the content. A file with 0 entries will be rejected — make sure the correct type is selected for this URL. Size limit: 200 MB.",
 	"geodata_delete_title": "Delete geo file",
-	"geodata_delete_external_message": "Remove “{file}” from the list? The file belongs to another program and stays on disk. It cannot be added back; sing-box rules using its tags will not find them unless another file has them.",
 	"geodata_delete_message": "Delete “{file}”?",
 	"geodata_source_modal_title": "Geo file source",
 	"geodata_files_count": [

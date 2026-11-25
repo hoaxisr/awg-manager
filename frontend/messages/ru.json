@@ -4701,7 +4701,6 @@
 	"geodata_last_failed": "Не удалось: {action} ({route})",
 	"geodata_empty": "Файлы не загружены. Добавьте URL ниже.",
 	"geodata_hide_path": "Скрыть путь",
-	"geodata_external_title": "Файл принадлежит другой программе — только чтение",
 	"geodata_source_aria": "Источник",
 	"geodata_source_title": "Показать источник",
 	"geodata_local_title": "Загружен вручную",
@@ -4717,7 +4716,6 @@
 	"geodata_type_hint_prefix": "Тип ",
 	"geodata_type_hint_suffix": " должен соответствовать содержимому. Файл с 0 записей будет отклонён — убедитесь что выбран правильный тип для этого URL. Лимит размера: 200 МБ.",
 	"geodata_delete_title": "Удалить гео-файл",
-	"geodata_delete_external_message": "Убрать «{file}» из списка? Файл принадлежит другой программе и останется на диске. Вернуть его в список нельзя; правила sing-box с тегами из него перестанут находить их, если тегов нет в других файлах.",
 	"geodata_delete_message": "Удалить «{file}»?",
 	"geodata_source_modal_title": "Источник гео-файла",
 	"geodata_files_count": [

@@ -20,7 +20,6 @@ type GeoFileEntryDTO struct {
 	Size     int64  `json:"size" example:"3145728"`
 	TagCount int    `json:"tagCount" example:"420"`
 	Updated  string `json:"updated" example:"2024-01-15T02:00:00Z"`
-	External bool   `json:"external,omitempty" example:"true"`
 }
 
 // GeoFilesResponse is the envelope for GET /geo/files.
@@ -173,7 +172,7 @@ func (h *GeoDataHandler) AddGeoFile(w http.ResponseWriter, r *http.Request) {
 // DeleteGeoFile removes a tracked geo data file.
 //
 //	@Summary		Delete geo file
-//	@Description	Removes the tracked geo data file at the given path. A file of another program (external) stays on disk: only the catalog entry is removed.
+//	@Description	Removes the tracked geo data file at the given path.
 //	@Tags			geo
 //	@Produce		json
 //	@Security		CookieAuth
