@@ -219,6 +219,26 @@ export function isGrayIPNetwork(opts: {
 	return false;
 }
 
+export function doesStep2RequireNATConfirm(opts: {
+	isEditMode: boolean;
+	keepExistingConnectionScheme: boolean;
+	isTgDirectOnly: boolean;
+	isRealityOnly: boolean;
+	wantXray: boolean;
+	realityMode: 'off' | 'also' | 'only';
+	originType: 'public_address' | 'cloud_address';
+	grayIPDetected: boolean;
+	realityWhiteIP: boolean;
+}): boolean {
+	if (!opts.grayIPDetected) return false;
+	if (opts.isTgDirectOnly) return true;
+	if (opts.isEditMode && opts.keepExistingConnectionScheme) return false;
+	if (opts.isRealityOnly) return true;
+	if (opts.originType === 'public_address') return true;
+	if (opts.wantXray && opts.realityMode === 'also' && !opts.realityWhiteIP) return true;
+	return false;
+}
+
 export function isCloudKeenDNSHost(
 	host?: string | null,
 	baseDomain?: string | null,

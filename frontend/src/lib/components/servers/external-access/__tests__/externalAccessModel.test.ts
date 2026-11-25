@@ -14,6 +14,7 @@ import {
 	computeConfigFingerprint,
 	computeEffectiveVerifyKind,
 	createInitialWizardDraft,
+	doesStep2RequireNATConfirm,
 	draftNeedsWebIngress,
 	isCloudKeenDNSHost,
 	isDraftEgressValid,
@@ -1047,5 +1048,40 @@ describe('externalAccessModel', () => {
 		bothDraft.connectionWay = 'external_https';
 		bothDraft.cdnProfileId = 'cdn_get';
 		expect(buildPlanRequestFromDraft(bothDraft).cdn_profile_id).toBe('cdn_get');
+
+		// 5. doesStep2RequireNATConfirm covers public_address, parallel Reality, Reality-only, and MTProto direct behind CGNAT
+		const baseStep2 = {
+			isEditMode: false,
+			keepExistingConnectionScheme: false,
+			isTgDirectOnly: false,
+			isRealityOnly: false,
+			wantXray: true,
+			realityMode: 'off' as const,
+			originType: 'cloud_address' as const,
+			grayIPDetected: true,
+			realityWhiteIP: false,
+		};
+		expect(doesStep2RequireNATConfirm({ ...baseStep2, grayIPDetected: false, originType: 'public_address', isRealityOnly: true, isTgDirectOnly: true })).toBe(false);
+		expect(doesStep2RequireNATConfirm({ ...baseStep2, originType: 'public_address' })).toBe(true);
+		expect(doesStep2RequireNATConfirm({ ...baseStep2, originType: 'cloud_address' })).toBe(false);
+		expect(doesStep2RequireNATConfirm({ ...baseStep2, realityMode: 'also' })).toBe(true);
+		expect(doesStep2RequireNATConfirm({ ...baseStep2, realityMode: 'also', realityWhiteIP: true })).toBe(false);
+		expect(doesStep2RequireNATConfirm({ ...baseStep2, isRealityOnly: true })).toBe(true);
+		expect(
+			doesStep2RequireNATConfirm({
+				...baseStep2,
+				isEditMode: true,
+				keepExistingConnectionScheme: true,
+				isRealityOnly: true,
+			})
+		).toBe(false);
+		expect(
+			doesStep2RequireNATConfirm({
+				...baseStep2,
+				isEditMode: true,
+				keepExistingConnectionScheme: true,
+				isTgDirectOnly: true,
+			})
+		).toBe(true);
 	});
 });

@@ -19,6 +19,7 @@
 	import {
 		createInitialWizardDraft,
 		buildPlanRequestFromDraft,
+		doesStep2RequireNATConfirm,
 		isCloudKeenDNSHost,
 		isDraftEgressValid,
 		isGrayIPNetwork,
@@ -173,6 +174,19 @@
 		draft.isEditMode &&
 			!(initialEditWasTgDirectOnly && !isTgDirectOnly) &&
 			!(initialEditWasRealityOnly && !isRealityOnly)
+	);
+	let step2NeedsNATConfirm = $derived(
+		doesStep2RequireNATConfirm({
+			isEditMode: draft.isEditMode,
+			keepExistingConnectionScheme: draft.keepExistingConnectionScheme,
+			isTgDirectOnly,
+			isRealityOnly,
+			wantXray,
+			realityMode,
+			originType: draft.originType,
+			grayIPDetected,
+			realityWhiteIP,
+		})
 	);
 
 	let otherServiceCurrentlyEnabled = $derived(
@@ -740,7 +754,7 @@
 	let canProceedStep = $derived.by(() => {
 		if (stepIndex === 0) return true;
 		if (stepIndex === 1) {
-			if ((isTgDirectOnly || isRealityOnly) && grayIPDetected && !draft.confirmDirectBehindNAT) {
+			if (step2NeedsNATConfirm && !draft.confirmDirectBehindNAT) {
 				return false;
 			}
 			return true;

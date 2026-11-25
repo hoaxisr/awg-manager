@@ -10748,5 +10748,8 @@
 	"servers_ext_wiz_s3_reality_cloud_host_error": "Домен {domain} работает в облачном режиме KeenDNS (только HTTP/HTTPS) — прямой Reality TLS через него не работает. Укажите белый IP/прямой домен, оставьте поле пустым для автоподстановки на белом IP или переключитесь на VLESS через домен.",
 	"servers_ext_wiz_s3_reality_public_host_required": "При подключении через внешний проброс за серым IP / CGNAT укажите внешний белый IP или прямой домен, чтобы он попал в клиентскую ссылку Reality.",
 	"servers_ext_wiz_s5_entry_reality_cgnat": "Прямой Reality TLS ({transport}, WAN за серым IP / CGNAT, нужен внешний проброс) · порт {port}/tcp",
+	"servers_ext_wiz_s2_public_ip_cgnat_mismatch_generic": "Внимание: роутер находится за серым IP / CGNAT. Режим «Белый IP» сработает только при внешнем пробросе портов до роутера.",
+	"servers_ext_wiz_s2_switch_private_ip": "Переключиться на «Серый IP / CGNAT»",
+	"servers_ext_wiz_s2_public_ip_confirm_behind_nat": "У меня настроен внешний проброс портов до роутера (DMZ / роутер выше / VPS) — продолжить в режиме «Белый IP»",
 	"firc_router_view_journal": "Журнал"
 }

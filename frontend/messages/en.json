@@ -10344,5 +10344,8 @@
 	"servers_ext_wiz_s3_reality_cloud_host_error": "Domain {domain} is in KeenDNS cloud mode (HTTP/HTTPS only) — direct Reality TLS will not work through it. Enter a public IP/direct domain, leave empty for auto-detection on a public IP, or switch to VLESS via domain.",
 	"servers_ext_wiz_s3_reality_public_host_required": "When using external port forwarding behind a private IP / CGNAT, enter the external public IP or direct domain so it is embedded in the Reality client link.",
 	"servers_ext_wiz_s5_entry_reality_cgnat": "Direct Reality TLS ({transport}, WAN behind CGNAT, external port forwarding required) · port {port}/tcp",
+	"servers_ext_wiz_s2_public_ip_cgnat_mismatch_generic": "Warning: the router is behind a private IP / CGNAT. Public IP mode works only if ports are forwarded to the router upstream.",
+	"servers_ext_wiz_s2_switch_private_ip": "Switch to \"Private IP / CGNAT\"",
+	"servers_ext_wiz_s2_public_ip_confirm_behind_nat": "I have external port forwarding configured to the router (DMZ / upstream router / VPS) — continue in Public IP mode",
 	"firc_router_view_journal": "Journal"
 }

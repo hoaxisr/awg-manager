@@ -336,7 +336,10 @@
 					type="button"
 					class="choice-card compact"
 					class:selected={draft.originType === 'public_address'}
-					onclick={() => (draft.originType = 'public_address')}
+					onclick={() => {
+						draft.originType = 'public_address';
+						draft.confirmDirectBehindNAT = false;
+					}}
 				>
 					<div class="choice-title">
 						{m.servers_ext_wiz_s2_public_ip()}
@@ -350,7 +353,10 @@
 					type="button"
 					class="choice-card compact"
 					class:selected={draft.originType === 'cloud_address'}
-					onclick={() => (draft.originType = 'cloud_address')}
+					onclick={() => {
+						draft.originType = 'cloud_address';
+						draft.confirmDirectBehindNAT = false;
+					}}
 				>
 					<div class="choice-title">
 						{m.servers_ext_wiz_s2_private_ip()}
@@ -361,10 +367,33 @@
 				</button>
 			</div>
 
-			{#if keendnsInfo?.wan_ip_private && draft.originType === 'public_address'}
-				<div class="scheme-warn-note" style="margin-top: 6px;">
-					<AlertTriangle size={14} />
-					<span>{m.servers_ext_wiz_s2_public_ip_cgnat_mismatch({ ip: keendnsInfo.wan_ip || '' })}</span>
+			{#if grayIPDetected && draft.originType === 'public_address'}
+				{@const detectedPrivateIP = keendnsInfo?.wan_ip || realityState?.network?.wan_address || ''}
+				<div class="reality-wan-box warn" style="margin-top: 6px;">
+					<AlertTriangle size={15} class="icon-warning-soft" />
+					<div class="warn-banner-body">
+						<span>
+							{detectedPrivateIP
+								? m.servers_ext_wiz_s2_public_ip_cgnat_mismatch({ ip: detectedPrivateIP })
+								: m.servers_ext_wiz_s2_public_ip_cgnat_mismatch_generic()}
+						</span>
+						<div>
+							<Button
+								variant="primary"
+								size="sm"
+								onclick={() => {
+									draft.originType = 'cloud_address';
+									draft.confirmDirectBehindNAT = false;
+								}}
+							>
+								{m.servers_ext_wiz_s2_switch_private_ip()}
+							</Button>
+						</div>
+						<label class="checkbox-row">
+							<input type="checkbox" bind:checked={draft.confirmDirectBehindNAT} />
+							<span>{m.servers_ext_wiz_s2_public_ip_confirm_behind_nat()}</span>
+						</label>
+					</div>
 				</div>
 			{/if}
 
@@ -424,35 +453,46 @@
 		{/if}
 
 		{#if wantXray}
-			<label class="reality-opt-box" class:selected={realityMode === 'also'}>
-				<input
-					type="checkbox"
-					checked={realityMode === 'also'}
-					onchange={(e) => {
-						realityMode = e.currentTarget.checked ? 'also' : 'off';
-					}}
-				/>
-				<div class="reality-opt-body">
-					<div class="reality-opt-head">
-						<Zap size={14} class="icon-accent-soft" />
-						<span class="choice-title">{m.servers_ext_wiz_s2_reality_also()}</span>
-						{#if realityState?.network}
-							<span class="tech-sub-badge" class:badge-ok={realityWhiteIP} class:badge-warn={!realityWhiteIP}>
-								{realityWhiteIP ? m.servers_ext_wiz_s2_white_ip_found() : m.servers_ext_wiz_s2_white_ip_required()}
-							</span>
-						{/if}
+			<div class="reality-opt-box" class:selected={realityMode === 'also'}>
+				<label class="reality-opt-toggle">
+					<input
+						type="checkbox"
+						checked={realityMode === 'also'}
+						onchange={(e) => {
+							realityMode = e.currentTarget.checked ? 'also' : 'off';
+							draft.confirmDirectBehindNAT = false;
+						}}
+					/>
+					<div class="reality-opt-body">
+						<div class="reality-opt-head">
+							<Zap size={14} class="icon-accent-soft" />
+							<span class="choice-title">{m.servers_ext_wiz_s2_reality_also()}</span>
+							{#if realityState?.network}
+								<span class="tech-sub-badge" class:badge-ok={realityWhiteIP} class:badge-warn={!realityWhiteIP}>
+									{realityWhiteIP ? m.servers_ext_wiz_s2_white_ip_found() : m.servers_ext_wiz_s2_white_ip_required()}
+								</span>
+							{/if}
+						</div>
+						<div class="choice-text">
+							{draft.connectionWay === 'external_https' ? m.servers_ext_wiz_s2_reality_also_ext({ port: realityPort }) : m.servers_ext_wiz_s2_reality_also_direct({ port: realityPort })}
+						</div>
 					</div>
-					<div class="choice-text">
-						{draft.connectionWay === 'external_https' ? m.servers_ext_wiz_s2_reality_also_ext({ port: realityPort }) : m.servers_ext_wiz_s2_reality_also_direct({ port: realityPort })}
-					</div>
-					{#if realityMode === 'also' && grayIPDetected && !realityWhiteIP}
-						<div class="scheme-warn-note" style="margin-top: 4px;">
+				</label>
+				{#if realityMode === 'also' && grayIPDetected && !realityWhiteIP}
+					<div class="reality-opt-warn">
+						<div class="scheme-warn-note">
 							<AlertTriangle size={14} />
 							<span>{m.servers_ext_wiz_s2_reality_also_cgnat_note()}</span>
 						</div>
-					{/if}
-				</div>
-			</label>
+						{#if draft.originType !== 'public_address'}
+							<label class="checkbox-row">
+								<input type="checkbox" bind:checked={draft.confirmDirectBehindNAT} />
+								<span>{m.servers_ext_wiz_s2_reality_confirm_behind_nat()}</span>
+							</label>
+						{/if}
+					</div>
+				{/if}
+			</div>
 		{/if}
 		{/if}
 	{/if}
@@ -594,13 +634,12 @@
 
 	.reality-opt-box {
 		display: flex;
-		align-items: flex-start;
-		gap: 10px;
+		flex-direction: column;
+		gap: 8px;
 		padding: 11px 13px;
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-sm);
 		background: var(--color-bg-primary);
-		cursor: pointer;
 		transition: border-color 0.15s, background 0.15s;
 	}
 
@@ -613,13 +652,27 @@
 		background: var(--color-accent-tint);
 	}
 
-	.reality-opt-box input[type='checkbox'] {
+	.reality-opt-toggle {
+		display: flex;
+		align-items: flex-start;
+		gap: 10px;
+		cursor: pointer;
+	}
+
+	.reality-opt-toggle > input[type='checkbox'] {
 		margin-top: 2px;
 		width: 16px;
 		height: 16px;
 		accent-color: var(--color-accent);
 		cursor: pointer;
 		flex-shrink: 0;
+	}
+
+	.reality-opt-warn {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		padding-left: 26px;
 	}
 
 	.reality-opt-body {
