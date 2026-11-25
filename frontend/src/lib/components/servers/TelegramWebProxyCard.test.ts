@@ -606,8 +606,8 @@ describe('TelegramWebProxyCard', () => {
 		});
 		await fireEvent.click(pillBtn);
 
-		const directHostInput = screen.getByLabelText(m.servers_tg_direct_host_label()) as HTMLInputElement;
-		expect(directHostInput.value).toBe('dacha.example.keenetic.pro');
+		const directHostInput = screen.getByLabelText(m.servers_tg_direct_host_label());
+		expect(directHostInput).toHaveValue('dacha.example.keenetic.pro');
 		await screen.findByText(m.servers_tg_direct_host_cloud_warn({ domain: 'dacha.example.keenetic.pro' }));
 	});
 });
