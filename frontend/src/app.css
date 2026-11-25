@@ -780,6 +780,17 @@ label {
 	min-width: 0;
 }
 
+/* Длинное поле на всю ширину карточки — под подписью. */
+.settings-layout .setting-row.settings-stacked-row {
+	flex-direction: column;
+	align-items: stretch;
+	gap: 0.5rem;
+}
+
+.settings-layout .settings-stacked-row > * {
+	flex: none;
+}
+
 /* Строки, уточняющие настройку над ними (расписание под тумблером и т.п.). */
 .setting-sub {
 	margin: 0 0 0.875rem 0.125rem;

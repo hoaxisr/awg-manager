@@ -28,7 +28,7 @@ describe('McpCard', () => {
 
 	it('выключен — ключи и адрес скрыты, тумблер виден', () => {
 		render(McpCard, { ...base, enabled: false, keys });
-		expect(screen.getByText('MCP-сервер')).toBeTruthy();
+		expect(screen.getByRole('checkbox', { name: 'MCP-сервер' })).toBeTruthy();
 		expect(screen.queryByText('laptop')).toBeNull();
 		expect(screen.queryByText(/\/mcp$/)).toBeNull();
 	});

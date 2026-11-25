@@ -3,10 +3,8 @@
 	import { api } from '$lib/api/client';
 	import { m } from '$lib/i18n';
 	import { usageLevel } from '$lib/stores/settings';
-	import { singboxStatus } from '$lib/stores/singbox';
-	import { isSectionVisible } from '$lib/types/usageLevel';
 	import AccessCard from './AccessCard.svelte';
-	import AdvancedCard from './AdvancedCard.svelte';
+	import ApiKeysCard from './ApiKeysCard.svelte';
 	import McpSection from './McpSection.svelte';
 	import { backendErrorOr, type SettingsEditor } from './settingsEditor.svelte';
 
@@ -17,9 +15,6 @@
 	let { editor }: Props = $props();
 
 	const origin = window.location.origin;
-	const showNdmsProxy = $derived(
-		($singboxStatus.data?.installed ?? false) && isSectionVisible($usageLevel, 'singboxTunnels'),
-	);
 
 	function toggleAuth(enabled: boolean) {
 		return editor.save(
@@ -70,19 +65,19 @@
 	</div>
 	{#if $usageLevel === 'expert'}
 		<div class="settings-column">
-			<AdvancedCard
+			<ApiKeysCard
 				apiKey={editor.settings.apiKey}
 				{origin}
 				saving={editor.saving}
-				{showNdmsProxy}
 				ongenerateApiKey={generateApiKey}
-			/>
-			<McpSection
-				enabled={editor.settings.mcpEnabled ?? false}
-				saving={editor.saving}
-				{origin}
-				ontoggle={toggleMcp}
-			/>
+			>
+				<McpSection
+					enabled={editor.settings.mcpEnabled ?? false}
+					saving={editor.saving}
+					{origin}
+					ontoggle={toggleMcp}
+				/>
+			</ApiKeysCard>
 		</div>
 	{/if}
 </div>

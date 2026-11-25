@@ -4,9 +4,11 @@
 	import { m } from '$lib/i18n';
 	import { notifications } from '$lib/stores/notifications';
 	import { setSettings as setGlobalSettings, usageLevel } from '$lib/stores/settings';
+	import { singboxStatus } from '$lib/stores/singbox';
 	import { isSectionVisible } from '$lib/types/usageLevel';
 	import FircIntegrationSection from './FircIntegrationSection.svelte';
 	import IntegrationsSection from './IntegrationsSection.svelte';
+	import NdmsProxyRow from './NdmsProxyRow.svelte';
 	import ObfuscatorRelayCard from './ObfuscatorRelayCard.svelte';
 	import { backendErrorOr, type SettingsEditor } from './settingsEditor.svelte';
 
@@ -17,6 +19,8 @@
 	let { editor }: Props = $props();
 
 	const showSingbox = $derived(isSectionVisible($usageLevel, 'singboxTunnels'));
+
+	const singboxInstalled = $derived($singboxStatus.data?.installed ?? false);
 
 	let savingBootstrapDNS = $state(false);
 
@@ -83,6 +87,13 @@
 	<div class="settings-column">
 		<FircIntegrationSection />
 		{#if $usageLevel === 'expert'}
+			{#if singboxInstalled && showSingbox}
+				<div class="settings-block">
+					<div class="card">
+						<NdmsProxyRow />
+					</div>
+				</div>
+			{/if}
 			<ObfuscatorRelayCard
 				process={editor.settings.obfuscatorRelayProcess ?? false}
 				tripped={editor.settings.obfuscatorKmodTripped ?? ''}

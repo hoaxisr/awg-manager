@@ -22,20 +22,21 @@
 	import { notifications } from '$lib/stores/notifications';
 	import { Button, ConfirmModal, ChipMultiSelect, type ChipOption } from '$lib/components/ui';
 	import type { RouterInterface, ServerListenState } from '$lib/types';
+	import { pageDraft, pageState } from './pageState.svelte';
 	import { usageLevel } from '$lib/stores/settings';
 	import { isHttpServerSettingsVisible } from '$lib/types/usageLevel';
 
 	const showSettings = $derived(isHttpServerSettingsVisible($usageLevel));
 
-	let listen = $state<ServerListenState | null>(null);
+	// Снимок общий на время страницы: с ним сверяются черновики, пока карточка
+	// после возврата на вкладку перечитывает состояние.
+	const view = pageState<{ listen: ServerListenState | null }>('http-listen', () => ({ listen: null }));
+	const listen = $derived(view.listen);
 	let ifaces = $state<RouterInterface[]>([]);
-	// number|string: Svelte на <input type="number"> присваивает в bind число,
-	// а начальное/пустое значение — строка; никаких строковых методов ниже.
-	let portDraft = $state<number | string>('');
-	let selected = $state<string[]>([]);
+	const portDraft = pageDraft<number | null>('http-port', () => listen?.port ?? null);
+	const selected = pageDraft<string[]>('http-ifaces', () => listen?.interfaces ?? [], ifacesEqual);
 	let busy = $state(false);
 	let confirmOpen = $state(false);
-	let touched = $state(false);
 
 	/** Радио/Wi‑Fi slave-интерфейсы — L2 под br*, слушать HTTP на них бессмысленно. */
 	function isListenNoise(name: string): boolean {
@@ -66,7 +67,7 @@
 			}));
 	});
 
-	const port = $derived(Number(portDraft));
+	const port = $derived(Number(portDraft.value));
 	const portValid = $derived(Number.isInteger(port) && port >= 1 && port <= 65535);
 
 	function ifacesEqual(a: string[], b: string[]): boolean {
@@ -74,22 +75,13 @@
 		return [...a].sort().join(',') === [...b].sort().join(',');
 	}
 
-	const dirty = $derived.by(() => {
-		if (!listen) return false;
-		if (portValid && port !== listen.port) return true;
-		return !ifacesEqual(selected, listen.interfaces);
-	});
-	const applyDisabled = $derived(busy || !portValid || !dirty || !touched);
-
-	function markTouched(): void {
-		touched = true;
-	}
+	const dirty = $derived(Boolean(listen) && ((portValid && portDraft.dirty) || selected.dirty));
+	const applyDisabled = $derived(busy || !portValid || !dirty);
 
 	async function load(): Promise<void> {
-		listen = await api.serverListenState();
-		portDraft = String(listen.port);
-		selected = [...listen.interfaces];
-		touched = false;
+		view.listen = await api.serverListenState();
+		portDraft.reset();
+		selected.reset();
 	}
 
 	// Данные и UI — только на «Продвинутом»; подгружаем при появлении уровня.
@@ -100,12 +92,9 @@
 			try {
 				const state = await api.serverListenState();
 				if (cancelled) return;
-				listen = state;
-				portDraft = String(state.port);
-				selected = [...state.interfaces];
-				touched = false;
+				view.listen = state;
 			} catch {
-				if (!cancelled) listen = null;
+				if (!cancelled) view.listen = null;
 				return;
 			}
 			try {
@@ -135,9 +124,9 @@
 	// (0.0.0.0 покрывает текущий хост — тоже оставляем его).
 	function redirectTarget(newPort: number, boundAddrs: string[]): string {
 		const cur = window.location;
-		const sameIfaces = listen ? ifacesEqual(selected, listen.interfaces) : true;
+		const sameIfaces = listen ? ifacesEqual(selected.value, listen.interfaces) : true;
 		let host = cur.hostname;
-		if (!sameIfaces && selected.length > 0) {
+		if (!sameIfaces && selected.value.length > 0) {
 			const ext = boundAddrs.find((a) => !a.startsWith('127.') && !a.startsWith('0.0.0.0'));
 			if (ext) host = ext.slice(0, ext.lastIndexOf(':'));
 		}
@@ -149,7 +138,7 @@
 		busy = true;
 		const prevPort = listen.port;
 		try {
-			const res = await api.serverListenChange(port, selected);
+			const res = await api.serverListenChange(port, selected.value);
 			if (isFrontendBehindProxy(prevPort)) {
 				await api.serverListenConfirm(res.confirmToken);
 				await load();
@@ -172,7 +161,7 @@
 	}
 
 	const confirmIfaceLabel = $derived(
-		selected.length === 0 ? m.settings_http_all_interfaces() : selected.join(', '),
+		selected.value.length === 0 ? m.settings_http_all_interfaces() : selected.value.join(', '),
 	);
 </script>
 
@@ -197,11 +186,10 @@
 					type="number"
 					min="1"
 					max="65535"
-					bind:value={portDraft}
-					oninput={markTouched}
+					bind:value={portDraft.value}
 					aria-label={m.settings_http_port_aria()}
 				/>
-				{#if portDraft !== '' && !portValid}
+				{#if portDraft.value !== null && !portValid}
 					<span class="err">1–65535</span>
 				{:else if portValid && port < 1024}
 					<span class="warn-inline" title={m.settings_http_privileged_port_title()}>&lt;1024</span>
@@ -218,12 +206,9 @@
 					</span>
 				</div>
 				<ChipMultiSelect
-					values={selected}
+					values={selected.value}
 					options={ifaceOptions}
-					onchange={(next) => {
-						selected = next;
-						markTouched();
-					}}
+					onchange={(next) => (selected.value = next)}
 					placeholder={m.settings_http_interfaces_placeholder()}
 					allowOrphans
 				/>
@@ -235,7 +220,7 @@
 			{m.settings_http_redirect_hint()}
 		</p>
 
-		{#if touched && dirty}
+		{#if dirty}
 			<div class="actions">
 				<Button
 					variant="primary"
