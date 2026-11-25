@@ -56,20 +56,22 @@ func (s *Service) PrepareCandidate(txID string, candidate Config) (string, error
 	}
 
 	// Normalize defaults for candidate
+	if candidate.Scenario == "" {
+		candidate.Scenario = ScenarioDual
+	}
 	if candidate.DirectPort == 0 {
 		candidate.DirectPort = DefaultDirectPort
 	}
-	if err := ValidateDirectPort(candidate.DirectPort); err != nil {
-		return "", err
+	if candidate.Scenario != ScenarioCDNHTTP {
+		if err := ValidateDirectPort(candidate.DirectPort); err != nil {
+			return "", err
+		}
 	}
 	if candidate.ListenPort <= 0 {
 		candidate.ListenPort = DefaultListenPort
 	}
 	if candidate.AdminPort <= 0 {
 		candidate.AdminPort = DefaultAdminPort
-	}
-	if candidate.Scenario == "" {
-		candidate.Scenario = ScenarioDual
 	}
 	if candidate.Backend == "" {
 		candidate.Backend = DefaultBackend

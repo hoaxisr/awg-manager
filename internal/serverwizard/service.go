@@ -895,9 +895,12 @@ func (s *WizardService) executeApplyJob(ctx context.Context, jobID string, rec *
 		if tgListenPort <= 0 {
 			tgListenPort = 8085
 		}
-		tgPublicHost := rec.Desired.TgPublicHostname
-		if tgPublicHost == "" {
-			tgPublicHost = rec.Desired.PublicHostname
+		tgPublicHost := ""
+		if rec.Desired.Scenario != "direct_fake_tls" {
+			tgPublicHost = rec.Desired.TgPublicHostname
+			if tgPublicHost == "" {
+				tgPublicHost = rec.Desired.PublicHostname
+			}
 		}
 		tgCfg := tgwebproxy.Config{
 			Enabled:        true,
@@ -975,15 +978,23 @@ func (s *WizardService) executeApplyJob(ctx context.Context, jobID string, rec *
 		case "xray":
 			services = []string{"xray"}
 		case "tgwebproxy":
-			services = []string{"tgwebproxy"}
+			if rec.Desired.Scenario != "direct_fake_tls" {
+				services = []string{"tgwebproxy"}
+			}
 		case "both":
-			services = []string{"xray", "tgwebproxy"}
+			if rec.Desired.Scenario != "direct_fake_tls" {
+				services = []string{"xray", "tgwebproxy"}
+			} else {
+				services = []string{"xray"}
+			}
 		}
-		txParams.KeenDNS = &serveringress.KeenDNSPublicationCandidate{
-			Label:        rec.Desired.KeenDNSLabel,
-			UpstreamHost: "127.0.0.1",
-			UpstreamPort: dispPort,
-			Services:     services,
+		if len(services) > 0 {
+			txParams.KeenDNS = &serveringress.KeenDNSPublicationCandidate{
+				Label:        rec.Desired.KeenDNSLabel,
+				UpstreamHost: "127.0.0.1",
+				UpstreamPort: dispPort,
+				Services:     services,
+			}
 		}
 	}
 

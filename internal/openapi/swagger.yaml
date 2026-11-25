@@ -7934,6 +7934,8 @@ definitions:
     properties:
       client_remark:
         type: string
+      disable_other_service:
+        type: boolean
       outbound_interface:
         type: string
       outbound_mode:

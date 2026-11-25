@@ -19,6 +19,7 @@ import {
 	isDraftEgressValid,
 	isGrayIPNetwork,
 	isTgDirectOnlyDraft,
+	isValidMtprotoDirectPort,
 	pickDefaultKeenDNSActionMode,
 	pickDefaultMtprotoDirectHost,
 	resolveEffectiveMtprotoDirectHost,
@@ -662,10 +663,14 @@ describe('externalAccessModel', () => {
 		expect(directReq.cdn_profile_id).toBe('direct');
 		expect(directReq.carrier_mode).toBe('websocket');
 
-		// 2. External HTTPS + direct_fake_tls must also emit cdn_profile_id='direct'
+		// 2. External HTTPS + direct_fake_tls: tgwebproxy-only forces 'direct',
+		//    while 'both' keeps VLESS's 'cdn_get' (backend forTelegram() normalizes Telegram to 'direct')
 		draft.connectionWay = 'external_https';
 		draft.tgScenario = 'direct_fake_tls';
-		expect(buildPlanRequestFromDraft(draft).cdn_profile_id).toBe('direct');
+		expect(buildPlanRequestFromDraft({ ...draft, selectedKind: 'tgwebproxy' }).cdn_profile_id).toBe(
+			'direct'
+		);
+		expect(buildPlanRequestFromDraft(draft).cdn_profile_id).toBe('cdn_get');
 
 		// 3. External HTTPS + dual keeps cdn_get and xhttp_get
 		draft.tgScenario = 'dual';
@@ -989,5 +994,58 @@ describe('externalAccessModel', () => {
 		expect(resolveEffectiveMtprotoDirectHost(cloudDual)).toBe(
 			'connect.dacha.example.keenetic.pro'
 		);
+	});
+
+	it('validates MTProto direct ports, overrides cloud flag when WAN is public, keeps Reality-only draft summary clean, and isolates direct_fake_tls CDN profile on xray/both', () => {
+		// 1. wanIPPrivate=false overrides keendnsMode='cloud'
+		expect(
+			isGrayIPNetwork({
+				wanIPPrivate: false,
+				keendnsEnabled: true,
+				keendnsMode: 'cloud',
+			})
+		).toBe(false);
+
+		// 2. isValidMtprotoDirectPort rejects reserved/out-of-range ports and accepts valid ones
+		for (const okPort of [1024, 8443, 9443, 65535]) {
+			expect(isValidMtprotoDirectPort(okPort)).toBe(true);
+		}
+		for (const badPort of [0, 22, 443, 1023, 1099, 2222, 2398, 3553, 8084, 8085, 8086, 9007, 9008, 9009, 51820, 65536, 'abc', 8443.5]) {
+			expect(isValidMtprotoDirectPort(badPort)).toBe(false);
+		}
+
+		// 3. createInitialWizardDraft handles Reality-only VLESS cleanly
+		const realityDraft = createInitialWizardDraft(
+			{
+				xrayConfig: {
+					enabled: true,
+					clients: [{ id: 'c1', remark: 'Phone', enabled: true }],
+				} as unknown as XrayConfig,
+				realityEnabled: true,
+				realityPort: 2053,
+				realityPublicHost: '203.0.113.10',
+			},
+			'xray'
+		);
+		expect(realityDraft.isEditMode).toBe(true);
+		expect(realityDraft.selectedKind).toBe('xray');
+		const summaryText =
+			typeof realityDraft.connectionSchemeSummary === 'function'
+				? realityDraft.connectionSchemeSummary()
+				: realityDraft.connectionSchemeSummary;
+		const warnText =
+			typeof realityDraft.connectionSchemeWarning === 'function'
+				? realityDraft.connectionSchemeWarning()
+				: realityDraft.connectionSchemeWarning;
+		expect(summaryText).toContain('203.0.113.10:2053');
+		expect(warnText).toBe('');
+
+		// 4. buildPlanRequestFromDraft on both + direct_fake_tls + external_https keeps VLESS cdn_profile_id
+		const bothDraft = createInitialWizardDraft({});
+		bothDraft.selectedKind = 'both';
+		bothDraft.tgScenario = 'direct_fake_tls';
+		bothDraft.connectionWay = 'external_https';
+		bothDraft.cdnProfileId = 'cdn_get';
+		expect(buildPlanRequestFromDraft(bothDraft).cdn_profile_id).toBe('cdn_get');
 	});
 });

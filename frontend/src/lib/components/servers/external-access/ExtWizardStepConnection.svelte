@@ -24,10 +24,12 @@
 		checkingFacts: boolean;
 		showRouterFacts: boolean;
 		keendnsInfo: KeenDNSDiscovery | null;
+		canReturnToSavedScheme?: boolean;
 		oncheckreality: () => void;
 		oncheckfacts: () => void;
 		onswitchtowebbridge: () => void;
 		onswitchtowebonly?: () => void;
+		onswitchtovlessdomain?: () => void;
 	}
 
 	let {
@@ -45,10 +47,12 @@
 		checkingFacts,
 		showRouterFacts,
 		keendnsInfo,
+		canReturnToSavedScheme = true,
 		oncheckreality,
 		oncheckfacts,
 		onswitchtowebbridge,
 		onswitchtowebonly,
+		onswitchtovlessdomain,
 	}: Props = $props();
 </script>
 
@@ -88,7 +92,7 @@
 			<div
 				class="reality-wan-box"
 				class:ok={realityState?.network ? realityWhiteIP : Boolean(keendnsInfo?.wan_ip && !keendnsInfo.wan_ip_private)}
-				class:warn={realityState?.network ? !realityWhiteIP : Boolean(keendnsInfo?.wan_ip_private)}
+				class:warn={realityState?.network ? !realityWhiteIP : Boolean(keendnsInfo?.wan_ip_private || grayIPDetected)}
 			>
 				{#if realityState?.network}
 					{#if realityWhiteIP}
@@ -137,6 +141,22 @@
 							</label>
 						</div>
 					{/if}
+				{:else if grayIPDetected}
+					<AlertTriangle size={15} class="icon-warning-soft" />
+					<div class="warn-banner-body">
+						<span>
+							{m.servers_ext_wiz_s2_tg_ip_not_found({ reason: m.servers_ext_wiz_s2_tg_ip_cgnat_reason() })}
+						</span>
+						<div>
+							<Button variant="primary" size="sm" onclick={onswitchtowebbridge}>
+								{m.servers_ext_wiz_s2_tg_switch_web()}
+							</Button>
+						</div>
+						<label class="checkbox-row">
+							<input type="checkbox" bind:checked={draft.confirmDirectBehindNAT} />
+							<span>{m.servers_ext_wiz_s2_confirm_behind_nat()}</span>
+						</label>
+					</div>
 				{:else}
 					<AlertTriangle size={15} class="icon-warning-soft" />
 					<span>{m.servers_ext_wiz_s2_ip_unchecked()}</span>
@@ -173,7 +193,7 @@
 			{/if}
 		</div>
 	{:else}
-		{#if draft.isEditMode}
+		{#if draft.isEditMode && canReturnToSavedScheme}
 			<div class="return-saved-row">
 				<button
 					type="button"
@@ -187,13 +207,16 @@
 
 		<div class="field-block">
 			<span class="field-label">{m.servers_ext_wiz_s2_q_way()}</span>
-			<div class="cards-grid">
+			<div class="cards-grid cols-2">
 				<button
 					type="button"
 					class="choice-card"
 					class:selected={!isRealityOnly && draft.connectionWay === 'direct'}
 					onclick={() => {
-						if (realityMode === 'only') realityMode = 'off';
+						if (realityMode === 'only') {
+							realityMode = 'off';
+							draft.confirmDirectBehindNAT = false;
+						}
 						draft.connectionWay = 'direct';
 					}}
 				>
@@ -208,7 +231,10 @@
 					class="choice-card"
 					class:selected={!isRealityOnly && draft.connectionWay === 'external_https'}
 					onclick={() => {
-						if (realityMode === 'only') realityMode = 'off';
+						if (realityMode === 'only') {
+							realityMode = 'off';
+							draft.confirmDirectBehindNAT = false;
+						}
 						draft.connectionWay = 'external_https';
 						draft.publicPort = 443;
 					}}
@@ -224,7 +250,10 @@
 						type="button"
 						class="choice-card choice-card-full"
 						class:selected={isRealityOnly}
-						onclick={() => (realityMode = 'only')}
+						onclick={() => {
+							realityMode = 'only';
+							draft.confirmDirectBehindNAT = false;
+						}}
 					>
 						<div class="choice-top">
 							<span class="choice-title">{m.servers_ext_wiz_s2_reality_title()}</span>
@@ -255,20 +284,35 @@
 					</Button>
 				</div>
 				<div class="reality-wan-box" class:ok={realityWhiteIP} class:warn={!realityWhiteIP}>
-					{#if !realityState?.network}
-						<AlertTriangle size={15} class="icon-warning-soft" />
-						<span>{m.servers_ext_wiz_s2_ip_unchecked()}</span>
-					{:else if realityWhiteIP}
+					{#if realityState?.network && realityWhiteIP}
 						<CheckCircle2 size={15} class="icon-success-soft" />
 						<span>
 							{m.servers_ext_wiz_s2_ip_confirmed()} <strong class="mono">{realityState.network.external_ip || realityState.network.wan_address}</strong>
 							{realityState.network.keendns_domain ? ` · ${m.servers_ext_wiz_s2_links_on_keendns({ domain: realityState.network.keendns_domain })}` : ''}
 						</span>
+					{:else if (realityState?.network && !realityWhiteIP) || grayIPDetected}
+						<AlertTriangle size={15} class="icon-warning-soft" />
+						<div class="warn-banner-body">
+							<span>
+								{realityState?.network
+									? m.servers_ext_wiz_s2_ip_not_found({ reason: realityState.network.reason || m.servers_ext_wiz_s2_ip_unreachable() })
+									: m.servers_ext_wiz_s2_reality_cgnat_warn()}
+							</span>
+							{#if onswitchtovlessdomain}
+								<div>
+									<Button variant="primary" size="sm" onclick={onswitchtovlessdomain}>
+										{m.servers_ext_wiz_s2_switch_vless_domain()}
+									</Button>
+								</div>
+							{/if}
+							<label class="checkbox-row">
+								<input type="checkbox" bind:checked={draft.confirmDirectBehindNAT} />
+								<span>{m.servers_ext_wiz_s2_reality_confirm_behind_nat()}</span>
+							</label>
+						</div>
 					{:else}
 						<AlertTriangle size={15} class="icon-warning-soft" />
-						<span>
-							{m.servers_ext_wiz_s2_ip_not_found({ reason: realityState.network.reason || m.servers_ext_wiz_s2_ip_unreachable() })}
-						</span>
+						<span>{m.servers_ext_wiz_s2_ip_unchecked()}</span>
 					{/if}
 				</div>
 			</div>
@@ -287,7 +331,7 @@
 				</Button>
 			</div>
 
-			<div class="cards-grid">
+			<div class="cards-grid cols-2">
 				<button
 					type="button"
 					class="choice-card compact"
@@ -401,6 +445,12 @@
 					<div class="choice-text">
 						{draft.connectionWay === 'external_https' ? m.servers_ext_wiz_s2_reality_also_ext({ port: realityPort }) : m.servers_ext_wiz_s2_reality_also_direct({ port: realityPort })}
 					</div>
+					{#if realityMode === 'also' && grayIPDetected && !realityWhiteIP}
+						<div class="scheme-warn-note" style="margin-top: 4px;">
+							<AlertTriangle size={14} />
+							<span>{m.servers_ext_wiz_s2_reality_also_cgnat_note()}</span>
+						</div>
+					{/if}
 				</div>
 			</label>
 		{/if}

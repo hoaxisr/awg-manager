@@ -10740,5 +10740,13 @@
 	"servers_ext_wiz_s3_cloud_host_error": "Домен {domain} сейчас работает в облачном режиме KeenDNS (только HTTP/HTTPS) — прямое TCP-подключение MTProto через него не работает. Переведите KeenDNS в режим «Прямой доступ» в настройках Keenetic (нужен белый IP), укажите другой белый IP/домен или переключитесь на Веб-мост.",
 	"servers_ext_wiz_s5_entry_tg_direct_cgnat": "Прямое TCP-подключение (WAN за серым IP / CGNAT, нужен внешний проброс) · порт {port}/tcp",
 	"servers_tg_direct_host_cloud_warn": "Домен {domain} работает в облачном режиме KeenDNS (только HTTP/HTTPS) — прямое TCP-подключение MTProto через него недоступно, пока KeenDNS не переведён в режим «Прямой доступ» на белом IP.",
+	"servers_ext_wiz_s2_reality_cgnat_warn": "Белый IP не обнаружен (WAN за серым IP / CGNAT). Прямой Reality TLS снаружи недоступен — выберите VLESS через домен роутера (KeenDNS) или внешний домен.",
+	"servers_ext_wiz_s2_switch_vless_domain": "Переключиться на VLESS через домен",
+	"servers_ext_wiz_s2_reality_confirm_behind_nat": "У меня настроен внешний проброс TCP-порта (DMZ / роутер выше / VPS с белым IP) — продолжить настройку Reality",
+	"servers_ext_wiz_s2_reality_also_cgnat_note": "На WAN обнаружен серый IP / CGNAT: дополнительный вход Reality сработает только при внешнем пробросе TCP-порта и указании внешнего адреса на следующем шаге.",
+	"servers_ext_wiz_s3_direct_port_invalid": "Укажите свободный TCP-порт от 1024 до 65535, не занятый службами роутера (1099, 2222, 2398, 3553, 8084–8086, 9007–9009, 51820).",
+	"servers_ext_wiz_s3_reality_cloud_host_error": "Домен {domain} работает в облачном режиме KeenDNS (только HTTP/HTTPS) — прямой Reality TLS через него не работает. Укажите белый IP/прямой домен, оставьте поле пустым для автоподстановки на белом IP или переключитесь на VLESS через домен.",
+	"servers_ext_wiz_s3_reality_public_host_required": "При подключении через внешний проброс за серым IP / CGNAT укажите внешний белый IP или прямой домен, чтобы он попал в клиентскую ссылку Reality.",
+	"servers_ext_wiz_s5_entry_reality_cgnat": "Прямой Reality TLS ({transport}, WAN за серым IP / CGNAT, нужен внешний проброс) · порт {port}/tcp",
 	"firc_router_view_journal": "Журнал"
 }

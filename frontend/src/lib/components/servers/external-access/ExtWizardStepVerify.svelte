@@ -30,6 +30,7 @@
 		wantXray: boolean;
 		wantTg: boolean;
 		wantTgDirect: boolean;
+		effectiveDirectHost?: string;
 		effectiveTlsDomain: string;
 		keendnsAvailable: boolean;
 		previewKeenDNSFqdn: string;
@@ -64,6 +65,7 @@
 		wantXray,
 		wantTg,
 		wantTgDirect,
+		effectiveDirectHost = '',
 		effectiveTlsDomain,
 		keendnsAvailable,
 		previewKeenDNSFqdn,
@@ -123,12 +125,21 @@
 			{#if isRealityOnly}
 				<div class="summary-row-item">
 					<span class="sum-label">{m.servers_ext_wiz_s5_services()}</span>
-					<span class="sum-val">{m.servers_ext_wiz_s5_svc_reality()}</span>
+					<span class="sum-val">
+						{m.servers_ext_wiz_s5_svc_reality()}
+						{#if draft.tgInitiallyEnabled}
+							· Telegram {draft.disableOtherService ? m.servers_ext_wiz_s5_will_disable() : m.servers_ext_wiz_s5_stays_on()}
+						{/if}
+					</span>
 				</div>
 				<div class="summary-row-item">
 					<span class="sum-label">{m.servers_ext_wiz_s5_entry()}</span>
 					<span class="sum-val">
-						{m.servers_ext_wiz_s5_entry_reality({ transport: realityTransport === 'xhttp' ? 'XHTTP (stream-one)' : 'TCP (raw)', port: realityPort })}
+						{#if grayIPDetected}
+							{m.servers_ext_wiz_s5_entry_reality_cgnat({ transport: realityTransport === 'xhttp' ? 'XHTTP (stream-one)' : 'TCP (raw)', port: realityPort })}
+						{:else}
+							{m.servers_ext_wiz_s5_entry_reality({ transport: realityTransport === 'xhttp' ? 'XHTTP (stream-one)' : 'TCP (raw)', port: realityPort })}
+						{/if}
 					</span>
 				</div>
 				<div class="summary-row-item">
@@ -258,7 +269,7 @@
 					<div class="summary-row-item">
 						<span class="sum-label">{m.servers_ext_wiz_s5_tg_direct_entry()}</span>
 						<span class="sum-val mono">
-							{formatDomainList(draft.directHost || draft.originHost) || '—'}:{draft.directPort || 8443} {m.servers_ext_wiz_s5_port_auto_open()}
+							{effectiveDirectHost || formatDomainList(draft.directHost) || '—'}:{draft.directPort || 8443} {m.servers_ext_wiz_s5_port_auto_open()}
 						</span>
 					</div>
 				{/if}

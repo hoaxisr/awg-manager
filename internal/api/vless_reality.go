@@ -21,6 +21,7 @@ type VlessRealityCheckDestRequest struct {
 type VlessRealityQuickSetupRequest struct {
 	ClientRemark            string                    `json:"client_remark"`
 	PreserveExistingClients bool                      `json:"preserve_existing_clients,omitempty"`
+	DisableOtherService     bool                      `json:"disable_other_service,omitempty"`
 	OutboundMode            string                    `json:"outbound_mode,omitempty"`
 	OutboundInterface       string                    `json:"outbound_interface,omitempty"`
 	Reality                 vlessserver.RealityUpdate `json:"reality"`
@@ -162,8 +163,81 @@ func (h *VlessServerHandler) realityQuickSetup(w http.ResponseWriter, r *http.Re
 		remark = "Reality"
 	}
 
+	om := strings.ToLower(strings.TrimSpace(req.OutboundMode))
+	if om == "firc:router" {
+		om = "router"
+	}
+	outboundIface := ""
+	if om != "" {
+		switch om {
+		case "direct", "router":
+		case "interface", "outbound":
+			outboundIface = strings.TrimSpace(req.OutboundInterface)
+			if outboundIface == "" {
+				WriteError(w, http.StatusBadRequest, "укажите интерфейс для outbound_mode=interface")
+				return
+			}
+			om = "interface"
+		default:
+			WriteError(w, http.StatusBadRequest, "неподдерживаемый режим выхода: "+req.OutboundMode)
+			return
+		}
+	}
+
+	prevCfg := h.svc.GetConfig()
+	prevReality := h.svc.GetRealityState(r.Context(), false).Settings
+
 	var client *vlessserver.Client
-	cfg := h.svc.GetConfig()
+	var createdClientID, reEnabledClientID string
+	var realityUpdated, xrayApplied bool
+
+	rollback := func() {
+		if realityUpdated {
+			if !prevReality.Enabled && prevReality.PublicKey == "" {
+				_, _ = h.svc.UpdateReality(vlessserver.RealityUpdate{Reset: true})
+			} else {
+				prevEnabled := prevReality.Enabled
+				upd := vlessserver.RealityUpdate{
+					Enabled:     &prevEnabled,
+					ServerNames: append([]string(nil), prevReality.ServerNames...),
+				}
+				if prevReality.Port > 0 {
+					p := prevReality.Port
+					upd.Port = &p
+				}
+				if prevReality.Transport != "" {
+					tr := prevReality.Transport
+					upd.Transport = &tr
+				}
+				if prevReality.Dest != "" {
+					dest := prevReality.Dest
+					upd.Dest = &dest
+				}
+				if prevReality.Fingerprint != "" {
+					fp := prevReality.Fingerprint
+					upd.Fingerprint = &fp
+				}
+				host := prevReality.PublicHost
+				upd.PublicHost = &host
+				_, _ = h.svc.UpdateReality(upd)
+			}
+		}
+		if createdClientID != "" {
+			_ = h.svc.DeleteClient(createdClientID)
+		} else if reEnabledClientID != "" {
+			_ = h.svc.ToggleClient(reEnabledClientID, false)
+		}
+		if xrayApplied && h.coord != nil {
+			rbCfg := h.svc.GetConfig()
+			rbCfg.Enabled = prevCfg.Enabled
+			rbCfg.OutboundMode = prevCfg.OutboundMode
+			rbCfg.OutboundInterface = prevCfg.OutboundInterface
+			rbCfg.OutboundSocksPort = prevCfg.OutboundSocksPort
+			_ = h.coord.ApplyXrayConfig(r.Context(), rbCfg)
+		}
+	}
+
+	cfg := prevCfg
 	if req.PreserveExistingClients && len(cfg.Clients) > 0 {
 		for i := range cfg.Clients {
 			if cfg.Clients[i].Enabled {
@@ -178,6 +252,7 @@ func (h *VlessServerHandler) realityQuickSetup(w http.ResponseWriter, r *http.Re
 				WriteError(w, http.StatusInternalServerError, "не удалось включить клиента: "+err.Error())
 				return
 			}
+			reEnabledClientID = c.ID
 			c.Enabled = true
 			client = &c
 		}
@@ -195,12 +270,14 @@ func (h *VlessServerHandler) realityQuickSetup(w http.ResponseWriter, r *http.Re
 				WriteError(w, http.StatusInternalServerError, "не удалось создать клиента: "+err.Error())
 				return
 			}
+			createdClientID = c.ID
 			client = c
 		} else if !client.Enabled {
 			if err := h.svc.ToggleClient(client.ID, true); err != nil {
 				WriteError(w, http.StatusInternalServerError, "не удалось включить клиента: "+err.Error())
 				return
 			}
+			reEnabledClientID = client.ID
 			client.Enabled = true
 		}
 	}
@@ -208,58 +285,57 @@ func (h *VlessServerHandler) realityQuickSetup(w http.ResponseWriter, r *http.Re
 	enabled := true
 	req.Reality.Enabled = &enabled
 	if _, err := h.svc.UpdateReality(req.Reality); err != nil {
+		rollback()
 		WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	realityUpdated = true
 
 	cfg = h.svc.GetConfig()
 	egressChanged := false
-	if om := strings.ToLower(strings.TrimSpace(req.OutboundMode)); om != "" {
-		if om == "firc:router" {
-			om = "router"
-		}
-		switch om {
-		case "direct", "router":
-			if cfg.OutboundMode != om || cfg.OutboundInterface != "" || cfg.OutboundSocksPort != 0 {
-				cfg.OutboundMode = om
-				cfg.OutboundInterface = ""
-				cfg.OutboundSocksPort = 0
-				egressChanged = true
-			}
-		case "interface", "outbound":
-			iface := strings.TrimSpace(req.OutboundInterface)
-			if iface == "" {
-				WriteError(w, http.StatusBadRequest, "укажите интерфейс для outbound_mode=interface")
-				return
-			}
-			if cfg.OutboundMode != "interface" || cfg.OutboundInterface != iface || cfg.OutboundSocksPort != 0 {
+	if om != "" {
+		if om == "interface" {
+			if cfg.OutboundMode != "interface" || cfg.OutboundInterface != outboundIface || cfg.OutboundSocksPort != 0 {
 				cfg.OutboundMode = "interface"
-				cfg.OutboundInterface = iface
+				cfg.OutboundInterface = outboundIface
 				cfg.OutboundSocksPort = 0
 				egressChanged = true
 			}
-		default:
-			WriteError(w, http.StatusBadRequest, "неподдерживаемый режим выхода: "+req.OutboundMode)
-			return
+		} else if cfg.OutboundMode != om || cfg.OutboundInterface != "" || cfg.OutboundSocksPort != 0 {
+			cfg.OutboundMode = om
+			cfg.OutboundInterface = ""
+			cfg.OutboundSocksPort = 0
+			egressChanged = true
 		}
 	}
 	if !cfg.Enabled || egressChanged {
 		if h.coord == nil {
+			rollback()
 			WriteError(w, http.StatusServiceUnavailable, "server ingress coordinator not configured")
 			return
 		}
 		cfg.Enabled = true
 		if err := h.coord.ApplyXrayConfig(r.Context(), cfg); err != nil {
+			rollback()
 			WriteError(w, http.StatusInternalServerError, "не удалось применить конфигурацию VLESS-сервера: "+err.Error())
 			return
 		}
+		xrayApplied = true
 	}
 
 	resp := VlessRealityQuickSetupResponse{Client: client}
 	state := h.svc.GetRealityState(r.Context(), false)
 	if state.LastError != "" && !state.Runtime.Running {
+		rollback()
 		WriteError(w, http.StatusInternalServerError, "Reality не запустился: "+state.LastError)
 		return
+	}
+	if req.DisableOtherService && h.coord != nil {
+		if err := h.coord.SetTelegramEnabled(r.Context(), false); err != nil {
+			rollback()
+			WriteError(w, http.StatusInternalServerError, "не удалось отключить Telegram-прокси: "+err.Error())
+			return
+		}
 	}
 	resp.State = state
 	if links, err := h.svc.GenerateRealityLinks(r.Context(), client.ID); err == nil {

@@ -606,3 +606,33 @@ func TestPreflightEngine_CdnHTTPAndCloudKeenDNSWarnings(t *testing.T) {
 		}
 	}
 }
+
+func TestPreflightEngine_InvalidDirectPortSkipsDuplicateConflict(t *testing.T) {
+	pe := NewPreflightEngine(nil, nil, nil, nil, nil)
+	resp := pe.Run(context.Background(), WizardPlanRequest{
+		Kind:         "tgwebproxy",
+		Scenario:     "direct_fake_tls",
+		DirectHost:   "203.0.113.10",
+		DirectPort:   2222,
+		TlsDomain:    "www.google.com",
+		CdnProfileID: "direct",
+	})
+	if resp.CanProceed {
+		t.Fatalf("expected CanProceed=false for reserved port 2222, checks=%+v", resp.Checks)
+	}
+	var sawValidBlocked, sawDuplicatePortCheck bool
+	for _, c := range resp.Checks {
+		if c.ID == "port_direct_valid" && c.Status == CheckStatusBlocked {
+			sawValidBlocked = true
+		}
+		if c.ID == "port_direct" || c.ID == "port_direct_conflict" {
+			sawDuplicatePortCheck = true
+		}
+	}
+	if !sawValidBlocked {
+		t.Fatalf("expected port_direct_valid blocked check, got %+v", resp.Checks)
+	}
+	if sawDuplicatePortCheck {
+		t.Fatalf("did not expect duplicate port_direct/port_direct_conflict check when ValidateDirectPort fails: %+v", resp.Checks)
+	}
+}

@@ -505,3 +505,85 @@ func TestValidateDirectPort_AndHardenedWANFirewall(t *testing.T) {
 		t.Fatalf("expected IsDirectWANPortOpen to fail closed when iptables query fails on Keenetic")
 	}
 }
+
+func TestDirectPortValidation_ReservedWebUIAndLifecycleFixes(t *testing.T) {
+	// 1. Port 2222 (AWG Manager Web UI) and invalid ports wrap ErrInvalidDirectPort
+	for _, bad := range []int{22, 1023, 2222, 65536} {
+		err := ValidateDirectPort(bad)
+		if !errors.Is(err, ErrInvalidDirectPort) {
+			t.Fatalf("expected ValidateDirectPort(%d) to wrap ErrInvalidDirectPort, got %v", bad, err)
+		}
+	}
+
+	// 2. PrepareCandidate skips ValidateDirectPort in cdn_http, but validates after normalizing empty Scenario -> dual
+	svc := New(t.TempDir(), nil)
+	svc.SetRuntimeDCProbeForTest(func(string) bool { return true })
+	t.Cleanup(func() { _ = svc.Close() })
+
+	cdnCfg := svc.GetInternalConfig()
+	cdnCfg.Scenario = ScenarioCDNHTTP
+	cdnCfg.DirectPort = 2222
+	if _, err := svc.PrepareCandidate("tx-cdn", cdnCfg); err != nil {
+		t.Fatalf("expected PrepareCandidate(cdn_http) to skip ValidateDirectPort even with DirectPort=2222, got %v", err)
+	}
+
+	emptyScenCfg := svc.GetInternalConfig()
+	emptyScenCfg.Scenario = ""
+	emptyScenCfg.DirectPort = 2222
+	if _, err := svc.PrepareCandidate("tx-empty", emptyScenCfg); !errors.Is(err, ErrInvalidDirectPort) {
+		t.Fatalf("expected PrepareCandidate with empty scenario (normalized to dual) and DirectPort=2222 to fail ErrInvalidDirectPort, got %v", err)
+	}
+
+	// 3. UpdateConfig allows keeping legacy DirectPort=2222 under cdn_http when DirectPort isn't changed,
+	//    but rejects changing DirectPort to 2222 or switching to direct_fake_tls with 2222.
+	svc.mu.Lock()
+	svc.config.Scenario = ScenarioCDNHTTP
+	svc.config.DirectPort = 2222
+	svc.mu.Unlock()
+
+	if err := svc.UpdateConfig(Config{DirectPort: 2222, TlsDomain: "www.example.com"}); err != nil {
+		t.Fatalf("expected UpdateConfig keeping legacy DirectPort=2222 under cdn_http to succeed, got %v", err)
+	}
+	if err := svc.UpdateConfig(Config{Scenario: ScenarioDirectFakeTLS, DirectPort: 2222}); !errors.Is(err, ErrInvalidDirectPort) {
+		t.Fatalf("expected UpdateConfig switching to direct_fake_tls with DirectPort=2222 to fail ErrInvalidDirectPort, got %v", err)
+	}
+
+	// 4. FactoryReset removes active WAN firewall hook
+	tmp := t.TempDir()
+	nfDir := filepath.Join(tmp, "netfilter.d")
+	hookPath := filepath.Join(nfDir, "68-awgm-tg-mtproto-wan.sh")
+	if err := os.MkdirAll(nfDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hookPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	stubDirectWANSeams(t, nfDir, hookPath, func(env []string, name string, args ...string) ([]byte, error) {
+		return nil, nil
+	})
+	svc.mu.Lock()
+	svc.config.Enabled = true
+	svc.config.Scenario = ScenarioDirectFakeTLS
+	svc.config.DirectPort = 8443
+	svc.mu.Unlock()
+	if err := svc.FactoryReset(context.Background()); err != nil {
+		t.Fatalf("FactoryReset: %v", err)
+	}
+	if _, err := os.Stat(hookPath); !os.IsNotExist(err) {
+		t.Fatalf("expected FactoryReset to remove WAN firewall hook, stat err=%v", err)
+	}
+
+	// 5. buildStatusWebProxyLinks omits web links in direct_fake_tls
+	directWithEndpoint := Config{
+		Scenario:       ScenarioDirectFakeTLS,
+		PublicHostname: "tg.example.com",
+		Endpoints: []WebProxyEndpoint{{
+			ID:         "ep-1",
+			Hostname:   "tg.example.com",
+			ListenPort: 8085,
+		}},
+	}
+	if links := buildStatusWebProxyLinks(directWithEndpoint); len(links) != 0 {
+		t.Fatalf("expected buildStatusWebProxyLinks to return no web links for direct_fake_tls, got %+v", links)
+	}
+}

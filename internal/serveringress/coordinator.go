@@ -1110,6 +1110,7 @@ func (c *Coordinator) failAndRollback(j *TransactionJournal, origErr error) erro
 		return errors.Join(append([]error{ErrRecoveryRequired, origErr}, persistErrs...)...)
 	}
 
+	c.syncWANIngressFirewall()
 	return origErr
 }
 
@@ -1170,7 +1171,7 @@ func (c *Coordinator) topologyForXrayConfig(cfg vlessserver.Config) IngressTopol
 
 	// Dispatcher needed check
 	desired.DispatcherEnabled = (desired.XrayEnabled && desired.XrayPublicHostname != "") ||
-		(desired.TgEnabled && (desired.TgScenario == "cdn_http" || desired.TgScenario == "dual"))
+		(desired.TgEnabled && tgScenarioNeedsWebIngress(desired.TgScenario))
 	return desired
 }
 
@@ -2857,6 +2858,7 @@ func (c *Coordinator) ResetVless(ctx context.Context, opts ResetOptions) (ResetR
 			_ = os.Remove(c.journalPath())
 		}
 		c.setRecovery(false, "")
+		c.syncWANIngressFirewall()
 		res.Reset = true
 		return nil
 	})
@@ -2953,6 +2955,7 @@ func (c *Coordinator) ResetTelegram(ctx context.Context, opts ResetOptions) (Res
 			_ = os.Remove(c.journalPath())
 		}
 		c.setRecovery(false, "")
+		c.syncWANIngressFirewall()
 		res.Reset = true
 		return nil
 	})

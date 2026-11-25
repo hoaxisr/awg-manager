@@ -839,3 +839,25 @@ func TestTgWebProxyAction_DeleteLastUserThenStopAndStartDoesNotResurrect(t *test
 		t.Fatalf("rotate_secret with 0 users mutated users: %+v", users)
 	}
 }
+
+func TestTgWebProxy_UpdateConfig_InvalidDirectPortReturns400(t *testing.T) {
+	handler, _, _, sessionToken, _ := setupTestTgWebProxyHandler(t)
+	token := getValidCSRFToken(t, handler, sessionToken)
+
+	for _, body := range []string{
+		`{"scenario":"direct_fake_tls","direct_port":2222}`,
+		`{"scenario":"direct_fake_tls","direct_port":443}`,
+	} {
+		req := httptest.NewRequest(http.MethodPut, "http://192.168.10.1:2222/api/servers/tgwebproxy", bytes.NewReader([]byte(body)))
+		req.Host = "192.168.10.1:2222"
+		req.Header.Set("Origin", "http://192.168.10.1:2222")
+		req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: sessionToken})
+		req.Header.Set("X-CSRF-Token", token)
+
+		w := httptest.NewRecorder()
+		handler.UpdateConfig(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("body=%s: expected 400 Bad Request, got %d: %s", body, w.Code, w.Body.String())
+		}
+	}
+}

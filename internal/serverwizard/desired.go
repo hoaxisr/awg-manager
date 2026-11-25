@@ -84,6 +84,8 @@ func (r WizardPlanRequest) forTelegram() WizardPlanRequest {
 		tr.PublicDomain = strings.TrimSpace(r.TgPublicDomain)
 	}
 	if strings.TrimSpace(tr.Scenario) == "direct_fake_tls" {
+		tr.ConnectionWay = "direct"
+		tr.CdnProfileID = cdn.ProfileDirectID
 		tr.PublicDomain = ""
 		tr.KeenDNSMode = ""
 		tr.KeenDNSLabel = ""

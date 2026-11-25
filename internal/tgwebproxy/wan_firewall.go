@@ -2,6 +2,7 @@ package tgwebproxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -20,8 +21,11 @@ const (
 	directWANExecTimeout         = 10 * time.Second
 )
 
+var ErrInvalidDirectPort = errors.New("некорректный прямой порт MTProto")
+
 var directReservedPorts = map[int]string{
 	1099:  "Mihomo mixed-port",
+	2222:  "AWG Manager Web UI",
 	2398:  "telemt raw backend",
 	3553:  "DNS-прокси",
 	8084:  "Telegram Web Proxy backend",
@@ -54,10 +58,10 @@ var (
 // NDMS/AWGM service ports before opening it on Keenetic's WAN firewall.
 func ValidateDirectPort(port int) error {
 	if port < 1024 || port > 65535 {
-		return fmt.Errorf("порт MTProto (%d) вне допустимого диапазона 1024–65535", port)
+		return fmt.Errorf("%w: порт MTProto (%d) вне допустимого диапазона 1024–65535", ErrInvalidDirectPort, port)
 	}
 	if why, reserved := directReservedPorts[port]; reserved {
-		return fmt.Errorf("порт %d зарезервирован: %s", port, why)
+		return fmt.Errorf("%w: порт %d зарезервирован: %s", ErrInvalidDirectPort, port, why)
 	}
 	return nil
 }

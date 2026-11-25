@@ -169,6 +169,18 @@ export interface ExternalAccessInput {
 	tgStatus?: TgWebProxyStatus | null;
 	dispatcherConfig?: CDNDispatcherConfig | null;
 	egressOptions?: EgressOption[];
+	realityEnabled?: boolean;
+	realityPort?: number;
+	realityPublicHost?: string;
+}
+
+export const RESERVED_MTPROTO_DIRECT_PORTS = new Set([
+	1099, 2222, 2398, 3553, 8084, 8085, 8086, 9007, 9008, 9009, 51820,
+]);
+
+export function isValidMtprotoDirectPort(port: number | string): boolean {
+	const n = Number(port);
+	return Number.isInteger(n) && n >= 1024 && n <= 65535 && !RESERVED_MTPROTO_DIRECT_PORTS.has(n);
 }
 
 export function isTgDirectOnlyDraft(
@@ -202,6 +214,7 @@ export function isGrayIPNetwork(opts: {
 	if (opts.hasRealityNetwork && opts.realityWhiteIP === true) return false;
 	if (opts.hasRealityNetwork && opts.realityWhiteIP === false) return true;
 	if (opts.wanIPPrivate === true) return true;
+	if (opts.wanIPPrivate === false) return false;
 	if (Boolean(opts.keendnsEnabled) && opts.keendnsMode === 'cloud') return true;
 	return false;
 }
@@ -588,7 +601,7 @@ export function createInitialWizardDraft(
 	const vlessDomains = splitDomains(xCfg?.public_domain);
 	const xClients = xCfg?.clients?.length ? xCfg.clients : (xSt?.clients ?? []);
 	const vlessConfigured = Boolean(
-		xCfg?.enabled || vlessDomains.length > 0 || xClients.length > 0
+		xCfg?.enabled || vlessDomains.length > 0 || xClients.length > 0 || input.realityEnabled
 	);
 
 	const tgScenarioRaw = tCfg?.scenario || 'dual';
@@ -680,6 +693,7 @@ export function createInitialWizardDraft(
 		tgEndpoints[0]?.carrier_mode || tCfg?.carrier_mode || tSt?.carrier_mode || 'https-lanes';
 
 	const vlessDomainStr = formatDomainList(xCfg?.public_domain);
+	const vlessRealityOnly = Boolean(vlessConfigured && !vlessDomainStr && input.realityEnabled);
 	const tgDomainStr =
 		tgScenario === 'direct_fake_tls'
 			? ''
@@ -788,6 +802,13 @@ export function createInitialWizardDraft(
 			const direct = `${directHost}:${directPort}`;
 			schemeParts.push(() => m.servers_ext_model_scheme_mtproto_addr({ addr: direct }));
 		}
+	} else if (selectedKind === 'xray' && vlessRealityOnly) {
+		schemeParts.push(() => m.servers_ext_wiz_s2_reality_title());
+		const rHost = (input.realityPublicHost || '').trim();
+		if (rHost) {
+			const rAddr = `${rHost}:${input.realityPort || 2053}`;
+			schemeParts.push(() => m.servers_ext_model_scheme_phone_addr({ addr: rAddr }));
+		}
 	} else {
 		if (connectionWay === 'direct') {
 			schemeParts.push(() => m.servers_ext_model_scheme_router_domain());
@@ -807,10 +828,10 @@ export function createInitialWizardDraft(
 	}
 
 	const schemeWarnings: (() => string)[] = [];
-	if (vlessConfigured && !vlessDomainStr) {
+	if (vlessConfigured && !vlessDomainStr && !vlessRealityOnly) {
 		schemeWarnings.push(() => m.servers_ext_model_warn_no_vless_domain());
 	}
-	if (connectionWay === 'external_https' && !originHost && vlessConfigured) {
+	if (connectionWay === 'external_https' && !originHost && vlessConfigured && !vlessRealityOnly) {
 		schemeWarnings.push(() => m.servers_ext_model_warn_no_origin());
 	}
 	if (rawTransport && !isSupportedTransport) {
@@ -1036,8 +1057,7 @@ export function buildPlanRequestFromDraft(
 			? draft.selectedMode
 			: 'xhttp_get';
 	const effectiveCdnProfileId =
-		(draft.selectedKind !== 'xray' && draft.tgScenario === 'direct_fake_tls') ||
-		draft.connectionWay === 'direct'
+		tgDirectOnly || draft.connectionWay === 'direct'
 			? 'direct'
 			: draft.cdnProfileId || 'cdn_get';
 	const effectiveCarrierMode =

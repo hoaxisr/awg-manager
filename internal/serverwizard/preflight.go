@@ -292,8 +292,10 @@ func (pe *PreflightEngine) checkTelegram(ctx context.Context, req WizardPlanRequ
 	}
 
 	if scenario != "cdn_http" {
+		directPortValid := true
 		if req.DirectPort != 0 {
 			if err := tgwebproxy.ValidateDirectPort(req.DirectPort); err != nil {
+				directPortValid = false
 				*checks = append(*checks, PreflightCheck{
 					ID:          "port_direct_valid",
 					Title:       "Корректность порта MTProto",
@@ -327,7 +329,7 @@ func (pe *PreflightEngine) checkTelegram(ctx context.Context, req WizardPlanRequ
 				Message:     fmt.Sprintf("Порт %d занят внутренним сервисом роутера", directPort),
 				Remediation: "Выберите другой порт для MTProto Direct (по умолчанию 8443).",
 			})
-		} else if directPort >= 1024 && directPort <= 65535 {
+		} else if directPortValid && directPort >= 1024 && directPort <= 65535 {
 			pe.checkPort("port_direct", fmt.Sprintf("Порт прямого подключения (%d)", directPort), directPort, allowedDirectPID, checks)
 		}
 	}

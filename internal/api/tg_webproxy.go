@@ -216,7 +216,7 @@ func (h *TgWebProxyHandler) UpdateConfig(w http.ResponseWriter, r *http.Request)
 			WriteError(w, http.StatusConflict, "operation in progress")
 			return
 		}
-		if errors.Is(err, tgwebproxy.ErrInvalidUpstream) {
+		if errors.Is(err, tgwebproxy.ErrInvalidUpstream) || errors.Is(err, tgwebproxy.ErrInvalidDirectPort) {
 			WriteError(w, http.StatusBadRequest, err.Error())
 			return
 		}

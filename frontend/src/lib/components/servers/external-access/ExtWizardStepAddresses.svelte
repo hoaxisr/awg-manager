@@ -20,7 +20,11 @@
 		wantTgWeb: boolean;
 		wantTgDirect: boolean;
 		grayIPDetected?: boolean;
+		effectiveDirectHost?: string;
 		isDirectHostCloudKeenDNS?: boolean;
+		isDirectPortInvalid?: boolean;
+		isRealityPublicHostCloudKeenDNS?: boolean;
+		realityPublicHostRequired?: boolean;
 		detectedMtprotoWhiteIP: string;
 		keenDNSBaseDomain: string;
 		keenDNSBaseIsDirect: boolean;
@@ -43,6 +47,7 @@
 		onsynckeendns: () => void;
 		onswitchtowebbridge?: () => void;
 		onswitchtowebonly?: () => void;
+		onswitchtovlessdomain?: () => void;
 	}
 
 	let {
@@ -54,7 +59,11 @@
 		wantTgWeb,
 		wantTgDirect,
 		grayIPDetected = false,
+		effectiveDirectHost = '',
 		isDirectHostCloudKeenDNS = false,
+		isDirectPortInvalid = false,
+		isRealityPublicHostCloudKeenDNS = false,
+		realityPublicHostRequired = false,
 		detectedMtprotoWhiteIP,
 		keenDNSBaseDomain,
 		keenDNSBaseIsDirect,
@@ -77,6 +86,7 @@
 		onsynckeendns,
 		onswitchtowebbridge,
 		onswitchtowebonly,
+		onswitchtovlessdomain,
 	}: Props = $props();
 
 	let hideCloudFallback = $derived(draft.originType === 'cloud_address' && draft.keendnsMode !== 'manual');
@@ -104,6 +114,15 @@
 				bind:dest={realityDest}
 				bind:serverName={realityServerName}
 				bind:publicHost={realityPublicHost}
+				cloudHostError={isRealityPublicHostCloudKeenDNS
+					? m.servers_ext_wiz_s3_reality_cloud_host_error({
+							domain: realityPublicHost.trim(),
+						})
+					: ''}
+				publicHostRequiredHint={realityPublicHostRequired
+					? m.servers_ext_wiz_s3_reality_public_host_required()
+					: ''}
+				{onswitchtovlessdomain}
 				onrefreshed={(fresh) => (realityState = fresh)}
 			/>
 		</div>
@@ -156,7 +175,7 @@
 					<div class="cloud-host-error-box">
 						<AlertTriangle size={14} class="icon-error-soft" />
 						<div class="dual-cgnat-warn-body">
-							<span>{m.servers_ext_wiz_s3_cloud_host_error({ domain: draft.directHost.trim() })}</span>
+							<span>{m.servers_ext_wiz_s3_cloud_host_error({ domain: effectiveDirectHost || draft.directHost.trim() })}</span>
 							{#if onswitchtowebbridge}
 								<div>
 									<Button variant="primary" size="sm" onclick={onswitchtowebbridge}>
@@ -211,8 +230,12 @@
 						min="1024"
 						max="65535"
 						class="text-input mono"
+						class:input-error={isDirectPortInvalid}
 						bind:value={draft.directPort}
 					/>
+					{#if isDirectPortInvalid}
+						<span class="field-error">{m.servers_ext_wiz_s3_direct_port_invalid()}</span>
+					{/if}
 					<span class="field-hint">
 						{m.servers_ext_wiz_s3_tg_only_port_hint()}
 					</span>
@@ -416,7 +439,7 @@
 					<div class="cloud-host-error-box">
 						<AlertTriangle size={14} class="icon-error-soft" />
 						<div class="dual-cgnat-warn-body">
-							<span>{m.servers_ext_wiz_s3_cloud_host_error({ domain: draft.directHost.trim() })}</span>
+							<span>{m.servers_ext_wiz_s3_cloud_host_error({ domain: effectiveDirectHost || draft.directHost.trim() })}</span>
 							{#if onswitchtowebonly}
 								<div>
 									<Button variant="secondary" size="sm" onclick={onswitchtowebonly}>
@@ -506,9 +529,15 @@
 						<input
 							id="wiz-direct-port"
 							type="number"
+							min="1024"
+							max="65535"
 							class="text-input mono"
+							class:input-error={isDirectPortInvalid}
 							bind:value={draft.directPort}
 						/>
+						{#if isDirectPortInvalid}
+							<span class="field-error">{m.servers_ext_wiz_s3_direct_port_invalid()}</span>
+						{/if}
 					</div>
 				</div>
 			{/if}
@@ -525,6 +554,14 @@
 				bind:dest={realityDest}
 				bind:serverName={realityServerName}
 				bind:publicHost={realityPublicHost}
+				cloudHostError={isRealityPublicHostCloudKeenDNS
+					? m.servers_ext_wiz_s3_reality_cloud_host_error({
+							domain: realityPublicHost.trim(),
+						})
+					: ''}
+				publicHostRequiredHint={realityPublicHostRequired
+					? m.servers_ext_wiz_s3_reality_public_host_required()
+					: ''}
 				onrefreshed={(fresh) => (realityState = fresh)}
 			/>
 		</div>
@@ -601,6 +638,12 @@
 
 	:global(.ext-wizard .text-input.input-error:focus) {
 		border-color: var(--color-error);
+	}
+
+	.field-error {
+		font-size: 11.5px;
+		color: var(--color-error);
+		line-height: 1.4;
 	}
 
 	.cloud-host-error-box {

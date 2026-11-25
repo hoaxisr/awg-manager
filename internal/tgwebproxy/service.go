@@ -940,11 +940,18 @@ func (s *Service) UpdateConfig(cfg Config) error {
 	if cfg.DirectHost != "" {
 		newCfg.DirectHost = cfg.DirectHost
 	}
+	scenarioUsesDirect := newCfg.Scenario != ScenarioCDNHTTP
 	if cfg.DirectPort != 0 {
-		if err := ValidateDirectPort(cfg.DirectPort); err != nil {
-			return err
+		if scenarioUsesDirect || cfg.DirectPort != s.config.DirectPort {
+			if err := ValidateDirectPort(cfg.DirectPort); err != nil {
+				return err
+			}
 		}
 		newCfg.DirectPort = cfg.DirectPort
+	} else if scenarioUsesDirect && newCfg.DirectPort != 0 {
+		if err := ValidateDirectPort(newCfg.DirectPort); err != nil {
+			return err
+		}
 	}
 	if cfg.Secret != "" && cfg.Secret != s.config.Secret {
 		newCfg.LegacySecret = s.config.Secret
@@ -1480,6 +1487,7 @@ func (s *Service) FactoryReset(ctx context.Context) error {
 	}
 
 	s.config = defCfg
+	s.syncDirectWANFirewallLocked(defCfg)
 	s.recoveryRequired = false
 	s.lastStartupError = ""
 
@@ -1894,6 +1902,9 @@ func linkableEndpoints(cfg Config) []WebProxyEndpoint {
 // buildStatusWebProxyLinks describes the linkable endpoints without any
 // secret-derived material, for the regular status response.
 func buildStatusWebProxyLinks(cfg Config) []WebProxyStatusLink {
+	if cfg.Scenario == ScenarioDirectFakeTLS {
+		return nil
+	}
 	var out []WebProxyStatusLink
 	for _, ep := range linkableEndpoints(cfg) {
 		out = append(out, WebProxyStatusLink{

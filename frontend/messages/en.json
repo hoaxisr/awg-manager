@@ -10336,5 +10336,13 @@
 	"servers_ext_wiz_s3_cloud_host_error": "Domain {domain} is currently in KeenDNS cloud mode (HTTP/HTTPS only) — direct TCP MTProto will not work through it. Switch KeenDNS to \"Direct access\" in Keenetic settings (requires a public IP), enter another public IP/domain, or switch to Web Bridge.",
 	"servers_ext_wiz_s5_entry_tg_direct_cgnat": "Direct TCP connection (WAN behind CGNAT, external port forwarding required) · port {port}/tcp",
 	"servers_tg_direct_host_cloud_warn": "Domain {domain} is in KeenDNS cloud mode (HTTP/HTTPS only) — direct TCP MTProto will not work through it until KeenDNS is switched to \"Direct access\" on a public IP.",
+	"servers_ext_wiz_s2_reality_cgnat_warn": "No public IP detected (WAN behind private IP / CGNAT). Direct Reality TLS is unreachable externally — choose VLESS via router domain (KeenDNS) or an external domain.",
+	"servers_ext_wiz_s2_switch_vless_domain": "Switch to VLESS via domain",
+	"servers_ext_wiz_s2_reality_confirm_behind_nat": "I have external TCP port forwarding configured (DMZ / upstream router / VPS with public IP) — continue Reality setup",
+	"servers_ext_wiz_s2_reality_also_cgnat_note": "Private IP / CGNAT detected on WAN: the additional Reality entry will only work with external TCP port forwarding and an external address specified on the next step.",
+	"servers_ext_wiz_s3_direct_port_invalid": "Enter an available TCP port between 1024 and 65535 that is not reserved by router services (1099, 2222, 2398, 3553, 8084–8086, 9007–9009, 51820).",
+	"servers_ext_wiz_s3_reality_cloud_host_error": "Domain {domain} is in KeenDNS cloud mode (HTTP/HTTPS only) — direct Reality TLS will not work through it. Enter a public IP/direct domain, leave empty for auto-detection on a public IP, or switch to VLESS via domain.",
+	"servers_ext_wiz_s3_reality_public_host_required": "When using external port forwarding behind a private IP / CGNAT, enter the external public IP or direct domain so it is embedded in the Reality client link.",
+	"servers_ext_wiz_s5_entry_reality_cgnat": "Direct Reality TLS ({transport}, WAN behind CGNAT, external port forwarding required) · port {port}/tcp",
 	"firc_router_view_journal": "Journal"
 }

@@ -1099,3 +1099,100 @@ func TestWizardService_VerifyTelegramGrayIPAndCloudKeenDNS(t *testing.T) {
 		t.Fatalf("did not expect tg_mtproto_wan_ip on public WAN: %+v", wan4)
 	}
 }
+
+func TestWizardService_DirectFakeTLS_DesiredAndNoKeenDNSPublication(t *testing.T) {
+	svc, coord, _, _, _ := setupTestWizard(t)
+	ctx := context.Background()
+	sessionID := "direct-fake-tls-session"
+
+	// 1. kind="tgwebproxy" + direct_fake_tls rejects explicit 4th-level KeenDNS label,
+	//    and otherwise normalizes ConnectionWay="direct", CDNProfileID="direct", clearing stale PublicDomain
+	if _, err := svc.Plan(ctx, sessionID, WizardPlanRequest{
+		Kind:         "tgwebproxy",
+		Scenario:     "direct_fake_tls",
+		DirectHost:   "203.0.113.10",
+		DirectPort:   8443,
+		TlsDomain:    "www.google.com",
+		KeenDNSLabel: "stale",
+		CdnProfileID: "direct",
+	}); err == nil {
+		t.Fatal("expected Plan tgwebproxy direct_fake_tls with KeenDNSLabel to fail")
+	}
+
+	recTg, err := svc.Plan(ctx, sessionID, WizardPlanRequest{
+		Kind:         "tgwebproxy",
+		Scenario:     "direct_fake_tls",
+		DirectHost:   "203.0.113.10",
+		DirectPort:   8443,
+		TlsDomain:    "www.google.com",
+		PublicDomain: "stale.example.keenetic.pro",
+		CdnProfileID: "direct",
+	})
+	if err != nil {
+		t.Fatalf("Plan tgwebproxy direct_fake_tls failed: %v", err)
+	}
+	if recTg.Desired.ConnectionWay != "direct" || recTg.Desired.CDNProfileID != "direct" {
+		t.Fatalf("expected ConnectionWay=direct and CDNProfileID=direct, got way=%q profile=%q", recTg.Desired.ConnectionWay, recTg.Desired.CDNProfileID)
+	}
+	if recTg.Desired.PublicHostname != "" || recTg.Desired.KeenDNSLabel != "" {
+		t.Fatalf("expected cleared PublicHostname/KeenDNSLabel for direct_fake_tls, got domain=%q label=%q", recTg.Desired.PublicHostname, recTg.Desired.KeenDNSLabel)
+	}
+
+	// 2. kind="both" + direct_fake_tls keeps Xray KeenDNS publication for xray ONLY, never attaches PublicHost or tgwebproxy KeenDNS service
+	svc.SetKeenDNS(&mockKeenDNSOperator{
+		disc: serveringress.KeenDNSDiscovery{
+			State:      "supported",
+			BaseFQDN:   "home.example.keenetic.pro",
+			AccessMode: "direct",
+			WANAddress: "198.51.100.10",
+			WANPrivate: false,
+		},
+	})
+	recBoth, err := svc.Plan(ctx, sessionID, WizardPlanRequest{
+		Kind:           "both",
+		Scenario:       "direct_fake_tls",
+		ConnectionWay:  "keendns",
+		PublicDomain:   "vless.home.example.keenetic.pro",
+		KeenDNSMode:    "create",
+		KeenDNSLabel:   "vless",
+		DirectHost:     "198.51.100.10",
+		DirectPort:     8443,
+		TlsDomain:      "www.google.com",
+		CdnProfileID:   "cdn_get",
+		UpstreamDevice: "direct",
+	})
+	if err != nil {
+		t.Fatalf("Plan both direct_fake_tls failed: %v", err)
+	}
+	jobID, err := svc.Apply(ctx, sessionID, recBoth.PlanID)
+	if err != nil {
+		t.Fatalf("Apply both failed: %v", err)
+	}
+	var jobResp JobStatusResponse
+	for i := 0; i < 30; i++ {
+		time.Sleep(30 * time.Millisecond)
+		jobResp, err = svc.GetJob(ctx, jobID, sessionID)
+		if err != nil {
+			t.Fatalf("GetJob: %v", err)
+		}
+		if jobResp.Phase == JobPhaseSucceeded || jobResp.Phase == JobPhaseFailed {
+			break
+		}
+	}
+	if jobResp.Phase != JobPhaseSucceeded {
+		t.Fatalf("expected both apply succeeded, got %s (%s)", jobResp.Phase, jobResp.Error)
+	}
+	if coord.txParams.Telegram == nil || coord.txParams.Telegram.PublicHostname != "" {
+		t.Fatalf("expected empty Telegram PublicHostname in direct_fake_tls, got %+v", coord.txParams.Telegram)
+	}
+	if coord.txParams.KeenDNS == nil || len(coord.txParams.KeenDNS.Services) != 1 || coord.txParams.KeenDNS.Services[0] != "xray" {
+		t.Fatalf("expected KeenDNS Services=[xray] only, got %+v", coord.txParams.KeenDNS)
+	}
+	creds, err := svc.Reveal(ctx, jobID, sessionID)
+	if err != nil {
+		t.Fatalf("Reveal both: %v", err)
+	}
+	if creds.PublicHost != "vless.home.example.keenetic.pro" || creds.TgPublicHost != "" {
+		t.Fatalf("unexpected Reveal hosts: PublicHost=%q TgPublicHost=%q", creds.PublicHost, creds.TgPublicHost)
+	}
+}

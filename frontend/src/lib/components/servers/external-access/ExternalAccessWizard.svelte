@@ -23,6 +23,7 @@
 		isDraftEgressValid,
 		isGrayIPNetwork,
 		isTgDirectOnlyDraft,
+		isValidMtprotoDirectPort,
 		pickDefaultKeenDNSActionMode,
 		pickDefaultMtprotoDirectHost,
 		resolveEffectiveMtprotoDirectHost,
@@ -94,6 +95,7 @@
 	let applyPhase = $state<'review' | 'applying' | 'done'>('review');
 	let stopJobPoll: (() => void) | null = null;
 	let initialEditWasTgDirectOnly = $state(false);
+	let initialEditWasRealityOnly = $state(false);
 
 	// Direct VLESS + REALITY entry (white-IP preset)
 	type WizardRealityMode = 'off' | 'also' | 'only';
@@ -154,8 +156,23 @@
 			keendnsMode: keendnsInfo?.mode,
 		})
 	);
+	let effectiveDirectHost = $derived(resolveEffectiveMtprotoDirectHost(draft));
 	let isDirectHostCloudKeenDNS = $derived(
-		isCloudKeenDNSHost(draft.directHost, keenDNSBaseDomain, keenDNSBaseIsDirect)
+		isCloudKeenDNSHost(effectiveDirectHost, keenDNSBaseDomain, keenDNSBaseIsDirect)
+	);
+	let isDirectPortInvalid = $derived(wantTgDirect && !isValidMtprotoDirectPort(draft.directPort));
+	let isRealityPublicHostCloudKeenDNS = $derived(
+		usesReality &&
+			Boolean(realityPublicHost.trim()) &&
+			isCloudKeenDNSHost(realityPublicHost, keenDNSBaseDomain, keenDNSBaseIsDirect)
+	);
+	let realityPublicHostRequired = $derived(
+		usesReality && grayIPDetected && !realityWhiteIP && !realityPublicHost.trim()
+	);
+	let canReturnToSavedScheme = $derived(
+		draft.isEditMode &&
+			!(initialEditWasTgDirectOnly && !isTgDirectOnly) &&
+			!(initialEditWasRealityOnly && !isRealityOnly)
 	);
 
 	let otherServiceCurrentlyEnabled = $derived(
@@ -333,7 +350,13 @@
 			]);
 			if (seq !== initSeq || !open) return;
 
-			const initial = createInitialWizardDraft(input, preferredKind);
+			const draftInput: ExternalAccessInput = {
+				...input,
+				realityEnabled: Boolean(rSt?.settings?.enabled),
+				realityPort: rSt?.settings?.port,
+				realityPublicHost: rSt?.settings?.public_host,
+			};
+			const initial = createInitialWizardDraft(draftInput, preferredKind);
 			// Имя первого устройства — данные (уходят на сервер как remark и
 			// правятся в поле ввода), а не подпись: язык момента открытия верен.
 			draft =
@@ -359,6 +382,9 @@
 				realityPublicHost = '';
 			}
 			const hasCdnDomain = Boolean((input.xrayConfig?.public_domain || '').trim());
+			initialEditWasRealityOnly = Boolean(
+				draft.isEditMode && draft.selectedKind === 'xray' && rEnabled && !hasCdnDomain
+			);
 			if (draft.selectedKind === 'xray' && rEnabled && !hasCdnDomain) {
 				realityMode = 'only';
 			} else if ((draft.selectedKind === 'xray' || draft.selectedKind === 'both') && rEnabled) {
@@ -590,6 +616,24 @@
 		draft.directHost = '';
 	}
 
+	function switchToVlessDomain() {
+		realityMode = 'off';
+		draft.confirmDirectBehindNAT = false;
+		draft.keepExistingConnectionScheme = false;
+		if (keendnsAvailable) {
+			draft.connectionWay = 'direct';
+			draft.originType = 'cloud_address';
+			setKeenDNSActionMode(
+				pickDefaultKeenDNSActionMode({
+					keendnsAvailable,
+					hasCompatiblePublications: compatibleKeenDNSPublications.length > 0,
+				})
+			);
+		} else {
+			draft.connectionWay = 'external_https';
+		}
+	}
+
 	function setKeenDNSActionMode(mode: 'manual' | 'existing' | 'create') {
 		draft.keendnsMode = mode;
 		if (mode === 'existing' && compatibleKeenDNSPublications.length > 0) {
@@ -688,13 +732,15 @@
 			(Number.isInteger(Number(realityPort)) &&
 				Number(realityPort) >= 1024 &&
 				Number(realityPort) <= 65535 &&
-				Boolean(realityDest.trim()))
+				Boolean(realityDest.trim()) &&
+				!isRealityPublicHostCloudKeenDNS &&
+				!realityPublicHostRequired)
 	);
 
 	let canProceedStep = $derived.by(() => {
 		if (stepIndex === 0) return true;
 		if (stepIndex === 1) {
-			if (isTgDirectOnly && grayIPDetected && !draft.confirmDirectBehindNAT) {
+			if ((isTgDirectOnly || isRealityOnly) && grayIPDetected && !draft.confirmDirectBehindNAT) {
 				return false;
 			}
 			return true;
@@ -705,13 +751,10 @@
 			}
 			if (isTgDirectOnly) {
 				if (isDirectHostCloudKeenDNS) return false;
-				const portNum = Number(draft.directPort);
 				return Boolean(
 					draft.directHost.trim() &&
 						effectiveTlsDomain &&
-						Number.isInteger(portNum) &&
-						portNum >= 1024 &&
-						portNum <= 65535
+						isValidMtprotoDirectPort(draft.directPort)
 				);
 			}
 			if (draft.keendnsMode === 'create') {
@@ -741,13 +784,10 @@
 				if (isCloudKeenDNSHost(dHost, keenDNSBaseDomain, keenDNSBaseIsDirect)) {
 					return false;
 				}
-				const portNum = Number(draft.directPort);
 				if (
 					!dHost ||
 					!effectiveTlsDomain ||
-					!Number.isInteger(portNum) ||
-					portNum < 1024 ||
-					portNum > 65535
+					!isValidMtprotoDirectPort(draft.directPort)
 				) {
 					return false;
 				}
@@ -868,6 +908,9 @@
 					buildRealityPayload(),
 					{
 						preserve_existing_clients: draft.existingClientCount > 0,
+						disable_other_service: draft.tgInitiallyEnabled
+							? draft.disableOtherService
+							: false,
 						...egress,
 					}
 				);
@@ -1047,10 +1090,12 @@
 					{checkingFacts}
 					{showRouterFacts}
 					{keendnsInfo}
+					{canReturnToSavedScheme}
 					oncheckreality={() => void checkRealityNetwork()}
 					oncheckfacts={() => void checkRouterFacts()}
 					onswitchtowebbridge={switchToWebBridgeFromCGNAT}
 					onswitchtowebonly={switchToWebBridgeOnly}
+					onswitchtovlessdomain={switchToVlessDomain}
 				/>
 			{:else if stepIndex === 2}
 				<ExtWizardStepAddresses
@@ -1062,7 +1107,11 @@
 					{wantTgWeb}
 					{wantTgDirect}
 					{grayIPDetected}
+					{effectiveDirectHost}
 					{isDirectHostCloudKeenDNS}
+					{isDirectPortInvalid}
+					{isRealityPublicHostCloudKeenDNS}
+					{realityPublicHostRequired}
 					{detectedMtprotoWhiteIP}
 					{keenDNSBaseDomain}
 					{keenDNSBaseIsDirect}
@@ -1085,6 +1134,7 @@
 					onsynckeendns={syncKeenDNSToAddresses}
 					onswitchtowebbridge={switchToWebBridgeFromCGNAT}
 					onswitchtowebonly={switchToWebBridgeOnly}
+					onswitchtovlessdomain={switchToVlessDomain}
 				/>
 			{:else if stepIndex === 3}
 				<ExtWizardStepEgress
@@ -1115,6 +1165,7 @@
 					{wantXray}
 					{wantTg}
 					{wantTgDirect}
+					{effectiveDirectHost}
 					{effectiveTlsDomain}
 					{keendnsAvailable}
 					{previewKeenDNSFqdn}
@@ -1187,6 +1238,10 @@
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(195px, 1fr));
 		gap: 10px;
+	}
+
+	:where(.ext-wizard) :global(.cards-grid.cols-2) {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
 	}
 
 	:where(.ext-wizard) :global(.choice-card) {
@@ -1403,6 +1458,7 @@
 
 	@media (max-width: 640px) {
 		:where(.ext-wizard) :global(.cards-grid),
+		:where(.ext-wizard) :global(.cards-grid.cols-2),
 		:where(.ext-wizard) :global(.form-grid-2),
 		:where(.ext-wizard) :global(.form-grid-3) {
 			grid-template-columns: 1fr;
