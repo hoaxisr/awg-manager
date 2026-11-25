@@ -16,7 +16,6 @@
 	let { editor }: Props = $props();
 
 	const isExpert = $derived($usageLevel === 'expert');
-	const mcpEnabled = $derived(editor.settings.mcpEnabled ?? false);
 	const origin = window.location.origin;
 
 	function toggleAuth(enabled: boolean) {
@@ -56,7 +55,6 @@
 	}
 </script>
 
-<!-- С включённым MCP правая колонка вдвое выше — ключи подписок уходят влево. -->
 <div class="settings-columns">
 	<div class="settings-column">
 		<AccessCard
@@ -66,7 +64,7 @@
 			ontoggleAuth={toggleAuth}
 			onsaveSessionTtl={saveSessionTtl}
 		/>
-		{#if isExpert && mcpEnabled}
+		{#if isExpert}
 			<HappKeysCard saving={editor.saving} />
 		{/if}
 	</div>
@@ -78,11 +76,13 @@
 				saving={editor.saving}
 				ongenerateApiKey={generateApiKey}
 			>
-				<McpSection enabled={mcpEnabled} saving={editor.saving} {origin} ontoggle={toggleMcp} />
+				<McpSection
+					enabled={editor.settings.mcpEnabled ?? false}
+					saving={editor.saving}
+					{origin}
+					ontoggle={toggleMcp}
+				/>
 			</ApiKeysCard>
-			{#if !mcpEnabled}
-				<HappKeysCard saving={editor.saving} />
-			{/if}
 		</div>
 	{/if}
 </div>
