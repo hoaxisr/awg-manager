@@ -51,6 +51,7 @@
 		fircTunnels,
 		fircTunnelsState,
 		reloadFircAll,
+		acquireFircStatusWatch,
 		acquireFircTunnelsStatePoll,
 	} from '$lib/stores/firc';
 	import { singboxRouter } from '$lib/stores/singboxRouter';
@@ -168,6 +169,10 @@
 	$effect(() => {
 		if (!isSectionVisible($usageLevel, 'singboxTunnels')) return;
 		return acquireFircTunnelsStatePoll();
+	});
+	$effect(() => {
+		if (!isSectionVisible($usageLevel, 'singboxTunnels')) return;
+		return acquireFircStatusWatch();
 	});
 
 	let trafficTick = $state(0);
@@ -747,7 +752,7 @@
 			(fircOwnsRouting || Boolean($fircStatus?.running)),
 	);
 	const showFircCreate = $derived(
-		showSingboxTunnelTabs && !$fircForeign && (fircOwnsRouting || Boolean($fircStatus?.running)),
+		showSingboxTunnelTabs && $fircForeign === null && (fircOwnsRouting || Boolean($fircStatus?.running)),
 	);
 	const showSingboxCreate = $derived(
 		showSingboxSections && !(fircOwnsRouting && !$fircForeign && (dashboardShowFirc || !singboxInstalled)),

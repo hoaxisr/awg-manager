@@ -8014,6 +8014,7 @@
 	"firc_foreign_turn_off": "Turn off the FIRC engine",
 	"firc_foreign_left": "The FIRC engine is no longer selected",
 	"firc_foreign_leave_failed": "Failed to switch the engine: {error}",
+	"firc_foreign_restart_required": "FIRC recovery is postponed: at startup the firc files belonged to someone else or their owner was unknown. Restart AWG Manager.",
 	"firc_foreign_open_ui": "Open the firc interface",
 	"firc_foreign_egress": "Unavailable: firc is installed on the router and is managed from its own interface.",
 	"firc_runtime_upgrading": "Updating…",

@@ -508,6 +508,8 @@ export interface FircStatus {
 	recoveryRequired?: boolean;
 	recoveryReason?: string;
 	recoveryMarker?: FircRecoveryMarker | null;
+	/** Восстановление отложено из-за стороннего firc до перезапуска AWG Manager. */
+	restartRequired?: boolean;
 	/** На роутере сторонний firc; остальные поля при нём не заполнены. */
 	foreign?: FircForeign;
 }

@@ -147,7 +147,7 @@
 				type="button"
 				class="preset-tab"
 				class:active={egressMode === 'router'}
-				disabled={$fircForeign !== null}
+				disabled={Boolean($fircForeign)}
 				onclick={() => selectEgressMode('router')}
 			>
 				<div class="preset-name">{EXTERNAL_ACCESS_LABELS.egressFirc}</div>
@@ -222,7 +222,7 @@
 
 	{#snippet actions()}
 		<Button variant="secondary" onclick={() => (open = false)}>{m.common_cancel()}</Button>
-		<Button variant="primary" onclick={saveEgress} disabled={egressSaving || (egressMode === 'router' && $fircForeign !== null)}>
+		<Button variant="primary" onclick={saveEgress} disabled={egressSaving || (egressMode === 'router' && Boolean($fircForeign))}>
 			{egressSaving ? m.common_saving() : m.common_save()}
 		</Button>
 	{/snippet}

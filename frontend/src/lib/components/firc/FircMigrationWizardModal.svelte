@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { get } from 'svelte/store';
   import { api } from '$lib/api/client';
   import type {
@@ -14,7 +14,7 @@
     FircSnapshotMeta,
   } from '$lib/types/firc';
   import { m } from '$lib/i18n';
-  import { fircStatus, reloadFircAll } from '$lib/stores/firc';
+  import { acquireFircStatusWatch, fircForeign, fircStatus, reloadFircAll } from '$lib/stores/firc';
   import { reloadSettings } from '$lib/stores/settings';
   import { singboxRouter } from '$lib/stores/singboxRouter';
   import { singboxStatus, singboxTunnels } from '$lib/stores/singbox';
@@ -31,6 +31,7 @@
     setFircMigrationPopupLocallyDismissed,
     type FircMigrationWizardTab,
   } from '$lib/stores/fircMigrationModal';
+  import { LoadingSpinner } from '$lib/components/layout';
   import { Modal, Button, Tabs } from '$lib/components/ui';
   import type { Tab } from '$lib/components/ui/tabs-model';
   import { notifications } from '$lib/stores/notifications';
@@ -71,7 +72,12 @@
   let fircGroupsCount = $state(0);
   let dontShowAgain = $state(false);
   let installStatus = $state<FircInstallStatus | null>(null);
-  let foreign = $derived(installStatus?.foreign ?? null);
+  // Свежий статус важнее снимка на момент открытия: сторонний firc могли
+  // поставить или снять, пока окно открыто.
+  let foreign = $derived($fircForeign === undefined ? installStatus?.foreign : ($fircForeign ?? undefined));
+  let overviewFailed = $state(false);
+  let overviewLoaded = $state(false);
+  let overviewReady = $derived(overviewLoaded && installStatus !== null);
   let installingRuntime = $state(false);
   let installingSingbox = $state(false);
   let purgingEngine = $state<MigrationEngine | null>(null);
@@ -329,6 +335,9 @@
         api.fircGetInstallStatus().catch(() => null),
       ]);
       if (seq !== overviewReqSeq) return;
+      // Открытие окна прошлый ответ не оставляет; перечитывание посреди работы —
+      // оставляет, чтобы сбой запроса не стёр показанный итог операции.
+      overviewFailed = nextInstallStatus === null && !overviewLoaded;
       if (nextInstallStatus !== null) {
         installStatus = nextInstallStatus;
         if (
@@ -372,11 +381,13 @@
       }
     } catch (e: unknown) {
       if (seq === overviewReqSeq) {
+        overviewFailed = !overviewLoaded;
         notifications.error(errorText(e, m.firc_migration_load_failed()));
       }
     } finally {
       if (seq === overviewReqSeq) {
         loadingOverview = false;
+        overviewLoaded = !overviewFailed;
       }
     }
   }
@@ -410,8 +421,20 @@
       lastExecutionNotice = null;
       snapConfirmRestoreId = null;
       confirmPurgeEngine = null;
+      installStatus = null;
+      overviewFailed = false;
+      overviewLoaded = false;
       void loadFullWizardData(false);
+      return acquireFircStatusWatch();
     }
+  });
+
+  // Сторонний firc ушёл при открытом окне: данных для разделов ещё нет.
+  let wasForeign = false;
+  $effect(() => {
+    const now = Boolean(foreign);
+    if (isOpen && wasForeign && !now) void untrack(() => loadFullWizardData(false));
+    wasForeign = now;
   });
 
   $effect(() => {
@@ -740,6 +763,10 @@
 <Modal open={isOpen} onclose={handleCloseModal} title={m.firc_migration_title()} width="740px">
   {#if foreign}
   <FircForeignNotice {foreign} selected={$fircStatus?.selected ?? activeEngine === 'firc'} bare />
+  {:else if overviewFailed}
+  <p class="wiz-loading" role="alert">{m.firc_migration_load_failed()}</p>
+  {:else if !overviewReady}
+  <div class="wiz-loading"><LoadingSpinner /></div>
   {:else}
   <div class="firc-mig-body">
     <Tabs {tabs} active={activeTab} disabled={isBusy} onchange={(id) => setTab(id as FircMigrationWizardTab)} />
@@ -838,7 +865,7 @@
   {/if}
 
   {#snippet actions()}
-    {#if foreign}
+    {#if foreign || !overviewReady || overviewFailed}
     <Button variant="ghost" size="sm" onclick={closeFircMigrationModal}>{m.common_close()}</Button>
     {:else}
     <div class="wiz-footer">

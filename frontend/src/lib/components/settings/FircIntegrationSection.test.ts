@@ -17,6 +17,11 @@ vi.mock('$lib/api/client', () => ({
 		fircUpdateSettings: updateSettings,
 	},
 }));
+vi.mock('$lib/stores/firc', async () => {
+	const { writable } = await import('svelte/store');
+	return { fircForeign: writable(null), acquireFircStatusWatch: () => () => {}, reloadFircAll: vi.fn() };
+});
+import { fircForeign } from '$lib/stores/firc';
 import FircIntegrationSection from './FircIntegrationSection.svelte';
 import { m } from '$lib/i18n';
 import type { FircInstallStatus } from '$lib/types/firc';
@@ -117,6 +122,18 @@ describe('FIRC runtime settings', () => {
 		expect(screen.getByRole('link', { name: m.firc_foreign_open_ui() })).toBeInTheDocument();
 		expect(screen.queryAllByRole('button')).toHaveLength(0);
 		expect(screen.queryByText(m.firc_runtime_activation_note())).not.toBeInTheDocument();
+	});
+	it('до ответа кнопок нет, смена стороннего перечитывает состояние', async () => {
+		let answer!: (v: FircInstallStatus) => void;
+		status.mockReturnValueOnce(new Promise((r) => (answer = r)));
+		render(FircIntegrationSection);
+		expect(screen.queryAllByRole('button')).toHaveLength(0);
+		answer(base);
+		await screen.findByRole('button', { name: /Установить FIRC|Install FIRC/ });
+		status.mockResolvedValue({ ...base, state: 'foreign', available: false, foreign: { package: 'firc' } });
+		(fircForeign as never as { set(v: unknown): void }).set({ package: 'firc' });
+		expect(await screen.findByText(m.firc_foreign_text())).toBeInTheDocument();
+		(fircForeign as never as { set(v: unknown): void }).set(null);
 	});
 	it('при стороннем firc и выбранном движке FIRC предлагает только уйти с него', async () => {
 		status.mockResolvedValue({ ...base, state: 'foreign', available: false, activeEngine: true, foreign: { package: 'firc' } });

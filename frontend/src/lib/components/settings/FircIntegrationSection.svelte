@@ -3,6 +3,7 @@
 	import { api } from '$lib/api/client';
 	import { onResourceInvalidated } from '$lib/stores/storeRegistry';
 	import { startVisiblePoll } from '$lib/utils/visiblePoll';
+	import { acquireFircStatusWatch, fircForeign } from '$lib/stores/firc';
 	import { m } from '$lib/i18n';
 	import { Button, ConfirmModal, StatusDot } from '$lib/components/ui';
 	import FircForeignNotice from '$lib/components/firc/FircForeignNotice.svelte';
@@ -111,7 +112,14 @@
 		// Состояние рантайма — по подсказке firc (установка/удаление запущены,
 		// смена движка, демон упал или поднялся).
 		const unsub = onResourceInvalidated('firc', () => void refresh());
-		return () => { alive = false; unsub(); };
+		// Сторонний firc ставят и снимают мимо панели — подсказки об этом нет.
+		const releaseWatch = acquireFircStatusWatch();
+		let known = false;
+		const unsubForeign = fircForeign.subscribe((f) => {
+			if (known) void refresh();
+			known = f !== undefined;
+		});
+		return () => { alive = false; unsub(); unsubForeign(); releaseWatch(); };
 	});
 	// Ход установки/обновления/удаления — короткий опрос только пока операция
 	// идёт (status.busy); с её концом опрос снимается сам.
@@ -170,6 +178,7 @@
 					</span>
 				{/if}
 			</div>
+			{#if status}
 			<div class="firc-actions-row">
 				{#if updateAvailable}
 					<Button size="sm" onclick={() => (confirmUpgrade = true)} disabled={upgradeDisabled}>
@@ -184,6 +193,7 @@
 					<Button size="sm" variant="outline-danger" onclick={() => (confirmRemoval = true)} disabled={removeDisabled}>{m.firc_runtime_remove()}</Button>
 				{/if}
 			</div>
+			{/if}
 		</div>
 		{#if status?.busy}
 			<div class="setting-row"><progress class="firc-progress" max="1" value={status.progress ?? 0} aria-label={stateLabel}></progress></div>

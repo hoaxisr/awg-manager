@@ -8408,6 +8408,7 @@
 	"firc_foreign_turn_off": "Отключить движок FIRC",
 	"firc_foreign_left": "Движок FIRC больше не выбран",
 	"firc_foreign_leave_failed": "Не удалось сменить движок: {error}",
+	"firc_foreign_restart_required": "Восстановление FIRC отложено: на старте файлы firc были чужими или их владелец был неизвестен. Перезапустите AWG Manager.",
 	"firc_foreign_open_ui": "Открыть интерфейс firc",
 	"firc_foreign_egress": "Недоступно: на роутере установлен firc, он управляется своим интерфейсом.",
 	"firc_runtime_upgrading": "Обновляется…",

@@ -4,7 +4,8 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
-	import { fircForeign, fircStatus, fircGroups, fircTunnels, fircTunnelsState, reloadFircAll } from '$lib/stores/firc';
+	import { acquireFircStatusWatch, fircForeign, fircStatus, fircGroups, fircTunnels, fircTunnelsState, reloadFircAll } from '$lib/stores/firc';
+	import { LoadingSpinner } from '$lib/components/layout';
 	import { Button, IconButton, StatusDot, Badge, SideDrawer, ConfirmModal } from '$lib/components/ui';
 	import StatStrip, { type StatCellData } from '$lib/components/sb-router/StatStrip.svelte';
 	import FircForeignNotice from '$lib/components/firc/FircForeignNotice.svelte';
@@ -32,6 +33,7 @@
 		void reloadFircAll().catch((e) => {
 			notifications.error(m.firc_router_load_failed({ error: (e as Error).message }));
 		});
+		return acquireFircStatusWatch();
 	});
 
 	async function handleSelectFircEngine() {
@@ -157,7 +159,9 @@
 	]);
 </script>
 
-{#if $fircForeign}
+{#if $fircForeign === undefined}
+<LoadingSpinner />
+{:else if $fircForeign}
 <FircForeignNotice foreign={$fircForeign} selected={$fircStatus?.selected} />
 {:else}
 <div class="sb-shell">
@@ -218,7 +222,9 @@
 
 	<StatStrip cells={statCells} />
 
-	{#if $fircStatus?.recoveryRequired}
+	{#if $fircStatus?.restartRequired}
+		<div class="firc-error-banner" role="alert">{m.firc_foreign_restart_required()}</div>
+	{:else if $fircStatus?.recoveryRequired}
 		<div class="firc-recovery-banner" role="alert">
 			<div class="recovery-content">
 				<div class="recovery-title">

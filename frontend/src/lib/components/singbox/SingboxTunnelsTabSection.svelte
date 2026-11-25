@@ -177,7 +177,7 @@
 	{:else if singboxTunnelsList.length > 0 || (dashboardOn && dashboardSingboxTunnels.length > 0)}
 		{#if fircOwnsRouting && !dashboardOn && $fircForeign}
 			<FircForeignNotice foreign={$fircForeign} selected />
-		{:else if fircOwnsRouting && !dashboardOn}
+		{:else if fircOwnsRouting && !dashboardOn && $fircForeign === null}
 			<div class="sbx-saved-banner">
 				<span class="sbx-saved-banner-text">{m.singbox_saved_banner()}</span>
 				<Button variant="secondary" size="sm" onclick={() => openFircMigrationModal('reverse')}>
