@@ -179,12 +179,12 @@ type SingboxController interface {
 	// and until when auto-restart is suppressed (zero = not suppressed).
 	CrashStats() (recentCrashes int, lastCrashReason string, restartSuppressedUntil time.Time)
 	// TunExternalConfig: want — писать ли `external_configuration` (бинарь
-	// пиннутый и знает ключ); known=false — версия бинаря пока не определена.
+	// знает ключ); known=false — версия бинаря пока не определена.
 	TunExternalConfig() (want, known bool)
 }
 
 // tunExternalConfig — писать ли `external_configuration` в tun-инбаунд:
-// ключ знает только пиннутый бинарь, чужой отверг бы весь конфиг. Неизвестная
+// ключ знает форк с awgm.28, чужой бинарь отверг бы весь конфиг. Неизвестная
 // версия даёт false — годится для включения режима (старого инстанса tun ещё
 // нет), но не для heal: см. healTunSettings.
 func (s *ServiceImpl) tunExternalWant() bool {
