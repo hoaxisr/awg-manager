@@ -221,13 +221,13 @@ func TestXHTTPServer_DoSHardeningLimitsAnd413(t *testing.T) {
 	}
 }
 
-func TestXHTTPServer_BoundedPreAuthContractAndAutoExpiry(t *testing.T) {
-	clientUUID := "11111111-2222-3333-4444-555555555555"
+func startPreAuthServer(t *testing.T, ttl time.Duration) (*xhttpserver.Server, string) {
+	t.Helper()
 	srv := newCServer(t, xhttpserver.Config{
 		ListenAddr:              testutil.FreeAddr(t),
 		PathPrefix:              "/cdn-bridge",
-		Clients:                 []string{clientUUID},
-		PreAuthSessionTTL:       120 * time.Millisecond,
+		Clients:                 []string{"11111111-2222-3333-4444-555555555555"},
+		PreAuthSessionTTL:       ttl,
 		MaxPreAuthSessions:      8,
 		MaxPreAuthSessionsPerIP: 4,
 		MaxPreAuthBytesPerIP:    16 * 1024,
@@ -240,9 +240,14 @@ func TestXHTTPServer_BoundedPreAuthContractAndAutoExpiry(t *testing.T) {
 	if err := srv.Start(); err != nil {
 		t.Fatalf("srv.Start: %v", err)
 	}
-	defer srv.Stop()
+	t.Cleanup(func() { srv.Stop() })
+	return srv, "http://" + srv.Addr() + "/cdn-bridge"
+}
 
-	baseURL := "http://" + srv.Addr() + "/cdn-bridge"
+// TTL заведомо длиннее теста: границы проверяются на живых сессиях, снятие по
+// сроку — в TestXHTTPServer_PreAuthAutoExpiry.
+func TestXHTTPServer_BoundedPreAuthContract(t *testing.T) {
+	srv, baseURL := startPreAuthServer(t, time.Minute)
 
 	rHigh, err := http.Post(baseURL+"/?sid=preauth_high&page=5", "application/octet-stream", bytes.NewReader([]byte("x")))
 	if err != nil {
@@ -290,27 +295,29 @@ func TestXHTTPServer_BoundedPreAuthContractAndAutoExpiry(t *testing.T) {
 	if rBytesCap.StatusCode != http.StatusTooManyRequests {
 		t.Fatalf("expected 429 when exceeding MaxPreAuthBytesPerIP, got %d", rBytesCap.StatusCode)
 	}
+}
 
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if srv.SessionCount() == 0 && srv.PreAuthSessionCount() == 0 && srv.TotalPreAuthBufferedBytes() == 0 {
-			break
+// Истёкшие сессии снимает сам демон, и место под предел на IP освобождается.
+func TestXHTTPServer_PreAuthAutoExpiry(t *testing.T) {
+	srv, baseURL := startPreAuthServer(t, 120*time.Millisecond)
+	post := func(sid string) {
+		t.Helper()
+		r, err := http.Post(baseURL+"/?sid="+sid+"&page=1", "application/octet-stream", bytes.NewReader([]byte("ok")))
+		if err != nil {
+			t.Fatalf("POST %s: %v", sid, err)
 		}
-		time.Sleep(40 * time.Millisecond)
+		_ = r.Body.Close()
+		if r.StatusCode != http.StatusOK {
+			t.Fatalf("POST %s: expected 200 OK, got %d", sid, r.StatusCode)
+		}
 	}
-	if srv.SessionCount() != 0 || srv.PreAuthSessionCount() != 0 || srv.TotalPreAuthBufferedBytes() != 0 {
-		t.Fatalf("expected automatic C reaper cleanup to zero pre-auth counters, got sessions=%d preAuth=%d preAuthBytes=%d",
-			srv.SessionCount(), srv.PreAuthSessionCount(), srv.TotalPreAuthBufferedBytes())
+	for i := 0; i < 4; i++ {
+		post("preauth_ok_" + strconv.Itoa(i))
 	}
-
-	rAfter, err := http.Post(baseURL+"/?sid=preauth_after_ttl&page=1", "application/octet-stream", bytes.NewReader([]byte("ok")))
-	if err != nil {
-		t.Fatalf("POST after TTL cleanup: %v", err)
-	}
-	_ = rAfter.Body.Close()
-	if rAfter.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200 OK after automatic pre-auth TTL cleanup, got %d", rAfter.StatusCode)
-	}
+	testutil.WaitFor(t, func() bool {
+		return srv.SessionCount() == 0 && srv.PreAuthSessionCount() == 0 && srv.TotalPreAuthBufferedBytes() == 0
+	}, "expected automatic C reaper cleanup to zero pre-auth counters")
+	post("preauth_after_ttl")
 }
 
 func TestXHTTPServer_TrustedProxyAndSpoofedForwardedFor(t *testing.T) {
