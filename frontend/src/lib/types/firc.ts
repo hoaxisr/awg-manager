@@ -522,12 +522,20 @@ export interface FircForeign {
 	webHost?: string;
 }
 
-/** Адрес интерфейса стороннего firc; null — порт неизвестен. */
-export function fircForeignWebUrl(foreign: FircForeign, pageHost: string): string | null {
-	if (!foreign.webPort) return null;
-	const host = foreign.webHost || pageHost;
-	const literal = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
-	return `http://${literal}:${foreign.webPort}/`;
+const FOREIGN_HOST_NAME = /^([A-Za-z0-9-]+\.)*[A-Za-z][A-Za-z0-9-]*$/;
+const FOREIGN_HOST_V4 = /^\d{1,3}(\.\d{1,3}){3}$/;
+const FOREIGN_HOST_V6 = /^[0-9A-Fa-f:]*:[0-9A-Fa-f:.]*$/;
+
+/**
+ * Адрес интерфейса стороннего firc; null — порт неизвестен, адрес не похож на
+ * адрес, либо страница открыта по https (KeenDNS): порт роутера оттуда не виден.
+ */
+export function fircForeignWebUrl(foreign: FircForeign, page: { protocol: string; hostname: string }): string | null {
+	if (!foreign.webPort || page.protocol !== 'http:') return null;
+	const host = (foreign.webHost || page.hostname).replace(/^\[(.*)\]$/, '$1');
+	const v6 = FOREIGN_HOST_V6.test(host);
+	if (!v6 && !FOREIGN_HOST_V4.test(host) && !FOREIGN_HOST_NAME.test(host)) return null;
+	return `http://${v6 ? `[${host}]` : host}:${foreign.webPort}/`;
 }
 
 export type FircInstallState =

@@ -58,8 +58,20 @@ describe('fircForeignWebUrl', () => {
 		[{ webPort: 666 }, 'fd00::1', 'http://[fd00::1]:666/'],
 		[{ webPort: 666 }, '[fd00::1]', 'http://[fd00::1]:666/'],
 		[{ webPort: 666, webHost: '10.0.0.1' }, 'router.lan', 'http://10.0.0.1:666/'],
+		[{ webPort: 666, webHost: 'firc.lan' }, '192.168.1.1', 'http://firc.lan:666/'],
 		[{}, '192.168.1.1', null],
-	])('%o на %s → %s', (foreign, host, want) => {
-		expect(fircForeignWebUrl(foreign, host)).toBe(want);
+	])('%o на %s → %s', (foreign, hostname, want) => {
+		expect(fircForeignWebUrl(foreign, { protocol: 'http:', hostname })).toBe(want);
+	});
+
+	it.each(['evil.example/@192.168.1.1', 'user@host', 'host:80', 'host/x', 'a?b', 'a#b', 'fe80::1%br0', '127.1', '0x7f.1', 'a b', 'javascript:alert(1)'])(
+		'враждебный хост %s — ссылки нет',
+		(webHost) => {
+			expect(fircForeignWebUrl({ webPort: 666, webHost }, { protocol: 'http:', hostname: '192.168.1.1' })).toBeNull();
+		},
+	);
+
+	it('на https-странице (KeenDNS) ссылки нет', () => {
+		expect(fircForeignWebUrl({ webPort: 666 }, { protocol: 'https:', hostname: 'awg.my.keenetic.pro' })).toBeNull();
 	});
 });

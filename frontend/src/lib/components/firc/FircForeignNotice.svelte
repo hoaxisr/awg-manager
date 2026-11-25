@@ -24,7 +24,7 @@
 
 	let { foreign, selected = false, bare = false }: Props = $props();
 
-	const webUrl = $derived(fircForeignWebUrl(foreign, window.location.hostname));
+	const webUrl = $derived(fircForeignWebUrl(foreign, window.location));
 	const singboxAbsent = $derived($singboxStatus.data?.installed === false);
 	let leaving = $state(false);
 
