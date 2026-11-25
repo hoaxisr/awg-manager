@@ -64,9 +64,6 @@
 			ontoggleAuth={toggleAuth}
 			onsaveSessionTtl={saveSessionTtl}
 		/>
-		{#if isExpert}
-			<HappKeysCard saving={editor.saving} />
-		{/if}
 	</div>
 	{#if isExpert}
 		<div class="settings-column">
@@ -83,6 +80,7 @@
 					ontoggle={toggleMcp}
 				/>
 			</ApiKeysCard>
+			<HappKeysCard saving={editor.saving} />
 		</div>
 	{/if}
 </div>
