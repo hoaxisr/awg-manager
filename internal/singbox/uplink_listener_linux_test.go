@@ -5,6 +5,7 @@ package singbox
 import (
 	"context"
 	"errors"
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 	"github.com/hoaxisr/awg-manager/internal/uplink"
 	"net"
 	"os"
@@ -21,12 +22,7 @@ func TestUplinkOwnedSOCKSWaitsForDelayedListener(t *testing.T) {
 		t.Fatal(err)
 	}
 	op := &Operator{proc: &Process{pidPath: path, matchBinaryFn: func(pid int) bool { return pid == os.Getpid() }}}
-	reservation, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := reservation.Addr().(*net.TCPAddr).Port
-	reservation.Close()
+	port := testutil.FreePort(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	result := make(chan error, 1)
@@ -75,12 +71,7 @@ func TestUplinkOwnedSOCKSRejectsForeignListenerAndChangedPID(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("accepted another process's socket: %v", err)
 	}
-	reservation, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	unused := uint16(reservation.Addr().(*net.TCPAddr).Port)
-	reservation.Close()
+	unused := uint16(testutil.FreePort(t))
 	if err = os.WriteFile(path, []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
 		t.Fatal(err)
 	}

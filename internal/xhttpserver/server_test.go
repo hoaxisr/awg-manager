@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 	"github.com/hoaxisr/awg-manager/internal/xhttpserver"
 	"github.com/hoaxisr/awg-manager/internal/xhttpserver/xhttptest"
 )
@@ -980,12 +981,7 @@ func TestXHTTPServer_ExternalVLESSClientBinaryInterop(t *testing.T) {
 	srvHost, srvPortStr, _ := net.SplitHostPort(srv.Addr())
 	srvPort, _ := strconv.Atoi(srvPortStr)
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("alloc port: %v", err)
-	}
-	socksPort := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
+	socksPort := testutil.FreePort(t)
 	socksAddr := fmt.Sprintf("127.0.0.1:%d", socksPort)
 
 	cfgJSON := fmt.Sprintf(`{

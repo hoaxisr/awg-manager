@@ -32,6 +32,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 )
 
 // Self-exec fake awgm-box/sing-box binary hook so Process.matchesBinary (/proc/<pid>/cmdline
@@ -149,17 +150,6 @@ type lifecycleHarness struct {
 	routerFault   *faultyRouterCoord
 	mux           *http.ServeMux
 	closed        bool
-}
-
-func pickFreeTCPPort(t *testing.T) int {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen ephemeral port: %v", err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	_ = ln.Close()
-	return port
 }
 
 func seedLifecycleDiskState(t *testing.T, rootDir string, clashPort int) (dataDir, singboxDir string) {
@@ -450,7 +440,7 @@ func (h *lifecycleHarness) bootstrapRunningSingboxWithActiveRouter(ctx context.C
 
 func TestFircEngineLifecycle_SwitchAndStop_SurvivesWatchdogTicksAndDaemonRestart(t *testing.T) {
 	ctx := context.Background()
-	clashPort := pickFreeTCPPort(t)
+	clashPort := testutil.FreePort(t)
 	dataDir, singboxDir := seedLifecycleDiskState(t, t.TempDir(), clashPort)
 
 	sharedFirc := &atomic.Bool{}
@@ -533,7 +523,7 @@ func TestFircEngineLifecycle_SwitchAndStop_SurvivesWatchdogTicksAndDaemonRestart
 
 func TestFircEngineLifecycle_SwitchStandby_KeepsNonRouterSingboxWhileRouterParked(t *testing.T) {
 	ctx := context.Background()
-	clashPort := pickFreeTCPPort(t)
+	clashPort := testutil.FreePort(t)
 	dataDir, singboxDir := seedLifecycleDiskState(t, t.TempDir(), clashPort)
 
 	sharedFirc := &atomic.Bool{}
@@ -588,7 +578,7 @@ func TestFircEngineLifecycle_SwitchStandby_KeepsNonRouterSingboxWhileRouterParke
 
 func TestFircEngineLifecycle_ReturnToSingbox_And_ManualControlIsolation(t *testing.T) {
 	ctx := context.Background()
-	clashPort := pickFreeTCPPort(t)
+	clashPort := testutil.FreePort(t)
 	dataDir, singboxDir := seedLifecycleDiskState(t, t.TempDir(), clashPort)
 
 	sharedFirc := &atomic.Bool{}
@@ -663,7 +653,7 @@ func TestFircEngineLifecycle_ReturnToSingbox_And_ManualControlIsolation(t *testi
 
 func TestFircEngineLifecycle_BidirectionalRollback_RestoresExactState(t *testing.T) {
 	ctx := context.Background()
-	clashPort := pickFreeTCPPort(t)
+	clashPort := testutil.FreePort(t)
 	dataDir, singboxDir := seedLifecycleDiskState(t, t.TempDir(), clashPort)
 
 	sharedFirc := &atomic.Bool{}
@@ -756,7 +746,7 @@ func TestFircEngineLifecycle_StopEngineSerializesWithInflightColdStart(t *testin
 	runScenario := func(t *testing.T, triggerStop func(ctx context.Context, h *lifecycleHarness)) {
 		t.Helper()
 		ctx := context.Background()
-		clashPort := pickFreeTCPPort(t)
+		clashPort := testutil.FreePort(t)
 		dataDir, singboxDir := seedLifecycleDiskState(t, t.TempDir(), clashPort)
 
 		sharedFirc := &atomic.Bool{}
@@ -831,7 +821,7 @@ func TestFircEngineLifecycle_StopEngineSerializesWithInflightColdStart(t *testin
 
 func TestFircEngineLifecycle_AwgOutboundsReloadDoesNotColdStartStoppedSingbox(t *testing.T) {
 	ctx := context.Background()
-	clashPort := pickFreeTCPPort(t)
+	clashPort := testutil.FreePort(t)
 	dataDir, singboxDir := seedLifecycleDiskState(t, t.TempDir(), clashPort)
 
 	sharedFirc := &atomic.Bool{}
@@ -883,7 +873,7 @@ func TestFircEngineLifecycle_Proxy0AndConfigsPreservedAcrossStopStandbyAndReturn
 	}
 
 	ctx := context.Background()
-	clashPort := pickFreeTCPPort(t)
+	clashPort := testutil.FreePort(t)
 	dataDir, singboxDir := seedLifecycleDiskState(t, t.TempDir(), clashPort)
 
 	// Enable CreateNDMSProxyForSingbox and provide a tunnel referencing Proxy0 (`tun-a`).
@@ -978,7 +968,7 @@ func TestFircEngineLifecycle_Proxy0AndConfigsPreservedAcrossStopStandbyAndReturn
 
 func TestFircSnapshotRestoreRollback_NoRecoveryRequired(t *testing.T) {
 	ctx := context.Background()
-	clashPort := pickFreeTCPPort(t)
+	clashPort := testutil.FreePort(t)
 	dataDir, singboxDir := seedLifecycleDiskState(t, t.TempDir(), clashPort)
 
 	sharedFirc := &atomic.Bool{}
@@ -1078,7 +1068,7 @@ func TestFircSnapshotRestoreRollback_NoRecoveryRequired(t *testing.T) {
 
 func TestFircSnapshotRestoreRollback_SingboxToFircStartFailure_NoRecoveryRequired(t *testing.T) {
 	ctx := context.Background()
-	clashPort := pickFreeTCPPort(t)
+	clashPort := testutil.FreePort(t)
 	dataDir, singboxDir := seedLifecycleDiskState(t, t.TempDir(), clashPort)
 
 	sharedFirc := &atomic.Bool{}
@@ -1194,7 +1184,7 @@ func TestFircSnapshotRestoreRollback_SingboxToFircStartFailure_NoRecoveryRequire
 
 func TestFircSnapshotRestore_SingboxSnapshotWhileFircActive_SkipsFircdSync(t *testing.T) {
 	ctx := context.Background()
-	clashPort := pickFreeTCPPort(t)
+	clashPort := testutil.FreePort(t)
 	dataDir, singboxDir := seedLifecycleDiskState(t, t.TempDir(), clashPort)
 
 	sharedFirc := &atomic.Bool{}

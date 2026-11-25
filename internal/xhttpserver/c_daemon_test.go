@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 )
 
 func TestCDaemon_HelperProcess(t *testing.T) {
@@ -128,17 +130,6 @@ func configureTestCDaemonHelper(t *testing.T, srv *Server, mode string) {
 	srv.cConfPath = filepath.Join(t.TempDir(), "awgm-xhttpd.conf")
 }
 
-func findFreeLocalAddr(t *testing.T) string {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	addr := ln.Addr().String()
-	_ = ln.Close()
-	return addr
-}
-
 func assertPortNotListening(t *testing.T, addr string) {
 	t.Helper()
 	if strings.HasSuffix(addr, ":0") || addr == "" {
@@ -166,7 +157,7 @@ func TestCDaemon_MandatoryCBackendAndNoGoFallbackOnEnvOrMissingBin(t *testing.T)
 			}
 			t.Setenv("AWGM_DISABLE_C_XHTTPD", "")
 
-			addr := findFreeLocalAddr(t)
+			addr := testutil.FreeAddr(t)
 			srv := New(Config{
 				ListenAddr: addr,
 				PathPrefix: "/cdn-bridge",
@@ -190,7 +181,7 @@ func TestCDaemon_MandatoryCBackendAndNoGoFallbackOnEnvOrMissingBin(t *testing.T)
 			t.Setenv("AWGM_ENABLE_C_XHTTPD", "1")
 			t.Setenv("AWGM_DISABLE_C_XHTTPD", disableVal)
 
-			addr := findFreeLocalAddr(t)
+			addr := testutil.FreeAddr(t)
 			srv := New(Config{
 				ListenAddr: addr,
 				PathPrefix: "/cdn-bridge",
@@ -219,7 +210,7 @@ func TestCDaemon_MandatoryCBackendAndNoGoFallbackOnEnvOrMissingBin(t *testing.T)
 		{"directory_path", tmpDir},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			addr := findFreeLocalAddr(t)
+			addr := testutil.FreeAddr(t)
 			srv := New(Config{
 				ListenAddr: addr,
 				BinaryPath: tc.path,
@@ -240,7 +231,7 @@ func TestCDaemon_MandatoryCBackendAndNoGoFallbackOnEnvOrMissingBin(t *testing.T)
 		if err := os.WriteFile(nonExec, []byte("#!/bin/sh\nexit 0\n"), 0o644); err != nil {
 			t.Fatalf("write nonexec: %v", err)
 		}
-		addr := findFreeLocalAddr(t)
+		addr := testutil.FreeAddr(t)
 		srv := New(Config{
 			ListenAddr: addr,
 			BinaryPath: nonExec,
@@ -345,7 +336,7 @@ func TestCDaemon_DeterministicClientOrder(t *testing.T) {
 
 func TestCDaemon_HealthPIDCapabilitiesAndCrashDetection(t *testing.T) {
 	t.Setenv("AWGM_DISABLE_C_XHTTPD", "")
-	addr := findFreeLocalAddr(t)
+	addr := testutil.FreeAddr(t)
 
 	srv := New(Config{
 		ListenAddr: addr,
@@ -409,7 +400,7 @@ func TestCDaemon_RejectEarlyExitForeignPIDAndMissingCapability(t *testing.T) {
 
 	for _, mode := range []string{"exit_early", "wrong_pid", "missing_cap"} {
 		t.Run(mode, func(t *testing.T) {
-			addr := findFreeLocalAddr(t)
+			addr := testutil.FreeAddr(t)
 			srv := New(Config{
 				ListenAddr: addr,
 				PathPrefix: "/cdn-bridge",

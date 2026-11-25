@@ -14,23 +14,13 @@ import (
 	"github.com/9seconds/mtg/v2/mtglib"
 	"github.com/9seconds/mtg/v2/mtglib/obfuscation"
 
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 	mtgctr "github.com/hoaxisr/awg-manager/internal/tgwebproxy/ctr"
 )
 
-func allocateFreePort(t *testing.T) int {
-	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen ephemeral port: %v", err)
-	}
-	port := l.Addr().(*net.TCPAddr).Port
-	_ = l.Close()
-	return port
-}
-
 func TestMtgEngine_StartStopAndSecretMatching(t *testing.T) {
-	directPort := allocateFreePort(t)
-	rawPort := allocateFreePort(t)
+	directPort := testutil.FreePort(t)
+	rawPort := testutil.FreePort(t)
 
 	engine := NewMtgEngine()
 	defer engine.Stop()

@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/singbox/orchestrator"
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 )
 
 // F690: набор с download_detour наша копия качает через служебный вход
@@ -139,9 +139,7 @@ func TestRuleSetGet_ViaFetchInbound(t *testing.T) {
 	}
 
 	// Вход не слушает (sing-box остановлен) — напрямую, как до F690.
-	l, _ := net.Listen("tcp", "127.0.0.1:0")
-	closed := l.Addr().String()
-	l.Close()
+	closed := testutil.FreeAddr(t)
 	if got := body("http://vpn:x@" + closed); got != "direct" {
 		t.Errorf("вход закрыт: %q, ждали прямую загрузку", got)
 	}

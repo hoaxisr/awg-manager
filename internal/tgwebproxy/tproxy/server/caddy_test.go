@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 	"github.com/hoaxisr/awg-manager/internal/tgwebproxy/tproxy/config"
 	"github.com/hoaxisr/awg-manager/internal/tgwebproxy/tproxy/frame"
 )
@@ -306,7 +307,7 @@ func caddyPair(t *testing.T, binary, public, relay string) (string, string, *tls
 		t.Fatal(err)
 	}
 	delete(servers, "srv0")
-	addresses := []string{freeAddress(t), freeAddress(t)}
+	addresses := []string{testutil.FreeAddr(t), testutil.FreeAddr(t)}
 	for i, upstream := range []string{public, relay} {
 		var server map[string]any
 		data := strings.ReplaceAll(string(template), "127.0.0.1:8080", strings.TrimPrefix(upstream, "http://"))
@@ -368,15 +369,4 @@ func caddyPair(t *testing.T, binary, public, relay string) (string, string, *tls
 	roots := x509.NewCertPool()
 	roots.AppendCertsFromPEM(certPEM)
 	return "https://" + addresses[0], "https://" + addresses[1], &tls.Config{RootCAs: roots, ServerName: testHost, MinVersion: tls.VersionTLS12}
-}
-
-func freeAddress(t *testing.T) string {
-	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	address := listener.Addr().String()
-	listener.Close()
-	return address
 }

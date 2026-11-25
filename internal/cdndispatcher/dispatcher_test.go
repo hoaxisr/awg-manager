@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 )
 
 func TestDispatcherRouting(t *testing.T) {
@@ -214,12 +216,7 @@ func TestDispatcherReconfigure(t *testing.T) {
 	defer xray2.Close()
 
 	// Find free ports
-	ln1, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr1 := ln1.Addr().String()
-	ln1.Close()
+	addr1 := testutil.FreeAddr(t)
 
 	d := New(Config{
 		ListenAddr:     addr1,
@@ -261,12 +258,7 @@ func TestDispatcherReconfigure(t *testing.T) {
 	resp.Body.Close()
 
 	// Phase 2: Reconfigure address
-	ln2, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr2 := ln2.Addr().String()
-	ln2.Close()
+	addr2 := testutil.FreeAddr(t)
 
 	err = d.Reconfigure(Config{
 		ListenAddr: addr2,
@@ -345,12 +337,7 @@ func TestApplyConfig_TwoPhaseListenerSwitchAndHostnameClear(t *testing.T) {
 	}))
 	defer backend.Close()
 
-	ln1, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr1 := ln1.Addr().String()
-	_ = ln1.Close()
+	addr1 := testutil.FreeAddr(t)
 
 	d := New(Config{
 		ListenAddr:     addr1,
@@ -374,12 +361,7 @@ func TestApplyConfig_TwoPhaseListenerSwitchAndHostnameClear(t *testing.T) {
 	_ = resp.Body.Close()
 
 	// Prepare addr2
-	ln2, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr2 := ln2.Addr().String()
-	_ = ln2.Close()
+	addr2 := testutil.FreeAddr(t)
 
 	// ApplyConfig (full replacement) with addr2 and empty hostname
 	err = d.ApplyConfig(Config{
@@ -647,12 +629,7 @@ func TestDispatcherHostAwareRouting_SharedHost(t *testing.T) {
 func TestDispatcherCandidateTransactions(t *testing.T) {
 	tempDir := t.TempDir()
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	_ = ln.Close()
+	addr := testutil.FreeAddr(t)
 
 	d := NewWithDataDir(tempDir, Config{
 		ListenAddr:     addr,
