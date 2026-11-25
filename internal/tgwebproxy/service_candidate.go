@@ -449,7 +449,7 @@ func (s *Service) CommitPrepared(txID string) error {
 	}
 
 	s.config = candidate
-	s.syncDirectWANFirewallLocked(candidate)
+	_ = s.syncDirectWANFirewallLocked(candidate)
 
 	// 3. Mark manifest active
 	manifest.State = "active"
@@ -581,7 +581,7 @@ func (s *Service) rollbackLocked(txID string, manifest *SnapshotManifest) error 
 	}
 
 	s.config = manifest.OldConfig
-	s.syncDirectWANFirewallLocked(manifest.OldConfig)
+	_ = s.syncDirectWANFirewallLocked(manifest.OldConfig)
 
 	if len(rollbackErrs) > 0 {
 		return errors.Join(rollbackErrs...)

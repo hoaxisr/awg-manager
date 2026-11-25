@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -44,7 +45,9 @@ type Service struct {
 	mux                  *Mux
 	legacyTimer          *time.Timer
 	onReload             func()
-	directWANFirewall    func(port int, enabled bool)
+	directWANFirewall    func(port int, enabled bool) error
+	directWANError       string
+	appLog               *logging.ScopedLogger
 	egressValidator      EgressValidator
 	tproxyValidator      TproxyValidator
 	runtimeDCProbe       func(device string) bool
@@ -691,32 +694,48 @@ func (s *Service) applyConfigLocked(newCfg Config) error {
 	}
 
 	s.config = newCfg
-	s.syncDirectWANFirewallLocked(newCfg)
+	_ = s.syncDirectWANFirewallLocked(newCfg)
 	s.scheduleLegacyExpiryLocked()
 	go tuneRuntimeNetworkUpstreams(newCfg.EnabledUpstreams())
 	go s.checkUpstreamHealth()
 	return nil
 }
 
+// SetAppLogger подключает журнал приложения.
+func (s *Service) SetAppLogger(appLogger logging.AppLogger) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.appLog = logging.NewScopedLogger(appLogger, logging.GroupServer, logging.SubFirewall)
+}
+
 // SyncDirectWANFirewall reconciles Keenetic's WAN firewall rule with the current config under s.mu.
-func (s *Service) SyncDirectWANFirewall() {
+func (s *Service) SyncDirectWANFirewall() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.recoveryRequired {
-		return
+		return nil
 	}
-	s.syncDirectWANFirewallLocked(s.config)
+	return s.syncDirectWANFirewallLocked(s.config)
 }
 
-func (s *Service) syncDirectWANFirewallLocked(cfg Config) {
+// syncDirectWANFirewallLocked приводит правило WAN к cfg. Ошибка уходит в
+// журнал и в статус (DirectWANError); вызывающие внутри пакета её не
+// возвращают — сбой файрвола не должен откатывать уже применённую конфигурацию.
+func (s *Service) syncDirectWANFirewallLocked(cfg Config) error {
 	if s.directWANFirewall == nil {
-		return
+		return nil
 	}
+	port := 0
 	if cfg.IsDirectEnabled() {
-		s.directWANFirewall(cfg.effectiveDirectPort(), true)
-		return
+		port = cfg.effectiveDirectPort()
 	}
-	s.directWANFirewall(0, false)
+	err := s.directWANFirewall(port, port > 0)
+	s.directWANError = ""
+	if err != nil {
+		s.directWANError = err.Error()
+		s.appLog.Warn("wan-firewall", "telegram-mtproto", err.Error())
+	}
+	return err
 }
 
 func hasTproxyFileChanges(tproxyDir string, files []FilePayload) bool {
@@ -1469,7 +1488,7 @@ func (s *Service) FactoryReset(ctx context.Context) error {
 	}
 
 	s.config = defCfg
-	s.syncDirectWANFirewallLocked(defCfg)
+	_ = s.syncDirectWANFirewallLocked(defCfg)
 	s.recoveryRequired = false
 	s.lastStartupError = ""
 
@@ -1502,7 +1521,7 @@ func (s *Service) Restart() error {
 	if err := s.workers.ApplyWorkers(s.config); err != nil {
 		return err
 	}
-	s.syncDirectWANFirewallLocked(s.config)
+	_ = s.syncDirectWANFirewallLocked(s.config)
 	s.notifyReload()
 	return nil
 }
@@ -1517,7 +1536,7 @@ func (s *Service) StartConfigured() error {
 	}
 
 	if !s.config.Enabled {
-		s.syncDirectWANFirewallLocked(s.config)
+		_ = s.syncDirectWANFirewallLocked(s.config)
 		return nil
 	}
 
@@ -1557,14 +1576,14 @@ func (s *Service) StartConfigured() error {
 	if err := s.workers.ApplyWorkers(s.config); err != nil {
 		runtimeStopCfg := s.config
 		runtimeStopCfg.Enabled = false
-		s.syncDirectWANFirewallLocked(runtimeStopCfg)
+		_ = s.syncDirectWANFirewallLocked(runtimeStopCfg)
 		return err
 	}
 	if err := s.workers.CheckReadiness(s.config); err != nil {
 		runtimeStopCfg := s.config
 		runtimeStopCfg.Enabled = false
 		stopErr := s.workers.ApplyWorkers(runtimeStopCfg)
-		s.syncDirectWANFirewallLocked(runtimeStopCfg)
+		_ = s.syncDirectWANFirewallLocked(runtimeStopCfg)
 		if stopErr != nil {
 			return errors.Join(err, fmt.Errorf("rollback tg workers after readiness failure: %w", stopErr))
 		}
@@ -1573,7 +1592,7 @@ func (s *Service) StartConfigured() error {
 	if s.config.IsWebEnabled() && s.mux != nil {
 		_ = s.mux.StartWithSecrets(s.config.ListenPort, s.config.GetEndpoints(), s.config.ActiveSecrets())
 	}
-	s.syncDirectWANFirewallLocked(s.config)
+	_ = s.syncDirectWANFirewallLocked(s.config)
 	go tuneRuntimeNetworkUpstreams(s.config.EnabledUpstreams())
 	return nil
 }
@@ -2009,6 +2028,7 @@ func (s *Service) GetStatus() Status {
 	workers := s.workers
 	recovery := s.recoveryRequired
 	startupErr := s.lastStartupError
+	directWANErr := s.directWANError
 	s.mu.Unlock()
 
 	var directOnline, rawOnline, webProxyOnline bool
@@ -2075,6 +2095,7 @@ func (s *Service) GetStatus() Status {
 		LegacyExpiredPendingReconcile: legacyExpiredPending,
 		RecoveryRequired:              recovery,
 		LastStartupError:              startupErr,
+		DirectWANError:                directWANErr,
 		WebProxies:                    buildStatusWebProxyLinks(cfg),
 		Users:                         cfg.GetPublicUsers(),
 	}

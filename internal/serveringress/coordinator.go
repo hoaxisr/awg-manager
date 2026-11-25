@@ -1371,8 +1371,8 @@ func (c *Coordinator) syncWANIngressFirewall() {
 	if needed, _ := c.IsRecoveryRequired(); needed {
 		return
 	}
-	if syncer, ok := c.tgSvc.(interface{ SyncDirectWANFirewall() }); ok {
-		syncer.SyncDirectWANFirewall()
+	if syncer, ok := c.tgSvc.(interface{ SyncDirectWANFirewall() error }); ok {
+		_ = syncer.SyncDirectWANFirewall() // ошибку пишет в журнал и статус сам сервис
 	}
 }
 

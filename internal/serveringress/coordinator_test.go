@@ -1647,8 +1647,9 @@ type mockTgWithFWSync struct {
 	syncCalls int
 }
 
-func (m *mockTgWithFWSync) SyncDirectWANFirewall() {
+func (m *mockTgWithFWSync) SyncDirectWANFirewall() error {
 	m.syncCalls++
+	return nil
 }
 
 func TestExecuteIngressTransaction_DirectFakeTLS_TopologiesAndRoutes(t *testing.T) {

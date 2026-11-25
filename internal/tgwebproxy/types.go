@@ -725,6 +725,7 @@ type Status struct {
 	LegacyExpiredPendingReconcile bool                 `json:"legacy_expired_pending_reconcile"`
 	RecoveryRequired              bool                 `json:"recovery_required"`
 	LastStartupError              string               `json:"last_startup_error,omitempty"`
+	DirectWANError                string               `json:"direct_wan_error,omitempty"` // сбой правила WAN-файрвола прямого порта
 	WebProxies                    []WebProxyStatusLink `json:"web_proxies,omitempty"`
 	Users                         []TelegramUser       `json:"users,omitempty"`
 }

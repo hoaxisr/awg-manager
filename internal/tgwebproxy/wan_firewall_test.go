@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/hoaxisr/awg-manager/internal/logging"
 )
 
 func stubDirectWANSeams(t *testing.T, netfilterDir, hookPath string, execFn func(env []string, name string, args ...string) ([]byte, error)) {
@@ -218,8 +220,9 @@ func TestService_DirectWANFirewallLifecycle(t *testing.T) {
 		enabled bool
 	}
 	var calls []fwCall
-	svc.directWANFirewall = func(port int, enabled bool) {
+	svc.directWANFirewall = func(port int, enabled bool) error {
 		calls = append(calls, fwCall{port: port, enabled: enabled})
+		return nil
 	}
 
 	// Start in default ScenarioDual (port 8443) -> opens 8443
@@ -588,5 +591,96 @@ func TestDirectPortValidation_ReservedWebUIAndLifecycleFixes(t *testing.T) {
 	}
 	if links := buildStatusWebProxyLinks(directWithEndpoint); len(links) != 0 {
 		t.Fatalf("expected buildStatusWebProxyLinks to return no web links for direct_fake_tls, got %+v", links)
+	}
+}
+
+// Мутация: вернуть nil вместо ошибки в любой из веток → красный.
+func TestSyncDirectWANFirewall_ReturnsErrors(t *testing.T) {
+	nfDir := filepath.Join(t.TempDir(), "netfilter.d")
+	hookPath := filepath.Join(nfDir, "68-awgm-tg-mtproto-wan.sh")
+	if err := os.MkdirAll(nfDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	const rule = "-A INPUT -p tcp -m tcp --dport 8443 -m comment --comment AWGM_TG_MTPROTO_WAN -j ACCEPT\n"
+	var failOn string
+	stubDirectWANSeams(t, nfDir, hookPath, func(_ []string, name string, args ...string) ([]byte, error) {
+		call := name + " " + strings.Join(args, " ")
+		if failOn != "" && strings.Contains(call, failOn) {
+			return []byte("вывод утилиты"), errors.New("boom")
+		}
+		if strings.Contains(call, "-S INPUT") {
+			return []byte(rule), nil
+		}
+		if strings.Contains(call, "-S _NDM_IP_PUBLIC") {
+			return []byte("iptables: No chain/target/match by that name.\n"), errors.New("exit status 1")
+		}
+		return nil, nil
+	})
+
+	if err := SyncDirectWANFirewall(8443, true); err != nil {
+		t.Fatalf("отсутствие _NDM_IP_PUBLIC — не ошибка: %v", err)
+	}
+	for _, tc := range []struct {
+		failOn  string
+		port    int
+		enabled bool
+	}{
+		{"-S INPUT", 8443, true},
+		{"-S INPUT", 0, false},
+		{"-D INPUT", 9443, true},
+		{"-D INPUT", 0, false},
+		{"/bin/sh", 8443, true},
+	} {
+		failOn = tc.failOn
+		err := SyncDirectWANFirewall(tc.port, tc.enabled)
+		if err == nil || !strings.Contains(err.Error(), "вывод утилиты") {
+			t.Fatalf("%+v: ждали ошибку с выводом утилиты, получили %v", tc, err)
+		}
+	}
+	failOn = ""
+	if err := SyncDirectWANFirewall(443, true); !errors.Is(err, ErrInvalidDirectPort) {
+		t.Fatalf("недопустимый порт: %v", err)
+	}
+	// Хук — каталог с содержимым: ни записать, ни снять.
+	if err := os.MkdirAll(filepath.Join(hookPath, "x"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, enabled := range []bool{true, false} {
+		if err := SyncDirectWANFirewall(8443, enabled); err == nil {
+			t.Fatalf("enabled=%v: сбой с файлом хука потерян", enabled)
+		}
+	}
+}
+
+type appLogSpy struct{ lines []string }
+
+func (l *appLogSpy) AppLog(level logging.Level, group, subgroup, action, target, message string) {
+	l.lines = append(l.lines, string(level)+" "+group+"/"+subgroup+" "+action+" "+target+" "+message)
+}
+
+// Мутации: не писать в журнал / не класть в статус / не снимать прошлую ошибку /
+// вернуть ошибку файрвола из Start → красный.
+func TestService_DirectWANFirewallErrorVisible(t *testing.T) {
+	svc, _, _ := setupTestService(t)
+	spy := &appLogSpy{}
+	svc.SetAppLogger(spy)
+	fwErr := errors.New("xtables lock")
+	svc.directWANFirewall = func(int, bool) error { return fwErr }
+
+	if err := svc.Start(); err != nil {
+		t.Fatalf("сбой файрвола не должен валить Start: %v", err)
+	}
+	if got := svc.GetStatus().DirectWANError; got != "xtables lock" {
+		t.Fatalf("статус: %q", got)
+	}
+	if len(spy.lines) != 1 || !strings.Contains(spy.lines[0], "server/firewall wan-firewall") || !strings.Contains(spy.lines[0], "xtables lock") {
+		t.Fatalf("журнал: %q", spy.lines)
+	}
+	if err := svc.SyncDirectWANFirewall(); !errors.Is(err, fwErr) {
+		t.Fatalf("SyncDirectWANFirewall: %v", err)
+	}
+	fwErr = nil
+	if err := svc.SyncDirectWANFirewall(); err != nil || svc.GetStatus().DirectWANError != "" {
+		t.Fatalf("после успеха ошибка осталась: %v / %q", err, svc.GetStatus().DirectWANError)
 	}
 }

@@ -102,6 +102,7 @@ func (a *app) setupServer() {
 		a.vlessServerService.SetOrchestrator(a.sbOrch)
 	}
 	a.tgWebProxyService = tgwebproxy.New(a.dataDir, onReload)
+	a.tgWebProxyService.SetAppLogger(a.loggingService)
 
 	// Cross-Component Ingress Coordinator and Crash Recovery
 	a.ingressCoordinator = serveringress.New(a.dataDir, a.vlessServerService, a.cdnDispatcher, a.tgWebProxyService)

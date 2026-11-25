@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -86,46 +85,50 @@ func ValidateDirectPortTransition(old, next Config) error {
 // AWGM_TG_MTPROTO_WAN comment and are persisted via an NDM netfilter.d hook so
 // they survive firewall rebuilds without colliding with other AWGM services.
 // Outside Keenetic (when the netfilter.d directory is absent), it is a no-op.
-func SyncDirectWANFirewall(port int, enabled bool) {
+func SyncDirectWANFirewall(port int, enabled bool) error {
 	directWANFirewallMu.Lock()
 	defer directWANFirewallMu.Unlock()
 
 	if _, err := os.Stat(directWANNetfilterDir); err != nil {
-		return
+		return nil
 	}
 
+	var errs []error
 	if enabled {
 		if err := ValidateDirectPort(port); err != nil {
-			log.Printf("tgwebproxy: wan firewall: refusing unsafe port %d: %v", port, err)
+			errs = append(errs, fmt.Errorf("порт на WAN не открыт: %w", err))
 			enabled = false
 		}
 	}
 
 	if !enabled {
 		if err := os.Remove(directWANHookPath); err != nil && !os.IsNotExist(err) {
-			log.Printf("tgwebproxy: wan firewall: remove hook %s failed: %v", directWANHookPath, err)
+			errs = append(errs, fmt.Errorf("снять хук: %w", err))
 		}
-		cleanupDirectWANRules(0)
-		return
+		errs = append(errs, cleanupDirectWANRules(0))
+		return errors.Join(errs...)
 	}
 
-	cleanupDirectWANRules(port)
+	errs = append(errs, cleanupDirectWANRules(port))
 
 	desiredHook := renderDirectWANHook(port)
 	if hookNeedsRewrite(directWANHookPath, desiredHook) {
 		if err := writeHookAtomically(directWANHookPath, desiredHook); err != nil {
-			log.Printf("tgwebproxy: wan firewall: write hook %s failed: %v", directWANHookPath, err)
-			return
+			errs = append(errs, fmt.Errorf("записать хук: %w", err))
+			return errors.Join(errs...)
 		}
 	}
 	if out, err := directWANExecOutput(directWANHookEnv(), "/bin/sh", directWANHookPath); err != nil {
-		msg := strings.TrimSpace(string(out))
-		if msg != "" {
-			log.Printf("tgwebproxy: wan firewall: exec hook %s failed: %v (%s)", directWANHookPath, err, msg)
-		} else {
-			log.Printf("tgwebproxy: wan firewall: exec hook %s failed: %v", directWANHookPath, err)
-		}
+		errs = append(errs, fmt.Errorf("применить правило tcp/%d: %w", port, withOutput(err, out)))
 	}
+	return errors.Join(errs...)
+}
+
+func withOutput(err error, out []byte) error {
+	if msg := strings.TrimSpace(string(out)); msg != "" {
+		return fmt.Errorf("%w (%s)", err, msg)
+	}
+	return err
 }
 
 func directWANHookEnv() []string {
@@ -363,7 +366,8 @@ exit 0
 `, port, directWANRuleLabel)
 }
 
-func cleanupDirectWANRules(keepPort int) {
+func cleanupDirectWANRules(keepPort int) error {
+	var errs []error
 	ipt := directWANIptablesBin()
 	keepFlag := ""
 	if keepPort > 0 {
@@ -373,6 +377,9 @@ func cleanupDirectWANRules(keepPort int) {
 	for _, chain := range []string{"INPUT", "_NDM_IP_PUBLIC"} {
 		out, err := runDirectWANIptables(ipt, "-S", chain)
 		if err != nil {
+			if !isIptablesNoSuchChain(out, err) {
+				errs = append(errs, fmt.Errorf("прочитать цепочку %s: %w", chain, withOutput(err, out)))
+			}
 			continue
 		}
 		for _, line := range strings.Split(string(out), "\n") {
@@ -394,7 +401,10 @@ func cleanupDirectWANRules(keepPort int) {
 				fields[i] = strings.Trim(fields[i], "\"")
 			}
 			args := append([]string{"-D"}, fields[1:]...)
-			_, _ = runDirectWANIptables(ipt, args...)
+			if out, err := runDirectWANIptables(ipt, args...); err != nil {
+				errs = append(errs, fmt.Errorf("снять правило из %s: %w", chain, withOutput(err, out)))
+			}
 		}
 	}
+	return errors.Join(errs...)
 }
