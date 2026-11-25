@@ -30,15 +30,12 @@ func (s *ServiceImpl) buildTproxySpec(
 	var lanBridges []LANBridgeDNSRedir
 	var ingress []string
 	if policyMode {
-		// Discover LAN bridges that NDMS knows how to REDIRECT DNS for
-		// (i.e. has _NDM_HOTSPOT_DNSREDIR rules on). DNS-NOPOLICY rules
-		// re-mark mark=0 DNS up to one of those marks so the existing
-		// REDIRECT picks it up and forwards to the per-policy ndnproxy.
-		// We pass our policy mark so the picker avoids it — re-marking
-		// default DNS up to the sing-box mark would route it via Policy1's
-		// (permit-less) table and DNS would never resolve. Empty result =
-		// no qualifying bridges = skip the DNS-NOPOLICY logic entirely.
-		lanBridges, _ = discoverLANBridges(ctx, mark)
+		// DNS-RESCUE — для ядра, чей ответный сокет отбирает :53 у ndnproxy
+		// (F910). Метку политики передаём, чтобы выбор порта её обошёл: у неё
+		// нет выхода, и DNS через её ndnproxy не разрешился бы.
+		if s.needDNSRescue() {
+			lanBridges, _ = discoverLANBridges(ctx, mark)
+		}
 		ingress = s.resolveIngressInterfaces(ctx, sr.IngressInterfaces)
 	}
 	bypassUDP, bypassTCP, _ := resolveBypassPorts(sr.BypassPresets, sr.BypassExtraPorts)
@@ -59,6 +56,11 @@ func (s *ServiceImpl) buildTproxySpec(
 		QoSClasses:        qosSpecs,
 		V4Off:             !familyHasV4(sr.InterceptFamily),
 	}
+}
+
+// needDNSRescue — нужен ли DNS-RESCUE запущенному ядру. Ядро неизвестно — нужен.
+func (s *ServiceImpl) needDNSRescue() bool {
+	return s.deps.Singbox == nil || !s.deps.Singbox.ReplySocketIsolated()
 }
 
 // buildPolicyTunSpec — режим policy-tun: netfilter нужен ТОЛЬКО под

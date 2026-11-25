@@ -15,8 +15,8 @@ import (
 // LANBridgeDNSRedir pairs a Linux bridge with the ndnproxy port we
 // short-circuit its mark=0 DNS into, bypassing NDMS's _NDM_DNS_FLT_REDIR
 // catch-all REDIRECT that would otherwise hand the packet to whatever is
-// bound to port 53 (which, with sing-box's hijack-dns side-effect, ends
-// up being a transparent listener that silently drops non-TPROXY'd DNS).
+// bound to port 53 — до awgm-box 44 это ответный сокет tproxy-инбаунда на
+// <LAN-IP>:53, который запросов не читает (F910).
 type LANBridgeDNSRedir struct {
 	Bridge string // kernel bridge name, e.g. "br0"
 	Port   int    // ndnproxy port, e.g. 41100

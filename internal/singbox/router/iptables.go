@@ -49,9 +49,9 @@ const (
 	BlackholeChain = "AWGM-BLACKHOLE"
 	// DNSRescueTag identifies our short-circuit REDIRECT rules in nat
 	// PREROUTING that bypass NDMS's _NDM_DNS_FLT_REDIR catch-all
-	// (which would unconditionally REDIRECT DNS to :53, where
-	// sing-box's hijack-dns transparent listener catches it and
-	// silently drops). The rules are inserted at PREROUTING position 1
+	// (which would unconditionally REDIRECT DNS to :53, where до
+	// awgm-box 44 его отбирал ответный сокет tproxy-инбаунда — F910;
+	// для новых ядер правила не ставятся). The rules are inserted at PREROUTING position 1
 	// per LAN bridge and target the per-policy ndnproxy port
 	// discovered from _NDM_HOTSPOT_DNSREDIR (see lanbridges.go).
 	// Issue #132.

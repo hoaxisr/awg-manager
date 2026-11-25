@@ -975,3 +975,68 @@ func TestBuildTproxySpec_AllDevicesSkipsPolicyOnlyDiscovery(t *testing.T) {
 		t.Errorf("DNS-RESCUE не применим при MatchAll: мостов=%d, want 0", len(all.LANBridges))
 	}
 }
+
+// F910: ядру с отдельным ответным сокетом DNS-RESCUE не нужен, а с ним DNS
+// устройств вне политики уходил в ndnproxy чужой политики. Условие касается
+// только RESCUE: остальная часть спека прежняя.
+func TestBuildTproxySpec_IsolatedReplySkipsRescue(t *testing.T) {
+	sb := newTestSingbox(t)
+	svc := newReconcileInstalledService(t, sb)
+	discovered := 0
+	stubLANBridges(t, func(context.Context, string) ([]LANBridgeDNSRedir, error) {
+		discovered++
+		return []LANBridgeDNSRedir{{Bridge: "br0", Port: 41100}}, nil
+	})
+	build := func() RestoreInputSpec {
+		discovered = 0
+		return svc.buildTproxySpec(context.Background(), reconcileInstalledSettings, "0xffffaaa", true, nil, nil)
+	}
+
+	old := build()
+	if len(old.LANBridges) != 1 {
+		t.Fatalf("прежнее ядро: мостов=%d, want 1", len(old.LANBridges))
+	}
+	sb.replyIsolated = true
+	isolated := build()
+	if len(isolated.LANBridges) != 0 || discovered != 0 {
+		t.Errorf("новое ядро: мостов=%d, запросов=%d, want 0 и 0", len(isolated.LANBridges), discovered)
+	}
+	old.LANBridges = nil
+	if !equalInstalledSpec(&old, &isolated) {
+		t.Error("условие изменило не только DNS-RESCUE")
+	}
+	svc.deps.Singbox = nil
+	if got := build(); len(got.LANBridges) != 1 {
+		t.Errorf("ядро неизвестно: мостов=%d, want 1", len(got.LANBridges))
+	}
+}
+
+// Панель и ядро обновляются порознь: правила обязаны сниматься и возвращаться
+// сверкой, без рестарта демона.
+func TestReconcileInstalled_RescueFollowsCore(t *testing.T) {
+	sb := newReadyTestSingbox(t)
+	svc := newReconcileInstalledService(t, sb)
+	stubLANBridges(t, func(context.Context, string) ([]LANBridgeDNSRedir, error) {
+		return []LANBridgeDNSRedir{{Bridge: "br0", Port: 41100}}, nil
+	})
+	var restores []string
+	svc.deps.IPTables = newStubIPTables(func(_ context.Context, in string) error { restores = append(restores, in); return nil })
+	tick := func(isolated bool, wantRestores int) {
+		t.Helper()
+		sb.replyIsolated = isolated
+		if err := svc.reconcileInstalled(context.Background(), reconcileInstalledSettings); err != nil {
+			t.Fatal(err)
+		}
+		if len(restores) != wantRestores {
+			t.Fatalf("установок %d, want %d", len(restores), wantRestores)
+		}
+		if got := strings.Contains(restores[len(restores)-1], DNSRescueTag); got == isolated {
+			t.Fatalf("изолирован=%v, DNS-RESCUE в правилах=%v", isolated, got)
+		}
+	}
+	tick(false, 1)
+	tick(false, 1)
+	tick(true, 2) // ядро обновили
+	tick(true, 2)
+	tick(false, 3) // откатили
+}
