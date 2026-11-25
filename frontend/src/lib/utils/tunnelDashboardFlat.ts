@@ -175,3 +175,20 @@ export function shouldShowDashboardSingboxBanner(input: DashboardSingboxBannerIn
 	}
 	return true;
 }
+
+/**
+ * Вкладки sing-box «Туннели» и «Подписки»: без установленного sing-box они
+ * бесполезны, кроме случая, когда там уже лежат сохранённые записи. Пока
+ * статус или список грузятся — показываем, чтобы вкладка не мигала.
+ */
+export function shouldShowSingboxListTab(input: {
+	showSingboxTabs: boolean;
+	singboxInstalledOrLoading: boolean;
+	listLoading: boolean;
+	savedCount: number;
+}): boolean {
+	return (
+		input.showSingboxTabs &&
+		(input.singboxInstalledOrLoading || input.listLoading || input.savedCount > 0)
+	);
+}

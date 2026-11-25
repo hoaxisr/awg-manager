@@ -125,6 +125,7 @@
 	import {
 		buildFlatDashboardItems,
 		shouldShowDashboardSingboxBanner,
+		shouldShowSingboxListTab,
 		type TunnelDashboardFlatItem,
 	} from '$lib/utils/tunnelDashboardFlat';
 	import {
@@ -755,7 +756,9 @@
 		showSingboxTunnelTabs && $fircForeign === null && (fircOwnsRouting || Boolean($fircStatus?.running)),
 	);
 	const showSingboxCreate = $derived(
-		showSingboxSections && !(fircOwnsRouting && !$fircForeign && (dashboardShowFirc || !singboxInstalled)),
+		showSingboxSections &&
+			(singboxStatusLoading || singboxInstalled) &&
+			!(fircOwnsRouting && !$fircForeign && (dashboardShowFirc || !singboxInstalled)),
 	);
 	let fircProbeSettled = $state(false);
 	let fircInitialLoadTriggered = false;
@@ -795,12 +798,30 @@
 	let dashboardFircProxies = $derived(dashboardShowFirc ? filterFircForDashboard(fircSingleTunnels) : []);
 	let dashboardFircSubscriptions = $derived(dashboardShowFirc ? filterFircForDashboard(fircSubTunnels) : []);
 	let dashboardFircCount = $derived(dashboardFircProxies.length + dashboardFircSubscriptions.length);
+	// Без sing-box вкладки «Туннели» и «Подписки» бесполезны, кроме случая,
+	// когда там уже лежат сохранённые записи (или они ещё грузятся).
+	const singboxTunnelsTabVisible = $derived(
+		shouldShowSingboxListTab({
+			showSingboxTabs: showSingboxTunnelTabs,
+			singboxInstalledOrLoading: awg3Visible,
+			listLoading: singboxTunnelsInitialLoading,
+			savedCount: singboxTunnelsList.length,
+		}),
+	);
+	const subscriptionsTabVisible = $derived(
+		shouldShowSingboxListTab({
+			showSingboxTabs: showSingboxTunnelTabs,
+			singboxInstalledOrLoading: awg3Visible,
+			listLoading: subscriptionsInitialLoading,
+			savedCount: subscriptionsList.length,
+		}),
+	);
 	const singboxMenuChildren = $derived(
 		[
-			showSingboxTunnelTabs
+			singboxTunnelsTabVisible
 				? { id: 'singbox', label: m.tunnels_tab_tunnels(), badge: singboxTunnelsList.length }
 				: null,
-			showSingboxTunnelTabs
+			subscriptionsTabVisible
 				? { id: 'subscriptions', label: m.tunnels_tab_subscriptions(), badge: subscriptionsList.length }
 				: null,
 			awg3Visible ? { id: 'awg3', label: 'WG endpoints', badge: awg3List.length } : null,
