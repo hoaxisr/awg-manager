@@ -2,14 +2,14 @@
 <script lang="ts">
 	import { api } from '$lib/api/client';
 	import { m } from '$lib/i18n';
-	import { notifications } from '$lib/stores/notifications';
-	import { setSettings as setGlobalSettings, usageLevel } from '$lib/stores/settings';
-	import { singboxStatus } from '$lib/stores/singbox';
+	import { usageLevel } from '$lib/stores/settings';
 	import { isSectionVisible } from '$lib/types/usageLevel';
 	import FircIntegrationSection from './FircIntegrationSection.svelte';
-	import IntegrationsSection from './IntegrationsSection.svelte';
 	import NdmsProxyRow from './NdmsProxyRow.svelte';
-	import ObfuscatorRelayCard from './ObfuscatorRelayCard.svelte';
+	import ObfuscatorRelayRow from './ObfuscatorRelayRow.svelte';
+	import ProxyBinariesSection from './ProxyBinariesSection.svelte';
+	import SingboxSection from './SingboxSection.svelte';
+	import ZapretCard from './ZapretCard.svelte';
 	import { backendErrorOr, type SettingsEditor } from './settingsEditor.svelte';
 
 	interface Props {
@@ -19,48 +19,7 @@
 	let { editor }: Props = $props();
 
 	const showSingbox = $derived(isSectionVisible($usageLevel, 'singboxTunnels'));
-
-	const singboxInstalled = $derived($singboxStatus.data?.installed ?? false);
-
-	let savingBootstrapDNS = $state(false);
-
-	// Bootstrap-DNS применяется бэкендом сразу: он переписывает адрес в
-	// 00-base.json и перечитывает конфиг sing-box без перезапуска.
-	async function saveBootstrapDNS(value: string) {
-		savingBootstrapDNS = true;
-		try {
-			editor.settings = await api.updateSettings({ singboxBootstrapDNS: value });
-			setGlobalSettings(editor.settings);
-			notifications.success(value ? m.settings_page_bootstrap_set({ value }) : m.settings_page_bootstrap_cleared());
-		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : m.settings_page_bootstrap_save_failed());
-		} finally {
-			savingBootstrapDNS = false;
-		}
-	}
-
-	let savingClashPort = $state(false);
-	let clashPortError = $state<string | null>(null);
-
-	// Порт Clash API применяется бэкендом сразу: он переписывает
-	// external_controller в 00-base.json, перечитывает конфиг sing-box и
-	// переставляет собственного клиента. Отказ по занятости порта приходит
-	// текстом ошибки и показывается прямо под полем.
-	async function saveClashPort(value: number) {
-		savingClashPort = true;
-		clashPortError = null;
-		try {
-			editor.settings = await api.updateSettings({ singboxClashPort: value });
-			setGlobalSettings(editor.settings);
-			notifications.success(m.settings_page_clash_port_saved({ value }));
-		} catch (e) {
-			const msg = e instanceof Error ? e.message : m.settings_page_clash_port_save_failed();
-			clashPortError = msg;
-			notifications.error(msg);
-		} finally {
-			savingClashPort = false;
-		}
-	}
+	const isExpert = $derived($usageLevel === 'expert');
 
 	function toggleObfuscatorRelay(process: boolean) {
 		return editor.save(
@@ -73,33 +32,26 @@
 
 <div class="settings-columns">
 	<div class="settings-column">
-		<IntegrationsSection
-			{showSingbox}
-			bootstrapDNS={editor.settings.singboxBootstrapDNS ?? ''}
-			bootstrapSaving={savingBootstrapDNS}
-			onsaveBootstrapDNS={saveBootstrapDNS}
-			clashPort={editor.settings.singboxClashPort ?? 0}
-			clashPortSaving={savingClashPort}
-			{clashPortError}
-			onsaveClashPort={saveClashPort}
-		/>
+		{#if showSingbox}
+			<SingboxSection {editor}>
+				{#if isExpert}
+					<NdmsProxyRow />
+				{/if}
+			</SingboxSection>
+		{/if}
+		<FircIntegrationSection />
 	</div>
 	<div class="settings-column">
-		<FircIntegrationSection />
-		{#if $usageLevel === 'expert'}
-			{#if singboxInstalled && showSingbox}
-				<div class="settings-block">
-					<div class="card">
-						<NdmsProxyRow />
-					</div>
-				</div>
-			{/if}
-			<ObfuscatorRelayCard
-				process={editor.settings.obfuscatorRelayProcess ?? false}
-				tripped={editor.settings.obfuscatorKmodTripped ?? ''}
-				saving={editor.saving}
-				ontoggle={toggleObfuscatorRelay}
-			/>
-		{/if}
+		<ProxyBinariesSection phobosKernel={isExpert ? phobosKernel : undefined} />
+		<ZapretCard />
 	</div>
 </div>
+
+{#snippet phobosKernel()}
+	<ObfuscatorRelayRow
+		process={editor.settings.obfuscatorRelayProcess ?? false}
+		tripped={editor.settings.obfuscatorKmodTripped ?? ''}
+		saving={editor.saving}
+		ontoggle={toggleObfuscatorRelay}
+	/>
+{/snippet}

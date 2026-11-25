@@ -17,7 +17,7 @@ vi.hoisted(() => {
 import { render, screen } from '@testing-library/svelte';
 import { flushSync } from 'svelte';
 import SettingsFooter from './SettingsFooter.svelte';
-import ObfuscatorRelayCard from './ObfuscatorRelayCard.svelte';
+import ObfuscatorRelayRow from './ObfuscatorRelayRow.svelte';
 import LoggingSettings from './LoggingSettings.svelte';
 import ExperimentalSettingsCard from './ExperimentalSettingsCard.svelte';
 import { locale } from '$lib/i18n';
@@ -46,19 +46,17 @@ describe('SettingsFooter i18n', () => {
 	});
 });
 
-describe('ObfuscatorRelayCard i18n', () => {
+describe('ObfuscatorRelayRow i18n', () => {
 	it('карточка релея и причина отключения переключаются на английский', () => {
-		render(ObfuscatorRelayCard, {
+		render(ObfuscatorRelayRow, {
 			props: { process: false, tripped: 'oom', ontoggle: () => {} },
 		});
-		expect(screen.getByText('Релей обфускатора')).toBeTruthy();
 		expect(screen.getByText('Phobos в ядре')).toBeTruthy();
 		expect(screen.getByText('Выключено автоматически: oom')).toBeTruthy();
 
 		locale.set('en');
 		flushSync();
 
-		expect(screen.getByText('Obfuscator relay')).toBeTruthy();
 		expect(screen.getByText('Phobos in kernel')).toBeTruthy();
 		expect(screen.getByText('Disabled automatically: oom')).toBeTruthy();
 	});

@@ -4,7 +4,7 @@
 	import { m } from '$lib/i18n';
 	import { experimentalSettingsUnlocked } from '$lib/stores/experimentalSettingsUnlocked';
 	import { usageLevel } from '$lib/stores/settings';
-	import { isAppearanceSettingsVisible, isSectionVisible, usageLevelLabel, type UsageLevel } from '$lib/types/usageLevel';
+	import { isAppearanceSettingsVisible, usageLevelLabel, type UsageLevel } from '$lib/types/usageLevel';
 	import ExperimentalSettingsCard from './ExperimentalSettingsCard.svelte';
 	import ServiceActionsCard from './ServiceActionsCard.svelte';
 	import ThemeSchemeCard from './ThemeSchemeCard.svelte';
@@ -18,8 +18,6 @@
 	}
 
 	let { editor, expandLevel = false }: Props = $props();
-
-	const showSingbox = $derived(isSectionVisible($usageLevel, 'singboxTunnels'));
 
 	function selectUsageLevel(level: UsageLevel) {
 		return editor.save(
@@ -38,7 +36,7 @@
 			onSelect={selectUsageLevel}
 			initialExpanded={expandLevel}
 		/>
-		<ServiceActionsCard {showSingbox} />
+		<ServiceActionsCard />
 		{#if $usageLevel === 'expert' && $experimentalSettingsUnlocked}
 			<ExperimentalSettingsCard />
 		{/if}

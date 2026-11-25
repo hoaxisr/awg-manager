@@ -791,6 +791,21 @@ label {
 	flex: none;
 }
 
+/* Строка без точки выровнена по подписи компонента над ней. */
+.settings-layout .setting-row.component-indent {
+	padding-left: 1.25rem;
+}
+
+.settings-layout .setting-description.warning {
+	color: var(--color-warning);
+}
+
+.component-sub {
+	font-size: 0.6875rem;
+	font-family: var(--font-mono);
+	color: var(--color-text-muted);
+}
+
 /* Строки, уточняющие настройку над ними (расписание под тумблером и т.п.). */
 .setting-sub {
 	margin: 0 0 0.875rem 0.125rem;

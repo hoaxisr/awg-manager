@@ -50,7 +50,7 @@
 	}
 </script>
 
-<div class="setting-row toggle-inline-row">
+<div class="setting-row toggle-inline-row component-indent">
 	<div class="flex flex-col gap-1">
 		<span class="font-medium">{m.settings_page_ndms_proxy_label()}</span>
 		<span class="setting-description">
