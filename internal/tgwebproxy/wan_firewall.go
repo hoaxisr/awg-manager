@@ -24,6 +24,10 @@ const (
 
 var ErrInvalidDirectPort = errors.New("некорректный прямой порт MTProto")
 
+// ErrDirectWANNoChain — открывать не в чем: прошивка не поддерживает такое
+// правило либо файрвол ещё не собран.
+var ErrDirectWANNoChain = errors.New("в файрволе роутера нет цепочки _NDM_IP_PUBLIC, порт MTProto на WAN открыть нельзя: снимите прямой адрес или выберите веб-мост")
+
 var directReservedPorts = map[int]string{
 	1099:  "Mihomo mixed-port",
 	2222:  "AWG Manager Web UI",
@@ -157,6 +161,9 @@ func SyncDirectWANFirewall(port int, enabled bool) error {
 	var execErr error
 	if out, err := directWANExecOutput(directWANHookEnv(), "/bin/sh", directWANHookPath); err != nil {
 		execErr = fmt.Errorf("exec hook %s: %w", directWANHookPath, wrapIptablesErr(out, err))
+		if chainOut, chainErr := runDirectWANIptables(ipt, "-S", "_NDM_IP_PUBLIC"); isIptablesNoSuchChain(chainOut, chainErr) {
+			execErr = ErrDirectWANNoChain
+		}
 	}
 	return errors.Join(ndmErr, cleanupErr, execErr)
 }
@@ -526,7 +533,7 @@ not_ready() {
     exit 1
 }
 
-run -L _NDM_IP_PUBLIC -n >/dev/null 2>&1 || not_ready "в файрволе роутера нет цепочки _NDM_IP_PUBLIC: порт tcp/${PORT} на WAN открыть нельзя"
+run -L _NDM_IP_PUBLIC -n >/dev/null 2>&1 || not_ready "нет цепочки _NDM_IP_PUBLIC"
 
 WAN_IFACES=""
 NDM_RULES="$(run -S _NDM_INPUT)" || not_ready "не удалось прочитать цепочку _NDM_INPUT: WAN-интерфейсы неизвестны"

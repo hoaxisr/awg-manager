@@ -48,6 +48,7 @@ type Service struct {
 	onReload             func()
 	directWANFirewall    func(port int, enabled bool) error
 	directWANErr         error
+	directWANNoChain     int // повторы подряд без цепочки _NDM_IP_PUBLIC
 	appLog               *logging.ScopedLogger
 	workerLog            *logging.ScopedLogger
 	egressValidator      EgressValidator
@@ -747,6 +748,11 @@ func (s *Service) SyncDirectWANFirewall() error {
 // журнал и в статус (DirectWANError). Возвращённую ошибку вызывающий учитывает,
 // только если cfg открывает порт заново (opensDirectWANAnew).
 func (s *Service) syncDirectWANFirewallLocked(cfg Config) error {
+	s.directWANNoChain = 0
+	return s.runDirectWANFirewallLocked(cfg)
+}
+
+func (s *Service) runDirectWANFirewallLocked(cfg Config) error {
 	if s.directWANFirewall == nil {
 		return nil
 	}
@@ -761,6 +767,11 @@ func (s *Service) syncDirectWANFirewallLocked(cfg Config) error {
 	return s.directWANErr
 }
 
+// maxDirectWANNoChainRetries — сколько тиков (по 30 с) ждать цепочку ndm: на
+// загрузке файрвол может быть ещё не собран, а на неподходящей прошивке её не
+// будет никогда. Дальше — до следующей правки, запуска или перезапуска.
+const maxDirectWANNoChainRetries = 10
+
 // retryDirectWANFirewall повторяет неудачную сверку: на загрузке WAN может быть
 // ещё не поднят, а блокировка xtables — временной. Недопустимый порт повтором
 // не исправить.
@@ -770,7 +781,13 @@ func (s *Service) retryDirectWANFirewall() {
 	if s.directWANErr == nil || s.recoveryRequired || errors.Is(s.directWANErr, ErrInvalidDirectPort) {
 		return
 	}
-	_ = s.syncDirectWANFirewallLocked(s.config)
+	if errors.Is(s.directWANErr, ErrDirectWANNoChain) {
+		if s.directWANNoChain >= maxDirectWANNoChainRetries {
+			return
+		}
+		s.directWANNoChain++
+	}
+	_ = s.runDirectWANFirewallLocked(s.config)
 }
 
 func hasTproxyFileChanges(tproxyDir string, files []FilePayload) bool {

@@ -359,3 +359,51 @@ func TestSyncDirectWANFirewall_ReportsNotReady(t *testing.T) {
 		t.Fatalf("причина не дошла: %v", err)
 	}
 }
+
+// Мутации: не отличать отсутствие цепочки от сбоя хука; убрать совет → красный.
+func TestSyncDirectWANFirewall_NoChainAdvice(t *testing.T) {
+	nfDir := filepath.Join(t.TempDir(), "netfilter.d")
+	if err := os.MkdirAll(nfDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	noChain := true
+	stubDirectWANSeams(t, nfDir, filepath.Join(nfDir, "68.sh"), func(_ []string, name string, args ...string) ([]byte, error) {
+		if name == "/bin/sh" {
+			return []byte("сбой хука"), errors.New("exit status 1")
+		}
+		if noChain && slices.Contains(args, "_NDM_IP_PUBLIC") {
+			return []byte("iptables: No chain/target/match by that name.\n"), errors.New("exit status 1")
+		}
+		return nil, nil
+	})
+	if err := SyncDirectWANFirewall(8443, true); !errors.Is(err, ErrDirectWANNoChain) || !strings.Contains(err.Error(), "снимите прямой адрес или выберите веб-мост") {
+		t.Fatalf("нет цепочки: %v", err)
+	}
+	noChain = false
+	if err := SyncDirectWANFirewall(8443, true); err == nil || errors.Is(err, ErrDirectWANNoChain) {
+		t.Fatalf("цепочка есть: %v", err)
+	}
+}
+
+// Без цепочки повторяем ограниченно; правка или запуск начинают отсчёт заново.
+// Мутации: убрать предел; не сбрасывать счётчик в сверке → красный.
+func TestRetryDirectWANFirewall_NoChainIsBounded(t *testing.T) {
+	svc, _, _ := setupTestService(t)
+	calls := 0
+	svc.directWANFirewall = func(int, bool) error { calls++; return ErrDirectWANNoChain }
+	exhaust := func() int {
+		calls = 0
+		for range 3 * maxDirectWANNoChainRetries {
+			svc.retryDirectWANFirewall()
+		}
+		return calls
+	}
+	_ = svc.SyncDirectWANFirewall()
+	if got := exhaust(); got != maxDirectWANNoChainRetries {
+		t.Fatalf("повторов %d", got)
+	}
+	_ = svc.SyncDirectWANFirewall()
+	if got := exhaust(); got != maxDirectWANNoChainRetries {
+		t.Fatalf("после новой сверки повторов %d", got)
+	}
+}
