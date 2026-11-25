@@ -432,7 +432,7 @@
   // Сторонний firc ушёл при открытом окне: данных для разделов ещё нет.
   let wasForeign = false;
   $effect(() => {
-    const now = Boolean(foreign);
+    const now = Boolean($fircForeign); // не foreign: тот гаснет и на каждом открытии
     if (isOpen && wasForeign && !now) void untrack(() => loadFullWizardData(false));
     wasForeign = now;
   });
