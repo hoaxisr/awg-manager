@@ -502,7 +502,7 @@ func TestSaveCoordinator_fire_OnSuccess_InvalidatesRunningConfig(t *testing.T) {
 		sc.SetSaveTimings(SaveEventCap, 0, SaveAfterRemoval)
 
 		sc.Request()
-		// debounce 10ms + post 0ms + settle 20ms = ~30ms. Wait 100ms for safety.
+		// debounce 10ms + post 0ms + settle 20ms = 30ms.
 		time.Sleep(100 * time.Millisecond)
 
 		if got := inv.Calls(); got != 1 {
@@ -714,9 +714,7 @@ func TestSaveCoordinator_Flush_NilInvalidator_DoesNotPanic(t *testing.T) {
 // гарда flushInProgress больше нет — fire и Flush сериализованы saveSem).
 // Различитель — ТРЕТИЙ POST: он существует только без гашения.
 //
-// Отрицательное утверждение на фиксированном окне: ждать нечего. Направление
-// риска — ложный ЗЕЛЁНЫЙ, если Flush-POST растянется дольше `retryDelay`
-// (150 мс). При флейке этого класса — первый подозреваемый.
+// Часы пузыря: Flush-POST не растянется дольше retryDelay, окно точное.
 func TestSaveCoordinator_LateFireDoesNotResurrectRetry(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		poster := &fakePoster{sleep: 60 * time.Millisecond}
