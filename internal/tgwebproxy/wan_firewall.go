@@ -344,10 +344,7 @@ func CheckDirectWANFirewall(port int) (DirectWANFirewallState, error) {
 	outNDM, err := runDirectWANIptables(ipt, "-S", "_NDM_INPUT")
 	if err != nil {
 		if isIptablesNoSuchChain(outNDM, err) {
-			if directChainAcceptsTCPPort(string(outPub), port, nil) {
-				return DirectWANFirewallOpen, nil
-			}
-			return DirectWANFirewallClosed, nil
+			return DirectWANFirewallUnknown, fmt.Errorf("chain _NDM_INPUT not found: cannot determine public WAN interfaces")
 		}
 		return DirectWANFirewallUnknown, fmt.Errorf("query _NDM_INPUT: %w", wrapIptablesErr(outNDM, err))
 	}
@@ -378,6 +375,9 @@ func resolveDirectWANIptablesBin() string {
 }
 
 func directChainAcceptsTCPPort(rulesOut string, port int, allowedWANIfaces map[string]struct{}) bool {
+	if len(allowedWANIfaces) == 0 {
+		return false
+	}
 	targetPort := strconv.Itoa(port)
 	for _, line := range strings.Split(rulesOut, "\n") {
 		trimmed := strings.TrimSpace(line)
@@ -388,7 +388,7 @@ func directChainAcceptsTCPPort(rulesOut string, port int, allowedWANIfaces map[s
 		if len(fields) < 4 || fields[0] != "-A" {
 			continue
 		}
-		var protoOK, dportOK, jumpAccept, ruleDisqualified bool
+		var protoOK, dportOK, jumpAccept, hasValidWANInIf, ruleDisqualified bool
 		for i := 2; i < len(fields); i++ {
 			tok := fields[i]
 			if tok == "!" {
@@ -437,16 +437,16 @@ func directChainAcceptsTCPPort(rulesOut string, port int, allowedWANIfaces map[s
 					val := strings.Trim(fields[i+1], "\"")
 					if neg || !isAllowedDirectWANInterface(val) {
 						ruleDisqualified = true
-					} else if allowedWANIfaces != nil {
-						if _, ok := allowedWANIfaces[val]; !ok {
-							ruleDisqualified = true
-						}
+					} else if _, ok := allowedWANIfaces[val]; !ok {
+						ruleDisqualified = true
+					} else {
+						hasValidWANInIf = true
 					}
 					i++
 				}
 			}
 		}
-		if !ruleDisqualified && protoOK && dportOK && jumpAccept {
+		if !ruleDisqualified && protoOK && dportOK && jumpAccept && hasValidWANInIf {
 			return true
 		}
 	}

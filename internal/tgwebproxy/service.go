@@ -701,9 +701,6 @@ func (s *Service) applyConfigLocked(newCfg Config) error {
 	}
 
 	s.config = newCfg
-	if err := s.syncDirectWANFirewallLocked(newCfg); err != nil {
-		return fmt.Errorf("sync direct WAN firewall: %w", err)
-	}
 	s.scheduleLegacyExpiryLocked()
 	go tuneRuntimeNetworkUpstreams(newCfg.EnabledUpstreams())
 	go s.checkUpstreamHealth()
@@ -759,6 +756,7 @@ type serviceTxHook struct {
 	tproxyWasRunning bool
 	prevCfg          Config
 	muxWasRunning    bool
+	firewallSynced   bool
 }
 
 func (h *serviceTxHook) CaptureWorkerStates() map[string]WorkerProcessState {
@@ -793,6 +791,12 @@ func (h *serviceTxHook) ApplyWorkers(cfg Config) error {
 			}
 		}
 	}
+	if h.svc != nil {
+		h.firewallSynced = true
+		if err := h.svc.syncDirectWANFirewallLocked(cfg); err != nil {
+			return fmt.Errorf("sync direct WAN firewall: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -817,8 +821,12 @@ func (h *serviceTxHook) CheckReadiness(cfg Config) error {
 func (h *serviceTxHook) RestoreWorkerStates(states map[string]WorkerProcessState) error {
 	var errs []error
 	if h.svc != nil && h.svc.workers != nil {
-		if err := h.svc.workers.RestoreWorkerStates(states); err != nil {
-			errs = append(errs, err)
+		if err := h.svc.workers.ApplyWorkers(h.prevCfg); err != nil {
+			errs = append(errs, fmt.Errorf("restore workers: %w", err))
+		} else if h.prevCfg.Enabled && h.prevCfg.IsWebEnabled() && h.tproxyChanged && h.tproxyWasRunning {
+			if err := h.svc.workers.RestartWorker(workerTproxy); err != nil {
+				errs = append(errs, fmt.Errorf("restart restored tproxy worker: %w", err))
+			}
 		}
 	}
 	if h.svc != nil && h.svc.mux != nil {
@@ -830,6 +838,11 @@ func (h *serviceTxHook) RestoreWorkerStates(states map[string]WorkerProcessState
 			if err := h.svc.mux.Stop(); err != nil {
 				errs = append(errs, err)
 			}
+		}
+	}
+	if h.firewallSynced && h.svc != nil {
+		if err := h.svc.syncDirectWANFirewallLocked(h.prevCfg); err != nil {
+			errs = append(errs, fmt.Errorf("restore direct WAN firewall: %w", err))
 		}
 	}
 	if len(errs) > 0 {

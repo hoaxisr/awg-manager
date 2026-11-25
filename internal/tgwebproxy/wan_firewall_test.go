@@ -2,7 +2,10 @@ package tgwebproxy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 func stubDirectWANSeams(t *testing.T, netfilterDir, hookPath string, execFn func(env []string, name string, args ...string) ([]byte, error)) {
@@ -604,9 +608,12 @@ func TestValidateDirectPort_AndHardenedWANFirewall(t *testing.T) {
 		t.Fatalf("expected cleanup fallback without -w to delete both rules, got %+v", delArgs)
 	}
 
-	// 3. Rejects LAN / guest / VPN / source-scoped / negated rules, accepts PPP WAN interface in _NDM_IP_PUBLIC
+	// 3. Rejects unscoped broad rules, non-WAN / guest / VPN / source-scoped / negated / off-WAN-list rules; accepts WAN interface from _NDM_INPUT
 	failWithW = false
+	ndmInputRules = "-A _NDM_INPUT -i ppp0 -m ndmslin --slin 3 (public) -j _NDM_IP_PUBLIC\n"
 	for _, badRule := range []string{
+		"-A _NDM_IP_PUBLIC -p tcp -m tcp --dport 8443 -m comment --comment AWGM_TG_MTPROTO_WAN -j ACCEPT\n",
+		"-A _NDM_IP_PUBLIC -i eth3 -p tcp -m tcp --dport 8443 -m comment --comment AWGM_TG_MTPROTO_WAN -j ACCEPT\n",
 		"-A _NDM_IP_PUBLIC -i br0 -p tcp -m tcp --dport 8443 -j ACCEPT\n",
 		"-A _NDM_IP_PUBLIC -i br1 -p tcp -m tcp --dport 8443 -j ACCEPT\n",
 		"-A _NDM_IP_PUBLIC -i lo -p tcp -m tcp --dport 8443 -j ACCEPT\n",
@@ -626,12 +633,26 @@ func TestValidateDirectPort_AndHardenedWANFirewall(t *testing.T) {
 		t.Fatalf("expected CheckDirectWANFirewall to accept explicit WAN interface rule, got state=%q err=%v", st, err)
 	}
 
-	// 4. Distinguishes missing _NDM_IP_PUBLIC chain (Closed) from transient xtables lock/exec error (Unknown)
+	// 4. Distinguishes missing _NDM_IP_PUBLIC chain (Closed) from missing _NDM_INPUT (Unknown) and transient xtables lock/exec error (Unknown)
 	stubDirectWANSeams(t, nfDir, hookPath, func(env []string, name string, args ...string) ([]byte, error) {
 		return []byte("iptables: No chain/target/match by that name.\n"), errors.New("exit status 1")
 	})
 	if st, err := CheckDirectWANFirewall(8443); err != nil || st != DirectWANFirewallClosed {
 		t.Fatalf("expected Closed/nil when _NDM_IP_PUBLIC chain does not exist, got state=%q err=%v", st, err)
+	}
+
+	stubDirectWANSeams(t, nfDir, hookPath, func(env []string, name string, args ...string) ([]byte, error) {
+		chain := args[len(args)-1]
+		if chain == "_NDM_IP_PUBLIC" {
+			return []byte("-A _NDM_IP_PUBLIC -i eth3 -p tcp -m tcp --dport 8443 -m comment --comment AWGM_TG_MTPROTO_WAN -j ACCEPT\n"), nil
+		}
+		return []byte("iptables: No chain/target/match by that name.\n"), errors.New("exit status 1")
+	})
+	if st, err := CheckDirectWANFirewall(8443); st != DirectWANFirewallUnknown || err == nil {
+		t.Fatalf("expected Unknown + err when _NDM_IP_PUBLIC exists but _NDM_INPUT is missing, got state=%q err=%v", st, err)
+	}
+	if IsDirectWANPortOpen(8443) {
+		t.Fatalf("expected IsDirectWANPortOpen=false when _NDM_INPUT is missing")
 	}
 
 	stubDirectWANSeams(t, nfDir, hookPath, func(env []string, name string, args ...string) ([]byte, error) {
@@ -821,5 +842,145 @@ func TestDirectPortValidation_ReservedWebUIAndLifecycleFixes(t *testing.T) {
 	}
 	if links := buildStatusWebProxyLinks(directWithEndpoint); len(links) != 0 {
 		t.Fatalf("expected buildStatusWebProxyLinks to return no web links for direct_fake_tls, got %+v", links)
+	}
+}
+
+func TestService_UpdateConfig_FirewallFailureRollsBackPortAndDiskConfig(t *testing.T) {
+	readSavedCfg := func(t *testing.T, svc *Service) Config {
+		t.Helper()
+		raw, err := os.ReadFile(svc.cfgPath())
+		if err != nil {
+			t.Fatalf("read saved settings: %v", err)
+		}
+		var cfg Config
+		if err := json.Unmarshal(raw, &cfg); err != nil {
+			t.Fatalf("unmarshal saved settings: %v", err)
+		}
+		return cfg
+	}
+
+	// Part A: fake engines verify exact in-memory config, saved JSON, worker config, and firewall rollback sequence
+	svc, _, engines := setupTestService(t)
+	type fwCall struct {
+		port    int
+		enabled bool
+	}
+	var fwCalls []fwCall
+	simFWErr := errors.New("simulated firewall error on port 9443")
+	svc.directWANFirewall = func(port int, enabled bool) error {
+		fwCalls = append(fwCalls, fwCall{port: port, enabled: enabled})
+		if port == 9443 && enabled {
+			return simFWErr
+		}
+		return nil
+	}
+
+	if err := svc.UpdateConfig(Config{
+		Scenario:   ScenarioDirectFakeTLS,
+		DirectHost: "203.0.113.10",
+		DirectPort: 8443,
+		TlsDomain:  "www.example.com",
+	}); err != nil {
+		t.Fatalf("initial UpdateConfig: %v", err)
+	}
+	if err := svc.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	callsBeforeFail := len(fwCalls)
+	err := svc.UpdateConfig(Config{DirectPort: 9443})
+	if !errors.Is(err, simFWErr) {
+		t.Fatalf("expected UpdateConfig to propagate firewall failure %v, got %v", simFWErr, err)
+	}
+
+	if got := svc.GetInternalConfig().DirectPort; got != 8443 {
+		t.Fatalf("expected in-memory DirectPort rolled back to 8443, got %d", got)
+	}
+	if saved := readSavedCfg(t, svc); saved.DirectPort != 8443 {
+		t.Fatalf("expected on-disk DirectPort rolled back to 8443, got %d", saved.DirectPort)
+	}
+	engines.mu.Lock()
+	engPort := engines.mtgCfg.DirectPort
+	engRunning := engines.direct
+	engines.mu.Unlock()
+	if engPort != 8443 || !engRunning {
+		t.Fatalf("expected mtg engine rolled back to running on port 8443, got port=%d running=%v", engPort, engRunning)
+	}
+	wantSeq := []fwCall{{port: 9443, enabled: true}, {port: 8443, enabled: true}}
+	if !reflect.DeepEqual(fwCalls[callsBeforeFail:], wantSeq) {
+		t.Fatalf("expected firewall fail + rollback call sequence %+v, got %+v", wantSeq, fwCalls[callsBeforeFail:])
+	}
+
+	// Part B: real NewMtgEngine() verifies the actual live TCP listening socket rolls back to portOld
+	allocValidPort := func(exclude int) int {
+		for range 20 {
+			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatalf("listen ephemeral port: %v", err)
+			}
+			p := ln.Addr().(*net.TCPAddr).Port
+			_ = ln.Close()
+			if p != exclude && ValidateDirectPort(p) == nil {
+				return p
+			}
+		}
+		t.Fatalf("failed to allocate free non-reserved port")
+		return 0
+	}
+	portOld := allocValidPort(0)
+	portNew := allocValidPort(portOld)
+
+	realSvc, _, _ := setupTestService(t)
+	realSvc.workers.mtg = NewMtgEngine()
+	t.Cleanup(func() {
+		realSvc.directWANFirewall = func(int, bool) error { return nil }
+		_ = realSvc.Close()
+	})
+	realSvc.directWANFirewall = func(port int, enabled bool) error {
+		if port == portNew && enabled {
+			return simFWErr
+		}
+		return nil
+	}
+
+	if err := realSvc.UpdateConfig(Config{
+		Scenario:   ScenarioDirectFakeTLS,
+		DirectHost: "203.0.113.10",
+		DirectPort: portOld,
+		TlsDomain:  "www.example.com",
+	}); err != nil {
+		t.Fatalf("real UpdateConfig old port %d: %v", portOld, err)
+	}
+	if err := realSvc.Start(); err != nil {
+		t.Fatalf("real Start on port %d: %v", portOld, err)
+	}
+
+	cOld, dialErr := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", portOld), time.Second)
+	if dialErr != nil {
+		t.Fatalf("expected real mtg listener active on portOld %d before UpdateConfig: %v", portOld, dialErr)
+	}
+	_ = cOld.Close()
+
+	err = realSvc.UpdateConfig(Config{DirectPort: portNew})
+	if !errors.Is(err, simFWErr) {
+		t.Fatalf("expected UpdateConfig to fail with firewall error on portNew %d, got %v", portNew, err)
+	}
+
+	if got := realSvc.GetInternalConfig().DirectPort; got != portOld {
+		t.Fatalf("expected real service DirectPort rolled back to %d, got %d", portOld, got)
+	}
+	if saved := readSavedCfg(t, realSvc); saved.DirectPort != portOld {
+		t.Fatalf("expected real saved config DirectPort rolled back to %d, got %d", portOld, saved.DirectPort)
+	}
+
+	cOldAfter, dialOldErr := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", portOld), time.Second)
+	if dialOldErr != nil {
+		t.Fatalf("expected rolled-back mtg listener to accept connections on portOld %d: %v", portOld, dialOldErr)
+	}
+	_ = cOldAfter.Close()
+
+	if cNew, dialNewErr := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", portNew), 300*time.Millisecond); dialNewErr == nil {
+		_ = cNew.Close()
+		t.Fatalf("expected portNew %d NOT to remain listening after rolled-back UpdateConfig", portNew)
 	}
 }
