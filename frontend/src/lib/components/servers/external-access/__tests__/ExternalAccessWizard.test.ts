@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { m } from '$lib/i18n';
 import { api } from '$lib/api/client';
-import type { PreflightResponse, WizardPlanRequest } from '$lib/types/serverWizard';
+import { notifications } from '$lib/stores/notifications';
+import type { PreflightResponse, ServerPlanRecord, WizardPlanRequest } from '$lib/types/serverWizard';
 import type { TgWebProxyConfig, XrayConfig } from '$lib/types';
 import type { XrayRealityState } from '$lib/types/xray';
 import ExternalAccessWizard from '../ExternalAccessWizard.svelte';
@@ -39,13 +40,13 @@ function tgConfig(over: Partial<TgWebProxyConfig> = {}): TgWebProxyConfig {
 
 function mount(cfg = tgConfig(), xrayConfig: XrayConfig | null = null) {
 	const onclose = vi.fn();
-	render(ExternalAccessWizard, {
+	const view = render(ExternalAccessWizard, {
 		props: {
 			open: true, initialKind: 'tgwebproxy', onclose,
 			initialInput: { xrayConfig, xrayStatus: null, xrayTuning: null, tgConfig: cfg, tgStatus: null, dispatcherConfig: null },
 		},
 	});
-	return { onclose };
+	return { onclose, rerender: view.rerender };
 }
 
 const button = (name: string) => screen.queryByRole<HTMLButtonElement>('button', { name });
@@ -162,5 +163,58 @@ describe('ExternalAccessWizard', () => {
 		const alert = await screen.findByRole('alert');
 		expect(alert.textContent).toContain(m.servers_ext_wiz_s3_direct_port_invalid());
 		expect(button(m.proxy_wizard_next())?.disabled).toBe(true);
+	});
+
+	// Мутации: снять любую из проверок planSeq; не растить planSeq при закрытии.
+	for (const stage of ['preflight', 'plan', 'error'] as const) {
+		it(`ответ на построение плана (${stage}) после закрытия не трогает новый мастер`, async () => {
+			const { rerender } = mount();
+			for (let i = 0; i < 3; i++) await next();
+			let settle: () => void = () => {};
+			if (stage === 'plan') {
+				vi.mocked(api.createWizardPlan).mockReturnValueOnce(
+					new Promise((r) => (settle = () => r({ plan_id: 'stale', plan: { items: [] } } as unknown as ServerPlanRecord)))
+				);
+			} else {
+				vi.mocked(api.runWizardPreflight).mockReturnValueOnce(
+					new Promise((r, reject) => (settle = () => (stage === 'error' ? reject(new Error('поздно')) : r(PREFLIGHT_OK))))
+				);
+			}
+			await next();
+			await rerender({ open: false });
+			await rerender({ open: true });
+			await waitFor(() => expect(button(m.proxy_wizard_next())?.disabled).toBe(false));
+			for (let i = 0; i < 3; i++) await next();
+			// Новый мастер строит свой план: прежний ответ не снимает его занятость.
+			let resolveNew: (r: PreflightResponse) => void = () => {};
+			vi.mocked(api.runWizardPreflight).mockReturnValueOnce(new Promise((r) => (resolveNew = r)));
+			await next();
+			settle();
+			await new Promise((r) => setTimeout(r, 0));
+			expect(button(m.common_apply())).toBeNull();
+			expect(button(m.proxy_wizard_next())?.disabled).toBe(true);
+			expect(notifications.error).not.toHaveBeenCalled();
+			resolveNew(PREFLIGHT_OK);
+			await waitFor(() => expect(button(m.common_apply())?.disabled).toBe(false));
+			await fireEvent.click(button(m.common_apply())!);
+			await waitFor(() => expect(api.applyWizardPlan).toHaveBeenCalled());
+			expect(vi.mocked(api.applyWizardPlan).mock.calls[0][1]).not.toBe('stale');
+		});
+	}
+
+	// Мутация: не растить planSeq при закрытии.
+	it('поздний план не перебрасывает заново открытый мастер на последний шаг', async () => {
+		const { rerender } = mount();
+		for (let i = 0; i < 3; i++) await next();
+		let resolveOld: (r: PreflightResponse) => void = () => {};
+		vi.mocked(api.runWizardPreflight).mockReturnValueOnce(new Promise((r) => (resolveOld = r)));
+		await next();
+		await rerender({ open: false });
+		await rerender({ open: true });
+		await waitFor(() => expect(button(m.proxy_wizard_next())?.disabled).toBe(false));
+		resolveOld(PREFLIGHT_OK);
+		await new Promise((r) => setTimeout(r, 0));
+		expect(button(m.common_apply())).toBeNull();
+		expect(api.createWizardPlan).not.toHaveBeenCalled();
 	});
 });

@@ -73,6 +73,7 @@
 	let loading = $derived(initializing || capsLoading || planLoading);
 	let initSeq = 0;
 	let capsSeq = 0;
+	let planSeq = 0;
 	let userTouchedTgScenario = false;
 	let showAdvancedAddresses = $state(false);
 	let showTechnicalPlan = $state(false);
@@ -303,6 +304,7 @@
 		} else {
 			initSeq++;
 			capsSeq++;
+			planSeq++;
 			initializing = false;
 			capsLoading = false;
 			planLoading = false;
@@ -845,25 +847,31 @@
 
 	/** Проверка и план под текущий черновик. Прежние сбрасываются сразу: сбой не оставляет устаревший план. */
 	async function prepareStep5Plan(): Promise<boolean> {
+		const seq = ++planSeq; // закрытие мастера и новый запуск отменяют прежний
 		planLoading = true;
 		preflight = null;
 		planRecord = null;
 		try {
 			const req = buildRequest();
-			const pre = await api.runWizardPreflight(draft.selectedKind, req);
+			const kind = draft.selectedKind;
+			const pre = await api.runWizardPreflight(kind, req);
+			if (seq !== planSeq) return false;
 			preflight = pre;
 			if (pre.can_proceed) {
-				planRecord = await api.createWizardPlan(draft.selectedKind, req);
+				const plan = await api.createWizardPlan(kind, req);
+				if (seq !== planSeq) return false;
+				planRecord = plan;
 				planKey = requestKey(req);
 			}
 			return true;
 		} catch (e) {
+			if (seq !== planSeq) return false;
 			notifications.error(
 				e instanceof Error ? e.message : m.servers_ext_wiz_err_plan()
 			);
 			return false;
 		} finally {
-			planLoading = false;
+			if (seq === planSeq) planLoading = false;
 		}
 	}
 
