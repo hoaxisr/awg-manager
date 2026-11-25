@@ -508,6 +508,26 @@ export interface FircStatus {
 	recoveryRequired?: boolean;
 	recoveryReason?: string;
 	recoveryMarker?: FircRecoveryMarker | null;
+	/** На роутере сторонний firc; остальные поля при нём не заполнены. */
+	foreign?: FircForeign;
+}
+
+/** Сторонний firc: панель им не управляет, только сообщает, что он есть. */
+export interface FircForeign {
+	package?: string;
+	binary?: string;
+	/** Веб-интерфейс firc, если порт задан в его конфиге явно. */
+	webPort?: number;
+	/** Пусто — firc слушает все адреса. */
+	webHost?: string;
+}
+
+/** Адрес интерфейса стороннего firc; null — порт неизвестен. */
+export function fircForeignWebUrl(foreign: FircForeign, pageHost: string): string | null {
+	if (!foreign.webPort) return null;
+	const host = foreign.webHost || pageHost;
+	const literal = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+	return `http://${literal}:${foreign.webPort}/`;
 }
 
 export type FircInstallState =
@@ -517,7 +537,8 @@ export type FircInstallState =
 	| 'recovery_required'
 	| 'installing'
 	| 'uninstalling'
-	| 'unavailable';
+	| 'unavailable'
+	| 'foreign';
 
 export interface FircInstallStatus {
 	state: FircInstallState;
@@ -527,8 +548,7 @@ export interface FircInstallStatus {
 	available: boolean;
 	unavailableReason?: string;
 	activeEngine: boolean;
-	externalPackage?: string;
-	externalMigratable?: boolean;
+	foreign?: FircForeign;
 	dependentServices?: string[];
 	ndmHookPresent: boolean;
 	fircdPresent: boolean;

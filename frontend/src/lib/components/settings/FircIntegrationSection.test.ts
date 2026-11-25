@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
-const { status, install, upgrade, uninstall, migrate } = vi.hoisted(() => ({
+const { status, install, upgrade, uninstall, updateSettings } = vi.hoisted(() => ({
 	status: vi.fn(),
 	install: vi.fn(),
 	upgrade: vi.fn(),
 	uninstall: vi.fn(),
-	migrate: vi.fn(),
+	updateSettings: vi.fn(),
 }));
 vi.mock('$lib/api/client', () => ({
 	api: {
@@ -14,10 +14,11 @@ vi.mock('$lib/api/client', () => ({
 		fircInstall: install,
 		fircUpgrade: upgrade,
 		fircUninstall: uninstall,
-		fircMigrateRuntime: migrate,
+		fircUpdateSettings: updateSettings,
 	},
 }));
 import FircIntegrationSection from './FircIntegrationSection.svelte';
+import { m } from '$lib/i18n';
 import type { FircInstallStatus } from '$lib/types/firc';
 
 const base: FircInstallStatus = {
@@ -30,7 +31,7 @@ beforeEach(() => {
 	install.mockResolvedValue({ ok: true });
 	upgrade.mockResolvedValue({ ok: true });
 	uninstall.mockResolvedValue({ ok: true });
-	migrate.mockResolvedValue({ ok: true });
+	updateSettings.mockResolvedValue({});
 });
 afterEach(cleanup);
 
@@ -108,72 +109,23 @@ describe('FIRC runtime settings', () => {
 		await fireEvent.click(buttons[buttons.length - 1]);
 		await waitFor(() => expect(uninstall).toHaveBeenCalledWith(false));
 	});
-	it('shows external package notice and disables package mutations when managed via opkg', async () => {
-		status.mockResolvedValue({
-			...base,
-			state: 'installed',
-			available: false,
-			installedVersion: '0.8.2-1',
-			externalPackage: 'firc',
-			fircdPresent: true,
-			tunvlessPresent: true,
-			initScriptPresent: true,
-			ndmHookPresent: true,
-			configPresent: true,
-			dependentServices: ['server-routing:awg'],
-		});
+	it('при стороннем firc показывает одно пояснение без установки, обновления и удаления', async () => {
+		status.mockResolvedValue({ ...base, state: 'foreign', available: false, foreign: { package: 'firc', webPort: 666 } });
 		render(FircIntegrationSection);
-		expect(await screen.findByText('0.8.2-1')).toBeInTheDocument();
-		expect(screen.getByText(/внешний пакет Entware «firc»|external Entware package "firc"/)).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: /Установить FIRC|Install FIRC/ })).toBeDisabled();
-		expect(screen.getByRole('button', { name: /Удалить FIRC|Remove FIRC/ })).toBeDisabled();
-		expect(screen.queryByText(/ещё не опубликован|has not been published/)).not.toBeInTheDocument();
-		expect(screen.queryByText(/server-routing:awg/)).not.toBeInTheDocument();
+		expect(await screen.findByText(m.firc_foreign_text())).toBeInTheDocument();
+		expect(screen.getByText(m.firc_foreign_package({ pkg: 'firc' }))).toBeInTheDocument();
+		expect(screen.getByRole('link', { name: m.firc_foreign_open_ui() })).toBeInTheDocument();
+		expect(screen.queryAllByRole('button')).toHaveLength(0);
+		expect(screen.queryByText(m.firc_runtime_activation_note())).not.toBeInTheDocument();
 	});
-	it('offers confirmed migration from eligible external Entware firc package even when running', async () => {
-		status
-			.mockResolvedValueOnce({
-				...base,
-				state: 'running',
-				activeEngine: true,
-				installedVersion: '0.8.2-1',
-				externalPackage: 'firc',
-				externalMigratable: true,
-				fircdPresent: true,
-				tunvlessPresent: true,
-				initScriptPresent: true,
-				ndmHookPresent: true,
-				configPresent: true,
-			})
-			.mockResolvedValue({ ...base, state: 'installing', busy: true, busyAction: 'migrate_external', progress: 0.4 });
+	it('при стороннем firc и выбранном движке FIRC предлагает только уйти с него', async () => {
+		status.mockResolvedValue({ ...base, state: 'foreign', available: false, activeEngine: true, foreign: { package: 'firc' } });
 		render(FircIntegrationSection);
-		const switchBtn = await screen.findByRole('button', { name: /Перейти на FIRC от AWGM|Switch to AWGM FIRC/ });
-		await waitFor(() => expect(switchBtn).toBeEnabled());
-		expect(screen.getByRole('button', { name: /Удалить FIRC|Remove FIRC/ })).toBeDisabled();
-
-		await fireEvent.click(switchBtn);
-		expect(await screen.findByText(/\/opt\/etc\/firc.*\/opt\/var\/lib\/firc/)).toBeInTheDocument();
-		const confirmButtons = screen.getAllByRole('button', { name: /Перейти на FIRC от AWGM|Switch to AWGM FIRC/ });
-		await fireEvent.click(confirmButtons[confirmButtons.length - 1]);
-		await waitFor(() => expect(migrate).toHaveBeenCalledWith({ replaceExternalPackage: true }));
-		expect(install).not.toHaveBeenCalled();
-	});
-	it('blocks external migration button when dependent services are active', async () => {
-		status.mockResolvedValue({
-			...base,
-			state: 'running',
-			activeEngine: true,
-			installedVersion: '0.8.2-1',
-			externalPackage: 'firc',
-			externalMigratable: true,
-			fircdPresent: true,
-			tunvlessPresent: true,
-			dependentServices: ['vless_xhttp_server'],
-		});
-		render(FircIntegrationSection);
-		const switchBtn = await screen.findByRole('button', { name: /Перейти на FIRC от AWGM|Switch to AWGM FIRC/ });
-		expect(switchBtn).toBeDisabled();
-		expect(screen.getByText(/vless_xhttp_server/)).toBeInTheDocument();
+		const leave = await screen.findByRole('button', { name: m.firc_foreign_leave() });
+		expect(screen.getAllByRole('button')).toEqual([leave]);
+		expect(screen.getByText(m.firc_foreign_conflict())).toBeInTheDocument();
+		await fireEvent.click(leave);
+		await waitFor(() => expect(updateSettings).toHaveBeenCalledWith({ routingEngine: 'sing-box' }));
 	});
 	it('enables Install FIRC when activeEngine is true, stopped, and state is not_installed', async () => {
 		status

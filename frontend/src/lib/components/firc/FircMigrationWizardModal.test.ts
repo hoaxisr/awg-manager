@@ -75,19 +75,26 @@ vi.mock('$lib/api/client', () => ({
 vi.mock('$lib/stores/notifications', () => ({
 	notifications: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
 }));
-vi.mock('$lib/stores/firc', () => ({
-	reloadFircAll: vi.fn().mockResolvedValue(undefined),
-}));
+vi.mock('$lib/stores/firc', async () => {
+	const { readable } = await import('svelte/store');
+	return { reloadFircAll: vi.fn().mockResolvedValue(undefined), fircStatus: readable(null) };
+});
 vi.mock('$lib/stores/settings', () => ({
 	reloadSettings: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('$lib/stores/singboxRouter', () => ({
 	singboxRouter: { reloadSettings: vi.fn().mockResolvedValue(undefined) },
 }));
-vi.mock('$lib/stores/singbox', () => ({
-	singboxStatus: { refetch: vi.fn().mockResolvedValue(undefined) },
-	singboxTunnels: { refetch: vi.fn().mockResolvedValue(undefined) },
-}));
+vi.mock('$lib/stores/singbox', async () => {
+	const { readable } = await import('svelte/store');
+	return {
+		singboxStatus: {
+			...readable({ data: { installed: false } }),
+			refetch: vi.fn().mockResolvedValue(undefined),
+		},
+		singboxTunnels: { refetch: vi.fn().mockResolvedValue(undefined) },
+	};
+});
 vi.mock('$lib/stores/subscriptions', () => ({
 	subscriptionsStore: { refetch: vi.fn().mockResolvedValue(undefined) },
 	subscriptionGroupsStore: { refetch: vi.fn().mockResolvedValue(undefined) },
@@ -201,6 +208,26 @@ afterEach(() => {
 });
 
 describe('FircMigrationWizardModal engine purge & recovery', () => {
+	it('при стороннем firc — пояснение вместо разделов, без предпросмотра и миграции', async () => {
+		fircGetMigrationState.mockResolvedValue(baseOverview({ activeEngine: 'firc', forwardPreview: null as never }));
+		fircGetInstallStatus.mockResolvedValue({
+			...installedFircStatus,
+			state: 'foreign',
+			fircdPresent: false,
+			tunvlessPresent: false,
+			foreign: { binary: '/opt/bin/fircd' },
+		});
+		render(FircMigrationWizardModal);
+		openFircMigrationModal('forward');
+		expect(await screen.findByText(m.firc_foreign_binary({ path: '/opt/bin/fircd' }))).toBeInTheDocument();
+		// sing-box не установлен: уход с движка означает «выключить».
+		expect(screen.getByRole('button', { name: m.firc_foreign_turn_off() })).toBeInTheDocument();
+		expect(screen.queryByRole('tab')).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: m.firc_migration_fwd_apply() })).not.toBeInTheDocument();
+		expect(fircMigrateFromSingbox).not.toHaveBeenCalled();
+		expect(fircReverseMigrateToSingbox).not.toHaveBeenCalled();
+	});
+
 	it('offers switch_and_uninstall in Tab 1 and enforces mandatory snapshot on submit', async () => {
 		fircMigrateFromSingbox.mockImplementation(async (dryRun: boolean) => {
 			if (dryRun) {

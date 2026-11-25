@@ -542,6 +542,17 @@ describe('FIRC tunnels UI integration', () => {
 		});
 	});
 
+	it('вкладка при стороннем firc — только пояснение: ни туннелей, ни создания, ни мастера', async () => {
+		const foreignStatus = { ...get(fircStatus)!, running: false, selected: false, foreign: { package: 'firc' } };
+		fircStatus.set(foreignStatus);
+		fircGetStatus.mockResolvedValue(foreignStatus);
+		render(FircTunnelsTabSection);
+		expect(await screen.findByText(m.firc_foreign_text())).toBeInTheDocument();
+		expect(screen.queryAllByRole('button')).toHaveLength(0);
+		// Порт интерфейса неизвестен — ссылки нет.
+		expect(screen.queryByRole('link')).not.toBeInTheDocument();
+	});
+
 	it('проверка без единого узла не выдаётся за завершённую', async () => {
 		fircTunnels.set([
 			{

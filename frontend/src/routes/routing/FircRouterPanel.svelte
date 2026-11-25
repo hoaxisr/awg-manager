@@ -4,9 +4,10 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { singboxRouter as singboxRouterStore } from '$lib/stores/singboxRouter';
-	import { fircStatus, fircGroups, fircTunnels, fircTunnelsState, reloadFircAll } from '$lib/stores/firc';
+	import { fircForeign, fircStatus, fircGroups, fircTunnels, fircTunnelsState, reloadFircAll } from '$lib/stores/firc';
 	import { Button, IconButton, StatusDot, Badge, SideDrawer, ConfirmModal } from '$lib/components/ui';
 	import StatStrip, { type StatCellData } from '$lib/components/sb-router/StatStrip.svelte';
+	import FircForeignNotice from '$lib/components/firc/FircForeignNotice.svelte';
 	import FircGroupsPanel from '$lib/components/firc/FircGroupsPanel.svelte';
 	import FircSettingsPanel from '$lib/components/firc/FircSettingsPanel.svelte';
 	import FircMonitorPanel from '$lib/components/firc/FircMonitorPanel.svelte';
@@ -156,6 +157,9 @@
 	]);
 </script>
 
+{#if $fircForeign}
+<FircForeignNotice foreign={$fircForeign} selected={$fircStatus?.selected} />
+{:else}
 <div class="sb-shell">
 	<header class="sb-header">
 		<div class="title-block">
@@ -253,9 +257,10 @@
 		<FircGroupsPanel />
 	</div>
 </div>
+{/if}
 
 <SideDrawer
-	open={settingsDrawerOpen}
+	open={settingsDrawerOpen && !$fircForeign}
 	title={m.firc_router_params()}
 	width={460}
 	onClose={requestCloseSettingsDrawer}

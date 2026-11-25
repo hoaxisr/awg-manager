@@ -25,7 +25,9 @@
 		type SingboxLayoutMode,
 		type TunnelRenderMode,
 	} from '$lib/constants/singboxLayout';
+	import FircForeignNotice from './FircForeignNotice.svelte';
 	import {
+		fircForeign,
 		fircStatus,
 		fircTunnels,
 		fircTunnelsState,
@@ -332,6 +334,9 @@
 	<CreateIcon />
 {/snippet}
 
+{#if $fircForeign}
+<FircForeignNotice foreign={$fircForeign} selected={$fircStatus?.selected} />
+{:else}
 <div class="firc-tunnels-wrap">
 	{#if !dashboardMode}
 		<FircTunnelsRuntimeStrip
@@ -473,6 +478,7 @@
 		</div>
 	{/if}
 </div>
+{/if}
 
 {#if embedEditModal}
 	<FircTunnelEditModal />

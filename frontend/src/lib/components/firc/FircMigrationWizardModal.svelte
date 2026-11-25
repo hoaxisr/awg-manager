@@ -14,7 +14,7 @@
     FircSnapshotMeta,
   } from '$lib/types/firc';
   import { m } from '$lib/i18n';
-  import { reloadFircAll } from '$lib/stores/firc';
+  import { fircStatus, reloadFircAll } from '$lib/stores/firc';
   import { reloadSettings } from '$lib/stores/settings';
   import { singboxRouter } from '$lib/stores/singboxRouter';
   import { singboxStatus, singboxTunnels } from '$lib/stores/singbox';
@@ -35,6 +35,7 @@
   import type { Tab } from '$lib/components/ui/tabs-model';
   import { notifications } from '$lib/stores/notifications';
   import './fircMigrationShared.css';
+  import FircForeignNotice from './FircForeignNotice.svelte';
   import FircMigrationEngineStrip from './FircMigrationEngineStrip.svelte';
   import FircMigrationExecNotice from './FircMigrationExecNotice.svelte';
   import FircMigrationForwardTab from './FircMigrationForwardTab.svelte';
@@ -70,6 +71,7 @@
   let fircGroupsCount = $state(0);
   let dontShowAgain = $state(false);
   let installStatus = $state<FircInstallStatus | null>(null);
+  let foreign = $derived(installStatus?.foreign ?? null);
   let installingRuntime = $state(false);
   let installingSingbox = $state(false);
   let purgingEngine = $state<MigrationEngine | null>(null);
@@ -337,6 +339,7 @@
         }
       }
       activeEngine = ov.activeEngine || 'sing-box';
+      if (nextInstallStatus?.foreign) return; // мигрировать некуда: предпросмотр вернул бы отказ
       fircRunning = Boolean(ov.fircRunning);
       singboxRunning = Boolean(ov.singboxRunning);
       fircInstalled =
@@ -735,6 +738,9 @@
 </script>
 
 <Modal open={isOpen} onclose={handleCloseModal} title={m.firc_migration_title()} width="740px">
+  {#if foreign}
+  <FircForeignNotice {foreign} selected={$fircStatus?.selected ?? activeEngine === 'firc'} bare />
+  {:else}
   <div class="firc-mig-body">
     <Tabs {tabs} active={activeTab} disabled={isBusy} onchange={(id) => setTab(id as FircMigrationWizardTab)} />
 
@@ -829,8 +835,12 @@
       />
     {/if}
   </div>
+  {/if}
 
   {#snippet actions()}
+    {#if foreign}
+    <Button variant="ghost" size="sm" onclick={closeFircMigrationModal}>{m.common_close()}</Button>
+    {:else}
     <div class="wiz-footer">
       <label class="check-row">
         <input
@@ -879,6 +889,7 @@
         {/if}
       </div>
     </div>
+    {/if}
   {/snippet}
 </Modal>
 

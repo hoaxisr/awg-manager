@@ -33,6 +33,7 @@
 		persistActiveId,
 	} from '$lib/components/servers/serverRailItems';
 	import type { XrayStatus, TgWebProxyStatus, CDNDispatcherConfig } from '$lib/types';
+	import { fircStatus } from '$lib/stores/firc';
 	import { extractFircEnabledServers, getFircEnabledServers, setFircServerRoutingEnabled, type FircInboundServerId } from '$lib/utils/fircServerRouting';
 	import { createIngressMutationLock } from '$lib/utils/ingressMutation';
 	import { serversSkeletonCount, clampSkeletonCount } from '$lib/stores/skeletonCounts';
@@ -118,10 +119,12 @@
 
 	async function loadIngressRefs() {
 		try {
-			const [s, fircIds] = await Promise.all([
+			const [s, fircIds, status] = await Promise.all([
 				api.singboxRouterGetSettings(),
 				getFircEnabledServers(),
+				api.fircGetStatus().catch(() => null),
 			]);
+			if (status) fircStatus.set(status); // окно выхода VLESS: правила FIRC при стороннем firc недоступны
 			ingressRefs = s.ingressInterfaces ?? [];
 			fircEnabledServers = fircIds ?? [];
 			activeEngine = s.routingEngine === 'firc' ? 'firc' : 'sing-box';

@@ -5,6 +5,7 @@
 	import { startVisiblePoll } from '$lib/utils/visiblePoll';
 	import { m } from '$lib/i18n';
 	import { Button, ConfirmModal, StatusDot } from '$lib/components/ui';
+	import FircForeignNotice from '$lib/components/firc/FircForeignNotice.svelte';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
 	import { Shield } from 'lucide-svelte';
 	import type { FircInstallStatus } from '$lib/types/firc';
@@ -15,7 +16,6 @@
 	let loading = $state(true);
 	let submitting = $state(false);
 	let confirmRemoval = $state(false);
-	let confirmExternalMigration = $state(false);
 	let confirmUpgrade = $state(false);
 	let alive = false;
 	let refreshing = false;
@@ -32,16 +32,12 @@
 				status?.installedVersion,
 		),
 	);
-	const externalPackage = $derived(status?.externalPackage?.trim() || '');
-	const externalOwned = $derived(Boolean(externalPackage));
-	const externalMigratable = $derived(externalOwned && Boolean(status?.externalMigratable));
 	const updateAvailable = $derived(
 		Boolean(
 			status?.updateAvailable &&
 				installedVersion &&
 				availableVersion &&
 				installedVersion !== availableVersion &&
-				!externalOwned &&
 				(status?.state === 'installed' || status?.state === 'running'),
 		),
 	);
@@ -49,14 +45,12 @@
 		Boolean(
 			availableVersion &&
 				availableVersion !== installedVersion &&
-				!externalOwned &&
 				(updateAvailable || !installed),
 		),
 	);
 	const blocked = $derived(Boolean(status?.activeEngine || status?.state === 'running' || status?.dependentServices?.length));
 	const repairUnblocked = $derived(
-		!externalOwned &&
-			status?.state !== 'running' &&
+		status?.state !== 'running' &&
 			(status?.state === 'not_installed' || status?.state === 'recovery_required'),
 	);
 	const installDisabled = $derived(
@@ -64,12 +58,10 @@
 			busy ||
 			!status?.available ||
 			Boolean(fetchError) ||
-			(externalOwned
-				? !externalMigratable || Boolean(status?.dependentServices?.length)
-				: !repairUnblocked && blocked),
+			(!repairUnblocked && blocked),
 	);
 	const upgradeDisabled = $derived(loading || busy || !status?.available || Boolean(fetchError) || !updateAvailable);
-	const removeDisabled = $derived(busy || externalOwned || blocked || Boolean(fetchError));
+	const removeDisabled = $derived(busy || blocked || Boolean(fetchError));
 	const upgradeConfirmSecondary = $derived.by(() => {
 		const baseMsg =
 			status?.activeEngine || status?.state === 'running'
@@ -130,16 +122,14 @@
 		if (!operationRunning) return;
 		return startVisiblePoll(refresh, 2000);
 	});
-	async function act(action: 'install' | 'upgrade' | 'uninstall' | 'migrate-external') {
+	async function act(action: 'install' | 'upgrade' | 'uninstall') {
 		if (busy) return;
 		confirmRemoval = false;
-		confirmExternalMigration = false;
 		confirmUpgrade = false;
 		submitting = true;
 		actionError = '';
 		try {
-			if (action === 'migrate-external') await api.fircMigrateRuntime({ replaceExternalPackage: true });
-			else if (action === 'upgrade') await api.fircUpgrade();
+			if (action === 'upgrade') await api.fircUpgrade();
 			else if (action === 'install') await api.fircInstall();
 			else await api.fircUninstall(false);
 			revision++;
@@ -164,6 +154,11 @@
 <div class="settings-block">
 	<div class="card">
 		<SettingsSectionLabel label="FIRC" icon={Shield} tone="purple" header />
+		{#if status?.foreign}
+		<div class="setting-row">
+			<FircForeignNotice foreign={status.foreign} selected={status.activeEngine} bare />
+		</div>
+		{:else}
 		<div class="setting-row firc-header-row">
 			<div class="firc-status-line">
 				<StatusDot variant={status?.state === 'running' ? 'success' : status?.state === 'recovery_required' ? 'error' : 'muted'} />
@@ -181,8 +176,8 @@
 						{m.firc_runtime_upgrade()}
 					</Button>
 				{:else}
-					<Button size="sm" onclick={() => (externalMigratable ? (confirmExternalMigration = true) : act('install'))} disabled={installDisabled}>
-						{externalMigratable ? m.firc_runtime_migrate_external() : status?.state === 'recovery_required' ? m.firc_runtime_repair() : m.firc_runtime_install()}
+					<Button size="sm" onclick={() => act('install')} disabled={installDisabled}>
+						{status?.state === 'recovery_required' ? m.firc_runtime_repair() : m.firc_runtime_install()}
 					</Button>
 				{/if}
 				{#if installed}
@@ -193,27 +188,22 @@
 		{#if status?.busy}
 			<div class="setting-row"><progress class="firc-progress" max="1" value={status.progress ?? 0} aria-label={stateLabel}></progress></div>
 		{/if}
-		{#if externalOwned}
-			<div class="setting-row text-secondary">{m.firc_runtime_external_notice({ pkg: externalPackage })}</div>
-		{/if}
-		{#if !status?.available && status && !externalOwned}
+		{#if !status?.available && status}
 			<div class="setting-row text-secondary">{m.firc_runtime_release_pending()}</div>
 		{/if}
-		{#if (!externalOwned && ((blocked && !repairUnblocked) || Boolean(status?.dependentServices?.length))) || (externalMigratable && Boolean(status?.dependentServices?.length))}
+		{#if (blocked && !repairUnblocked) || Boolean(status?.dependentServices?.length)}
 			<div class="setting-row text-secondary">{m.firc_runtime_dependency_warning()} {status?.dependentServices?.join(', ')}</div>
 		{/if}
 		{#if fetchError || actionError || status?.error}
 			<div class="setting-row text-danger" role="alert">{fetchError || actionError || status?.error}</div>
 		{/if}
 		<div class="setting-row text-secondary">{m.firc_runtime_activation_note()}</div>
+		{/if}
 	</div>
 </div>
 
 {#if confirmRemoval}
 	<ConfirmModal open title={m.firc_runtime_remove()} message={m.firc_runtime_remove_confirm()} secondary={m.firc_runtime_config_preserved()} confirmLabel={m.firc_runtime_remove()} cancelLabel={m.common_cancel()} variant="danger" onConfirm={() => act('uninstall')} onClose={() => (confirmRemoval = false)} />
-{/if}
-{#if confirmExternalMigration}
-	<ConfirmModal open title={m.firc_runtime_migrate_external()} message={m.firc_runtime_migrate_external_confirm({ pkg: externalPackage })} secondary={m.firc_runtime_migrate_external_secondary()} confirmLabel={m.firc_runtime_migrate_external()} cancelLabel={m.common_cancel()} variant="primary" onConfirm={() => act('migrate-external')} onClose={() => (confirmExternalMigration = false)} />
 {/if}
 {#if confirmUpgrade}
 	<ConfirmModal open title={m.firc_runtime_upgrade_confirm_title()} message={m.firc_runtime_upgrade_confirm({ current: installedVersion, target: availableVersion })} secondary={upgradeConfirmSecondary} confirmLabel={m.firc_runtime_upgrade()} cancelLabel={m.common_cancel()} variant="primary" onConfirm={() => act('upgrade')} onClose={() => (confirmUpgrade = false)} />

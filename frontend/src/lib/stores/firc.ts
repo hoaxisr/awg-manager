@@ -1,4 +1,4 @@
-import { writable, get } from 'svelte/store';
+import { derived, writable, get } from 'svelte/store';
 import { api } from '$lib/api/client';
 import { startVisiblePoll } from '$lib/utils/visiblePoll';
 import {
@@ -13,6 +13,8 @@ import {
 } from '$lib/types/firc';
 
 export const fircStatus = writable<FircStatus | null>(null);
+/** Сторонний firc на роутере; null — его нет или статус ещё не загружен. */
+export const fircForeign = derived(fircStatus, ($s) => $s?.foreign ?? null);
 export const fircTunnels = writable<FircTunnel[]>([]);
 export const fircTunnelsState = writable<FircTunnelState[]>([]);
 export const fircGroups = writable<FircGroup[]>([]);

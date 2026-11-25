@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { m } from '$lib/i18n';
 	import { settings } from '$lib/stores/settings';
-	import { fircStatus } from '$lib/stores/firc';
+	import { fircForeign, fircStatus } from '$lib/stores/firc';
+	import FircForeignNotice from '$lib/components/firc/FircForeignNotice.svelte';
 	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import { openFircMigrationModal } from '$lib/stores/fircMigrationModal';
 	// Вкладка «Sing-box туннели» страницы туннелей — выделено из
@@ -174,7 +175,9 @@
 			</div>
 		</div>
 	{:else if singboxTunnelsList.length > 0 || (dashboardOn && dashboardSingboxTunnels.length > 0)}
-		{#if fircOwnsRouting && !dashboardOn}
+		{#if fircOwnsRouting && !dashboardOn && $fircForeign}
+			<FircForeignNotice foreign={$fircForeign} selected />
+		{:else if fircOwnsRouting && !dashboardOn}
 			<div class="sbx-saved-banner">
 				<span class="sbx-saved-banner-text">{m.singbox_saved_banner()}</span>
 				<Button variant="secondary" size="sm" onclick={() => openFircMigrationModal('reverse')}>

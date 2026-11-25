@@ -151,13 +151,6 @@ export class FircClient extends WarpScoutClient {
 		});
 	}
 
-	async fircMigrateRuntime(opts?: { replaceExternalPackage?: boolean }): Promise<{ ok: boolean }> {
-		return this.request<{ ok: boolean }>('/firc/migrate-runtime', {
-			method: 'POST',
-			body: JSON.stringify(opts?.replaceExternalPackage ? { replaceExternalPackage: true } : {}),
-		});
-	}
-
 	async fircUninstall(purgeConfigs: boolean = false): Promise<{ ok: boolean }> {
 		return this.request<{ ok: boolean }>('/firc/uninstall', {
 			method: 'POST',

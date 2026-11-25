@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FircExtConfig } from '$lib/types/firc';
 
-const { fircGetExt, fircSaveExt } = vi.hoisted(() => ({
+const { fircGetExt, fircSaveExt, fircGetStatus } = vi.hoisted(() => ({
+	fircGetStatus: vi.fn<() => Promise<{ foreign?: object }>>(),
 	fircGetExt: vi.fn<() => Promise<FircExtConfig>>(),
 	fircSaveExt: vi.fn<(cfg: FircExtConfig) => Promise<FircExtConfig>>(),
 }));
@@ -10,6 +11,7 @@ vi.mock('$lib/api/client', () => ({
 	api: {
 		fircGetExt,
 		fircSaveExt,
+		fircGetStatus,
 	},
 }));
 
@@ -18,6 +20,13 @@ import { setFircServerRoutingEnabled } from './fircServerRouting';
 describe('setFircServerRoutingEnabled', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		fircGetStatus.mockResolvedValue({});
+	});
+
+	it('при стороннем firc ничего не сохраняет: настройка sing-box уже записана, отказ был бы ложной ошибкой', async () => {
+		fircGetStatus.mockResolvedValue({ foreign: { package: 'firc' } });
+		expect(await setFircServerRoutingEnabled('managed:Wireguard5', true)).toBeNull();
+		expect(fircSaveExt).not.toHaveBeenCalled();
 	});
 
 	it('enabling managed:Wireguard5 preserves globalTarget, proxyGroups, keenDnsCloud, and appends managed:Wireguard5', async () => {
