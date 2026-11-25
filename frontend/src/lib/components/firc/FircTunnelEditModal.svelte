@@ -236,7 +236,11 @@
 				}
 				return { ...all, [targetId]: nextMap };
 			});
-			notifications.success(m.firc_tunnel_edit_probe_done({ device: targetDev }));
+			if (rows.length === 0) {
+				notifications.info(m.firc_tunnel_edit_probe_empty({ device: targetDev }));
+			} else {
+				notifications.success(m.firc_tunnel_edit_probe_done({ device: targetDev }));
+			}
 		} catch (e: unknown) {
 			notifications.error((e instanceof Error ? e.message : undefined) ?? m.firc_tunnel_edit_probe_error());
 		} finally {

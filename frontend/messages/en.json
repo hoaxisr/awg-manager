@@ -9070,6 +9070,7 @@
 	"firc_tunnel_edit_saved": "Tunnel {device} settings saved",
 	"firc_tunnel_edit_save_error": "Failed to save the FIRC tunnel",
 	"firc_tunnel_edit_probe_done": "Node latency check for {device} finished",
+	"firc_tunnel_edit_probe_empty": "Nothing to check: {device} has no nodes",
 	"firc_tunnel_edit_probe_error": "Node check failed",
 	"firc_tunnel_edit_refresh_done": "Subscriptions of tunnel {device} refreshed",
 	"firc_tunnel_edit_refresh_error": "Failed to refresh the subscription",

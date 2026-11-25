@@ -92,6 +92,7 @@ import FircTunnelsTabSection from './FircTunnelsTabSection.svelte';
 import FircTunnelEditModal from './FircTunnelEditModal.svelte';
 import SingboxTunnelCard from '$lib/components/singbox/SingboxTunnelCard.svelte';
 import SingboxTunnelsTabSection from '$lib/components/singbox/SingboxTunnelsTabSection.svelte';
+import { notifications } from '$lib/stores/notifications';
 import { settings } from '$lib/stores/settings';
 import {
 	fircStatus,
@@ -539,6 +540,23 @@ describe('FIRC tunnels UI integration', () => {
 				expect.objectContaining({ id: 'stopped_tun' }),
 			);
 		});
+	});
+
+	it('проверка без единого узла не выдаётся за завершённую', async () => {
+		fircTunnels.set([
+			{
+				id: 'tun-empty', device: 'tunvless7', description: 'Empty', enable: true, uplink: { kind: 'auto' },
+				sources: [], active: 1, by: 'connection', interval: 30, silence: 20, filter: '', order: [], exclude: [], advanced: {},
+			} as never,
+		]);
+		fircProbeTunnel.mockResolvedValue([]);
+		fircEditTunnelId.set('tun-empty');
+		render(FircTunnelEditModal);
+		await fireEvent.click(await screen.findByRole('button', { name: m.firc_tunnel_edit_probe_all() }));
+		await waitFor(() =>
+			expect(notifications.info).toHaveBeenCalledWith(m.firc_tunnel_edit_probe_empty({ device: 'tunvless7' })),
+		);
+		expect(notifications.success).not.toHaveBeenCalled();
 	});
 
 	it('shows edit modal probe progress, single-node probe, and sorts by total latency', async () => {

@@ -83,13 +83,15 @@ export class FircClient extends WarpScoutClient {
 
 		if (!response.ok) {
 			const obj = (parsed && typeof parsed === 'object' ? parsed : {}) as {
-				error?: string;
+				// fircd кладёт сюда текст, обёртка панели — true (текст в message).
+				error?: string | boolean;
 				message?: string;
 				field?: string;
 				group?: string;
 				tunnel?: string;
 			};
-			const msg = obj.error || obj.message || text || m.firc_api_error({ status: response.status });
+			const errorText = typeof obj.error === 'string' ? obj.error : '';
+			const msg = errorText || obj.message || text || m.firc_api_error({ status: response.status });
 			const err: Error & {
 				status?: number;
 				field?: string;

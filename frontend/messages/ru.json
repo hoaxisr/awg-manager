@@ -9472,6 +9472,7 @@
 	"firc_tunnel_edit_saved": "Настройки туннеля {device} сохранены",
 	"firc_tunnel_edit_save_error": "Ошибка сохранения туннеля FIRC",
 	"firc_tunnel_edit_probe_done": "Проверка задержки узлов {device} завершена",
+	"firc_tunnel_edit_probe_empty": "Проверять нечего: у {device} нет узлов",
 	"firc_tunnel_edit_probe_error": "Ошибка проверки узлов",
 	"firc_tunnel_edit_refresh_done": "Подписки туннеля {device} обновлены",
 	"firc_tunnel_edit_refresh_error": "Ошибка обновления подписки",
