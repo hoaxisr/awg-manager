@@ -43,8 +43,39 @@ func (i *OnDemandInstaller) Upgrade(ctx context.Context, op *Operator) error {
 	return err
 }
 
+func (i *OnDemandInstaller) runWithRuntimeLock(op *Operator, fn func()) {
+	if i.lockRuntime != nil {
+		unlock := i.lockRuntime()
+		defer unlock()
+	} else if op != nil {
+		unlock := op.LockRuntimeMutation()
+		defer unlock()
+	}
+	fn()
+}
+
+func (i *OnDemandInstaller) waitRuntimeStopped(ctx context.Context, op *Operator, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		if !i.isCurrentlyRunning(ctx, op) && !i.isTunvlessCurrentlyRunning(ctx) {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return errors.New("FIRC or tunvless remained running after stop")
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
 func (i *OnDemandInstaller) upgradeRuntimeLocked(ctx context.Context, op *Operator) (result error) {
 	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := i.checkNotForeign(); err != nil {
 		return err
 	}
 	if i.packages == nil {
@@ -54,9 +85,6 @@ func (i *OnDemandInstaller) upgradeRuntimeLocked(ctx context.Context, op *Operat
 		if err := checker.CheckEnvironment(); err != nil {
 			return err
 		}
-	}
-	if err := i.checkExternalPackageOwnership(); err != nil {
-		return err
 	}
 	priorOp, journalErr := i.readOperation()
 	if journalErr != nil || priorOp.Pending {
@@ -119,7 +147,10 @@ func (i *OnDemandInstaller) upgradeRuntimeLocked(ctx context.Context, op *Operat
 	}
 
 	required := spec.PackageSize*4 + (16 << 20)
-	free, ok := i.probeFreeDiskForFirc()
+	if i.freeDisk == nil {
+		return errors.New("firc: free-space probe unavailable")
+	}
+	free, ok := i.freeDisk(filepath.Dir(i.layout.FircdBin))
 	if !ok {
 		return errors.New("firc: cannot verify free disk space")
 	}
@@ -266,6 +297,10 @@ func (i *OnDemandInstaller) upgradeRuntimeLocked(ctx context.Context, op *Operat
 		}
 	}()
 
+	// Загрузка шла минутами: за это время могли поставить сторонний firc.
+	if err := i.checkNotForeign(); err != nil {
+		return err
+	}
 	if wasRunning {
 		i.setProgress(0.45)
 		stopped = true

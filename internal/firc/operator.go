@@ -55,20 +55,20 @@ type BreakGlassOptions struct {
 
 // Options configures the firc Operator.
 type Options struct {
-	Logger         *slog.Logger
-	AppLog         logging.AppLogger
-	ConfigDir      string
-	SocketPath     string
-	FircdBinary    string
-	AltFircdBinary string
-	TunvlessBin    string
-	AltTunvlessBin string
-	InitScript     string
-	DNSProxyAddr   string
-	DNSProxyPort   int
-	InboundPort    uint16
-	StartTimeout   time.Duration
-	ConntrackPath  string
+	Logger        *slog.Logger
+	AppLog        logging.AppLogger
+	ConfigDir     string
+	SocketPath    string
+	FircdBinary   string
+	TunvlessBin   string
+	InitScript    string
+	DNSProxyAddr  string
+	DNSProxyPort  int
+	InboundPort   uint16
+	StartTimeout  time.Duration
+	ConntrackPath string
+	// Foreign — поиск стороннего firc; nil — на каталоге вне системы его нет.
+	Foreign *ForeignDetector
 }
 
 // EngineSwitchHooks defines the callbacks used by SwitchEngine to coordinate
@@ -197,6 +197,9 @@ type MigrationJournalCommitFaultHooks struct {
 // Leaf locks (extConfigMu, cloudStateMu, cloudCancelMu, mu, extIpsetMu, extIptablesMu, extCloudDNSMu,
 // extCloudClockMu) must never acquire any lock listed above.
 type Operator struct {
+	foreign                  *ForeignDetector
+	foreignTicks             atomic.Int32
+	recoveryDeferred         atomic.Bool
 	runtimeObs               runtimeObserver
 	mu                       sync.Mutex
 	mutationMu               sync.Mutex
@@ -231,9 +234,7 @@ type Operator struct {
 	configDir                string
 	socketPath               string
 	fircdBinary              string
-	altFircdBinary           string
 	tunvlessBin              string
-	altTunvlessBin           string
 	initScript               string
 	lastOutPath              string
 	dnsProxyAddr             string
@@ -290,15 +291,9 @@ func NewOperator(opts Options) *Operator {
 	}
 	if opts.FircdBinary == "" {
 		opts.FircdBinary = DefaultFircdBinary
-		if opts.AltFircdBinary == "" {
-			opts.AltFircdBinary = AltFircdBinary
-		}
 	}
 	if opts.TunvlessBin == "" {
 		opts.TunvlessBin = DefaultTunvlessBinary
-		if opts.AltTunvlessBin == "" {
-			opts.AltTunvlessBin = AltTunvlessBinary
-		}
 	}
 	if opts.InitScript == "" {
 		opts.InitScript = "/opt/etc/init.d/S99firc"
@@ -315,31 +310,34 @@ func NewOperator(opts Options) *Operator {
 	if opts.StartTimeout <= 0 {
 		opts.StartTimeout = 30 * time.Second
 	}
+	if opts.Foreign == nil && filepath.Clean(opts.ConfigDir) == filepath.Clean(DefaultConfigDir) {
+		opts.Foreign = NewForeignDetector("")
+	}
 	if opts.ConntrackPath == "" {
 		opts.ConntrackPath = "/proc/net/nf_conntrack"
 	}
 	op := &Operator{
-		log:            log,
-		appLog:         logging.NewScopedLogger(opts.AppLog, logging.GroupRouting, logging.SubAccessPolicy),
-		configDir:      opts.ConfigDir,
-		socketPath:     opts.SocketPath,
-		fircdBinary:    opts.FircdBinary,
-		altFircdBinary: opts.AltFircdBinary,
-		tunvlessBin:    opts.TunvlessBin,
-		altTunvlessBin: opts.AltTunvlessBin,
-		initScript:     opts.InitScript,
-		dnsProxyAddr:   opts.DNSProxyAddr,
-		dnsProxyPort:   opts.DNSProxyPort,
-		inboundPort:    opts.InboundPort,
-		startTimeout:   opts.StartTimeout,
-		conntrackPath:  opts.ConntrackPath,
-		client:         NewClient(opts.SocketPath),
-		singboxBinary:  "/opt/bin/sing-box",
-		cloudEpoch:     1,
+		log:           log,
+		appLog:        logging.NewScopedLogger(opts.AppLog, logging.GroupRouting, logging.SubAccessPolicy),
+		configDir:     opts.ConfigDir,
+		socketPath:    opts.SocketPath,
+		fircdBinary:   opts.FircdBinary,
+		tunvlessBin:   opts.TunvlessBin,
+		initScript:    opts.InitScript,
+		dnsProxyAddr:  opts.DNSProxyAddr,
+		dnsProxyPort:  opts.DNSProxyPort,
+		inboundPort:   opts.InboundPort,
+		startTimeout:  opts.StartTimeout,
+		conntrackPath: opts.ConntrackPath,
+		foreign:       opts.Foreign,
+		client:        NewClient(opts.SocketPath),
+		singboxBinary: "/opt/bin/sing-box",
+		cloudEpoch:    1,
 	}
 	if op.isSystemConfigDir() {
 		op.lastOutPath = "/tmp/firc-init/fircd.last"
 	}
+	op.client.gate = op.CheckNotForeign
 	op.extConfigGen.Store(1)
 	if _, err := os.Stat(op.extConfigPath()); err == nil {
 		op.extConfigSaved.Store(true)
@@ -400,9 +398,15 @@ func (o *Operator) effectiveVarLibDir() string {
 }
 
 func (o *Operator) shouldManageKernelNetfilter() bool {
-	if o == nil {
+	if o == nil || o.foreignPresent() {
 		return false
 	}
+	return o.managesKernelNetfilter()
+}
+
+// managesKernelNetfilter — то же без оглядки на сторонний firc: так снимаются
+// собственные правила панели, оставшиеся от движка FIRC.
+func (o *Operator) managesKernelNetfilter() bool {
 	if runtime.GOOS == "linux" && o.isSystemConfigDir() {
 		return true
 	}
@@ -567,6 +571,12 @@ func (o *Operator) RecoveryMarkerInfo() *RecoveryMarker {
 // the previous durable marker's identity is retained in memory (with LastPersistError recorded) so
 // in-memory state and post-restart state do not diverge (P1.2).
 func (o *Operator) SetRecoveryRequiredWithMeta(marker RecoveryMarker) error {
+	// Метка описывает наш рантайм и лежит в каталоге firc: при стороннем её
+	// некуда и незачем писать.
+	if err := o.CheckNotForeign(); err != nil {
+		o.log.Warn("firc recovery marker skipped", "reason", marker.Reason, "error", err)
+		return err
+	}
 	marker.Required = true
 	if marker.TimestampUnixMs == 0 {
 		marker.TimestampUnixMs = time.Now().UnixMilli()
@@ -722,6 +732,9 @@ func restoreRecoveryTombstone(tombstonePath string, data []byte, hooks RecoveryC
 //     returning both via errors.Join while keeping recoveryRequired=true in memory.
 //  3. Clears in-memory recovery_required state ONLY after both durable phases succeed.
 func (o *Operator) ClearRecovery() error {
+	if err := o.CheckNotForeign(); err != nil {
+		return err
+	}
 	o.mu.Lock()
 	cfgDir := o.configDir
 	markerPath := o.RecoveryMarkerPath()
@@ -966,6 +979,17 @@ func (o *Operator) ForceClearRecoveryAdmin(confirmToken string, opts ...BreakGla
 }
 
 func (o *Operator) checkMutationAllowed() error {
+	if err := o.CheckNotForeign(); err != nil {
+		return err
+	}
+	return o.checkRecoveryClear()
+}
+
+// checkRecoveryClear — незавершённое восстановление нашего рантайма.
+func (o *Operator) checkRecoveryClear() error {
+	if o.recoveryDeferred.Load() {
+		return ErrRestartRequired
+	}
 	req, reason := o.RecoveryInfo()
 	if req {
 		return fmt.Errorf("%w: %s", ErrRecoveryRequired, reason)
@@ -1026,6 +1050,9 @@ func (o *Operator) Client() *Client {
 func (o *Operator) SetClient(c *Client) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if c != nil {
+		c.gate = o.CheckNotForeign
+	}
 	o.client = c
 }
 
@@ -1162,6 +1189,9 @@ func restoreFileSnapshot(snap fileSnapshot) error {
 
 // EnsureConfigFiles creates the config directory and writes a default firc.conf if none exists.
 func (o *Operator) EnsureConfigFiles() error {
+	if err := o.CheckNotForeign(); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(o.configDir, 0755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", o.configDir, err)
 	}
@@ -1188,34 +1218,14 @@ app:
 	return atomicWriteYAMLFile(confPath, []byte(content), 0644)
 }
 
-func resolveExecutableFallback(primary, alt string) string {
-	if primary != "" {
-		if _, err := os.Stat(primary); err == nil {
-			return primary
-		}
-	}
-	if alt != "" {
-		if _, err := os.Stat(alt); err == nil {
-			return alt
-		}
-	}
-	return primary
-}
-
-func (o *Operator) resolvedFircdBinary() string {
-	return resolveExecutableFallback(o.fircdBinary, o.altFircdBinary)
-}
-
-func (o *Operator) resolvedTunvlessBinary() string {
-	return resolveExecutableFallback(o.tunvlessBin, o.altTunvlessBin)
-}
-
 // ValidateBinaries checks that both fircd and tunvless binaries exist, are regular
 // non-empty executable files, and verifies SHA-256 checksums when a SHA256SUMS manifest
 // is present in configDir.
 func (o *Operator) ValidateBinaries() error {
-	fircdPath := o.resolvedFircdBinary()
-	tunvlessPath := o.resolvedTunvlessBinary()
+	if err := o.CheckNotForeign(); err != nil {
+		return err
+	}
+	fircdPath, tunvlessPath := o.fircdBinary, o.tunvlessBin
 	for _, bin := range []struct {
 		name string
 		path string
@@ -1266,7 +1276,7 @@ func (o *Operator) validateProductionPreflight() (string, error) {
 	if err := o.ValidateBinaries(); err != nil {
 		return "preflight_validate_binaries", err
 	}
-	for _, binPath := range []string{o.resolvedFircdBinary(), o.resolvedTunvlessBinary()} {
+	for _, binPath := range []string{o.fircdBinary, o.tunvlessBin} {
 		ef, err := elf.Open(binPath)
 		if err != nil {
 			return "preflight_validate_elf", fmt.Errorf("invalid ELF binary %s: %w", binPath, err)
@@ -1308,8 +1318,17 @@ func (o *Operator) GetOfflineStatus(selected bool) Status {
 }
 
 func (o *Operator) getStatus(ctx context.Context, selected, allowLive bool) Status {
-	_, errFircd := os.Stat(o.resolvedFircdBinary())
-	_, errTun := os.Stat(o.resolvedTunvlessBinary())
+	if found := o.ForeignFirc(); found != nil {
+		return Status{
+			Selected:         selected,
+			Foreign:          found,
+			SocketPath:       o.socketPath,
+			DNSProxyEndpoint: o.DNSProxyEndpoint(),
+			InboundPort:      o.inboundPort,
+		}
+	}
+	_, errFircd := os.Stat(o.fircdBinary)
+	_, errTun := os.Stat(o.tunvlessBin)
 	running := allowLive && o.IsRunning(ctx)
 	recReq, recReason := o.RecoveryInfo()
 
@@ -1321,6 +1340,7 @@ func (o *Operator) getStatus(ctx context.Context, selected, allowLive bool) Stat
 		RecoveryRequired:  recReq,
 		RecoveryReason:    recReason,
 		RecoveryMarker:    o.RecoveryMarkerInfo(),
+		RestartRequired:   o.recoveryDeferred.Load(),
 		SocketPath:        o.socketPath,
 		DNSProxyEndpoint:  o.DNSProxyEndpoint(),
 		InboundPort:       o.inboundPort,
@@ -1405,6 +1425,9 @@ func (o *Operator) startRuntime(ctx context.Context) error {
 	o.mu.Lock()
 	startHook := o.startHook
 	o.mu.Unlock()
+	if err := o.CheckNotForeign(); err != nil {
+		return err
+	}
 	InvalidateOutputRoutingCache()
 	if startHook != nil {
 		return startHook(ctx)
@@ -1453,7 +1476,7 @@ func (o *Operator) startRuntime(ctx context.Context) error {
 		return fmt.Errorf("stat init script %s: %w", initScript, err)
 	} else {
 		_ = os.MkdirAll(filepath.Dir(o.socketPath), 0755)
-		cmd := exec.Command(o.resolvedFircdBinary(), "--config", o.ConfigPath())
+		cmd := exec.Command(o.fircdBinary, "--config", o.ConfigPath())
 		cmd.Env = append(os.Environ(), "STEER_TUN_SPARES=0")
 		if err := cmd.Start(); err != nil {
 			o.mu.Unlock()
@@ -1502,9 +1525,15 @@ func (o *Operator) stopRuntime(ctx context.Context) error {
 	runCleanup := func() {
 		if o.isSystemConfigDir() {
 			cleanupExtNetfilter(ctx, "")
-		} else if o.shouldManageKernelNetfilter() || hasCustomExtIpsetRunner() {
+		} else if o.managesKernelNetfilter() || hasCustomExtIpsetRunner() {
 			cleanupExtNetfilterRules(ctx)
 		}
+	}
+	if o.foreignPresent() {
+		// Сторонний демон не наш: снимаем только свои цепочки FEXT_* и хук,
+		// чтобы панель могла уйти с движка FIRC.
+		runCleanup()
+		return nil
 	}
 	o.mu.Lock()
 	stopHook := o.stopHook
@@ -2300,13 +2329,20 @@ func (o *Operator) SwitchEngineWithOptions(ctx context.Context, targetEngine str
 	o.mutationMu.Lock()
 	defer o.mutationMu.Unlock()
 
-	if err := o.checkMutationAllowed(); err != nil {
-		return err
-	}
-
 	normTarget, err := normalizeTargetEngineName(targetEngine)
 	if err != nil {
 		return err
+	}
+	// Уйти с FIRC при стороннем firc можно всегда: метка восстановления и
+	// журнал относились к нашему рантайму, а файлов firc уход не пишет.
+	if normTarget == "firc" {
+		if err := o.checkMutationAllowed(); err != nil {
+			return err
+		}
+	} else if !o.foreignPresent() {
+		if err := o.checkRecoveryClear(); err != nil {
+			return err
+		}
 	}
 	if guard != nil {
 		if err := guard.CheckTarget(normTarget); err != nil {
@@ -2468,7 +2504,8 @@ func (o *Operator) SwitchEngineWithOptions(ctx context.Context, targetEngine str
 		}
 
 		// Phase R3: restart_previous
-		if previousStopAttempted && prevEngine != normTarget && prevEngine != "mihomo" {
+		if previousStopAttempted && prevEngine != normTarget && prevEngine != "mihomo" &&
+			(prevEngine != "firc" || !o.foreignPresent()) {
 			var cerr error
 			if prevEngine == "firc" {
 				cerr = startAndSyncFirc(false)
@@ -2621,6 +2658,12 @@ func (o *Operator) ReconcileRecovery(ctx context.Context, preferredEngine string
 	o.mutationMu.Lock()
 	defer o.mutationMu.Unlock()
 
+	if err := o.CheckNotForeign(); err != nil {
+		return nil, err
+	}
+	if o.recoveryDeferred.Load() {
+		return nil, ErrRestartRequired
+	}
 	hooks := o.DefaultEngineHooks()
 	for _, ov := range overrideHooks {
 		hooks = mergeEngineSwitchHooks(hooks, ov)
@@ -2959,6 +3002,9 @@ type groupsYAMLFile struct {
 
 // SaveTunnelsFile writes tunnels atomically to tunnels.yaml in ConfigDir.
 func (o *Operator) SaveTunnelsFile(tunnels []Tunnel) error {
+	if err := o.CheckNotForeign(); err != nil {
+		return err
+	}
 	if o.configDir == "" {
 		return errors.New("firc config directory is not configured")
 	}
@@ -2971,6 +3017,9 @@ func (o *Operator) SaveTunnelsFile(tunnels []Tunnel) error {
 
 // LoadTunnelsFile reads tunnels from tunnels.yaml in ConfigDir.
 func (o *Operator) LoadTunnelsFile() ([]Tunnel, error) {
+	if o.CheckNotForeign() != nil {
+		return nil, nil // туннели стороннего firc панель не показывает
+	}
 	data, err := os.ReadFile(o.TunnelsPath())
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -3018,6 +3067,9 @@ func (o *Operator) SetNetfilterStrictHook(fn func(ctx context.Context, ext ExtCo
 
 // SaveGroupsFile writes groups atomically to groups.yaml in ConfigDir.
 func (o *Operator) SaveGroupsFile(groups []Group) error {
+	if err := o.CheckNotForeign(); err != nil {
+		return err
+	}
 	o.mu.Lock()
 	hook := o.groupsSaveFaultHook
 	o.mu.Unlock()
@@ -3041,6 +3093,9 @@ func (o *Operator) SaveGroupsFile(groups []Group) error {
 
 // LoadGroupsFile reads groups from groups.yaml in ConfigDir.
 func (o *Operator) LoadGroupsFile() ([]Group, error) {
+	if o.CheckNotForeign() != nil {
+		return nil, nil // группы стороннего firc панель не показывает
+	}
 	data, err := os.ReadFile(o.GroupsPath())
 	if err != nil {
 		if os.IsNotExist(err) {

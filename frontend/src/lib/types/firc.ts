@@ -508,6 +508,36 @@ export interface FircStatus {
 	recoveryRequired?: boolean;
 	recoveryReason?: string;
 	recoveryMarker?: FircRecoveryMarker | null;
+	/** Восстановление отложено из-за стороннего firc до перезапуска AWG Manager. */
+	restartRequired?: boolean;
+	/** На роутере сторонний firc; остальные поля при нём не заполнены. */
+	foreign?: FircForeign;
+}
+
+/** Сторонний firc: панель им не управляет, только сообщает, что он есть. */
+export interface FircForeign {
+	package?: string;
+	binary?: string;
+	/** Веб-интерфейс firc, если порт задан в его конфиге явно. */
+	webPort?: number;
+	/** Пусто — firc слушает все адреса. */
+	webHost?: string;
+}
+
+const FOREIGN_HOST_NAME = /^([A-Za-z0-9-]+\.)*[A-Za-z][A-Za-z0-9-]*$/;
+const FOREIGN_HOST_V4 = /^\d{1,3}(\.\d{1,3}){3}$/;
+const FOREIGN_HOST_V6 = /^[0-9A-Fa-f:]*:[0-9A-Fa-f:.]*$/;
+
+/**
+ * Адрес интерфейса стороннего firc; null — порт неизвестен, адрес не похож на
+ * адрес, либо страница открыта по https (KeenDNS): порт роутера оттуда не виден.
+ */
+export function fircForeignWebUrl(foreign: FircForeign, page: { protocol: string; hostname: string }): string | null {
+	if (!foreign.webPort || page.protocol !== 'http:') return null;
+	const host = (foreign.webHost || page.hostname).replace(/^\[(.*)\]$/, '$1');
+	const v6 = FOREIGN_HOST_V6.test(host);
+	if (!v6 && !FOREIGN_HOST_V4.test(host) && !FOREIGN_HOST_NAME.test(host)) return null;
+	return `http://${v6 ? `[${host}]` : host}:${foreign.webPort}/`;
 }
 
 export type FircInstallState =
@@ -517,7 +547,8 @@ export type FircInstallState =
 	| 'recovery_required'
 	| 'installing'
 	| 'uninstalling'
-	| 'unavailable';
+	| 'unavailable'
+	| 'foreign';
 
 export interface FircInstallStatus {
 	state: FircInstallState;
@@ -527,8 +558,7 @@ export interface FircInstallStatus {
 	available: boolean;
 	unavailableReason?: string;
 	activeEngine: boolean;
-	externalPackage?: string;
-	externalMigratable?: boolean;
+	foreign?: FircForeign;
 	dependentServices?: string[];
 	ndmHookPresent: boolean;
 	fircdPresent: boolean;

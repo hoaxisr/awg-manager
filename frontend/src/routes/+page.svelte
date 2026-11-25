@@ -39,16 +39,19 @@
 	import { subscriptionsStore, subscriptionGroupsStore } from '$lib/stores/subscriptions';
 	import SubscriptionsTabSection from '$lib/components/subscriptions/SubscriptionsTabSection.svelte';
 	import SingboxTunnelsTabSection from '$lib/components/singbox/SingboxTunnelsTabSection.svelte';
+	import FircForeignNotice from '$lib/components/firc/FircForeignNotice.svelte';
 	import FircTunnelsTabSection from '$lib/components/firc/FircTunnelsTabSection.svelte';
 	import FircTunnelEditModal from '$lib/components/firc/FircTunnelEditModal.svelte';
 	import AwgTunnelsTabSection from '$lib/components/tunnels/AwgTunnelsTabSection.svelte';
 	import UplinkTab from '$lib/components/uplink/UplinkTab.svelte';
 	import {
 		createAndOpenFircTunnel,
+		fircForeign,
 		fircStatus,
 		fircTunnels,
 		fircTunnelsState,
 		reloadFircAll,
+		acquireFircStatusWatch,
 		acquireFircTunnelsStatePoll,
 	} from '$lib/stores/firc';
 	import { singboxRouter } from '$lib/stores/singboxRouter';
@@ -166,6 +169,10 @@
 	$effect(() => {
 		if (!isSectionVisible($usageLevel, 'singboxTunnels')) return;
 		return acquireFircTunnelsStatePoll();
+	});
+	$effect(() => {
+		if (!isSectionVisible($usageLevel, 'singboxTunnels')) return;
+		return acquireFircStatusWatch();
 	});
 
 	let trafficTick = $state(0);
@@ -745,10 +752,10 @@
 			(fircOwnsRouting || Boolean($fircStatus?.running)),
 	);
 	const showFircCreate = $derived(
-		showSingboxTunnelTabs && (fircOwnsRouting || Boolean($fircStatus?.running)),
+		showSingboxTunnelTabs && $fircForeign === null && (fircOwnsRouting || Boolean($fircStatus?.running)),
 	);
 	const showSingboxCreate = $derived(
-		showSingboxSections && !(fircOwnsRouting && (dashboardShowFirc || !singboxInstalled)),
+		showSingboxSections && !(fircOwnsRouting && !$fircForeign && (dashboardShowFirc || !singboxInstalled)),
 	);
 	let fircProbeSettled = $state(false);
 	let fircInitialLoadTriggered = false;
@@ -1910,6 +1917,9 @@
 		/>
 	{:else}
 		{#if dashboardOn}
+			{#if $fircForeign && fircOwnsRouting}
+				<div class="dashboard-foreign"><FircForeignNotice foreign={$fircForeign} selected /></div>
+			{/if}
 			<DashboardFlatSection ctx={dashboardFlatCtx} />
 		{:else}
 			<Tabs
@@ -2102,6 +2112,9 @@
 {/if}
 
 <style>
+	.dashboard-foreign {
+		margin-bottom: 0.75rem;
+	}
 
 	/* Ghost-токен drag-переупорядочивания: бейдж вида + имя. */
 	.drag-ghost-token {

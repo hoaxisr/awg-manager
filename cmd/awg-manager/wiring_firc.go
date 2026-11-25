@@ -206,6 +206,11 @@ func (a *app) buildProductionEngineSwitchHooks() firc.EngineSwitchHooks {
 				return errors.New("sing-box operator is not initialized")
 			}
 			if !a.singboxOp.IsPresent() {
+				if errors.Is(a.fircOp.CheckNotForeign(), firc.ErrForeignFirc) {
+					// Сторонний firc: с движка FIRC уходят и без sing-box —
+					// маршрутизация панели просто выключается.
+					return a.singboxOp.SetStoppedByEngine(false)
+				}
 				return errors.New("sing-box binary is not installed; install sing-box first")
 			}
 			a.singboxOp.EnsureConfigDirInitialized()
@@ -335,6 +340,9 @@ func (a *app) buildProductionEngineSwitchHooks() firc.EngineSwitchHooks {
 	activateTarget := func(ctx context.Context, targetEngine string) error {
 		switch targetEngine {
 		case "sing-box":
+			if a.singboxOp != nil && !a.singboxOp.IsPresent() && errors.Is(a.fircOp.CheckNotForeign(), firc.ErrForeignFirc) {
+				return nil // ушли с FIRC без sing-box (см. startTarget): поднимать нечего
+			}
 			if a.singboxOp != nil {
 				a.singboxOp.EnsureConfigDirInitialized()
 				if err := a.singboxOp.ReconcileRestoredProxies(ctx); err != nil {
@@ -665,6 +673,7 @@ func (a *app) setupFirc() {
 		AppLog:      a.loggingService,
 		ConfigDir:   configDir,
 		InboundPort: firc.DefaultMixedInboundPort,
+		Foreign:     firc.NewForeignDetector(""),
 	})
 	a.fircHandler = api.NewFircHandler(a.fircOp)
 	a.fircHandler.SetSettingsStore(a.settingsStore)
@@ -755,6 +764,7 @@ func (a *app) runFircStartupRecoveryGate() bool {
 		return false
 	}
 	if a.fircInstaller != nil {
+		abandoned := a.fircInstaller.PendingOperationAction() == firc.AbandonedExternalMigration
 		recCtx, recCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		recErr := a.fircInstaller.RecoverPendingOperationOnStartup(recCtx, a.fircOp)
 		recCancel()
@@ -764,11 +774,20 @@ func (a *app) runFircStartupRecoveryGate() bool {
 			}
 			return false
 		}
+		if abandoned && a.bootLog != nil {
+			a.bootLog.Warn("firc-runtime-recovery", "migrate_external",
+				"прерванный перевод пакета firc на рантайм AWGM отменён; копия настроек, если она была сделана, осталась в "+a.fircInstaller.ExternalMigrationBackupDir())
+		}
 	}
 	return true
 }
 
 func (a *app) completeFircStartup() {
+	if err := a.fircOp.CheckNotForeign(); err != nil {
+		a.completeForeignFircStartup(err)
+		a.recoverOrphanServerRoutingTx() // под чужим каталогом только отмечает отложенное
+		return
+	}
 	if !a.runFircStartupRecoveryGate() {
 		return
 	}
@@ -794,33 +813,7 @@ func (a *app) completeFircStartup() {
 	}
 
 	if a.isFircEngineActive() {
-		stopByEngine := a.singboxOp != nil && a.singboxOp.IsStoppedByEngine()
-		if a.singboxOp != nil {
-			a.singboxOp.SetProxiesParked(true)
-			parkCtx, parkCancel := context.WithTimeout(context.Background(), 10*time.Second)
-			if err := a.singboxOp.ParkOwnedNDMSProxies(parkCtx); err != nil && a.bootLog != nil {
-				a.bootLog.Warn("firc-startup", "park-proxies", err.Error())
-			}
-			parkCancel()
-		}
-		var releaseHold func()
-		if stopByEngine && a.sbOrch != nil {
-			releaseHold = a.sbOrch.HoldReloads()
-		}
-		if rl := a.routerLifecycle(); rl != nil {
-			parkCtx, parkCancel := context.WithTimeout(context.Background(), 15*time.Second)
-			if err := rl.ParkForExternalEngine(parkCtx); err != nil && a.bootLog != nil {
-				a.bootLog.Warn("firc-startup", "park-router", err.Error())
-			}
-			parkCancel()
-		}
-		if stopByEngine {
-			if a.sbOrch != nil {
-				a.sbOrch.CancelPendingReload()
-				releaseHold()
-			}
-			_ = a.suppressAndStopSingbox(0)
-		}
+		a.parkSingboxForFirc()
 		if !a.fircOp.ManuallyDisabled() {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
@@ -835,6 +828,59 @@ func (a *app) completeFircStartup() {
 		}
 	}
 	a.recoverOrphanServerRoutingTx()
+}
+
+// parkSingboxForFirc паркует sing-box на старте, когда выбран движок FIRC.
+func (a *app) parkSingboxForFirc() {
+	stopByEngine := a.singboxOp != nil && a.singboxOp.IsStoppedByEngine()
+	if a.singboxOp != nil {
+		a.singboxOp.SetProxiesParked(true)
+		parkCtx, parkCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := a.singboxOp.ParkOwnedNDMSProxies(parkCtx); err != nil && a.bootLog != nil {
+			a.bootLog.Warn("firc-startup", "park-proxies", err.Error())
+		}
+		parkCancel()
+	}
+	var releaseHold func()
+	if stopByEngine && a.sbOrch != nil {
+		releaseHold = a.sbOrch.HoldReloads()
+	}
+	if rl := a.routerLifecycle(); rl != nil {
+		parkCtx, parkCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		if err := rl.ParkForExternalEngine(parkCtx); err != nil && a.bootLog != nil {
+			a.bootLog.Warn("firc-startup", "park-router", err.Error())
+		}
+		parkCancel()
+	}
+	if stopByEngine {
+		if a.sbOrch != nil {
+			a.sbOrch.CancelPendingReload()
+			releaseHold()
+		}
+		_ = a.suppressAndStopSingbox(0)
+	}
+}
+
+// completeForeignFircStartup — старт при стороннем firc: ни восстановления
+// операций рантайма, ни миграции, ни запуска демона. Если движок FIRC уже был
+// выбран, sing-box остаётся припаркован, а свои цепочки FEXT_* и хук снимаем —
+// иначе они действовали бы на туннели стороннего firc.
+func (a *app) completeForeignFircStartup(reason error) {
+	if !a.isFircEngineActive() {
+		return
+	}
+	if a.bootLog != nil {
+		a.bootLog.Warn("firc", "start", reason.Error())
+	}
+	a.parkSingboxForFirc()
+	if !errors.Is(reason, firc.ErrForeignFirc) {
+		return // чей firc — неизвестно: работающий может быть нашим, не трогаем
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := a.fircOp.Stop(ctx); err != nil && a.bootLog != nil {
+		a.bootLog.Warn("firc", "release-rules", err.Error())
+	}
 }
 
 // recoverOrphanServerRoutingTx подбирает транзакции sr-tx, которые журнал

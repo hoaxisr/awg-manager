@@ -3,7 +3,6 @@ package firc
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,31 +35,32 @@ const (
 	InstallStateInstalling     InstallState = "installing"
 	InstallStateUninstalling   InstallState = "uninstalling"
 	InstallStateUnavailable    InstallState = "unavailable"
+	// InstallStateForeign — на роутере сторонний firc, рантайм панели не предлагается.
+	InstallStateForeign InstallState = "foreign"
 )
 
 // InstallStatus is the JSON payload for /api/firc/install-status.
 type InstallStatus struct {
-	State              InstallState `json:"state"`
-	InstalledVersion   string       `json:"installedVersion,omitempty"`
-	AvailableVersion   string       `json:"availableVersion,omitempty"`
-	UpdateAvailable    bool         `json:"updateAvailable"`
-	Available          bool         `json:"available"`
-	UnavailableReason  string       `json:"unavailableReason,omitempty"`
-	FircdPresent       bool         `json:"fircdPresent"`
-	TunvlessPresent    bool         `json:"tunvlessPresent"`
-	InitScriptPresent  bool         `json:"initScriptPresent"`
-	NDMHookPresent     bool         `json:"ndmHookPresent"`
-	ConfigPresent      bool         `json:"configPresent"`
-	FreeDiskBytes      int64        `json:"freeDiskBytes,omitempty"`
-	RequiredDiskBytes  int64        `json:"requiredDiskBytes,omitempty"`
-	Busy               bool         `json:"busy"`
-	BusyAction         string       `json:"busyAction,omitempty"`
-	Progress           float64      `json:"progress,omitempty"` // 0.0–1.0
-	Error              string       `json:"error,omitempty"`
-	ActiveEngine       bool         `json:"activeEngine"`
-	ExternalPackage    string       `json:"externalPackage,omitempty"`
-	ExternalMigratable bool         `json:"externalMigratable,omitempty"`
-	DependentServices  []string     `json:"dependentServices,omitempty"`
+	State             InstallState `json:"state"`
+	InstalledVersion  string       `json:"installedVersion,omitempty"`
+	AvailableVersion  string       `json:"availableVersion,omitempty"`
+	UpdateAvailable   bool         `json:"updateAvailable"`
+	Available         bool         `json:"available"`
+	UnavailableReason string       `json:"unavailableReason,omitempty"`
+	FircdPresent      bool         `json:"fircdPresent"`
+	TunvlessPresent   bool         `json:"tunvlessPresent"`
+	InitScriptPresent bool         `json:"initScriptPresent"`
+	NDMHookPresent    bool         `json:"ndmHookPresent"`
+	ConfigPresent     bool         `json:"configPresent"`
+	FreeDiskBytes     int64        `json:"freeDiskBytes,omitempty"`
+	RequiredDiskBytes int64        `json:"requiredDiskBytes,omitempty"`
+	Busy              bool         `json:"busy"`
+	BusyAction        string       `json:"busyAction,omitempty"`
+	Progress          float64      `json:"progress,omitempty"` // 0.0–1.0
+	Error             string       `json:"error,omitempty"`
+	ActiveEngine      bool         `json:"activeEngine"`
+	DependentServices []string     `json:"dependentServices,omitempty"`
+	Foreign           *ForeignFirc `json:"foreign,omitempty"`
 }
 
 // OnDemandInstaller manages on-demand FIRC binary download, verification, and install/uninstall.
@@ -89,55 +89,19 @@ type OnDemandInstaller struct {
 	checkDependenciesFn func(ctx context.Context) ([]string, error)
 	lockRuntime         func() func()
 	packages            RuntimePackageManager
+	foreign             *ForeignDetector
 }
 
 func (odi *OnDemandInstaller) SetRuntimeLocker(lock func() func()) { odi.lockRuntime = lock }
 
-// ExternalRuntimePackage reports the Entware opkg package name (such as "firc" or
-// "tunvless") that owns FIRC runtime binaries or hooks outside awg-manager and
-// awg-firc-runtime, or "" when none is registered.
-func (odi *OnDemandInstaller) ExternalRuntimePackage() (string, error) {
-	infoDir := odi.rootPath("/opt/lib/opkg/info")
-	entries, err := os.ReadDir(infoDir)
-	if os.IsNotExist(err) {
-		return "", nil
-	}
-	if err != nil {
-		return "", err
-	}
-	protected := map[string]bool{
-		"/opt/sbin/fircd": true, "/opt/bin/fircd": true,
-		"/opt/sbin/tunvless": true, "/opt/bin/tunvless": true,
-		"/opt/etc/init.d/S99firc":                true,
-		"/opt/etc/ndm/netfilter.d/100-firc":      true,
-		"/opt/etc/ndm/iflayerchanged.d/100-firc": true,
-	}
-	for _, entry := range entries {
-		if !strings.HasSuffix(entry.Name(), ".list") || entry.Name() == RuntimePackageName+".list" || entry.Name() == "awg-manager.list" {
-			continue
-		}
-		list := filepath.Join(infoDir, entry.Name())
-		data, err := os.ReadFile(list)
-		if err != nil {
-			return "", fmt.Errorf("read package ownership: %w", err)
-		}
-		for _, line := range strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n") {
-			if protected[strings.TrimSpace(line)] {
-				return strings.TrimSuffix(entry.Name(), ".list"), nil
-			}
-		}
-	}
-	return "", nil
-}
-
-// Refuse direct mutation of files owned by a third-party IPK (such as upstream firc or tunvless).
-func (odi *OnDemandInstaller) checkExternalPackageOwnership() error {
-	pkg, err := odi.ExternalRuntimePackage()
+// checkNotForeign — отказ пакетных операций при стороннем firc.
+func (odi *OnDemandInstaller) checkNotForeign() error {
+	found, err := odi.foreign.Detect()
 	if err != nil {
 		return err
 	}
-	if pkg != "" {
-		return fmt.Errorf("firc runtime belongs to external package %s.list; refusing to overwrite", pkg)
+	if found != nil {
+		return ErrForeignFirc
 	}
 	return nil
 }
@@ -171,6 +135,7 @@ func NewOnDemandInstaller(arch string, spec FircBinarySpec) *OnDemandInstaller {
 		layout:   DefaultPackageLayout(""),
 		freeDisk: routerinfo.FreeBytes,
 		packages: OpkgRuntimeManager{},
+		foreign:  NewForeignDetector(""),
 	}
 }
 
@@ -205,6 +170,7 @@ func (odi *OnDemandInstaller) SetFreeDiskFn(fn func(string) (int64, bool)) {
 // SetPackageLayout overrides the filesystem layout (tests only).
 func (odi *OnDemandInstaller) SetPackageLayout(layout PackageLayout) {
 	odi.layout = layout
+	odi.foreign = NewForeignDetector(layout.RootDir)
 }
 
 // SetEngineActiveChecker wires the active routing engine check.
@@ -259,16 +225,24 @@ func (odi *OnDemandInstaller) GetInstallStatus(ctx context.Context, op *Operator
 	lastErr := odi.lastError
 	odi.mu.Unlock()
 
+	foreign, ownerErr := odi.foreign.Detect()
+	if foreign != nil {
+		active := isSelected
+		if odi.engineActiveFn != nil {
+			active = odi.engineActiveFn()
+		}
+		return InstallStatus{
+			State:        InstallStateForeign,
+			Busy:         busy,
+			BusyAction:   busyAction,
+			ActiveEngine: active,
+			Foreign:      odi.foreign.describe(foreign),
+		}
+	}
+
 	// Probe files
 	_, errFircd := os.Stat(odi.layout.FircdBin)
-	if errFircd != nil {
-		// Standalone Entware firc installs binaries into /opt/bin instead of /opt/sbin.
-		_, errFircd = os.Stat(odi.rootPath("/opt/bin/fircd"))
-	}
 	_, errTun := os.Stat(odi.layout.TunvlessBin)
-	if errTun != nil {
-		_, errTun = os.Stat(odi.rootPath("/opt/bin/tunvless"))
-	}
 	_, errInit := os.Stat(odi.layout.InitScript)
 	_, errNetfilter := os.Stat(odi.layout.NDMNetfilterHook)
 	_, errIfLayer := os.Lstat(odi.layout.NDMIfLayerHook)
@@ -303,18 +277,14 @@ func (odi *OnDemandInstaller) GetInstallStatus(ctx context.Context, op *Operator
 		isRunning = op.IsRunning(ctx)
 	}
 
-	extPkg, extPkgErr := odi.ExternalRuntimePackage()
 	installedVer := ""
 	var packageErr error
 	if odi.packages != nil {
 		installedVer, packageErr = odi.packages.Version(ctx, RuntimePackageName)
-		if packageErr == nil && installedVer == "" && extPkg != "" {
-			installedVer, packageErr = odi.packages.Version(ctx, extPkg)
-		}
 	}
 	journal, journalErr := odi.readOperation()
-	if extPkgErr != nil {
-		lastErr = extPkgErr.Error()
+	if ownerErr != nil {
+		lastErr = ownerErr.Error()
 	} else if packageErr != nil {
 		lastErr = packageErr.Error()
 	} else if journalErr != nil {
@@ -336,13 +306,13 @@ func (odi *OnDemandInstaller) GetInstallStatus(ctx context.Context, op *Operator
 
 	var state InstallState
 	switch {
-	case busy && (busyAction == "install" || busyAction == "upgrade" || busyAction == "migrate_external"):
+	case busy && (busyAction == "install" || busyAction == "upgrade"):
 		state = InstallStateInstalling
 	case busy && busyAction == "uninstall":
 		state = InstallStateUninstalling
-	case journalErr != nil || journal.Pending || extPkgErr != nil || packageErr != nil || dependencyErr != nil:
+	case journalErr != nil || journal.Pending || ownerErr != nil || packageErr != nil || dependencyErr != nil:
 		state = InstallStateRecoveryNeeded
-	case !fircdPresent && !tunvlessPresent && !initPresent && installedVer == "" && extPkg == "":
+	case !fircdPresent && !tunvlessPresent && !initPresent && installedVer == "":
 		if !available {
 			state = InstallStateUnavailable
 		} else {
@@ -360,42 +330,35 @@ func (odi *OnDemandInstaller) GetInstallStatus(ctx context.Context, op *Operator
 	}
 
 	updateAvailable := available &&
-		extPkg == "" &&
 		(state == InstallStateInstalled || state == InstallStateRunning) &&
 		installedVer != "" &&
 		effectiveSpec.Version != "" &&
 		installedVer != effectiveSpec.Version
 
 	status := InstallStatus{
-		State:              state,
-		InstalledVersion:   installedVer,
-		AvailableVersion:   effectiveSpec.Version,
-		UpdateAvailable:    updateAvailable,
-		Available:          available,
-		UnavailableReason:  unavailableReason,
-		FircdPresent:       fircdPresent,
-		TunvlessPresent:    tunvlessPresent,
-		InitScriptPresent:  initPresent,
-		NDMHookPresent:     ndmHookPresent,
-		ConfigPresent:      cfgPresent,
-		Busy:               busy,
-		BusyAction:         busyAction,
-		Progress:           progress,
-		Error:              lastErr,
-		ActiveEngine:       active,
-		ExternalPackage:    extPkg,
-		ExternalMigratable: extPkg != "" && isAllowedExternalFircPackage(extPkg),
-		DependentServices:  dependentServices,
+		State:             state,
+		InstalledVersion:  installedVer,
+		AvailableVersion:  effectiveSpec.Version,
+		UpdateAvailable:   updateAvailable,
+		Available:         available,
+		UnavailableReason: unavailableReason,
+		FircdPresent:      fircdPresent,
+		TunvlessPresent:   tunvlessPresent,
+		InitScriptPresent: initPresent,
+		NDMHookPresent:    ndmHookPresent,
+		ConfigPresent:     cfgPresent,
+		Busy:              busy,
+		BusyAction:        busyAction,
+		Progress:          progress,
+		Error:             lastErr,
+		ActiveEngine:      active,
+		DependentServices: dependentServices,
 	}
 
 	required := effectiveSpec.PackageSize*4 + diskReserveBytes
 	status.RequiredDiskBytes = required
 	if odi.freeDisk != nil {
-		diskProbeDir := filepath.Dir(odi.layout.FircdBin)
-		if _, err := os.Stat(diskProbeDir); err != nil {
-			diskProbeDir = filepath.Dir(odi.rootPath("/opt/bin/fircd"))
-		}
-		if free, ok := odi.freeDisk(diskProbeDir); ok {
+		if free, ok := odi.freeDisk(filepath.Dir(odi.layout.FircdBin)); ok {
 			status.FreeDiskBytes = free
 		}
 	}

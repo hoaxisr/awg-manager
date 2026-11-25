@@ -1,4 +1,4 @@
-import { writable, get } from 'svelte/store';
+import { derived, writable, get } from 'svelte/store';
 import { api } from '$lib/api/client';
 import { startVisiblePoll } from '$lib/utils/visiblePoll';
 import {
@@ -13,6 +13,8 @@ import {
 } from '$lib/types/firc';
 
 export const fircStatus = writable<FircStatus | null>(null);
+/** Сторонний firc на роутере: undefined — статус ещё не загружен, null — его нет. */
+export const fircForeign = derived(fircStatus, ($s) => ($s === null ? undefined : ($s.foreign ?? null)));
 export const fircTunnels = writable<FircTunnel[]>([]);
 export const fircTunnelsState = writable<FircTunnelState[]>([]);
 export const fircGroups = writable<FircGroup[]>([]);
@@ -89,16 +91,77 @@ export async function createAndOpenFircTunnel(kind: 'link' | 'subscription'): Pr
 	openFircTunnelEditor(id, 'sources');
 }
 
+let statusInflight: Promise<void> | null = null;
+
+/**
+ * Перечитать только статус. Сторонний firc ставят и снимают мимо панели: если
+ * он появился или ушёл, вместе со статусом устарели туннели и группы.
+ */
+export function refreshFircStatus(): Promise<void> {
+	statusInflight ??= (async () => {
+		try {
+			const prev = get(fircStatus);
+			const next = await api.fircGetStatus();
+			fircStatus.set(next);
+			if (prev && Boolean(prev.foreign) !== Boolean(next.foreign)) await reloadFircAll();
+		} finally {
+			statusInflight = null;
+		}
+	})();
+	return statusInflight;
+}
+
+// Наблюдение за установкой и снятием стороннего firc. Владелец один, держат его
+// по ссылке страницы с разделами FIRC. Таймер спрашивает только пока статуса нет
+// или стоит сторонний (показано пояснение); в обычной работе запрос один — на
+// возвращение к вкладке браузера.
+const STATUS_WATCH_MS = 15_000;
+const STATUS_VISIBLE_GAP_MS = 3_000;
+let statusWatchRefs = 0;
+let stopStatusWatch: (() => void) | null = null;
+
+export function acquireFircStatusWatch(): () => void {
+	if (statusWatchRefs++ === 0) stopStatusWatch = startStatusWatch();
+	let released = false;
+	return () => {
+		if (released) return;
+		released = true;
+		if (--statusWatchRefs === 0) {
+			stopStatusWatch?.();
+			stopStatusWatch = null;
+		}
+	};
+}
+
+function startStatusWatch(): () => void {
+	let lastAt = 0;
+	const refresh = () => {
+		lastAt = Date.now();
+		return refreshFircStatus().catch(() => undefined);
+	};
+	const stopPoll = startVisiblePoll(async () => {
+		if (get(fircForeign) !== null && !get(fircLoading)) await refresh();
+	}, STATUS_WATCH_MS);
+	const onVisible = () => {
+		if (document.visibilityState === 'visible' && Date.now() - lastAt >= STATUS_VISIBLE_GAP_MS) void refresh();
+	};
+	document.addEventListener('visibilitychange', onVisible);
+	return () => {
+		stopPoll();
+		document.removeEventListener('visibilitychange', onVisible);
+	};
+}
+
 export async function reloadFircAll(): Promise<void> {
 	fircLoading.set(true);
 	try {
-		const [status, tunnels, groups, tStates] = await Promise.all([
-			api.fircGetStatus(),
+		const [, tunnels, groups, tStates] = await Promise.all([
+			// Статус — сразу: без него разделы не знают, чей firc на роутере.
+			api.fircGetStatus().then((status) => fircStatus.set(status)),
 			api.fircGetTunnels(),
 			api.fircGetGroups(),
 			api.fircGetTunnelsState().catch(() => [] as FircTunnelState[]),
 		]);
-		fircStatus.set(status);
 		fircTunnels.set(tunnels);
 		fircGroups.set(groups);
 		fircTunnelsState.set(tStates);

@@ -20,14 +20,8 @@ const (
 	// DefaultFircdBinary is the default path to the fircd daemon binary.
 	DefaultFircdBinary = "/opt/sbin/fircd"
 
-	// AltFircdBinary is the fallback path used by standalone Entware firc packages.
-	AltFircdBinary = "/opt/bin/fircd"
-
 	// DefaultTunvlessBinary is the default path to the tunvless binary.
 	DefaultTunvlessBinary = "/opt/sbin/tunvless"
-
-	// AltTunvlessBinary is the fallback path used by standalone Entware firc packages.
-	AltTunvlessBinary = "/opt/bin/tunvless"
 
 	// DefaultDNSProxyAddr is the local DNS proxy address used by fircd.
 	DefaultDNSProxyAddr = "127.0.0.1"
@@ -1072,6 +1066,10 @@ type Status struct {
 	GroupsCount       int              `json:"groupsCount"`
 	Netfilter         *NetfilterHealth `json:"netfilter,omitempty"`
 	LastError         string           `json:"lastError,omitempty"`
+	// Foreign — на роутере сторонний firc; остальные поля при нём не заполняются.
+	Foreign *ForeignFirc `json:"foreign,omitempty"`
+	// RestartRequired — восстановление отложено до перезапуска AWG Manager.
+	RestartRequired bool `json:"restartRequired,omitempty"`
 }
 
 // ProxyGroup defines an AWGM-managed fallback group of interfaces (up to 4) for FIRC.

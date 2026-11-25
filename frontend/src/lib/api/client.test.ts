@@ -309,3 +309,22 @@ describe('fircGetMonitor', () => {
 		expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual(['/api/firc/monitor', '/api/firc/monitor?clients=1']);
 	});
 });
+
+describe('ошибки /firc/v1', () => {
+	const originalFetch = globalThis.fetch;
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+
+	// F913: обёртка панели шлёт error:true, текст — в message.
+	it.each([
+		['обёртка панели', { error: true, message: 'на роутере установлен firc', code: 'FIRC_FOREIGN' }, 'на роутере установлен firc'],
+		['ответ fircd', { error: 'unknown key', tunnel: 't1' }, 'unknown key'],
+	])('%s: в ошибке текст', async (_name, body, want) => {
+		globalThis.fetch = vi.fn().mockResolvedValue(
+			new Response(JSON.stringify(body), { status: 409, headers: { 'Content-Type': 'application/json' } }),
+		);
+		await expect(api.fircSaveTunnels([])).rejects.toMatchObject({ message: want, status: 409 });
+	});
+});

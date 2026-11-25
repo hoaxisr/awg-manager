@@ -59,6 +59,11 @@ func (op *Operator) PrepareServerRouting(ctx context.Context, txID string, serve
 	op.mutationMu.Lock()
 	defer op.mutationMu.Unlock()
 
+	if !enabled && op.CheckNotForeign() != nil {
+		// Снимать нечего: при стороннем firc маршрутизация серверов через FIRC
+		// не действует, а сервер должен остаться настраиваемым.
+		return "", nil
+	}
 	if err := op.checkMutationAllowed(); err != nil {
 		return "", err
 	}
@@ -266,6 +271,14 @@ func (op *Operator) RollbackServerRouting(ctx context.Context, txID string) erro
 	op.mutationMu.Lock()
 	defer op.mutationMu.Unlock()
 
+	// Каталог firc чужой: начатую до него транзакцию не трогаем, её подберёт
+	// RecoverIncompleteServerRoutingTx на первом запуске без стороннего firc.
+	if op.CheckNotForeign() != nil {
+		if _, err := os.Stat(op.srTxDir(txID)); err == nil {
+			op.deferRecovery()
+		}
+		return nil
+	}
 	txDir := op.srTxDir(txID)
 	manifestPath := filepath.Join(txDir, "manifest.json")
 	mBytes, err := os.ReadFile(manifestPath)
@@ -383,6 +396,10 @@ func (op *Operator) FinalizeServerRouting(txID string) error {
 	if strings.TrimSpace(txID) == "" || op.configDir == "" {
 		return nil
 	}
+	if op.CheckNotForeign() != nil {
+		op.deferRecovery()
+		return nil
+	}
 	return os.RemoveAll(op.srTxDir(txID))
 }
 
@@ -395,6 +412,12 @@ func (op *Operator) RecoverIncompleteServerRoutingTx(ctx context.Context) error 
 	}
 	srRoot := filepath.Join(op.configDir, "sr-tx")
 	entries, err := os.ReadDir(srRoot)
+	if op.CheckNotForeign() != nil {
+		if len(entries) > 0 {
+			op.deferRecovery()
+		}
+		return nil
+	}
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil

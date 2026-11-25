@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 
@@ -129,5 +131,34 @@ func TestServerListFircEgressTunnels(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("entry[%d] mismatch:\n  got:  %+v\n  want: %+v", i, got[i], want[i])
 		}
+	}
+}
+
+func TestFircEgressState_ForeignFirc(t *testing.T) {
+	root := t.TempDir()
+	info := filepath.Join(root, "opt/lib/opkg/info")
+	if err := os.MkdirAll(info, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	settings := storage.NewSettingsStore(t.TempDir())
+	if err := settings.Update(func(st *storage.Settings) error {
+		st.SingboxRouter.RoutingEngine = "firc"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"ok":true}`)) }))
+	defer daemon.Close()
+	op := firc.NewOperator(firc.Options{ConfigDir: t.TempDir(), Foreign: firc.NewForeignDetector(root)})
+	op.SetClient(firc.NewHTTPClient(daemon.URL, daemon.Client()))
+	srv := &Server{settings: settings, fircHandler: api.NewFircHandler(op)}
+	if ok, why := srv.fircEgressState(context.Background()); !ok || why != "" {
+		t.Fatalf("без стороннего: %v %q", ok, why)
+	}
+	if err := os.WriteFile(filepath.Join(info, "firc.list"), []byte("/opt/bin/fircd\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if ok, why := srv.fircEgressState(context.Background()); ok || why != firc.ErrForeignFirc.Error() {
+		t.Fatalf("при стороннем: %v %q", ok, why)
 	}
 }

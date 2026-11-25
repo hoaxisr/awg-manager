@@ -8,14 +8,14 @@ import (
 )
 
 // F831: перед операцией из кэша уходят IPK прежних версий и брошенные stage;
-// IPK установленной версии (для отката), verified.ipk и бэкап внешней
-// миграции остаются. При незавершённой операции кэш не трогается.
+// IPK установленной версии (для отката), verified.ipk
+// остаются. При незавершённой операции кэш не трогается.
 func TestPruneRuntimeCache(t *testing.T) {
 	root := t.TempDir()
 	inst := NewOnDemandInstaller("aarch64-3.10", FircBinarySpec{})
 	inst.SetPackageLayout(DefaultPackageLayout(root))
 	cache := inst.rootPath("/opt/var/cache/awg-manager/firc-runtime")
-	for _, d := range []string{"stage-1", "upgrade-stage-2", "ext-migrate-stage-3", "external-migration-backup"} {
+	for _, d := range []string{"stage-1", "upgrade-stage-2"} {
 		if err := os.MkdirAll(filepath.Join(cache, d), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -42,12 +42,12 @@ func TestPruneRuntimeCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	inst.pruneRuntimeCache(cache)
-	for _, gone := range []string{"runtime-bbb.ipk", "stage-1", "upgrade-stage-2", "ext-migrate-stage-3"} {
+	for _, gone := range []string{"runtime-bbb.ipk", "stage-1", "upgrade-stage-2"} {
 		if _, err := os.Stat(filepath.Join(cache, gone)); !os.IsNotExist(err) {
 			t.Errorf("%s survived prune", gone)
 		}
 	}
-	for _, kept := range []string{"runtime-aaa.ipk", "verified.ipk", "installed.json", "external-migration-backup"} {
+	for _, kept := range []string{"runtime-aaa.ipk", "verified.ipk", "installed.json"} {
 		if _, err := os.Stat(filepath.Join(cache, kept)); err != nil {
 			t.Errorf("%s removed: %v", kept, err)
 		}

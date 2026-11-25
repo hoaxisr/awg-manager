@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { tick } from 'svelte';
 import { get } from 'svelte/store';
 
 const {
@@ -75,19 +76,31 @@ vi.mock('$lib/api/client', () => ({
 vi.mock('$lib/stores/notifications', () => ({
 	notifications: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
 }));
-vi.mock('$lib/stores/firc', () => ({
-	reloadFircAll: vi.fn().mockResolvedValue(undefined),
-}));
+vi.mock('$lib/stores/firc', async () => {
+	const { writable } = await import('svelte/store');
+	return {
+		reloadFircAll: vi.fn().mockResolvedValue(undefined),
+		fircStatus: writable(null),
+		fircForeign: writable(undefined),
+		acquireFircStatusWatch: () => () => {},
+	};
+});
 vi.mock('$lib/stores/settings', () => ({
 	reloadSettings: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('$lib/stores/singboxRouter', () => ({
 	singboxRouter: { reloadSettings: vi.fn().mockResolvedValue(undefined) },
 }));
-vi.mock('$lib/stores/singbox', () => ({
-	singboxStatus: { refetch: vi.fn().mockResolvedValue(undefined) },
-	singboxTunnels: { refetch: vi.fn().mockResolvedValue(undefined) },
-}));
+vi.mock('$lib/stores/singbox', async () => {
+	const { readable } = await import('svelte/store');
+	return {
+		singboxStatus: {
+			...readable({ data: { installed: false } }),
+			refetch: vi.fn().mockResolvedValue(undefined),
+		},
+		singboxTunnels: { refetch: vi.fn().mockResolvedValue(undefined) },
+	};
+});
 vi.mock('$lib/stores/subscriptions', () => ({
 	subscriptionsStore: { refetch: vi.fn().mockResolvedValue(undefined) },
 	subscriptionGroupsStore: { refetch: vi.fn().mockResolvedValue(undefined) },
@@ -201,6 +214,77 @@ afterEach(() => {
 });
 
 describe('FircMigrationWizardModal engine purge & recovery', () => {
+	it('до ответа — без кнопок и вкладок, сбой installStatus не оставляет прошлый ответ', async () => {
+		fircGetMigrationState.mockResolvedValue(baseOverview());
+		let answer!: (v: FircInstallStatus) => void;
+		fircGetInstallStatus.mockReturnValue(new Promise((r) => (answer = r)));
+		render(FircMigrationWizardModal);
+		openFircMigrationModal('forward');
+		await waitFor(() => expect(fircGetInstallStatus).toHaveBeenCalled());
+		expect(screen.queryByText(m.firc_migration_tab_reverse())).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: m.firc_migration_fwd_apply() })).not.toBeInTheDocument();
+		answer(installedFircStatus);
+		expect((await screen.findAllByText(m.firc_migration_tab_reverse())).length).toBeGreaterThan(0); // признак не холостой
+		expect(await screen.findByRole('button', { name: m.firc_migration_fwd_apply() })).toBeInTheDocument();
+
+		closeFircMigrationModal();
+		await tick();
+		fircGetInstallStatus.mockRejectedValue(new Error('сеть'));
+		openFircMigrationModal('forward');
+		expect(await screen.findByRole('alert')).toHaveTextContent(m.firc_migration_load_failed());
+		expect(screen.queryByRole('button', { name: m.firc_migration_fwd_apply() })).not.toBeInTheDocument();
+	});
+
+	it('повторное открытие не показывает пояснение с прошлого раза', async () => {
+		fircGetMigrationState.mockResolvedValue(baseOverview());
+		fircGetInstallStatus.mockResolvedValue({ ...installedFircStatus, state: 'foreign', foreign: { package: 'firc' } });
+		render(FircMigrationWizardModal);
+		openFircMigrationModal('forward');
+		expect(await screen.findByText(m.firc_foreign_text())).toBeInTheDocument();
+		closeFircMigrationModal();
+		await tick();
+		fircGetInstallStatus.mockReturnValue(new Promise(() => {}));
+		openFircMigrationModal('forward');
+		await waitFor(() => expect(fircGetInstallStatus).toHaveBeenCalledTimes(2));
+		expect(screen.queryByText(m.firc_foreign_text())).not.toBeInTheDocument();
+	});
+
+	it('сторонний firc ушёл при открытом окне — данные перечитываются', async () => {
+		const { fircForeign } = await import('$lib/stores/firc');
+		const store = fircForeign as unknown as { set(v: unknown): void };
+		store.set({ package: 'firc' });
+		fircGetMigrationState.mockResolvedValue(baseOverview());
+		fircGetInstallStatus.mockResolvedValue({ ...installedFircStatus, state: 'foreign', foreign: { package: 'firc' } });
+		render(FircMigrationWizardModal);
+		openFircMigrationModal('forward');
+		expect(await screen.findByText(m.firc_foreign_text())).toBeInTheDocument();
+		fircGetInstallStatus.mockResolvedValue(installedFircStatus);
+		store.set(null);
+		await waitFor(() => expect(fircGetInstallStatus).toHaveBeenCalledTimes(2));
+		expect(await screen.findByRole('button', { name: m.firc_migration_fwd_apply() })).toBeInTheDocument();
+		store.set(undefined);
+	});
+
+	it('при стороннем firc — пояснение вместо разделов, без предпросмотра и миграции', async () => {
+		fircGetMigrationState.mockResolvedValue(baseOverview({ activeEngine: 'firc', forwardPreview: null as never }));
+		fircGetInstallStatus.mockResolvedValue({
+			...installedFircStatus,
+			state: 'foreign',
+			fircdPresent: false,
+			tunvlessPresent: false,
+			foreign: { binary: '/opt/bin/fircd' },
+		});
+		render(FircMigrationWizardModal);
+		openFircMigrationModal('forward');
+		expect(await screen.findByText(m.firc_foreign_binary({ path: '/opt/bin/fircd' }))).toBeInTheDocument();
+		// sing-box не установлен: уход с движка означает «выключить».
+		expect(screen.getByRole('button', { name: m.firc_foreign_turn_off() })).toBeInTheDocument();
+		expect(screen.queryByText(m.firc_migration_tab_reverse())).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: m.firc_migration_fwd_apply() })).not.toBeInTheDocument();
+		expect(fircMigrateFromSingbox).not.toHaveBeenCalled();
+		expect(fircReverseMigrateToSingbox).not.toHaveBeenCalled();
+	});
+
 	it('offers switch_and_uninstall in Tab 1 and enforces mandatory snapshot on submit', async () => {
 		fircMigrateFromSingbox.mockImplementation(async (dryRun: boolean) => {
 			if (dryRun) {

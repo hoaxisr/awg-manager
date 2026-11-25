@@ -35,7 +35,10 @@
     import { modeSwitch, modeSwitchBusy } from '$lib/stores/modeSwitch';
     import GeoDataTab from './GeoDataTab.svelte';
     import FircRouterPanel from './FircRouterPanel.svelte';
-    import { reloadFircAll } from '$lib/stores/firc';
+    import { fircForeign, refreshFircStatus, reloadFircAll } from '$lib/stores/firc';
+    import { routingStartTab, restoresRoutingTab } from '$lib/utils/routingStartTab';
+    import { readTabMemory, tabMemoryKey } from '$lib/components/ui/tab-memory';
+    import { LoadingSpinner } from '$lib/components/layout';
     import { fircHasDraft, clearFircGroupsDraft } from '$lib/stores/fircDraft';
     import { isRoutingSubTabVisible, type RoutingSubTab, type UsageLevel } from '$lib/types/usageLevel';
     import { usageLevel, settings, settingsUnavailable } from '$lib/stores/settings';
@@ -92,6 +95,7 @@
 
     // «Любимая» вкладка — открывается первой вместо FIRC. Per-browser
     // удобство, поэтому localStorage, а не настройки роутера.
+    const TAB_MEMORY_KEY = 'routing-sections';
     const FAVORITE_TAB_KEY = 'awgm.routing.favoriteTab';
 
     function loadFavoriteTab(): RoutingTab | null {
@@ -126,8 +130,43 @@
     }
 
     const urlTab = tabFromUrl();
-    const startTab = urlTab ?? savedFavoriteTab ?? 'firc';
-    let activeTab = $state<RoutingTab>(startTab);
+    const explicitTab = { url: urlTab, favorite: savedFavoriteTab };
+    const tabPreset = urlTab !== null || savedFavoriteTab !== null;
+    // Снимок на старте: вкладка не прыгает, если сторонний firc появится или уйдёт.
+    const initialForeign = get(fircForeign);
+    const initialTab: RoutingTab = routingStartTab(explicitTab, Boolean(initialForeign));
+    let foreignAtStart = $state(Boolean(initialForeign));
+    let startTab = $state(initialTab);
+    let activeTab = $state(initialTab);
+    // Пока не ясно, чей firc на роутере, стартовую вкладку по умолчанию не
+    // показываем — иначе FIRC мелькнула бы перед sing-box.
+    const unknownAtStart = !tabPreset && initialForeign === undefined;
+    let startPending = $state(unknownAtStart);
+
+    async function settleStartTab() {
+        await Promise.race([
+            refreshFircStatus().catch(() => undefined),
+            new Promise((resolve) => setTimeout(resolve, 3000)),
+        ]);
+        foreignAtStart = Boolean(get(fircForeign));
+        const untouched = activeTab === startTab;
+        startTab = routingStartTab(explicitTab, foreignAtStart);
+        if (untouched) activeTab = startTab;
+        startPending = false;
+    }
+    if (browser && unknownAtStart) void settleStartTab();
+    // Вкладка по умолчанию убирается из адреса. Пока статуса нет, не убираем ничего:
+    // иначе явная ?tab=firc пропала бы и после F5 открылся бы sing-box.
+    const defaultTab = $derived(
+        favoriteTab ?? ($fircForeign === undefined ? '' : $fircForeign ? 'singbox' : 'firc'),
+    );
+    const restoreTabMemory = $derived(
+        restoresRoutingTab(
+            savedFavoriteTab,
+            readTabMemory(tabMemoryKey(TAB_MEMORY_KEY), [...ROUTING_TABS]),
+            foreignAtStart,
+        ),
+    );
 
     // ?policy=Policy1 — прямой переход из настроек sing-box в редактор
     // конкретной политики (#573).
@@ -404,7 +443,7 @@
     // уводил на IP.
     $effect(() => {
         const items = tabItems;
-        if (items.length === 0) return;
+        if (items.length === 0 || startPending) return;
 
         const si = $systemInfo;
         // Отказ system/info вкладку из ссылки не сбрасывает: сброс ушёл бы в
@@ -453,7 +492,8 @@
         }
 
         if (!tabsInclude(items, activeTab)) {
-            const first = items[0];
+            // При стороннем firc вместо скрытой вкладки TProxy — соседняя sing-box.
+            const first = (foreignAtStart && items.find((t) => t.children)) || items[0];
             activeTab =
                 savedFavoriteTab && tabsInclude(items, savedFavoriteTab)
                     ? savedFavoriteTab
@@ -505,16 +545,19 @@
         {/snippet}
     </PageHeader>
 
+    {#if startPending}
+        <LoadingSpinner />
+    {:else}
     <Tabs
         tabs={tabItems}
         active={activeTab}
         onchange={(id) => requestTab(id)}
         urlParam="tab"
-        persistKey="routing-sections"
+        persistKey={TAB_MEMORY_KEY}
         skipMemorySearchParams={['policy', 'rule', 'edit']}
         memoryReady={$settings !== null && $systemInfo.lastFetchedAt > 0 && (!singboxInstalled || $singboxSettings !== null)}
-        restoreMemory={savedFavoriteTab === null}
-        defaultTab={favoriteTab ?? 'firc'}
+        restoreMemory={restoreTabMemory}
+        defaultTab={defaultTab}
     />
 
     {#if activeTab === 'dns'}
@@ -561,6 +604,7 @@
         <ZapretTab />
     {:else if activeTab === 'autolist'}
         <AutolistTab {policyDevices} />
+    {/if}
     {/if}
     <ModeSwitchHost />
     </div>

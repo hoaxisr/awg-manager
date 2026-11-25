@@ -8192,11 +8192,6 @@ definitions:
           объекты будет не из чего (снос при этом выполнен).
         type: boolean
     type: object
-  api.fircMigrateRuntimeRequest:
-    properties:
-      replaceExternalPackage:
-        type: boolean
-    type: object
   api.fircUninstallRequest:
     properties:
       purgeConfigs:
@@ -12105,44 +12100,6 @@ paths:
       security:
       - CookieAuth: []
       summary: Get FIRC runtime installation status
-      tags:
-      - firc
-  /firc/migrate-runtime:
-    post:
-      consumes:
-      - application/json
-      description: Transactionally migrates FIRC ownership from an allowlisted external
-        Entware FIRC package (requires replaceExternalPackage=true) to awg-firc-runtime,
-        preserving configs and runtime state.
-      parameters:
-      - description: Migration options; set replaceExternalPackage=true to replace
-          an external Entware FIRC package
-        in: body
-        name: request
-        schema:
-          $ref: '#/definitions/api.fircMigrateRuntimeRequest'
-      produces:
-      - application/json
-      responses:
-        "202":
-          description: Accepted
-          schema:
-            $ref: '#/definitions/api.APIEnvelope'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "409":
-          description: Conflict
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-        "503":
-          description: Service Unavailable
-          schema:
-            $ref: '#/definitions/api.APIErrorEnvelope'
-      security:
-      - CookieAuth: []
-      summary: Migrate FIRC runtime ownership to awg-firc-runtime
       tags:
       - firc
   /firc/uninstall:

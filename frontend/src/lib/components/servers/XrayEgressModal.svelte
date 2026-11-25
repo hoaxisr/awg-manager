@@ -3,6 +3,7 @@
 	import { api } from '$lib/api/client';
 	import { m } from '$lib/i18n';
 	import { notifications } from '$lib/stores/notifications';
+	import { fircForeign } from '$lib/stores/firc';
 	import { Button, Modal } from '$lib/components/ui';
 	import type { XrayConfig } from '$lib/types';
 	import type { EgressOption } from '$lib/types/serverWizard';
@@ -146,10 +147,11 @@
 				type="button"
 				class="preset-tab"
 				class:active={egressMode === 'router'}
+				disabled={Boolean($fircForeign)}
 				onclick={() => selectEgressMode('router')}
 			>
 				<div class="preset-name">{EXTERNAL_ACCESS_LABELS.egressFirc}</div>
-				<div class="preset-desc">{m.servers_xray_egress_router_desc()}</div>
+				<div class="preset-desc">{$fircForeign ? m.firc_foreign_egress() : m.servers_xray_egress_router_desc()}</div>
 			</button>
 			<button
 				type="button"
@@ -220,7 +222,7 @@
 
 	{#snippet actions()}
 		<Button variant="secondary" onclick={() => (open = false)}>{m.common_cancel()}</Button>
-		<Button variant="primary" onclick={saveEgress} disabled={egressSaving}>
+		<Button variant="primary" onclick={saveEgress} disabled={egressSaving || (egressMode === 'router' && Boolean($fircForeign))}>
 			{egressSaving ? m.common_saving() : m.common_save()}
 		</Button>
 	{/snippet}
@@ -323,7 +325,11 @@
 		flex-direction: column;
 		gap: 3px;
 	}
-	.preset-tab:hover {
+	.preset-tab:disabled {
+		cursor: default;
+		opacity: 0.6;
+	}
+	.preset-tab:hover:not(:disabled) {
 		border-color: var(--color-accent);
 	}
 	.preset-tab.active {

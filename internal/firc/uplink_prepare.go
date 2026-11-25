@@ -60,6 +60,9 @@ func (o *Operator) saveUplinkInboundRecords(records map[string]uint16) error {
 	if path == "" {
 		return nil
 	}
+	if err := o.CheckNotForeign(); err != nil {
+		return err
+	}
 	if len(records) == 0 {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return err

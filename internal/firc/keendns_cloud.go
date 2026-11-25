@@ -433,6 +433,9 @@ func (o *Operator) syncKeenDNSCloudWithGen(ctx context.Context, force bool, expe
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := o.CheckNotForeign(); err != nil {
+		return err
+	}
 	if o.ManuallyDisabled() {
 		return ErrManuallyDisabled
 	}

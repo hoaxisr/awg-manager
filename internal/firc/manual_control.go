@@ -36,6 +36,9 @@ func (o *Operator) StopByUser(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if o.foreignPresent() {
+		return ErrForeignFirc
+	}
 	if err := os.MkdirAll(o.configDir, 0700); err != nil {
 		return err
 	}
@@ -111,6 +114,9 @@ func (o *Operator) startRuntimeAuthorized(ctx context.Context, authorizeDisabled
 func (o *Operator) restoreDisabledMarker() error {
 	o.lifecycleMu.Lock()
 	defer o.lifecycleMu.Unlock()
+	if err := o.CheckNotForeign(); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(o.configDir, 0700); err != nil {
 		return err
 	}

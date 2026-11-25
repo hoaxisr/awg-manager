@@ -49,6 +49,9 @@ func (m *mockFallbackRuntimePkgMgr) Install(_ context.Context, ipkPath string) e
 			return err
 		}
 	}
+	if err := writeOwnRuntimeList(m.root); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	m.version = m.expected
 	m.mu.Unlock()
@@ -71,7 +74,7 @@ func (m *mockFallbackRuntimePkgMgr) Remove(_ context.Context, name string) error
 		}
 	}
 	m.version = ""
-	return nil
+	return removeOwnRuntimeList(m.root)
 }
 
 func buildMockEntwareFircIPK(t *testing.T, arch, version string, class elf.Class, data elf.Data, machine elf.Machine) []byte {

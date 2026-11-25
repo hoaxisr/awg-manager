@@ -1,5 +1,6 @@
 import { api } from '$lib/api/client';
-import type { FircExtConfig } from '$lib/types/firc';
+import { fircStatus } from '$lib/stores/firc';
+import type { FircExtConfig, FircStatus } from '$lib/types/firc';
 
 export type FircInboundServerId =
 	| `managed:${string}`
@@ -52,6 +53,12 @@ export async function setFircServerRoutingEnabled(
 	const getFn = (api as { fircGetExt?: () => Promise<FircExtConfig> }).fircGetExt;
 	const saveFn = (api as { fircSaveExt?: (cfg: FircExtConfig) => Promise<FircExtConfig> }).fircSaveExt;
 	if (typeof getFn !== 'function' || typeof saveFn !== 'function') return null;
+	// При стороннем firc эта настройка не действует, а сохранение отклоняется.
+	const statusFn = (api as { fircGetStatus?: () => Promise<FircStatus> }).fircGetStatus;
+	// Запрос вспомогательный: его сбой саму операцию не роняет.
+	const status = typeof statusFn === 'function' ? await statusFn.call(api).catch(() => null) : null;
+	if (status) fircStatus.set(status);
+	if (status?.foreign) return null;
 	const ext = await getFn.call(api);
 	const cur = extractFircEnabledServers(ext);
 	const next = enabled

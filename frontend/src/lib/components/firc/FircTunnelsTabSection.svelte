@@ -25,7 +25,10 @@
 		type SingboxLayoutMode,
 		type TunnelRenderMode,
 	} from '$lib/constants/singboxLayout';
+	import { LoadingSpinner } from '$lib/components/layout';
+	import FircForeignNotice from './FircForeignNotice.svelte';
 	import {
+		fircForeign,
 		fircStatus,
 		fircTunnels,
 		fircTunnelsState,
@@ -33,6 +36,7 @@
 		fircInterfaceProbeResults,
 		reloadFircAll,
 		createAndOpenFircTunnel,
+		acquireFircStatusWatch,
 		acquireFircTunnelsStatePoll,
 	} from '$lib/stores/firc';
 	import {
@@ -71,6 +75,7 @@
 	let trafficTotals = $state<Record<string, { down: number; up: number }>>({});
 
 	let releaseStatePoll: (() => void) | undefined;
+	let releaseStatusWatch: (() => void) | undefined;
 	let unsubTunnelsState: (() => void) | undefined;
 	let lastTrafficAt = $state(0);
 	let unsubSbTunnels: (() => void) | undefined;
@@ -187,11 +192,13 @@
 		// Опрос состояния — общий с главной (acquireFircTunnelsStatePoll);
 		// трафик копим по каждому пришедшему снимку.
 		releaseStatePoll = acquireFircTunnelsStatePoll();
+		releaseStatusWatch = acquireFircStatusWatch();
 		unsubTunnelsState = fircTunnelsState.subscribe((stList) => accumulatePollTraffic(stList));
 	});
 
 	onDestroy(() => {
 		releaseStatePoll?.();
+		releaseStatusWatch?.();
 		unsubTunnelsState?.();
 		unsubSbStatus?.();
 		unsubSbTunnels?.();
@@ -332,6 +339,11 @@
 	<CreateIcon />
 {/snippet}
 
+{#if $fircForeign === undefined}
+<LoadingSpinner />
+{:else if $fircForeign}
+<FircForeignNotice foreign={$fircForeign} selected={$fircStatus?.selected} />
+{:else}
 <div class="firc-tunnels-wrap">
 	{#if !dashboardMode}
 		<FircTunnelsRuntimeStrip
@@ -473,6 +485,7 @@
 		</div>
 	{/if}
 </div>
+{/if}
 
 {#if embedEditModal}
 	<FircTunnelEditModal />

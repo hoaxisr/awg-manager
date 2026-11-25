@@ -49,6 +49,8 @@ type Client struct {
 	socketPath string
 	baseURL    string
 	httpClient *http.Client
+	// gate отказывает до обращения к сокету: за ним может быть чужой демон.
+	gate func() error
 }
 
 // NewClient creates a Client bound to the fircd Unix domain socket.
@@ -94,6 +96,11 @@ func (c *Client) SocketPath() string {
 }
 
 func (c *Client) doJSON(ctx context.Context, method, path string, reqBody, respBody interface{}) error {
+	if c.gate != nil {
+		if err := c.gate(); err != nil {
+			return err
+		}
+	}
 	var bodyReader io.Reader
 	if reqBody != nil {
 		b, err := json.Marshal(reqBody)
