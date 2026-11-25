@@ -3,8 +3,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/sv
 import { m } from '$lib/i18n';
 import { api } from '$lib/api/client';
 import type { PreflightResponse, WizardPlanRequest } from '$lib/types/serverWizard';
-import type { TgWebProxyConfig } from '$lib/types';
-import type { XrayConfig, XrayRealityState } from '$lib/types/xray';
+import type { TgWebProxyConfig, XrayConfig } from '$lib/types';
+import type { XrayRealityState } from '$lib/types/xray';
 import ExternalAccessWizard from '../ExternalAccessWizard.svelte';
 
 vi.mock('$lib/api/client', () => ({
@@ -48,7 +48,7 @@ function mount(cfg = tgConfig(), xrayConfig: XrayConfig | null = null) {
 	return { onclose };
 }
 
-const button = (name: string) => screen.queryByRole('button', { name }) as HTMLButtonElement | null;
+const button = (name: string) => screen.queryByRole<HTMLButtonElement>('button', { name });
 
 async function next() {
 	await waitFor(() => expect(button(m.proxy_wizard_next())?.disabled).toBe(false));
@@ -73,7 +73,7 @@ describe('ExternalAccessWizard', () => {
 			async (_kind, request: WizardPlanRequest) =>
 				({ plan_id: `plan-${++plans}`, request, plan: { summary: '', items: [], restart_required: true, state_fingerprint: '' } }) as unknown as Awaited<ReturnType<typeof api.createWizardPlan>>
 		);
-		vi.mocked(api.applyWizardPlan).mockResolvedValue({ job_id: 'job-1' } as Awaited<ReturnType<typeof api.applyWizardPlan>>);
+		vi.mocked(api.applyWizardPlan).mockResolvedValue({ job_id: 'job-1' });
 	});
 	afterEach(cleanup);
 

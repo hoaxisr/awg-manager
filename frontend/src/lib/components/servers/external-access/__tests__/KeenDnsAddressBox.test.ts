@@ -10,7 +10,10 @@ function mount(label: string, labelConflict = '') {
 	render(KeenDnsAddressBox, {
 		props: {
 			variant: 'direct', mode: 'create', label, labelConflict,
-			keendnsInfo: { state: 'supported', enabled: true, domain: 'home.example.keenetic.pro' } as KeenDNSDiscovery,
+			keendnsInfo: {
+				state: 'supported', enabled: true, domain: 'home.example.keenetic.pro', mode: 'direct',
+				cert_ok: true, publications: [], wan_ip_private: false,
+			} satisfies KeenDNSDiscovery,
 			keendnsAvailable: true, validation: validateKeenDNSLabelClient(label),
 			previewFqdn: `${label}.home.example.keenetic.pro`, publications: [],
 			onsetmode: vi.fn(), onapplypublication: vi.fn(), onsync: vi.fn(),
