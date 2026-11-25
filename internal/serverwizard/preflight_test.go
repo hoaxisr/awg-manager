@@ -100,6 +100,7 @@ func TestPreflightEngine_TelegramChecks(t *testing.T) {
 	resp = engine.Run(ctx, WizardPlanRequest{
 		Kind:         "tgwebproxy",
 		Scenario:     "dual",
+		DirectHost:   "203.0.113.10",
 		DirectPort:   8443,
 		ListenPort:   8085,
 		CdnProfileID: "cdn_get",

@@ -726,7 +726,7 @@ func (s *Service) syncDirectWANFirewallLocked(cfg Config) error {
 		return nil
 	}
 	port := 0
-	if cfg.IsDirectEnabled() {
+	if cfg.OpensDirectWAN() {
 		port = cfg.effectiveDirectPort()
 	}
 	err := s.directWANFirewall(port, port > 0)
@@ -865,6 +865,16 @@ func tuneRuntimeNetwork(upstreamDevice string) {
 }
 
 func (s *Service) UpdateConfig(cfg Config) error {
+	return s.updateConfig(cfg, cfg.DirectHost != "")
+}
+
+// UpdateConfigWithDirectHost — UpdateConfig, где прямой адрес задан явно:
+// пустой снимает его, а с ним и порт на WAN.
+func (s *Service) UpdateConfigWithDirectHost(cfg Config) error {
+	return s.updateConfig(cfg, true)
+}
+
+func (s *Service) updateConfig(cfg Config, setDirectHost bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -942,8 +952,8 @@ func (s *Service) UpdateConfig(cfg Config) error {
 	if cfg.PublicHostname != "" {
 		newCfg.PublicHostname = cfg.PublicHostname
 	}
-	if cfg.DirectHost != "" {
-		newCfg.DirectHost = cfg.DirectHost
+	if setDirectHost {
+		newCfg.DirectHost = strings.TrimSpace(cfg.DirectHost)
 	}
 	if cfg.DirectPort != 0 {
 		newCfg.DirectPort = cfg.DirectPort

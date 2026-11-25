@@ -3,6 +3,7 @@ package tgwebproxy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -224,6 +225,11 @@ func TestService_DirectWANFirewallLifecycle(t *testing.T) {
 		calls = append(calls, fwCall{port: port, enabled: enabled})
 		return nil
 	}
+
+	if err := svc.UpdateConfig(Config{DirectHost: "203.0.113.10"}); err != nil {
+		t.Fatalf("UpdateConfig direct host: %v", err)
+	}
+	calls = nil
 
 	// Start in default ScenarioDual (port 8443) -> opens 8443
 	if err := svc.Start(); err != nil {
@@ -682,5 +688,63 @@ func TestService_DirectWANFirewallErrorVisible(t *testing.T) {
 	fwErr = nil
 	if err := svc.SyncDirectWANFirewall(); err != nil || svc.GetStatus().DirectWANError != "" {
 		t.Fatalf("после успеха ошибка осталась: %v / %q", err, svc.GetStatus().DirectWANError)
+	}
+}
+
+// Порт на WAN открывает только заданный прямой адрес в сценарии с прямым
+// подключением; без него прежнее правило снимается.
+// Мутации: OpensDirectWAN без проверки DirectHost; синхронизация по
+// IsDirectEnabled; UpdateConfigWithDirectHost игнорирует пустую строку → красный.
+func TestService_DirectWANNeedsDirectHost(t *testing.T) {
+	svc, _, _ := setupTestService(t)
+	last := ""
+	svc.directWANFirewall = func(port int, enabled bool) error {
+		last = fmt.Sprintf("%d/%v", port, enabled)
+		return nil
+	}
+	expect := func(what, want string, err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("%s: %v", what, err)
+		}
+		if last != want {
+			t.Fatalf("%s: файрвол %q, ждали %q", what, last, want)
+		}
+	}
+
+	expect("dual без адреса", "0/false", svc.Start())
+	expect("direct_fake_tls без адреса", "0/false", svc.UpdateConfig(Config{Scenario: ScenarioDirectFakeTLS}))
+	expect("direct_fake_tls с адресом", "8443/true", svc.UpdateConfig(Config{DirectHost: "203.0.113.10"}))
+	expect("адрес не прислали", "8443/true", svc.UpdateConfig(Config{TlsDomain: "www.example.com"}))
+	expect("пустой сценарий с адресом", "8443/true", svc.UpdateConfig(Config{Scenario: ScenarioDual}))
+	expect("cdn_http с адресом", "0/false", svc.UpdateConfig(Config{Scenario: ScenarioCDNHTTP}))
+	expect("снова dual", "8443/true", svc.UpdateConfig(Config{Scenario: ScenarioDual}))
+	expect("адрес снят", "0/false", svc.UpdateConfigWithDirectHost(Config{DirectHost: "  "}))
+	if got := svc.GetInternalConfig().DirectHost; got != "" {
+		t.Fatalf("адрес не снят: %q", got)
+	}
+	svc.mu.Lock()
+	svc.config.Scenario = ""
+	svc.mu.Unlock()
+	expect("пустой сценарий без адреса", "0/false", svc.Restart())
+}
+
+// Выключенный прокси на загрузке снимает оставшееся правило.
+// Мутация: убрать синхронизацию из ветки !Enabled у StartConfigured → красный.
+func TestStartConfigured_DisabledClosesDirectWAN(t *testing.T) {
+	svc, _, _ := setupTestService(t)
+	calls := 0
+	svc.directWANFirewall = func(_ int, enabled bool) error {
+		if enabled {
+			t.Fatal("выключенный прокси открыл порт")
+		}
+		calls++
+		return nil
+	}
+	if err := svc.StartConfigured(); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("синхронизаций %d, ждали 1", calls)
 	}
 }

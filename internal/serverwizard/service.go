@@ -379,19 +379,30 @@ func (s *WizardService) buildTelegramPlan(desired DesiredWizardConfig, fp string
 				Description: fmt.Sprintf("MTProto Fake-TLS direct прокси на порту %d", directPort),
 				NewValue:    fmt.Sprintf(":%d", directPort),
 			},
-			PlanItem{
+		)
+		if desired.DirectHost != "" {
+			items = append(items, PlanItem{
 				Action:      "enable",
 				Target:      "wan_firewall",
 				Description: fmt.Sprintf("Автоматическое открытие TCP-порта %d в WAN-фаерволе Keenetic для MTProto", directPort),
 				NewValue:    fmt.Sprintf("tcp/%d", directPort),
-			},
-		)
-		if desired.DirectHost != "" {
+			})
 			items = append(items, PlanItem{
 				Action:      "modify",
 				Target:      "direct_host",
 				Description: fmt.Sprintf("Прямой хост подключения: %s", desired.DirectHost),
 				NewValue:    desired.DirectHost,
+			})
+		}
+	}
+
+	if desired.Scenario == "cdn_http" && s.tg != nil {
+		if cur := s.tg.GetConfig(); cur.OpensDirectWAN() {
+			items = append(items, PlanItem{
+				Action:      "disable",
+				Target:      "wan_firewall",
+				Description: fmt.Sprintf("Закрытие TCP-порта %d MTProto в WAN-фаерволе Keenetic", cur.DirectPort),
+				OldValue:    fmt.Sprintf("tcp/%d", cur.DirectPort),
 			})
 		}
 	}

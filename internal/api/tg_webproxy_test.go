@@ -899,3 +899,30 @@ func TestTgWebProxyAction_StartWithStoredInvalidPortReturns400(t *testing.T) {
 		}
 	}
 }
+
+// Мутация: звать UpdateConfig и при присланном direct_host → адрес не снимается.
+func TestTgWebProxy_UpdateConfig_EmptyDirectHostClears(t *testing.T) {
+	handler, svc, _, sessionToken, _ := setupTestTgWebProxyHandler(t)
+	put := func(body string) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPut, "http://192.168.10.1:2222/api/servers/tgwebproxy", strings.NewReader(body))
+		req.Host = "192.168.10.1:2222"
+		req.Header.Set("Origin", "http://192.168.10.1:2222")
+		req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: sessionToken})
+		req.Header.Set("X-CSRF-Token", getValidCSRFToken(t, handler, sessionToken))
+		w := httptest.NewRecorder()
+		handler.UpdateConfig(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", body, w.Code, w.Body.String())
+		}
+	}
+	put(`{"direct_host":"203.0.113.10","tls_domain":"www.example.com"}`)
+	put(`{"tls_domain":"www.example.org"}`)
+	if got := svc.GetConfig().DirectHost; got != "203.0.113.10" {
+		t.Fatalf("поле не прислали, адрес изменился: %q", got)
+	}
+	put(`{"direct_host":""}`)
+	if got := svc.GetConfig(); got.DirectHost != "" || got.TlsDomain != "www.example.org" {
+		t.Fatalf("адрес не снят: %+v", got)
+	}
+}

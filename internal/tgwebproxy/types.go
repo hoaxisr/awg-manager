@@ -634,6 +634,16 @@ func (c Config) IsDirectEnabled() bool {
 	return c.Scenario == ScenarioDirectFakeTLS || c.Scenario == ScenarioDual || c.Scenario == ""
 }
 
+// OpensDirectWAN — открывать ли прямой порт на WAN. Без прямого адреса MTProto
+// слушает только для LAN: снаружи подключаться некуда.
+func (c Config) OpensDirectWAN() bool {
+	return c.IsDirectEnabled() && strings.TrimSpace(c.DirectHost) != ""
+}
+
+func (c PublicConfig) OpensDirectWAN() bool {
+	return Config{Enabled: c.Enabled, Scenario: c.Scenario, DirectHost: c.DirectHost}.OpensDirectWAN()
+}
+
 func (c Config) effectiveDirectPort() int {
 	if c.DirectPort <= 0 {
 		return DefaultDirectPort

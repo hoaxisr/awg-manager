@@ -355,6 +355,24 @@ func (pe *PreflightEngine) checkTelegram(ctx context.Context, req WizardPlanRequ
 		}
 	}
 
+	if scenario != "cdn_http" {
+		wanCheck := PreflightCheck{
+			ID:      "port_direct_wan",
+			Title:   "Порт MTProto на WAN",
+			Status:  CheckStatusOK,
+			Message: fmt.Sprintf("TCP-порт %d будет открыт на WAN роутера: задан прямой адрес", directPort),
+		}
+		if strings.TrimSpace(req.DirectHost) == "" {
+			wanCheck.Status = CheckStatusWarning
+			wanCheck.Message = fmt.Sprintf("TCP-порт %d на WAN не откроется: прямой адрес не задан", directPort)
+			wanCheck.Remediation = "Укажите прямой адрес, если MTProto должен работать из интернета."
+		} else if err := tgwebproxy.ValidateDirectPort(directPort); err != nil {
+			wanCheck.Status = CheckStatusWarning
+			wanCheck.Message = fmt.Sprintf("TCP-порт %d на WAN не откроется: порт недопустим", directPort)
+		}
+		*checks = append(*checks, wanCheck)
+	}
+
 	var kdDisc *serveringress.KeenDNSDiscovery
 	if scenario != "cdn_http" && pe.keendns != nil {
 		if disc, err := pe.keendns.Discover(ctx, dispPort); err == nil {
