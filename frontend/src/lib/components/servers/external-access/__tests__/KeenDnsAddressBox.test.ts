@@ -11,7 +11,7 @@ function mount(label: string, labelConflict = '') {
 		props: {
 			variant: 'direct', mode: 'create', label, labelConflict,
 			keendnsInfo: {
-				state: 'supported', enabled: true, domain: 'home.example.keenetic.pro', mode: 'direct',
+				state: 'ready', enabled: true, domain: 'home.example.keenetic.pro', mode: 'direct',
 				cert_ok: true, publications: [], wan_ip_private: false,
 			} satisfies KeenDNSDiscovery,
 			keendnsAvailable: true, validation: validateKeenDNSLabelClient(label),
