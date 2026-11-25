@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -465,12 +466,16 @@ func (s *WizardService) verifyTelegram(ctx context.Context, checks *[]Verificati
 					Remediation:   "Укажите внешний белый IP/прямой домен либо переключитесь на «Веб-мост (через домен)».",
 					TargetAddress: directHost,
 				})
-			} else if net.ParseIP(directHost) == nil {
-				s.verifyDomainDNS(ctx, "tg_mtproto_dns", "tg_mtproto", "DNS прямого адреса MTProto", directHost, checks)
+			} else {
+				addrs := []string{directHost}
+				if net.ParseIP(directHost) == nil {
+					addrs = s.verifyDomainDNS(ctx, "tg_mtproto_dns", "tg_mtproto", "DNS прямого адреса MTProto", directHost, checks)
+				}
+				verifyDirectHostAddrs(directHost, addrs, kdDisc, checks)
 			}
 		}
 
-		if kdDisc != nil && kdDisc.WANPrivate {
+		if directHost != "" && kdDisc != nil && kdDisc.WANPrivate {
 			wanTarget := strings.TrimSpace(kdDisc.WANAddress)
 			wanMsg := fmt.Sprintf("На WAN-интерфейсе роутера серый (приватный/CGNAT) адрес — прямые входящие TCP-подключения MTProto на порт %d из интернета недоступны без проброса порта с внешнего белого IP/VPS.", directPort)
 			if wanTarget != "" {
@@ -488,7 +493,17 @@ func (s *WizardService) verifyTelegram(ctx context.Context, checks *[]Verificati
 			})
 		}
 
-		if tgwebproxy.IsDirectWANPortOpen(directPort) {
+		if directHost == "" {
+			*checks = append(*checks, VerificationCheck{
+				ID:            "tg_mtproto_wan_firewall",
+				Service:       "tg_mtproto",
+				Title:         "WAN-фаервол для порта MTProto",
+				Status:        CheckStatusOK,
+				Message:       fmt.Sprintf("TCP-порт %d на WAN не открывается: прямой адрес не задан, MTProto доступен только из локальной сети", directPort),
+				Remediation:   "Если MTProto должен работать из интернета, укажите прямой адрес.",
+				TargetAddress: directTarget,
+			})
+		} else if tgwebproxy.IsDirectWANPortOpen(directPort) {
 			*checks = append(*checks, VerificationCheck{
 				ID:            "tg_mtproto_wan_firewall",
 				Service:       "tg_mtproto",
@@ -498,13 +513,17 @@ func (s *WizardService) verifyTelegram(ctx context.Context, checks *[]Verificati
 				TargetAddress: fmt.Sprintf("0.0.0.0:%d", directPort),
 			})
 		} else {
+			wanMsg := fmt.Sprintf("TCP-порт %d не обнаружен в правилах WAN-фаервола Keenetic", directPort)
+			if st.DirectWANError != "" {
+				wanMsg += ": " + st.DirectWANError
+			}
 			*checks = append(*checks, VerificationCheck{
 				ID:            "tg_mtproto_wan_firewall",
 				Service:       "tg_mtproto",
 				Title:         "WAN-фаервол для порта MTProto",
 				Status:        CheckStatusWarning,
 				Category:      VerifyCategoryFirewall,
-				Message:       fmt.Sprintf("TCP-порт %d не обнаружен в правилах WAN-фаервола Keenetic", directPort),
+				Message:       wanMsg,
 				Remediation:   "Перепримените настройки в мастере или перезапустите прокси Telegram для автоматического открытия порта.",
 				TargetAddress: fmt.Sprintf("0.0.0.0:%d", directPort),
 			})
@@ -863,7 +882,7 @@ func (s *WizardService) verifyTelegramUpstreams(ctx context.Context, upstreams [
 	}
 }
 
-func (s *WizardService) verifyDomainDNS(ctx context.Context, id, service, title, domain string, checks *[]VerificationCheck) {
+func (s *WizardService) verifyDomainDNS(ctx context.Context, id, service, title, domain string, checks *[]VerificationCheck) []string {
 	lookupFn := s.lookupHost
 	if lookupFn == nil {
 		lookupFn = net.DefaultResolver.LookupHost
@@ -887,7 +906,7 @@ func (s *WizardService) verifyDomainDNS(ctx context.Context, id, service, title,
 			Remediation:   "Проверьте наличие A/AAAA или CNAME записи для домена у вашего DNS/CDN провайдера.",
 			TargetAddress: domain,
 		})
-		return
+		return nil
 	}
 
 	*checks = append(*checks, VerificationCheck{
@@ -897,6 +916,54 @@ func (s *WizardService) verifyDomainDNS(ctx context.Context, id, service, title,
 		Status:        CheckStatusOK,
 		Message:       fmt.Sprintf("Домен %s успешно разрешается (%s)", domain, addrs[0]),
 		TargetAddress: domain,
+	})
+	return addrs
+}
+
+// verifyDirectHostAddrs сверяет адреса прямого хоста с WAN и предупреждает об
+// IPv6: правило файрвола открывает только IPv4. Серый WAN не сверяем — внешний
+// адрес за NAT нам неизвестен, о нём предупреждает tg_mtproto_wan_ip.
+func verifyDirectHostAddrs(host string, addrs []string, disc *serveringress.KeenDNSDiscovery, checks *[]VerificationCheck) {
+	var v4 []string
+	hasV6, isName := false, net.ParseIP(host) == nil
+	for _, a := range addrs {
+		ip := net.ParseIP(a)
+		switch {
+		case ip == nil:
+		case ip.To4() == nil:
+			hasV6 = true
+		default:
+			v4 = append(v4, ip.String())
+		}
+	}
+	if hasV6 {
+		*checks = append(*checks, VerificationCheck{
+			ID:            "tg_mtproto_dns_ipv6",
+			Service:       "tg_mtproto",
+			Title:         "IPv6 прямого адреса MTProto",
+			Status:        CheckStatusWarning,
+			Category:      VerifyCategoryFirewall,
+			Message:       fmt.Sprintf("У прямого адреса %s есть IPv6, а порт на WAN открывается только для IPv4: клиенты с IPv6 могут не подключиться", host),
+			Remediation:   "Уберите AAAA-запись или укажите адрес только с IPv4.",
+			TargetAddress: host,
+		})
+	}
+	if !isName || disc == nil || disc.WANPrivate {
+		return
+	}
+	wan := net.ParseIP(strings.TrimSpace(disc.WANAddress))
+	if wan == nil || len(v4) == 0 || slices.Contains(v4, wan.String()) {
+		return
+	}
+	*checks = append(*checks, VerificationCheck{
+		ID:            "tg_mtproto_dns_wan",
+		Service:       "tg_mtproto",
+		Title:         "Прямой адрес MTProto и WAN роутера",
+		Status:        CheckStatusWarning,
+		Category:      VerifyCategoryDNS,
+		Message:       fmt.Sprintf("Домен %s указывает на %s, а адрес WAN роутера — %s", host, strings.Join(v4, ", "), wan),
+		Remediation:   "Исправьте A-запись. Если трафик намеренно идёт через внешний адрес (VPS, проброс), предупреждение можно не учитывать.",
+		TargetAddress: host,
 	})
 }
 
