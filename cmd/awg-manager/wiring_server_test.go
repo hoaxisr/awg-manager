@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/api"
 	"github.com/hoaxisr/awg-manager/internal/firc"
+	"github.com/hoaxisr/awg-manager/internal/serveringress"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tgwebproxy"
 	"github.com/hoaxisr/awg-manager/internal/vlessserver"
@@ -115,5 +117,51 @@ func TestWiring_AssertProductionWiring_RequiresFircEngineCoordinator(t *testing.
 	aFircUnwired.fircHandler.SetInstaller(nil)
 	if err := assertProductionWiring(aFircUnwired); err == nil {
 		t.Fatal("expected error when fircHandler has nil installer")
+	}
+}
+
+type tgFirewallSpy struct {
+	*tgwebproxy.Service
+	syncs int
+}
+
+func (s *tgFirewallSpy) SyncDirectWANFirewall() error { s.syncs++; return nil }
+
+// Загрузка приводит файрвол к конфигурации и при выключенном прокси; под
+// восстановлением — не трогает.
+// Мутации: убрать SyncWANIngressFirewall из startIngressServices; звать его и
+// после ошибки автозапуска → красный.
+func TestStartIngressServices_SyncsWANFirewall(t *testing.T) {
+	dir := t.TempDir()
+	tg := tgwebproxy.New(dir, nil)
+	t.Cleanup(func() { _ = tg.Close() })
+	spy := &tgFirewallSpy{Service: tg}
+	a := &app{
+		vlessServerService: vlessserver.New(dir, nil),
+		tgWebProxyService:  tg,
+	}
+	a.ingressCoordinator = serveringress.New(dir, a.vlessServerService, nil, spy)
+
+	a.startIngressServices(true, "проверка", false, "")
+	if spy.syncs != 0 {
+		t.Fatalf("под восстановлением файрвол тронут: %d", spy.syncs)
+	}
+	a.startIngressServices(false, "", false, "")
+	if spy.syncs != 1 {
+		t.Fatalf("загрузка: синхронизаций %d, ждали 1", spy.syncs)
+	}
+}
+
+// Мутация: убрать вызов startIngressServices из setupServer → красный.
+func TestSetupServer_StartsIngressServices(t *testing.T) {
+	src, err := os.ReadFile("wiring_server.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+	start := strings.Index(body, "func (a *app) setupServer()")
+	end := strings.Index(body[start:], "\n}\n")
+	if start < 0 || end < 0 || !strings.Contains(body[start:start+end], "a.startIngressServices(") {
+		t.Fatal("setupServer не поднимает серверы")
 	}
 }
