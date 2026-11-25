@@ -178,7 +178,7 @@
 			onclick={runVerification}
 			disabled={loading}
 		>
-			<RefreshCw size={13} class={loading ? 'spin mr-1' : 'mr-1'} />
+			<RefreshCw size={13} class={loading ? 'spin' : ''} />
 			{loading ? m.servers_wizard_checks_running() : report ? m.servers_wizard_checks_again() : m.servers_wizard_checks_run()}
 		</Button>
 	</div>
@@ -288,6 +288,15 @@
 		padding: 7px 10px;
 		line-height: 1.4;
 	}
+	.scope-banner :global(.scope-icon) {
+		flex-shrink: 0;
+		margin-top: 2px;
+		color: var(--color-accent);
+	}
+	.scope-banner > span {
+		min-width: 0;
+		flex: 1;
+	}
 	.checks-error {
 		display: flex;
 		align-items: center;
@@ -298,6 +307,9 @@
 		border: 1px solid var(--color-error-border);
 		padding: 8px 10px;
 		border-radius: var(--radius-sm);
+	}
+	.checks-error > :global(svg) {
+		flex-shrink: 0;
 	}
 	.checks-grid {
 		display: flex;
@@ -375,12 +387,15 @@
 	.check-msg {
 		font-size: 12px;
 		color: var(--color-text-secondary);
+		line-height: 1.45;
 		overflow-wrap: anywhere;
 		word-break: break-word;
 	}
 	.check-remediation {
 		font-size: 11.5px;
-		color: var(--color-text-muted);
+		color: var(--color-text-secondary);
+		line-height: 1.4;
+		margin-top: 2px;
 		overflow-wrap: anywhere;
 		word-break: break-word;
 	}

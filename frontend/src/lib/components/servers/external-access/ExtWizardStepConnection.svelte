@@ -80,7 +80,7 @@
 					}}
 					disabled={checkingFacts || realityNetChecking}
 				>
-					<RefreshCw size={13} class="mr-1" />
+					<RefreshCw size={13} class={checkingFacts || realityNetChecking ? 'spin' : ''} />
 					{checkingFacts || realityNetChecking ? m.servers_wizard_checks_running() : m.common_check()}
 				</Button>
 			</div>
@@ -108,7 +108,7 @@
 									{m.servers_ext_wiz_s2_tg_switch_web()}
 								</Button>
 							</div>
-							<label class="checkbox-row" style="margin-top: 4px;">
+							<label class="checkbox-row">
 								<input type="checkbox" bind:checked={draft.confirmDirectBehindNAT} />
 								<span>{m.servers_ext_wiz_s2_confirm_behind_nat()}</span>
 							</label>
@@ -131,7 +131,7 @@
 									{m.servers_ext_wiz_s2_tg_switch_web()}
 								</Button>
 							</div>
-							<label class="checkbox-row" style="margin-top: 4px;">
+							<label class="checkbox-row">
 								<input type="checkbox" bind:checked={draft.confirmDirectBehindNAT} />
 								<span>{m.servers_ext_wiz_s2_confirm_behind_nat()}</span>
 							</label>
@@ -250,7 +250,7 @@
 						onclick={() => oncheckreality()}
 						disabled={realityNetChecking}
 					>
-						<RefreshCw size={13} class="mr-1" />
+						<RefreshCw size={13} class={realityNetChecking ? 'spin' : ''} />
 						{realityNetChecking ? m.servers_wizard_checks_running() : m.common_check()}
 					</Button>
 				</div>
@@ -282,7 +282,7 @@
 					onclick={oncheckfacts}
 					disabled={checkingFacts}
 				>
-					<HelpCircle size={13} class="mr-1" />
+					<HelpCircle size={13} />
 					{checkingFacts ? m.servers_wizard_checks_running() : m.servers_ext_wiz_s2_dont_know()}
 				</Button>
 			</div>
@@ -456,10 +456,22 @@
 
 	.scheme-warn-note {
 		display: flex;
-		align-items: center;
+		align-items: flex-start;
 		gap: 8px;
 		font-size: 12px;
+		line-height: 1.4;
 		color: var(--color-warning);
+	}
+
+	.scheme-warn-note > :global(svg) {
+		flex-shrink: 0;
+		margin-top: 2px;
+	}
+
+	.scheme-warn-note > span {
+		min-width: 0;
+		flex: 1;
+		overflow-wrap: anywhere;
 	}
 
 	.return-saved-row {
@@ -497,6 +509,7 @@
 		flex-direction: column;
 		gap: 8px;
 		font-size: 12px;
+		min-width: 0;
 	}
 
 	.facts-title {
@@ -511,6 +524,11 @@
 		flex-direction: column;
 		gap: 4px;
 		color: var(--color-text-secondary);
+	}
+
+	.facts-list li {
+		overflow-wrap: anywhere;
+		word-break: break-word;
 	}
 
 	.facts-scope {
@@ -571,7 +589,7 @@
 
 	.reality-wan-box {
 		display: flex;
-		align-items: center;
+		align-items: flex-start;
 		gap: 8px;
 		font-size: 12px;
 		line-height: 1.45;
@@ -579,6 +597,17 @@
 		border-radius: var(--radius-sm);
 		border: 1px solid var(--color-border);
 		color: var(--color-text-primary);
+	}
+
+	.reality-wan-box > :global(svg) {
+		flex-shrink: 0;
+		margin-top: 2px;
+	}
+
+	.reality-wan-box > span {
+		min-width: 0;
+		flex: 1;
+		overflow-wrap: anywhere;
 	}
 
 	.reality-wan-box.ok {
@@ -594,6 +623,8 @@
 	.warn-banner-body {
 		display: flex;
 		flex-direction: column;
-		gap: 6px;
+		gap: 8px;
+		min-width: 0;
+		flex: 1;
 	}
 </style>

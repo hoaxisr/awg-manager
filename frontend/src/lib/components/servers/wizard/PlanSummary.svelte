@@ -53,7 +53,7 @@
 			</div>
 			{#if plan.restart_required}
 				<span class="badge-restart">
-					<RefreshCw size={12} class="mr-1" />
+					<RefreshCw size={12} />
 					{m.servers_wizard_plan_restart()}
 				</span>
 			{/if}
@@ -128,6 +128,7 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 0.5rem;
+		flex-wrap: wrap;
 	}
 
 	.summary-title-group {
@@ -150,6 +151,7 @@
 	.badge-restart {
 		display: inline-flex;
 		align-items: center;
+		gap: 4px;
 		font-size: 0.6875rem;
 		font-weight: 600;
 		padding: 2px 8px;
@@ -164,6 +166,8 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
+		gap: 0.5rem;
+		flex-wrap: wrap;
 		padding-top: 0.5rem;
 		border-top: 1px solid var(--color-border);
 		font-size: 0.75rem;

@@ -128,14 +128,12 @@
 				disabled={initializing}
 				onclick={() => onselectscenario('direct_fake_tls')}
 			>
-				<div class="choice-top">
-					<span class="choice-title">{m.servers_ext_wiz_s1_tg_direct_title()}</span>
-					<div class="badges-row">
-						<span class="tech-sub-badge">MTProto / Fake-TLS</span>
-						{#if grayIPDetected}
-							<span class="tech-sub-badge badge-warn">{m.servers_ext_wiz_s1_white_ip_badge()}</span>
-						{/if}
-					</div>
+				<div class="choice-title">{m.servers_ext_wiz_s1_tg_direct_title()}</div>
+				<div class="badges-row">
+					<span class="tech-sub-badge">MTProto / Fake-TLS</span>
+					{#if grayIPDetected}
+						<span class="tech-sub-badge badge-warn">{m.servers_ext_wiz_s1_white_ip_badge()}</span>
+					{/if}
 				</div>
 				<div class="choice-text">
 					{m.servers_ext_wiz_s1_tg_direct_text()}
@@ -149,14 +147,12 @@
 				disabled={initializing}
 				onclick={() => onselectscenario('cdn_http')}
 			>
-				<div class="choice-top">
-					<span class="choice-title">{m.servers_ext_wiz_s1_tg_domain_title()}</span>
-					<div class="badges-row">
-						<span class="tech-sub-badge">{m.servers_ext_wiz_s1_tg_domain_badge()}</span>
-						{#if grayIPDetected}
-							<span class="current-pill">{m.servers_ext_wiz_recommended()}</span>
-						{/if}
-					</div>
+				<div class="choice-title">{m.servers_ext_wiz_s1_tg_domain_title()}</div>
+				<div class="badges-row">
+					<span class="tech-sub-badge">{m.servers_ext_wiz_s1_tg_domain_badge()}</span>
+					{#if grayIPDetected}
+						<span class="current-pill">{m.servers_ext_wiz_recommended()}</span>
+					{/if}
 				</div>
 				<div class="choice-text">
 					{m.servers_ext_wiz_s1_tg_domain_text()}
@@ -170,14 +166,12 @@
 				disabled={initializing}
 				onclick={() => onselectscenario('dual')}
 			>
-				<div class="choice-top">
-					<span class="choice-title">{m.servers_ext_wiz_s1_tg_dual_title()}</span>
-					<div class="badges-row">
-						<span class="tech-sub-badge">{m.servers_ext_wiz_s1_tg_dual_badge()}</span>
-						{#if grayIPDetected}
-							<span class="tech-sub-badge badge-warn">{m.servers_ext_wiz_s1_white_ip_badge()}</span>
-						{/if}
-					</div>
+				<div class="choice-title">{m.servers_ext_wiz_s1_tg_dual_title()}</div>
+				<div class="badges-row">
+					<span class="tech-sub-badge">{m.servers_ext_wiz_s1_tg_dual_badge()}</span>
+					{#if grayIPDetected}
+						<span class="tech-sub-badge badge-warn">{m.servers_ext_wiz_s1_white_ip_badge()}</span>
+					{/if}
 				</div>
 				<div class="choice-text">
 					{m.servers_ext_wiz_s1_tg_dual_text()}
@@ -230,6 +224,8 @@
 		display: flex;
 		flex-direction: column;
 		gap: 6px;
+		min-width: 0;
+		flex: 1;
 	}
 
 	.other-service-title {

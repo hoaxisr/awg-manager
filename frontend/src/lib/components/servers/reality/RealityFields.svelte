@@ -267,7 +267,6 @@
 	}
 	.rf-dest-row :global(.rf-btn-icon) {
 		flex-shrink: 0;
-		margin-right: 4px;
 	}
 	.rf-chips {
 		display: flex;
@@ -300,7 +299,7 @@
 	}
 	.rf-banner {
 		display: flex;
-		align-items: center;
+		align-items: flex-start;
 		gap: 8px;
 		flex-wrap: nowrap;
 		font-size: 12px;
@@ -309,6 +308,10 @@
 		border-radius: var(--radius-sm);
 		border: 1px solid var(--color-border);
 		color: var(--color-text-primary);
+	}
+	.rf-banner :global(.rf-banner-icon) {
+		flex-shrink: 0;
+		margin-top: 2px;
 	}
 	.rf-banner-text {
 		flex: 1;

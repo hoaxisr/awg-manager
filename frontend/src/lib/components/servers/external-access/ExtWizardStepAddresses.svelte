@@ -140,46 +140,46 @@
 					</div>
 				{/if}
 			</div>
-			<div class="form-grid-2">
-				<div class="field-block">
-					<label class="field-label" for="wiz-direct-host-only">
-						{m.servers_ext_wiz_s3_tg_direct_host_label()}
-					</label>
-					<input
-						id="wiz-direct-host-only"
-						type="text"
-						class="text-input mono"
-						class:input-error={isDirectHostCloudKeenDNS}
-						bind:value={draft.directHost}
-						placeholder={detectedMtprotoDirectDomain || detectedMtprotoWhiteIP || m.servers_ext_wiz_s3_tg_direct_host_ph()}
-					/>
-					{#if isDirectHostCloudKeenDNS}
-						<div class="cloud-host-error-box">
-							<AlertTriangle size={14} class="icon-error-soft" />
-							<div class="dual-cgnat-warn-body">
-								<span>{m.servers_ext_wiz_s3_cloud_host_error({ domain: draft.directHost.trim() })}</span>
-								{#if onswitchtowebbridge}
-									<div>
-										<Button variant="primary" size="sm" onclick={onswitchtowebbridge}>
-											{m.servers_ext_wiz_s2_tg_switch_web()}
-										</Button>
-									</div>
-								{/if}
-							</div>
+			<div class="field-block">
+				<label class="field-label" for="wiz-direct-host-only">
+					{m.servers_ext_wiz_s3_tg_direct_host_label()}
+				</label>
+				<input
+					id="wiz-direct-host-only"
+					type="text"
+					class="text-input mono"
+					class:input-error={isDirectHostCloudKeenDNS}
+					bind:value={draft.directHost}
+					placeholder={detectedMtprotoDirectDomain || detectedMtprotoWhiteIP || m.servers_ext_wiz_s3_tg_direct_host_ph()}
+				/>
+				{#if isDirectHostCloudKeenDNS}
+					<div class="cloud-host-error-box">
+						<AlertTriangle size={14} class="icon-error-soft" />
+						<div class="dual-cgnat-warn-body">
+							<span>{m.servers_ext_wiz_s3_cloud_host_error({ domain: draft.directHost.trim() })}</span>
+							{#if onswitchtowebbridge}
+								<div>
+									<Button variant="primary" size="sm" onclick={onswitchtowebbridge}>
+										{m.servers_ext_wiz_s2_tg_switch_web()}
+									</Button>
+								</div>
+							{/if}
 						</div>
-					{:else if keenDNSBaseDomain && !keenDNSBaseIsDirect}
-						<div class="scheme-warn-note" style="margin-top: 2px;">
-							<AlertTriangle size={14} />
-							<span>
-								{m.servers_ext_wiz_s3_tg_cloud_warn_before()} <strong class="mono">{keenDNSBaseDomain}</strong> {m.servers_ext_wiz_s3_tg_cloud_warn_after()}
-							</span>
-						</div>
-					{/if}
-					<span class="field-hint">
-						{m.servers_ext_wiz_s3_tg_direct_only_hint()}
-					</span>
-				</div>
+					</div>
+				{:else if keenDNSBaseDomain && !keenDNSBaseIsDirect}
+					<div class="scheme-warn-note" style="margin-top: 2px;">
+						<AlertTriangle size={14} />
+						<span>
+							{m.servers_ext_wiz_s3_tg_cloud_warn_before()} <strong class="mono">{keenDNSBaseDomain}</strong> {m.servers_ext_wiz_s3_tg_cloud_warn_after()}
+						</span>
+					</div>
+				{/if}
+				<span class="field-hint">
+					{m.servers_ext_wiz_s3_tg_direct_only_hint()}
+				</span>
+			</div>
 
+			<div class="form-grid-2">
 				<div class="field-block">
 					<label class="field-label" for="wiz-tls-preset-only">
 						{m.servers_ext_wiz_s3_tls_domain()}
@@ -200,9 +200,7 @@
 						/>
 					{/if}
 				</div>
-			</div>
 
-			<div class="form-grid-2" style="margin-top: 4px;">
 				<div class="field-block">
 					<label class="field-label" for="wiz-direct-port-only">
 						{m.servers_ext_wiz_s3_tg_only_port_label()}
@@ -400,68 +398,66 @@
 					</div>
 				{/if}
 			</div>
-			<div class="form-grid-2">
-				<div class="field-block">
-					<label class="field-label" for="wiz-direct-host">
-						{m.servers_ext_wiz_s3_direct_host()}
-					</label>
+			<div class="field-block">
+				<label class="field-label" for="wiz-direct-host">
+					{m.servers_ext_wiz_s3_direct_host()}
+				</label>
+				<input
+					id="wiz-direct-host"
+					type="text"
+					class="text-input mono"
+					class:input-error={isDirectHostCloudKeenDNS}
+					bind:value={draft.directHost}
+					placeholder={hideCloudFallback
+						? detectedMtprotoDirectDomain || detectedMtprotoWhiteIP || m.servers_ext_wiz_s3_tg_direct_host_ph()
+						: detectedMtprotoDirectDomain || detectedMtprotoWhiteIP || draft.originHost || draft.publicDomain || 'router.example.com'}
+				/>
+				{#if isDirectHostCloudKeenDNS}
+					<div class="cloud-host-error-box">
+						<AlertTriangle size={14} class="icon-error-soft" />
+						<div class="dual-cgnat-warn-body">
+							<span>{m.servers_ext_wiz_s3_cloud_host_error({ domain: draft.directHost.trim() })}</span>
+							{#if onswitchtowebonly}
+								<div>
+									<Button variant="secondary" size="sm" onclick={onswitchtowebonly}>
+										{m.servers_ext_wiz_s3_disable_mtproto_btn()}
+									</Button>
+								</div>
+							{/if}
+						</div>
+					</div>
+				{:else if keenDNSBaseDomain && !keenDNSBaseIsDirect}
+					<div class="scheme-warn-note" style="margin-top: 2px;">
+						<AlertTriangle size={14} />
+						<span>
+							{m.servers_ext_wiz_s3_tg_cloud_warn_before()} <strong class="mono">{keenDNSBaseDomain}</strong> {m.servers_ext_wiz_s3_tg_cloud_warn_after()}
+						</span>
+					</div>
+				{/if}
+				<span class="field-hint">
+					{hideCloudFallback ? m.servers_ext_wiz_s3_tg_direct_only_hint() : m.servers_ext_wiz_s3_direct_host_hint()}
+				</span>
+			</div>
+
+			<div class="field-block">
+				<label class="field-label" for="wiz-tls-preset">
+					{m.servers_ext_wiz_s3_tls_domain()}
+				</label>
+				<select id="wiz-tls-preset" class="select-input" bind:value={draft.tlsPreset}>
+					{#each TLS_SNI_PRESETS as p (p.domain)}
+						<option value={p.domain}>{p.label}</option>
+					{/each}
+					<option value="__custom__">{m.servers_ext_wiz_s3_tls_custom()}</option>
+				</select>
+				{#if draft.tlsPreset === '__custom__'}
 					<input
-						id="wiz-direct-host"
 						type="text"
 						class="text-input mono"
-						class:input-error={isDirectHostCloudKeenDNS}
-						bind:value={draft.directHost}
-						placeholder={hideCloudFallback
-							? detectedMtprotoDirectDomain || detectedMtprotoWhiteIP || m.servers_ext_wiz_s3_tg_direct_host_ph()
-							: detectedMtprotoDirectDomain || detectedMtprotoWhiteIP || draft.originHost || draft.publicDomain || 'router.example.com'}
+						style="margin-top: 6px;"
+						bind:value={draft.customTlsDomain}
+						placeholder="example.com"
 					/>
-					{#if isDirectHostCloudKeenDNS}
-						<div class="cloud-host-error-box">
-							<AlertTriangle size={14} class="icon-error-soft" />
-							<div class="dual-cgnat-warn-body">
-								<span>{m.servers_ext_wiz_s3_cloud_host_error({ domain: draft.directHost.trim() })}</span>
-								{#if onswitchtowebonly}
-									<div>
-										<Button variant="secondary" size="sm" onclick={onswitchtowebonly}>
-											{m.servers_ext_wiz_s3_disable_mtproto_btn()}
-										</Button>
-									</div>
-								{/if}
-							</div>
-						</div>
-					{:else if keenDNSBaseDomain && !keenDNSBaseIsDirect}
-						<div class="scheme-warn-note" style="margin-top: 2px;">
-							<AlertTriangle size={14} />
-							<span>
-								{m.servers_ext_wiz_s3_tg_cloud_warn_before()} <strong class="mono">{keenDNSBaseDomain}</strong> {m.servers_ext_wiz_s3_tg_cloud_warn_after()}
-							</span>
-						</div>
-					{/if}
-					<span class="field-hint">
-						{hideCloudFallback ? m.servers_ext_wiz_s3_tg_direct_only_hint() : m.servers_ext_wiz_s3_direct_host_hint()}
-					</span>
-				</div>
-
-				<div class="field-block">
-					<label class="field-label" for="wiz-tls-preset">
-						{m.servers_ext_wiz_s3_tls_domain()}
-					</label>
-					<select id="wiz-tls-preset" class="select-input" bind:value={draft.tlsPreset}>
-						{#each TLS_SNI_PRESETS as p (p.domain)}
-							<option value={p.domain}>{p.label}</option>
-						{/each}
-						<option value="__custom__">{m.servers_ext_wiz_s3_tls_custom()}</option>
-					</select>
-					{#if draft.tlsPreset === '__custom__'}
-						<input
-							type="text"
-							class="text-input mono"
-							style="margin-top: 6px;"
-							bind:value={draft.customTlsDomain}
-							placeholder="example.com"
-						/>
-					{/if}
-				</div>
+				{/if}
 			</div>
 		</div>
 	{/if}
@@ -554,13 +550,24 @@
 	.pill-btn {
 		display: inline-flex;
 		align-items: center;
+		gap: 5px;
+		max-width: 100%;
 		padding: 5px 10px;
 		border-radius: var(--radius-sm);
 		border: 1px solid var(--color-border);
 		background: var(--color-bg-secondary);
 		color: var(--color-text-secondary);
 		font-size: 12px;
+		line-height: 1.35;
+		text-align: left;
+		overflow-wrap: anywhere;
 		cursor: pointer;
+		transition: border-color 0.15s, background 0.15s, color 0.15s;
+	}
+
+	.pill-btn:hover {
+		border-color: var(--color-accent);
+		color: var(--color-text-primary);
 	}
 
 	.pill-btn.active {
@@ -575,8 +582,25 @@
 		color: var(--color-warning);
 	}
 
-	:global(.text-input.input-error) {
+	.pill-btn.pill-warn:hover {
+		border-color: var(--color-warning);
+		background: var(--color-warning-tint);
+		color: var(--color-warning);
+	}
+
+	.pill-btn.pill-warn.active {
+		border-color: var(--color-warning);
+		background: var(--color-warning-tint);
+		color: var(--color-warning);
+		font-weight: 600;
+	}
+
+	:global(.ext-wizard .text-input.input-error) {
 		border-color: var(--color-error-border);
+	}
+
+	:global(.ext-wizard .text-input.input-error:focus) {
+		border-color: var(--color-error);
 	}
 
 	.cloud-host-error-box {
@@ -601,10 +625,22 @@
 
 	.scheme-warn-note {
 		display: flex;
-		align-items: center;
+		align-items: flex-start;
 		gap: 8px;
 		font-size: 12px;
+		line-height: 1.4;
 		color: var(--color-warning);
+	}
+
+	.scheme-warn-note > :global(svg) {
+		flex-shrink: 0;
+		margin-top: 2px;
+	}
+
+	.scheme-warn-note > span {
+		min-width: 0;
+		flex: 1;
+		overflow-wrap: anywhere;
 	}
 
 	.dual-cgnat-warn-box {
@@ -623,7 +659,9 @@
 	.dual-cgnat-warn-body {
 		display: flex;
 		flex-direction: column;
-		gap: 6px;
+		gap: 8px;
+		min-width: 0;
+		flex: 1;
 	}
 
 	.advanced-box {

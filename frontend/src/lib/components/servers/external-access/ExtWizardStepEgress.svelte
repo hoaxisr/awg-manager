@@ -337,8 +337,13 @@
 		background: var(--color-bg-secondary);
 		text-align: left;
 		cursor: pointer;
+		transition: border-color 0.15s, background 0.15s;
 		min-width: 0;
 		max-width: 100%;
+	}
+
+	.egress-card:hover:not(:disabled) {
+		border-color: var(--color-accent);
 	}
 
 	.egress-card.selected {
@@ -371,6 +376,16 @@
 		gap: 10px;
 		min-width: 0;
 		flex: 1;
+	}
+
+	.egress-card-left > :global(svg) {
+		flex-shrink: 0;
+	}
+
+	.egress-status {
+		flex-shrink: 0;
+		display: flex;
+		align-items: center;
 	}
 
 	.egress-card-info {

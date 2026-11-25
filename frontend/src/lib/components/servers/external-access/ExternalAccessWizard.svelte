@@ -1007,7 +1007,7 @@
 	{open}
 	title={draft.isEditMode ? m.servers_ext_wiz_title_edit() : m.servers_ext_wiz_title_new()}
 	{onclose}
-	size="xl"
+	width="820px"
 >
 	<div class="ext-wizard">
 		<p class="wizard-subtitle">{m.servers_ext_wiz_subtitle()}</p>
@@ -1018,7 +1018,7 @@
 			canBack={applyPhase === 'review'}
 			busy={loading}
 			ongo={go}
-			finish={applyPhase === 'review' ? applyAction : undefined}
+			finish={applyPhase === 'review' ? applyAction : applyPhase === 'done' ? doneAction : undefined}
 		>
 			{#if stepIndex === 0}
 				<ExtWizardStepServices
@@ -1149,6 +1149,12 @@
 	</Button>
 {/snippet}
 
+{#snippet doneAction()}
+	<Button variant="primary" onclick={onclose}>
+		{m.common_close()}
+	</Button>
+{/snippet}
+
 <style>
 	.wizard-subtitle {
 		font-size: 0.75rem;
@@ -1179,7 +1185,7 @@
 
 	:where(.ext-wizard) :global(.cards-grid) {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+		grid-template-columns: repeat(auto-fit, minmax(195px, 1fr));
 		gap: 10px;
 	}
 
@@ -1218,7 +1224,7 @@
 		color: var(--color-warning);
 	}
 
-	:where(.ext-wizard) :global(.choice-card:hover) {
+	:where(.ext-wizard) :global(.choice-card:hover:not(:disabled)) {
 		border-color: var(--color-accent);
 	}
 
@@ -1307,17 +1313,21 @@
 		display: flex;
 		flex-direction: column;
 		gap: 6px;
+		min-width: 0;
 	}
 
 	:where(.ext-wizard) :global(.field-label) {
 		font-size: 12.5px;
 		font-weight: 500;
 		color: var(--color-text-primary);
+		margin-bottom: 0;
+		line-height: 1.35;
 	}
 
 	:where(.ext-wizard) :global(.field-hint) {
 		font-size: 11px;
 		color: var(--color-text-muted);
+		line-height: 1.4;
 	}
 
 	:where(.ext-wizard) :global(.text-input),
@@ -1336,10 +1346,19 @@
 
 	:where(.ext-wizard) :global(.checkbox-row) {
 		display: flex;
-		align-items: center;
+		align-items: flex-start;
 		gap: 8px;
 		font-size: 12px;
+		line-height: 1.4;
+		margin-bottom: 0;
 		color: var(--color-text-secondary);
+		cursor: pointer;
+	}
+
+	:where(.ext-wizard) :global(.checkbox-row input[type='checkbox']) {
+		margin-top: 2px;
+		flex-shrink: 0;
+		accent-color: var(--color-accent);
 		cursor: pointer;
 	}
 
@@ -1366,10 +1385,6 @@
 		display: grid;
 		grid-template-columns: 2fr 1fr 1fr;
 		gap: 10px;
-	}
-
-	:where(.ext-wizard) :global(.step-section .mr-1) {
-		margin-right: 4px;
 	}
 
 	:where(.ext-wizard) :global(.badge-ok) {
