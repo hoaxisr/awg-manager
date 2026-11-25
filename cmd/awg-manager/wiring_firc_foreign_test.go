@@ -175,6 +175,14 @@ func TestEngineHooks_LeavingFircWithoutSingbox(t *testing.T) {
 	if err := a.buildProductionEngineSwitchHooks().StartTarget(context.Background(), "sing-box"); err == nil {
 		t.Fatal("без стороннего firc переход на неустановленный sing-box должен отказать")
 	}
+	off := firc.WithTurnOff(context.Background())
+	hooks := a.buildProductionEngineSwitchHooks()
+	if err := hooks.StartTarget(off, "sing-box"); err != nil {
+		t.Fatalf("явный уход без sing-box: %v", err)
+	}
+	if err := hooks.ActivateTarget(off, "sing-box"); err != nil {
+		t.Fatalf("явный уход без sing-box, активация: %v", err)
+	}
 }
 
 func TestUplinkCatalog_ForeignFircTargetsHidden(t *testing.T) {

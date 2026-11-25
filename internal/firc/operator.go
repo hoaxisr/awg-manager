@@ -106,6 +106,21 @@ type EngineSwitchOptions struct {
 	AuthorizeDisabledStart bool
 }
 
+type turnOffCtxKey struct{}
+
+// WithTurnOff помечает явный уход пользователя с движка: если целевой движок не
+// установлен, маршрутизация панели просто выключается. Без метки переход на
+// неустановленный движок отказывает — миграция и снимки не должны терять её молча.
+func WithTurnOff(ctx context.Context) context.Context {
+	return context.WithValue(ctx, turnOffCtxKey{}, true)
+}
+
+// TurnOffRequested — есть ли в ctx метка WithTurnOff.
+func TurnOffRequested(ctx context.Context) bool {
+	v, _ := ctx.Value(turnOffCtxKey{}).(bool)
+	return v
+}
+
 type switchPrevEngineCtxKey struct{}
 
 // WithSwitchPreviousEngine attaches the authoritative pre-switch engine name

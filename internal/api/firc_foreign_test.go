@@ -25,6 +25,8 @@ type foreignFircFixture struct {
 	mux   *http.ServeMux
 	store *storage.SettingsStore
 	hits  *atomic.Int32
+	// turnOff — переход на sing-box пришёл с меткой firc.WithTurnOff.
+	turnOff bool
 }
 
 // newForeignFircFixture — роутер с пакетом firc и живым демоном на сокете;
@@ -98,10 +100,14 @@ func newForeignFircFixture(t *testing.T, engine string) *foreignFircFixture {
 	h.SetInstaller(inst)
 	h.SetSingboxConfigDir(filepath.Join(root, "sb/config.d"))
 	nop := func(context.Context, string) error { return nil }
-	h.SetOtherEngineLifecycle(nop, nop)
-	mux := http.NewServeMux()
-	h.RegisterRoutes(mux, func(next http.HandlerFunc) http.HandlerFunc { return next })
-	return &foreignFircFixture{root: root, mux: mux, store: store, hits: hits}
+	f := &foreignFircFixture{root: root, store: store, hits: hits}
+	h.SetOtherEngineLifecycle(func(ctx context.Context, _ string) error {
+		f.turnOff = firc.TurnOffRequested(ctx)
+		return nil
+	}, nop)
+	f.mux = http.NewServeMux()
+	h.RegisterRoutes(f.mux, func(next http.HandlerFunc) http.HandlerFunc { return next })
+	return f
 }
 
 func (f *foreignFircFixture) do(method, path, body string) *httptest.ResponseRecorder {
@@ -270,6 +276,9 @@ func TestFircForeign_LeavingEngineAllowed(t *testing.T) {
 			rec := f.do(c[0], c[1], c[2])
 			if rec.Code != http.StatusOK || f.engine() != "sing-box" {
 				t.Fatalf("= %d %s, движок %s", rec.Code, rec.Body.String(), f.engine())
+			}
+			if !f.turnOff {
+				t.Error("явный уход без метки WithTurnOff: без sing-box с движка не уйти")
 			}
 			f.assertUntouched(t, "уход с движка", before)
 		})

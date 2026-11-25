@@ -21,7 +21,12 @@ vi.mock('$lib/stores/firc', async () => {
 	const { writable } = await import('svelte/store');
 	return { fircForeign: writable(null), acquireFircStatusWatch: () => () => {}, reloadFircAll: vi.fn() };
 });
+vi.mock('$lib/stores/singbox', async (original) => {
+	const { writable } = await import('svelte/store');
+	return { ...(await original<typeof import('$lib/stores/singbox')>()), singboxStatus: writable({ data: null }) };
+});
 import { fircForeign } from '$lib/stores/firc';
+import { singboxStatus } from '$lib/stores/singbox';
 import FircIntegrationSection from './FircIntegrationSection.svelte';
 import { m } from '$lib/i18n';
 import type { FircInstallStatus } from '$lib/types/firc';
@@ -41,6 +46,26 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('FIRC runtime settings', () => {
+	it('движок отключается отсюда, только если sing-box не установлен', async () => {
+		const store = singboxStatus as unknown as { set: (v: unknown) => void };
+		status.mockResolvedValue({ ...base, state: 'running', activeEngine: true, fircdPresent: true });
+		store.set({ data: { installed: true } });
+		const { unmount } = render(FircIntegrationSection);
+		await screen.findByRole('button', { name: m.firc_runtime_remove() });
+		expect(screen.queryByRole('button', { name: m.firc_foreign_turn_off() })).toBeNull();
+		unmount();
+
+		store.set({ data: { installed: false } });
+		render(FircIntegrationSection);
+		await fireEvent.click(await screen.findByRole('button', { name: m.firc_foreign_turn_off() }));
+		await waitFor(() => expect(updateSettings).toHaveBeenCalledWith({ routingEngine: 'sing-box' }));
+		store.set({ data: null });
+	});
+	it('показывает, куда отложена конфигурация прежнего firc', async () => {
+		status.mockResolvedValue({ ...base, foreignConfigDir: '/opt/etc/firc/firc-config-1' });
+		render(FircIntegrationSection);
+		expect(await screen.findByText(/firc-config-1/)).toBeInTheDocument();
+	});
 	it('does not offer an unconfigured release', async () => {
 		status.mockResolvedValue({ ...base, state: 'unavailable', available: false });
 		render(FircIntegrationSection);
