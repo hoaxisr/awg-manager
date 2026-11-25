@@ -533,7 +533,7 @@ func (s *WizardService) buildXrayPlan(desired DesiredWizardConfig, fp string) Ch
 		{
 			Action:      "enable",
 			Target:      "cdn-dispatcher",
-			Description: fmt.Sprintf("Входящие подключения (:9009): маршрутизация пути %s на VLESS (XHTTP)", path),
+			Description: fmt.Sprintf("Домены внешнего доступа (:9009): маршрутизация пути %s на VLESS (XHTTP)", path),
 			NewValue:    fmt.Sprintf("0.0.0.0:%d -> 127.0.0.1:%d", dispPort, listenPort),
 		},
 		clientItem,

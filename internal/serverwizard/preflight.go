@@ -694,7 +694,7 @@ func (pe *PreflightEngine) checkCombinedPortCollisions(xr, tr WizardPlanRequest,
 
 	used := map[int]string{
 		xrayPort: "VLESS (XHTTP)",
-		dispPort: "Входящие подключения (:9009)",
+		dispPort: "Домены внешнего доступа (:9009)",
 	}
 	scenario := tr.Scenario
 	if scenario == "" {

@@ -541,7 +541,7 @@ func BuildDesiredConfig(ctx context.Context, egressResolver egress.Resolver, req
 		// Check internal port non-collision between Xray, Telegram Web, Telegram Direct, and Dispatcher
 		usedPorts := map[int]string{
 			xrayDesired.ListenPort:     "VLESS (XHTTP)",
-			xrayDesired.DispatcherPort: "Входящие подключения (:9009)",
+			xrayDesired.DispatcherPort: "Домены внешнего доступа (:9009)",
 		}
 		if tgDesired.Scenario == "cdn_http" || tgDesired.Scenario == "dual" {
 			if prev, exists := usedPorts[tgDesired.ListenPort]; exists {

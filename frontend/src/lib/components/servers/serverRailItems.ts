@@ -64,6 +64,7 @@ export function buildRailItems(
 	xrayStatus: XrayStatus | null,
 	tgStatus: TgWebProxyStatus | null,
 	dispatcherConfig: CDNDispatcherConfig | null,
+	activeId = '',
 ): RailItem[] {
 	const items: RailItem[] = [];
 	for (const ms of managedServers) {
@@ -121,14 +122,22 @@ export function buildRailItems(
 		kind: 'tgwebproxy',
 	});
 
-	items.push({
-		id: '__dispatcher__',
-		name: EXTERNAL_ACCESS_LABELS.dispatcherRailTitle,
-		iface: m.servers_rail_dispatcher_sub(),
-		listenPort: '',
-		status: dispatcherConfig?.running ? 'running' : 'stopped',
-		kind: 'dispatcher',
-	});
+	// Диспетчер — служебный: пункт нужен, пока он запущен, в нём есть маршруты
+	// или на него только что перешли кнопкой из настроек VLESS/Telegram.
+	if (
+		dispatcherConfig?.running ||
+		(dispatcherConfig?.routes?.length ?? 0) > 0 ||
+		activeId === '__dispatcher__'
+	) {
+		items.push({
+			id: '__dispatcher__',
+			name: EXTERNAL_ACCESS_LABELS.dispatcherRailTitle,
+			iface: m.servers_rail_dispatcher_sub(),
+			listenPort: '',
+			status: dispatcherConfig?.running ? 'running' : 'stopped',
+			kind: 'dispatcher',
+		});
+	}
 
 	return dedupBy(items, (i) => i.id, { warnTag: 'server rail' });
 }
