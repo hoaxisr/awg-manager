@@ -43,7 +43,9 @@ export function handleVersionBadgeClick(options: {
 	}
 
 	if (hasUpdate) {
-		void goto(UPDATE_SETTINGS_HREF);
+		// keepFocus: бейдж щёлкают подряд, а сброс фокуса SvelteKit ещё и вернул бы
+		// в адрес якорь, который страница уже разобрала.
+		void goto(UPDATE_SETTINGS_HREF, { keepFocus: true });
 	}
 
 	if (usageLevel === 'expert') {

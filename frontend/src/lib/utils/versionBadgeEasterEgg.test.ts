@@ -34,7 +34,7 @@ describe('handleVersionBadgeClick', () => {
 
 	it('opens the update block on settings when update is available', () => {
 		handleVersionBadgeClick({ usageLevel: 'basic', hasUpdate: true, onSettingsPage: true });
-		expect(goto).toHaveBeenCalledExactlyOnceWith('/settings#awgm-update');
+		expect(goto).toHaveBeenCalledExactlyOnceWith('/settings#awgm-update', { keepFocus: true });
 	});
 
 	it('shows countdown from the 7th click in expert mode', () => {
