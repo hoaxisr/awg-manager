@@ -230,3 +230,54 @@ func TestOperator_TunExternalConfig_OlderForkBuild(t *testing.T) {
 		})
 	}
 }
+
+// Ответный сокет TPROXY не занимает адрес роутера с awgm-box 44 (F910). Чужая,
+// прежняя и неизвестная сборка — false: им нужен DNS-RESCUE.
+func TestOperator_ReplySocketIsolated(t *testing.T) {
+	newOp := func(t *testing.T, version string) *Operator {
+		t.Helper()
+		dir := t.TempDir()
+		bin := filepath.Join(dir, "awgm-box")
+		if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		op := NewOperator(OperatorDeps{Dir: dir, Binary: bin})
+		if version != "" {
+			if err := writeSidecar(bin, version); err != nil {
+				t.Fatal(err)
+			}
+		}
+		op.resetVersionCache()
+		return op
+	}
+	for _, tc := range []struct {
+		version string
+		want    bool
+	}{
+		{"44", true},
+		{"45", true},
+		{"43", false},
+		{"1.15.0-alpha.13-awgm.40", false},
+		{"1.15.0-alpha.13", false},
+		{"", false},
+	} {
+		t.Run("версия "+tc.version, func(t *testing.T) {
+			if got := newOp(t, tc.version).ReplySocketIsolated(); got != tc.want {
+				t.Errorf("ReplySocketIsolated = %v, ожидалось %v", got, tc.want)
+			}
+		})
+	}
+
+	// Файл уже новый, процесс ещё прежний: сокеты держит процесс.
+	for _, fromFile := range []bool{true, false} {
+		op := newOp(t, "44")
+		if err := os.WriteFile(op.pidPath, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		op.proc.matchBinaryFn = func(int) bool { return true }
+		op.exeMatches = func(int, string) bool { return fromFile }
+		if got := op.ReplySocketIsolated(); got != fromFile {
+			t.Errorf("процесс из файла=%v: ReplySocketIsolated = %v", fromFile, got)
+		}
+	}
+}
