@@ -35,7 +35,9 @@
 	let ifaces = $state<RouterInterface[]>([]);
 	const portDraft = pageDraft<number | null>('http-port', () => listen?.port ?? null);
 	const selected = pageDraft<string[]>('http-ifaces', () => listen?.interfaces ?? [], ifacesEqual);
-	let busy = $state(false);
+	// Смена адреса взводит откат на бэкенде: вторая поверх идущей недопустима и
+	// после ухода со вкладки и возврата.
+	const op = pageState('http-op', () => ({ busy: false }));
 	let confirmOpen = $state(false);
 
 	/** Радио/Wi‑Fi slave-интерфейсы — L2 под br*, слушать HTTP на них бессмысленно. */
@@ -76,7 +78,7 @@
 	}
 
 	const dirty = $derived(Boolean(listen) && ((portValid && portDraft.dirty) || selected.dirty));
-	const applyDisabled = $derived(busy || !portValid || !dirty);
+	const applyDisabled = $derived(op.busy || !portValid || !dirty);
 
 	async function load(): Promise<void> {
 		view.listen = await api.serverListenState();
@@ -135,7 +137,7 @@
 
 	async function apply(): Promise<void> {
 		if (applyDisabled || !listen) return;
-		busy = true;
+		op.busy = true;
 		const prevPort = listen.port;
 		try {
 			const res = await api.serverListenChange(port, selected.value);
@@ -148,7 +150,7 @@
 						m.settings_http_port_changed_warning(),
 					);
 				}
-				busy = false;
+				op.busy = false;
 				return;
 			}
 			const target = redirectTarget(port, res.boundAddrs);
@@ -156,7 +158,7 @@
 			window.location.href = `${target}/settings#listen-confirm=${res.confirmToken}`;
 		} catch (e) {
 			notifications.error(m.settings_http_change_failed({ error: e instanceof Error ? e.message : String(e) }));
-			busy = false;
+			op.busy = false;
 		}
 	}
 
@@ -226,10 +228,10 @@
 					variant="primary"
 					size="sm"
 					disabled={applyDisabled}
-					loading={busy}
+					loading={op.busy}
 					onclick={() => (confirmOpen = true)}
 				>
-					{busy ? m.settings_http_applying() : m.common_apply()}
+					{op.busy ? m.settings_http_applying() : m.common_apply()}
 				</Button>
 			</div>
 		{/if}
@@ -240,13 +242,13 @@
 			message={m.settings_http_confirm_message({ port: portValid ? port : '?', interfaces: confirmIfaceLabel })}
 			confirmLabel={m.common_apply()}
 			variant="primary"
-			busy={busy}
+			busy={op.busy}
 			onConfirm={() => {
 				confirmOpen = false;
 				void apply();
 			}}
 			onClose={() => {
-				if (!busy) confirmOpen = false;
+				if (!op.busy) confirmOpen = false;
 			}}
 		/>
 	{:else}

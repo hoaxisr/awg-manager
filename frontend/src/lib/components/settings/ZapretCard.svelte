@@ -8,17 +8,18 @@
 	import { Zap } from 'lucide-svelte';
 	import ComponentRow from './ComponentRow.svelte';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
+	import { pageState } from './pageState.svelte';
 
 	const status = $derived($zapretStatusIfExpert?.data ?? null);
 	const running = $derived(status?.running ?? false);
-	let busy = $state(false);
+	const op = pageState('zapret-op', () => ({ busy: false }));
 
 	async function control(action: ZapretControlAction) {
-		busy = true;
+		op.busy = true;
 		try {
 			await runZapretControl(action, status?.base ?? '');
 		} finally {
-			busy = false;
+			op.busy = false;
 		}
 	}
 </script>
@@ -39,10 +40,10 @@
 				{#snippet actions()}
 					<Button variant="secondary" size="sm" href="/routing?tab=zapret">{m.settings_integrations_open()}</Button>
 					{#if running}
-						<Button variant="secondary" size="sm" onclick={() => control('restart')} loading={busy}>{m.common_restart()}</Button>
-						<Button variant="danger" size="sm" onclick={() => control('stop')} loading={busy}>{m.common_stop()}</Button>
+						<Button variant="secondary" size="sm" onclick={() => control('restart')} loading={op.busy}>{m.common_restart()}</Button>
+						<Button variant="danger" size="sm" onclick={() => control('stop')} loading={op.busy}>{m.common_stop()}</Button>
 					{:else}
-						<Button variant="success" size="sm" onclick={() => control('start')} loading={busy}>{m.common_start()}</Button>
+						<Button variant="success" size="sm" onclick={() => control('start')} loading={op.busy}>{m.common_start()}</Button>
 					{/if}
 				{/snippet}
 			</ComponentRow>

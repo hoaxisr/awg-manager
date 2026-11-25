@@ -1,19 +1,22 @@
-<!-- Обвязка теста: карточка с черновиком монтируется и снимается под одной страницей. -->
+<!-- Обвязка теста: карточки монтируются и снимаются под одной страницей, как вкладки. -->
 <script lang="ts">
-	import PingTargetsCard from './PingTargetsCard.svelte';
+	import type { Component } from 'svelte';
 	import { providePageState } from './pageState.svelte';
 
 	interface Props {
 		shown: boolean;
-		target: string;
-		onsave?: (target: string, url: string) => void;
+		// Карточка любая: свои пропсы у каждой.
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		cards: Array<{ component: Component<any>; props?: Record<string, unknown> }>;
 	}
 
-	let { shown, target, onsave = () => {} }: Props = $props();
+	let { shown, cards }: Props = $props();
 
 	providePageState();
 </script>
 
 {#if shown}
-	<PingTargetsCard {target} url="http://a/204" {onsave} />
+	{#each cards as { component: Card, props } (Card)}
+		<Card {...props} />
+	{/each}
 {/if}

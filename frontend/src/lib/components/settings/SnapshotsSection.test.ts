@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/svelte';
+import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import { writable, type Readable } from 'svelte/store';
+import BackupRestoreCard from './BackupRestoreCard.svelte';
+import PageStateTestHost from './PageStateTestHost.svelte';
 import SnapshotsSection from './SnapshotsSection.svelte';
 import { api } from '$lib/api/client';
 import type { PollingState } from '$lib/stores/polling';
@@ -113,5 +115,26 @@ describe('SnapshotsSection: снимки перед обновлением', () 
 		setState({ status: 'loading', lastFetchedAt: 0 });
 		render(SnapshotsSection);
 		expect(screen.queryByText(/Снимков пока нет/)).toBeNull();
+	});
+
+	// Восстановление поверх идущего смешало бы данные двух архивов.
+	it('пока восстанавливается файл, кнопки снимков заперты', async () => {
+		setState({ data: { snapshots: [snap], keep: 3, ttlDays: 7 } });
+		vi.mocked(api.importFullBackup).mockReturnValue(new Promise(() => {}));
+		vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
+		const { container } = render(PageStateTestHost, {
+			props: { shown: true, cards: [{ component: BackupRestoreCard }, { component: SnapshotsSection }] },
+		});
+		const row = container.querySelector<HTMLElement>('.snapshot-row')!;
+		const rowDisabled = () => within(row).getAllByRole<HTMLButtonElement>('button').map((b) => b.disabled);
+		expect(rowDisabled()).toEqual([false, false, false]);
+
+		await fireEvent.change(container.querySelector('input[type="file"]')!, {
+			target: { files: [new File(['x'], 'backup.tar.gz')] },
+		});
+		await fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Восстановить' }));
+		await vi.waitFor(() => expect(api.importFullBackup).toHaveBeenCalledTimes(1));
+		expect(rowDisabled()).toEqual([true, true, true]);
+		vi.unstubAllGlobals();
 	});
 });

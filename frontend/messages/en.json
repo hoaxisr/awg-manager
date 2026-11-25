@@ -8030,7 +8030,7 @@
 	"firc_runtime_upgrade_confirm_dependents": "Dependent services will briefly reconnect during restart: {services}.",
 	"firc_wizard_runtime_missing_title": "FIRC runtime package (fircd / tunvless) is not installed",
 	"firc_wizard_runtime_missing_desc": "Switching routing to FIRC is unavailable until the fircd and tunvless binaries (awg-firc-runtime) are installed on the router.",
-	"firc_wizard_runtime_missing_keep_hint": "Install FIRC under Settings → FIRC (or via opkg install awg-firc-runtime), or select \"Import configuration into FIRC only\" without switching.",
+	"firc_wizard_runtime_missing_keep_hint": "Install FIRC under Settings → Components (or via opkg install awg-firc-runtime), or select \"Import configuration into FIRC only\" without switching.",
 	"firc_keendns_sync_error": "Cloud address list sync error (last working rules preserved): {error}",
 	"firc_keendns_cloud_check_label": "Check cloud reachability (HTTPS + CoAP UDP)",
 	"firc_keendns_cloud_check_hint": "Off by default — uses standard interface liveness. When enabled for Fallback groups (2+ interfaces), FIRC probes Netcraze/Keenetic cloud over HTTPS :8082 and CoAP UDP :5683 to bypass tunnels that block RU or UDP. If all other tunnels go down, the group fails open to any remaining live interface instead of blocking traffic.",

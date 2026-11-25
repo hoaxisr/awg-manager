@@ -12,7 +12,7 @@
 	import { setSettings as setGlobalSettings } from '$lib/stores/settings';
 	import { isAutoInstallSettingsVisible } from '$lib/types/usageLevel';
 	import type { Settings, UpdateInfo } from '$lib/types';
-	import { pageDraft } from './pageState.svelte';
+	import { pageDraft, pageState } from './pageState.svelte';
 
 	interface Props {
 		updateInfo: UpdateInfo | null;
@@ -21,39 +21,38 @@
 
 	let { updateInfo, settings = $bindable() }: Props = $props();
 
-	let savingAutoInstall = $state(false);
-	let savingStats = $state(false);
-	let savingSnapshot = $state(false);
+	// Признаки записи переживают уход со вкладки.
+	const op = pageState('install-op', () => ({ savingAutoInstall: false, savingStats: false, savingSnapshot: false }));
 
 	const intervalDays = pageDraft('update-interval-days', () => settings.updates.autoInstallIntervalDays || 7);
 	const installTime = pageDraft('update-install-time', () => settings.updates.autoInstallTime || '05:00');
 
 	async function toggleStats(enabled: boolean) {
-		savingStats = true;
+		op.savingStats = true;
 		try {
 			settings = await api.updateSettings({ updates: { statsEnabled: enabled } });
 			setGlobalSettings(settings);
 		} catch (e) {
 			notifications.error(m.settings_update_stats_failed({ error: downloadErrorToText(e) }));
 		} finally {
-			savingStats = false;
+			op.savingStats = false;
 		}
 	}
 
 	async function toggleSnapshot(enabled: boolean) {
-		savingSnapshot = true;
+		op.savingSnapshot = true;
 		try {
 			settings = await api.updateSettings({ updates: { snapshotDisabled: !enabled } });
 			setGlobalSettings(settings);
 		} catch (e) {
 			notifications.error(m.settings_update_snapshot_failed({ error: downloadErrorToText(e) }));
 		} finally {
-			savingSnapshot = false;
+			op.savingSnapshot = false;
 		}
 	}
 
 	async function toggleAutoInstall(enabled: boolean) {
-		savingAutoInstall = true;
+		op.savingAutoInstall = true;
 		try {
 			settings = await api.updateSettings({ updates: { autoInstallEnabled: enabled } });
 			setGlobalSettings(settings);
@@ -63,12 +62,12 @@
 		} catch (e) {
 			notifications.error(m.settings_update_auto_failed({ error: downloadErrorToText(e) }));
 		} finally {
-			savingAutoInstall = false;
+			op.savingAutoInstall = false;
 		}
 	}
 
 	async function saveAutoInstallSchedule() {
-		savingAutoInstall = true;
+		op.savingAutoInstall = true;
 		try {
 			settings = await api.updateSettings({
 				updates: { autoInstallIntervalDays: intervalDays.value, autoInstallTime: installTime.value },
@@ -78,7 +77,7 @@
 		} catch (e) {
 			notifications.error(m.settings_update_schedule_failed({ error: downloadErrorToText(e) }));
 		} finally {
-			savingAutoInstall = false;
+			op.savingAutoInstall = false;
 		}
 	}
 </script>
@@ -95,7 +94,7 @@
 			checked={settings.updates.autoInstallEnabled}
 			controlled
 			onchange={toggleAutoInstall}
-			disabled={savingAutoInstall}
+			disabled={op.savingAutoInstall}
 		/>
 	</div>
 
@@ -118,7 +117,7 @@
 							bind:value={intervalDays.value}
 							min="1"
 							max="30"
-							disabled={savingAutoInstall}
+							disabled={op.savingAutoInstall}
 						/>
 						<span class="input-suffix">{m.settings_update_every_n_days()}</span>
 					</div>
@@ -126,16 +125,16 @@
 						type="time"
 						id="autoInstallTime"
 						bind:value={installTime.value}
-						disabled={savingAutoInstall}
+						disabled={op.savingAutoInstall}
 					/>
 					{#if intervalDays.dirty || installTime.dirty}
 						<Button
 							variant="primary"
 							size="sm"
 							onclick={saveAutoInstallSchedule}
-							loading={savingAutoInstall}
+							loading={op.savingAutoInstall}
 						>
-							{savingAutoInstall ? m.common_saving() : m.common_save()}
+							{op.savingAutoInstall ? m.common_saving() : m.common_save()}
 						</Button>
 					{/if}
 				</div>
@@ -155,7 +154,7 @@
 		checked={!settings.updates.snapshotDisabled}
 		ariaLabel={m.settings_update_snapshot_label()}
 		onchange={toggleSnapshot}
-		disabled={savingSnapshot}
+		disabled={op.savingSnapshot}
 	/>
 </div>
 
@@ -170,6 +169,6 @@
 		checked={settings.updates.statsEnabled}
 		controlled
 		onchange={toggleStats}
-		disabled={savingStats}
+		disabled={op.savingStats}
 	/>
 </div>

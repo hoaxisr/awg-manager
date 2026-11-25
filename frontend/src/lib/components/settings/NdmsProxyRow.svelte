@@ -8,10 +8,11 @@
 	import { ConfirmModal, Toggle } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
 	import { singboxStatus } from '$lib/stores/singbox';
+	import { pageState } from './pageState.svelte';
 
 	const singboxStatusValue = $derived($singboxStatus.data ?? null);
 	const ndmsProxyEnabled = $derived(singboxStatusValue?.ndmsProxyEnabled ?? true);
-	let ndmsProxyBusy = $state(false);
+	const op = pageState('ndms-proxy-op', () => ({ busy: false }));
 	let ndmsProxyConfirmOpen = $state(false);
 	let ndmsProxyConfirmEnable = $state(false); // true = подтверждение включения; false = выключения
 
@@ -24,7 +25,7 @@
 
 	async function applyNDMSProxyToggle() {
 		const enabled = ndmsProxyConfirmEnable;
-		ndmsProxyBusy = true;
+		op.busy = true;
 		try {
 			const res = await api.singboxToggleNDMSProxy(enabled);
 			ndmsProxyConfirmOpen = false;
@@ -45,7 +46,7 @@
 				notifications.error(msg);
 			}
 		} finally {
-			ndmsProxyBusy = false;
+			op.busy = false;
 		}
 	}
 </script>
@@ -66,7 +67,7 @@
 	<Toggle
 		checked={ndmsProxyEnabled}
 		controlled
-		disabled={ndmsProxyBusy}
+		disabled={op.busy}
 		onchange={handleNDMSProxyToggleClick}
 	/>
 </div>
@@ -82,7 +83,7 @@
 		: m.settings_page_ndms_confirm_disable_secondary()}
 	confirmLabel={ndmsProxyConfirmEnable ? m.common_enable() : m.common_disable()}
 	variant={ndmsProxyConfirmEnable ? 'primary' : 'danger'}
-	busy={ndmsProxyBusy}
+	busy={op.busy}
 	onConfirm={applyNDMSProxyToggle}
 	onClose={() => (ndmsProxyConfirmOpen = false)}
 />

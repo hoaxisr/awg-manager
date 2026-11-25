@@ -21,7 +21,8 @@
 
 	let { editor, children }: Props = $props();
 
-	// Установка идёт минутами: ход и отказ переживают уход со вкладки.
+	// Ход операций и отказ переживают уход со вкладки: вернувшийся не запустит
+	// вторую поверх идущей и увидит, чем кончилась первая.
 	const op = pageState('singbox-op', () => ({
 		installing: false,
 		uninstalling: false,
@@ -29,6 +30,9 @@
 		controlling: false,
 		installError: null as UiText | null,
 		updateError: null as UiText | null,
+		savingBootstrapDNS: false,
+		savingClashPort: false,
+		clashPortError: null as string | null,
 	}));
 
 	const status = $derived($singboxStatus.data ?? null);
@@ -89,12 +93,10 @@
 		}
 	}
 
-	let savingBootstrapDNS = $state(false);
-
 	// Bootstrap-DNS применяется бэкендом сразу: он переписывает адрес в
 	// 00-base.json и перечитывает конфиг sing-box без перезапуска.
 	async function saveBootstrapDNS(value: string) {
-		savingBootstrapDNS = true;
+		op.savingBootstrapDNS = true;
 		try {
 			editor.settings = await api.updateSettings({ singboxBootstrapDNS: value });
 			setGlobalSettings(editor.settings);
@@ -102,30 +104,27 @@
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : m.settings_page_bootstrap_save_failed());
 		} finally {
-			savingBootstrapDNS = false;
+			op.savingBootstrapDNS = false;
 		}
 	}
-
-	let savingClashPort = $state(false);
-	let clashPortError = $state<string | null>(null);
 
 	// Порт Clash API применяется бэкендом сразу: он переписывает
 	// external_controller в 00-base.json, перечитывает конфиг sing-box и
 	// переставляет собственного клиента. Отказ по занятости порта приходит
 	// текстом ошибки и показывается прямо под полем.
 	async function saveClashPort(value: number) {
-		savingClashPort = true;
-		clashPortError = null;
+		op.savingClashPort = true;
+		op.clashPortError = null;
 		try {
 			editor.settings = await api.updateSettings({ singboxClashPort: value });
 			setGlobalSettings(editor.settings);
 			notifications.success(m.settings_page_clash_port_saved({ value }));
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : m.settings_page_clash_port_save_failed();
-			clashPortError = msg;
+			op.clashPortError = msg;
 			notifications.error(msg);
 		} finally {
-			savingClashPort = false;
+			op.savingClashPort = false;
 		}
 	}
 </script>
@@ -144,11 +143,11 @@
 	oncontrol={control}
 	controlBusy={op.controlling}
 	bootstrapDNS={editor.settings.singboxBootstrapDNS ?? ''}
-	bootstrapSaving={savingBootstrapDNS}
+	bootstrapSaving={op.savingBootstrapDNS}
 	onsaveBootstrapDNS={saveBootstrapDNS}
 	clashPort={editor.settings.singboxClashPort ?? 0}
-	clashPortSaving={savingClashPort}
-	{clashPortError}
+	clashPortSaving={op.savingClashPort}
+	clashPortError={op.clashPortError}
 	onsaveClashPort={saveClashPort}
 	{children}
 />
