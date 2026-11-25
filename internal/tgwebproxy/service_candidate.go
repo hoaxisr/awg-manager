@@ -449,7 +449,9 @@ func (s *Service) CommitPrepared(txID string) error {
 	}
 
 	s.config = candidate
-	s.syncDirectWANFirewallLocked(candidate)
+	if err := s.syncDirectWANFirewallLocked(candidate); err != nil {
+		return rollbackAndJoin(fmt.Errorf("sync direct WAN firewall: %w", err))
+	}
 
 	// 3. Mark manifest active
 	manifest.State = "active"
@@ -581,7 +583,9 @@ func (s *Service) rollbackLocked(txID string, manifest *SnapshotManifest) error 
 	}
 
 	s.config = manifest.OldConfig
-	s.syncDirectWANFirewallLocked(manifest.OldConfig)
+	if err := s.syncDirectWANFirewallLocked(manifest.OldConfig); err != nil {
+		rollbackErrs = append(rollbackErrs, fmt.Errorf("restore direct WAN firewall: %w", err))
+	}
 
 	if len(rollbackErrs) > 0 {
 		return errors.Join(rollbackErrs...)

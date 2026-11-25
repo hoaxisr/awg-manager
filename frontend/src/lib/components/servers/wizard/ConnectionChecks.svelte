@@ -204,6 +204,8 @@
 							<CheckCircle2 size={16} class="icon-ok" />
 						{:else if chk.status === 'warning'}
 							<AlertTriangle size={16} class="icon-warn" />
+						{:else if chk.status === 'not_applicable'}
+							<Info size={16} class="icon-muted" />
 						{:else}
 							<XCircle size={16} class="icon-err" />
 						{/if}
@@ -219,7 +221,7 @@
 							{/if}
 						</div>
 						<div class="check-msg">{chk.message}</div>
-						{#if chk.remediation && chk.status !== 'ok'}
+						{#if chk.remediation && chk.status !== 'ok' && chk.status !== 'not_applicable'}
 							<div class="check-remediation">{m.servers_wizard_checks_remediation({ text: chk.remediation })}</div>
 						{/if}
 					</div>
@@ -336,6 +338,9 @@
 		border-color: var(--color-warning-border);
 		background: var(--color-warning-tint);
 	}
+	.check-row.status-not_applicable {
+		opacity: 0.85;
+	}
 	.check-icon {
 		margin-top: 2px;
 		flex-shrink: 0;
@@ -348,6 +353,9 @@
 	}
 	:global(.icon-err) {
 		color: var(--color-error);
+	}
+	:global(.icon-muted) {
+		color: var(--color-text-muted);
 	}
 	.check-body {
 		display: flex;

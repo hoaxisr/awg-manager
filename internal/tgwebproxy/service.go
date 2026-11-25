@@ -44,7 +44,7 @@ type Service struct {
 	mux                  *Mux
 	legacyTimer          *time.Timer
 	onReload             func()
-	directWANFirewall    func(port int, enabled bool)
+	directWANFirewall    func(port int, enabled bool) error
 	egressValidator      EgressValidator
 	tproxyValidator      TproxyValidator
 	runtimeDCProbe       func(device string) bool
@@ -701,7 +701,9 @@ func (s *Service) applyConfigLocked(newCfg Config) error {
 	}
 
 	s.config = newCfg
-	s.syncDirectWANFirewallLocked(newCfg)
+	if err := s.syncDirectWANFirewallLocked(newCfg); err != nil {
+		return fmt.Errorf("sync direct WAN firewall: %w", err)
+	}
 	s.scheduleLegacyExpiryLocked()
 	go tuneRuntimeNetworkUpstreams(newCfg.EnabledUpstreams())
 	go s.checkUpstreamHealth()
@@ -709,28 +711,27 @@ func (s *Service) applyConfigLocked(newCfg Config) error {
 }
 
 // SyncDirectWANFirewall reconciles Keenetic's WAN firewall rule with the current config under s.mu.
-func (s *Service) SyncDirectWANFirewall() {
+func (s *Service) SyncDirectWANFirewall() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.recoveryRequired {
-		return
+		return nil
 	}
-	s.syncDirectWANFirewallLocked(s.config)
+	return s.syncDirectWANFirewallLocked(s.config)
 }
 
-func (s *Service) syncDirectWANFirewallLocked(cfg Config) {
+func (s *Service) syncDirectWANFirewallLocked(cfg Config) error {
 	if s.directWANFirewall == nil {
-		return
+		return nil
 	}
 	if cfg.IsDirectEnabled() {
 		port := cfg.DirectPort
 		if port <= 0 {
 			port = DefaultDirectPort
 		}
-		s.directWANFirewall(port, true)
-		return
+		return s.directWANFirewall(port, true)
 	}
-	s.directWANFirewall(0, false)
+	return s.directWANFirewall(0, false)
 }
 
 func hasTproxyFileChanges(tproxyDir string, files []FilePayload) bool {
@@ -1487,7 +1488,7 @@ func (s *Service) FactoryReset(ctx context.Context) error {
 	}
 
 	s.config = defCfg
-	s.syncDirectWANFirewallLocked(defCfg)
+	fwErr := s.syncDirectWANFirewallLocked(defCfg)
 	s.recoveryRequired = false
 	s.lastStartupError = ""
 
@@ -1498,11 +1499,17 @@ func (s *Service) FactoryReset(ctx context.Context) error {
 
 	if s.dataDir != "" {
 		if err := s.saveSettingsFileLocked(defCfg); err != nil {
+			if fwErr != nil {
+				return errors.Join(fmt.Errorf("cleanup direct WAN firewall: %w", fwErr), fmt.Errorf("save default settings: %w", err))
+			}
 			return fmt.Errorf("save default settings: %w", err)
 		}
 	}
 
 	s.notifyReload()
+	if fwErr != nil {
+		return fmt.Errorf("cleanup direct WAN firewall: %w", fwErr)
+	}
 	return nil
 }
 
@@ -1520,7 +1527,9 @@ func (s *Service) Restart() error {
 	if err := s.workers.ApplyWorkers(s.config); err != nil {
 		return err
 	}
-	s.syncDirectWANFirewallLocked(s.config)
+	if err := s.syncDirectWANFirewallLocked(s.config); err != nil {
+		return fmt.Errorf("sync direct WAN firewall: %w", err)
+	}
 	s.notifyReload()
 	return nil
 }
@@ -1535,7 +1544,9 @@ func (s *Service) StartConfigured() error {
 	}
 
 	if !s.config.Enabled {
-		s.syncDirectWANFirewallLocked(s.config)
+		if err := s.syncDirectWANFirewallLocked(s.config); err != nil {
+			return fmt.Errorf("sync direct WAN firewall: %w", err)
+		}
 		return nil
 	}
 
@@ -1575,23 +1586,25 @@ func (s *Service) StartConfigured() error {
 	if err := s.workers.ApplyWorkers(s.config); err != nil {
 		runtimeStopCfg := s.config
 		runtimeStopCfg.Enabled = false
-		s.syncDirectWANFirewallLocked(runtimeStopCfg)
-		return err
+		fwErr := s.syncDirectWANFirewallLocked(runtimeStopCfg)
+		return errors.Join(err, fwErr)
 	}
 	if err := s.workers.CheckReadiness(s.config); err != nil {
 		runtimeStopCfg := s.config
 		runtimeStopCfg.Enabled = false
 		stopErr := s.workers.ApplyWorkers(runtimeStopCfg)
-		s.syncDirectWANFirewallLocked(runtimeStopCfg)
+		fwErr := s.syncDirectWANFirewallLocked(runtimeStopCfg)
 		if stopErr != nil {
-			return errors.Join(err, fmt.Errorf("rollback tg workers after readiness failure: %w", stopErr))
+			return errors.Join(err, fmt.Errorf("rollback tg workers after readiness failure: %w", stopErr), fwErr)
 		}
-		return err
+		return errors.Join(err, fwErr)
 	}
 	if s.config.IsWebEnabled() && s.mux != nil {
 		_ = s.mux.StartWithSecrets(s.config.ListenPort, s.config.GetEndpoints(), s.config.ActiveSecrets())
 	}
-	s.syncDirectWANFirewallLocked(s.config)
+	if err := s.syncDirectWANFirewallLocked(s.config); err != nil {
+		return fmt.Errorf("sync direct WAN firewall: %w", err)
+	}
 	go tuneRuntimeNetworkUpstreams(s.config.EnabledUpstreams())
 	return nil
 }

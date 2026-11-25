@@ -168,7 +168,9 @@ func (a *app) setupServer() {
 			a.bootLog.Info("ingress", "autostart", "ingress services started successfully")
 		}
 		if !recoveryReq && !vlessReq && !tgSt.RecoveryRequired {
-			a.ingressCoordinator.SyncWANIngressFirewall()
+			if err := a.ingressCoordinator.SyncWANIngressFirewall(); err != nil {
+				a.bootLog.Error("ingress", "wan_firewall", err.Error())
+			}
 		}
 	}
 

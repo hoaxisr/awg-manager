@@ -488,7 +488,9 @@ func (s *WizardService) verifyTelegram(ctx context.Context, checks *[]Verificati
 			})
 		}
 
-		if tgwebproxy.IsDirectWANPortOpen(directPort) {
+		fwState, fwErr := s.checkDirectWANFirewall(directPort)
+		switch fwState {
+		case tgwebproxy.DirectWANFirewallOpen:
 			*checks = append(*checks, VerificationCheck{
 				ID:            "tg_mtproto_wan_firewall",
 				Service:       "tg_mtproto",
@@ -497,7 +499,31 @@ func (s *WizardService) verifyTelegram(ctx context.Context, checks *[]Verificati
 				Message:       fmt.Sprintf("TCP-порт %d открыт в WAN-фаерволе роутера для входящих подключений MTProto", directPort),
 				TargetAddress: fmt.Sprintf("0.0.0.0:%d", directPort),
 			})
-		} else {
+		case tgwebproxy.DirectWANFirewallNotApplicable:
+			*checks = append(*checks, VerificationCheck{
+				ID:            "tg_mtproto_wan_firewall",
+				Service:       "tg_mtproto",
+				Title:         "WAN-фаервол для порта MTProto",
+				Status:        CheckStatusNotApplicable,
+				Message:       "Проверка WAN-фаервола Keenetic неприменима в этой среде (каталог /opt/etc/ndm/netfilter.d отсутствует)",
+				TargetAddress: fmt.Sprintf("0.0.0.0:%d", directPort),
+			})
+		case tgwebproxy.DirectWANFirewallUnknown:
+			msg := "Не удалось проверить правила WAN-фаервола Keenetic"
+			if fwErr != nil {
+				msg = fmt.Sprintf("Не удалось проверить правила WAN-фаервола Keenetic: %v", fwErr)
+			}
+			*checks = append(*checks, VerificationCheck{
+				ID:            "tg_mtproto_wan_firewall",
+				Service:       "tg_mtproto",
+				Title:         "WAN-фаервол для порта MTProto",
+				Status:        CheckStatusWarning,
+				Category:      VerifyCategoryFirewall,
+				Message:       msg,
+				Remediation:   "Проверьте доступность iptables и права доступа к каталогу /opt/etc/ndm/netfilter.d, затем повторите проверку.",
+				TargetAddress: fmt.Sprintf("0.0.0.0:%d", directPort),
+			})
+		default:
 			*checks = append(*checks, VerificationCheck{
 				ID:            "tg_mtproto_wan_firewall",
 				Service:       "tg_mtproto",

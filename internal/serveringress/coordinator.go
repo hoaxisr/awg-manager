@@ -1011,7 +1011,9 @@ func (c *Coordinator) applyLocked(ctx context.Context, txID string, desired Ingr
 		return fmt.Errorf("%w: archive journal: %v", ErrRecoveryRequired, err)
 	}
 
-	c.syncWANIngressFirewall()
+	if err := c.syncWANIngressFirewall(); err != nil {
+		return fmt.Errorf("sync WAN ingress firewall: %w", err)
+	}
 	return nil
 }
 
@@ -1110,7 +1112,9 @@ func (c *Coordinator) failAndRollback(j *TransactionJournal, origErr error) erro
 		return errors.Join(append([]error{ErrRecoveryRequired, origErr}, persistErrs...)...)
 	}
 
-	c.syncWANIngressFirewall()
+	if fwErr := c.syncWANIngressFirewall(); fwErr != nil {
+		return errors.Join(origErr, fmt.Errorf("sync WAN ingress firewall: %w", fwErr))
+	}
 	return origErr
 }
 
@@ -1351,17 +1355,18 @@ func (c *Coordinator) IsDispatcherRunning() bool {
 
 // SyncWANIngressFirewall synchronizes WAN firewall ports for MTProto direct ingress
 // when coordinator is not in recovery mode.
-func (c *Coordinator) SyncWANIngressFirewall() {
-	c.syncWANIngressFirewall()
+func (c *Coordinator) SyncWANIngressFirewall() error {
+	return c.syncWANIngressFirewall()
 }
 
-func (c *Coordinator) syncWANIngressFirewall() {
+func (c *Coordinator) syncWANIngressFirewall() error {
 	if needed, _ := c.IsRecoveryRequired(); needed {
-		return
+		return nil
 	}
-	if syncer, ok := c.tgSvc.(interface{ SyncDirectWANFirewall() }); ok {
-		syncer.SyncDirectWANFirewall()
+	if syncer, ok := c.tgSvc.(interface{ SyncDirectWANFirewall() error }); ok {
+		return syncer.SyncDirectWANFirewall()
 	}
+	return nil
 }
 
 // HydrateDispatcherRoutes checks if dispatcher routes are configured; if empty,
@@ -1611,7 +1616,9 @@ func (c *Coordinator) ApplyDispatcherConfig(ctx context.Context, cfg cdndispatch
 			_ = c.tgSvc.UpdateConfig(tgCfg)
 		}
 
-		c.syncWANIngressFirewall()
+		if err := c.syncWANIngressFirewall(); err != nil {
+			return fmt.Errorf("sync WAN ingress firewall: %w", err)
+		}
 		return nil
 	})
 }
@@ -2143,7 +2150,9 @@ func (c *Coordinator) ExecuteIngressTransaction(ctx context.Context, params Ingr
 			return fmt.Errorf("%w: archive journal: %v", ErrRecoveryRequired, err)
 		}
 
-		c.syncWANIngressFirewall()
+		if err := c.syncWANIngressFirewall(); err != nil {
+			return fmt.Errorf("sync WAN ingress firewall: %w", err)
+		}
 		return nil
 	})
 }
@@ -2858,7 +2867,9 @@ func (c *Coordinator) ResetVless(ctx context.Context, opts ResetOptions) (ResetR
 			_ = os.Remove(c.journalPath())
 		}
 		c.setRecovery(false, "")
-		c.syncWANIngressFirewall()
+		if fwErr := c.syncWANIngressFirewall(); fwErr != nil {
+			return fmt.Errorf("sync WAN ingress firewall: %w", fwErr)
+		}
 		res.Reset = true
 		return nil
 	})
@@ -2955,7 +2966,9 @@ func (c *Coordinator) ResetTelegram(ctx context.Context, opts ResetOptions) (Res
 			_ = os.Remove(c.journalPath())
 		}
 		c.setRecovery(false, "")
-		c.syncWANIngressFirewall()
+		if fwErr := c.syncWANIngressFirewall(); fwErr != nil {
+			return fmt.Errorf("sync WAN ingress firewall: %w", fwErr)
+		}
 		res.Reset = true
 		return nil
 	})

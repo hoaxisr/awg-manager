@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -14,11 +16,13 @@ func stubDirectWANSeams(t *testing.T, netfilterDir, hookPath string, execFn func
 	t.Helper()
 	origDir := directWANNetfilterDir
 	origHook := directWANHookPath
+	origStat := directWANStat
 	origExec := directWANExecOutput
 	origIpt := directWANIptablesBin
 
 	directWANNetfilterDir = netfilterDir
 	directWANHookPath = hookPath
+	directWANStat = os.Stat
 	if execFn != nil {
 		directWANExecOutput = execFn
 	}
@@ -27,6 +31,7 @@ func stubDirectWANSeams(t *testing.T, netfilterDir, hookPath string, execFn func
 	t.Cleanup(func() {
 		directWANNetfilterDir = origDir
 		directWANHookPath = origHook
+		directWANStat = origStat
 		directWANExecOutput = origExec
 		directWANIptablesBin = origIpt
 	})
@@ -45,13 +50,96 @@ func TestRenderDirectWANHook(t *testing.T) {
 		`ok=1`,
 		`logger -t awgm-tg-mtproto-wan`,
 		`exit 1`,
-		`INPUT`,
+		`_NDM_INPUT`,
 		`_NDM_IP_PUBLIC`,
+		`-i "$ifc"`,
 		`--dport "$PORT"`,
 		`-j ACCEPT`,
 	} {
 		if !strings.Contains(hook, want) {
 			t.Fatalf("rendered hook missing %q:\n%s", want, hook)
+		}
+	}
+	for _, forbidden := range []string{`-I INPUT`, `-C INPUT`} {
+		if strings.Contains(hook, forbidden) {
+			t.Fatalf("rendered hook must NOT insert unscoped %q:\n%s", forbidden, hook)
+		}
+	}
+
+	if _, err := exec.LookPath("/bin/sh"); err == nil {
+		tmp := t.TempDir()
+		hookPath := filepath.Join(tmp, "68-awgm-tg-mtproto-wan.sh")
+		logPath := filepath.Join(tmp, "iptables.log")
+		mockIpt := filepath.Join(tmp, "iptables")
+
+		// Execute the actual rendered POSIX shell hook against a realistic
+		// Keenetic _NDM_INPUT topology including WAN, LAN (br0), Guest (br1), and VPNs.
+		mockScript := `#!/bin/sh
+echo "$*" >> "` + logPath + `"
+shift_args="$*"
+case " $shift_args " in
+  *" -L _NDM_IP_PUBLIC "*) exit 0 ;;
+  *" -S _NDM_INPUT "*)
+    cat <<'EOFRULES'
+-N _NDM_INPUT
+-A _NDM_INPUT -i eth3 -m set --match-set _NDM_I4AL_eth3 dst -m ndmslin --slin 3 (public) -j _NDM_IP_PUBLIC
+-A _NDM_INPUT -i br0 -m set --match-set _NDM_I4AL_br0 dst -m ndmslin --slin 1 (private) -j _NDM_IP_PRIVATE
+-A _NDM_INPUT -i br1 -m set --match-set _NDM_I4AL_br1 dst -m ndmslin --slin 2 (protected) -j _NDM_IP_PROTECT
+-A _NDM_INPUT -i qmi_br0 -m set --match-set _NDM_I4AL_qmi_br0 dst -m ndmslin --slin 3 (public) -j _NDM_IP_PUBLIC
+-A _NDM_INPUT -i ppp0 -m set --match-set _NDM_I4AL_ppp0 dst -m ndmslin --slin 3 (public) -j _NDM_IP_PUBLIC
+-A _NDM_INPUT -i opkgtun10 -m set --match-set _NDM_I4AL_opkgtun10 dst -m ndmslin --slin 3 (public) -j _NDM_IP_PUBLIC
+-A _NDM_INPUT -i t2s0 -m set --match-set _NDM_I4AL_t2s0 dst -m ndmslin --slin 3 (public) -j _NDM_IP_PUBLIC
+-A _NDM_INPUT -i nwg2 -m set --match-set _NDM_I4AL_nwg2 dst -m ndmslin --slin 3 (public) -j _NDM_IP_PUBLIC
+EOFRULES
+    exit 0
+    ;;
+  *" -C _NDM_IP_PUBLIC "*) exit 1 ;;
+  *" -I _NDM_IP_PUBLIC 1 "*) exit 0 ;;
+esac
+exit 0
+`
+		if err := os.WriteFile(mockIpt, []byte(mockScript), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(hookPath, []byte(hook), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		cmd := exec.Command("/bin/sh", hookPath)
+		cmd.Env = []string{
+			"PATH=" + tmp + ":" + os.Getenv("PATH"),
+			"type=iptables",
+			"table=filter",
+		}
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("executing rendered hook failed: %v\n%s", err, string(out))
+		}
+		loggedBytes, err := os.ReadFile(logPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		logged := string(loggedBytes)
+		for _, wantWAN := range []string{
+			"-I _NDM_IP_PUBLIC 1 -i eth3 -p tcp -m tcp --dport 8443 -m comment --comment AWGM_TG_MTPROTO_WAN -j ACCEPT",
+			"-I _NDM_IP_PUBLIC 1 -i qmi_br0 -p tcp -m tcp --dport 8443 -m comment --comment AWGM_TG_MTPROTO_WAN -j ACCEPT",
+			"-I _NDM_IP_PUBLIC 1 -i ppp0 -p tcp -m tcp --dport 8443 -m comment --comment AWGM_TG_MTPROTO_WAN -j ACCEPT",
+		} {
+			if !strings.Contains(logged, wantWAN) {
+				t.Fatalf("expected hook run to insert WAN rule %q, got log:\n%s", wantWAN, logged)
+			}
+		}
+		for _, badInsert := range []string{
+			"-I INPUT",
+			"-i br0",
+			"-i br1",
+			"-i opkgtun10",
+			"-i t2s0",
+			"-i nwg2",
+		} {
+			if strings.Contains(logged, badInsert) {
+				t.Fatalf("hook must NOT allow %q (LAN/Guest/VPN/unscoped INPUT), got log:\n%s", badInsert, logged)
+			}
 		}
 	}
 }
@@ -61,19 +149,39 @@ func TestSyncDirectWANFirewall_LifecycleAndCleanup(t *testing.T) {
 	nfDir := filepath.Join(tmp, "netfilter.d")
 	hookPath := filepath.Join(nfDir, "68-awgm-tg-mtproto-wan.sh")
 
-	// 1. Outside Keenetic (netfilter.d absent): Sync is no-op, IsDirectWANPortOpen returns true
+	// 1. Outside Keenetic (netfilter.d absent): Sync is no-op, CheckDirectWANFirewall returns NotApplicable
 	called := 0
 	stubDirectWANSeams(t, nfDir, hookPath, func(env []string, name string, args ...string) ([]byte, error) {
 		called++
 		return nil, nil
 	})
-	SyncDirectWANFirewall(8443, true)
+	if err := SyncDirectWANFirewall(8443, true); err != nil {
+		t.Fatalf("expected nil outside Keenetic, got %v", err)
+	}
 	if called != 0 {
 		t.Fatalf("expected no exec outside Keenetic, got %d calls", called)
 	}
-	if !IsDirectWANPortOpen(8443) {
-		t.Fatalf("expected IsDirectWANPortOpen=true outside Keenetic")
+	state, err := CheckDirectWANFirewall(8443)
+	if err != nil || state != DirectWANFirewallNotApplicable {
+		t.Fatalf("expected DirectWANFirewallNotApplicable outside Keenetic, got state=%q err=%v", state, err)
 	}
+	if IsDirectWANPortOpen(8443) {
+		t.Fatalf("expected IsDirectWANPortOpen=false when netfilter.d absent (not applicable)")
+	}
+
+	// 1b. Non-NotExist os.Stat error (EACCES / EIO) -> CheckDirectWANFirewall returns Unknown, Sync returns error
+	stubDirectWANSeams(t, nfDir, hookPath, nil)
+	directWANStat = func(string) (os.FileInfo, error) {
+		return nil, &os.PathError{Op: "stat", Path: nfDir, Err: syscall.EACCES}
+	}
+	state, err = CheckDirectWANFirewall(8443)
+	if state != DirectWANFirewallUnknown || !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("expected DirectWANFirewallUnknown + permission err, got state=%q err=%v", state, err)
+	}
+	if err := SyncDirectWANFirewall(8443, true); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("expected SyncDirectWANFirewall to return stat permission error, got %v", err)
+	}
+	directWANStat = os.Stat
 
 	// Create Keenetic netfilter dir
 	if err := os.MkdirAll(nfDir, 0755); err != nil {
@@ -87,6 +195,13 @@ func TestSyncDirectWANFirewall_LifecycleAndCleanup(t *testing.T) {
 	var shEnvs [][]string
 	var delArgs [][]string
 	inputRules := "-P INPUT DROP\n"
+	ndmInputRules := strings.Join([]string{
+		"-A _NDM_INPUT -i eth3 -m ndmslin --slin 3 (public) -j _NDM_IP_PUBLIC",
+		"-A _NDM_INPUT -i qmi_br0 -m ndmslin --slin 3 (public) -j _NDM_IP_PUBLIC",
+		"-A _NDM_INPUT -i br0 -m ndmslin --slin 1 (private) -j _NDM_IP_PRIVATE",
+		"-A _NDM_INPUT -i br1 -m ndmslin --slin 2 (protected) -j _NDM_IP_PROTECT",
+		"-A _NDM_INPUT -i opkgtun10 -m ndmslin --slin 3 (public) -j _NDM_IP_PUBLIC",
+	}, "\n")
 	pubRules := "-P _NDM_IP_PUBLIC RETURN\n"
 
 	stubDirectWANSeams(t, nfDir, hookPath, func(env []string, name string, args ...string) ([]byte, error) {
@@ -96,10 +211,12 @@ func TestSyncDirectWANFirewall_LifecycleAndCleanup(t *testing.T) {
 			return nil, nil
 		}
 		if len(args) >= 4 && args[0] == "-w" && args[1] == "5" && args[2] == "-S" {
-			if args[3] == "INPUT" {
+			switch args[3] {
+			case "INPUT":
 				return []byte(inputRules), nil
-			}
-			if args[3] == "_NDM_IP_PUBLIC" {
+			case "_NDM_INPUT":
+				return []byte(ndmInputRules), nil
+			case "_NDM_IP_PUBLIC":
 				return []byte(pubRules), nil
 			}
 		}
@@ -109,7 +226,9 @@ func TestSyncDirectWANFirewall_LifecycleAndCleanup(t *testing.T) {
 		return nil, nil
 	})
 
-	SyncDirectWANFirewall(8443, true)
+	if err := SyncDirectWANFirewall(8443, true); err != nil {
+		t.Fatalf("SyncDirectWANFirewall(8443, true): %v", err)
+	}
 	st, err := os.Lstat(hookPath)
 	if err != nil {
 		t.Fatalf("expected hook file %s to be created: %v", hookPath, err)
@@ -130,7 +249,9 @@ func TestSyncDirectWANFirewall_LifecycleAndCleanup(t *testing.T) {
 	if err := os.Chmod(hookPath, 0644); err != nil {
 		t.Fatal(err)
 	}
-	SyncDirectWANFirewall(8443, true)
+	if err := SyncDirectWANFirewall(8443, true); err != nil {
+		t.Fatalf("SyncDirectWANFirewall repair 0644: %v", err)
+	}
 	st, err = os.Lstat(hookPath)
 	if err != nil || !st.Mode().IsRegular() || st.Mode().Perm() != 0755 {
 		t.Fatalf("expected 0644 hook repaired to regular 0755, got mode=%v err=%v", st.Mode(), err)
@@ -144,7 +265,9 @@ func TestSyncDirectWANFirewall_LifecycleAndCleanup(t *testing.T) {
 	if err := os.Symlink(decoyTarget, hookPath); err != nil {
 		t.Fatal(err)
 	}
-	SyncDirectWANFirewall(8443, true)
+	if err := SyncDirectWANFirewall(8443, true); err != nil {
+		t.Fatalf("SyncDirectWANFirewall repair symlink: %v", err)
+	}
 	st, err = os.Lstat(hookPath)
 	if err != nil || !st.Mode().IsRegular() || st.Mode().Perm() != 0755 {
 		t.Fatalf("expected symlink hook replaced atomically with regular 0755 file, got mode=%v err=%v", st.Mode(), err)
@@ -154,20 +277,25 @@ func TestSyncDirectWANFirewall_LifecycleAndCleanup(t *testing.T) {
 		t.Fatalf("symlink target was modified! got %q", string(decoyData))
 	}
 
-	// 3. Port change 8443 -> 9443 deletes old AWGM_TG_MTPROTO_WAN rules (both chains, quoted & unquoted), keeps unrelated rules
+	// 3. Port change 8443 -> 9443 deletes ALL legacy INPUT rules (even matching 9443) AND old/unscoped _NDM_IP_PUBLIC rules,
+	//    while preserving properly WAN-scoped rules for keepPort 9443 and unrelated AWGM rules.
 	inputRules = strings.Join([]string{
 		"-A INPUT -p tcp -m tcp --dport 8443 -m comment --comment AWGM_TG_MTPROTO_WAN -j ACCEPT",
 		"-A INPUT -p tcp -m tcp --dport 2053 -m comment --comment AWGM_REALITY_WAN -j ACCEPT",
 		"-A INPUT -p tcp -m tcp --dport 9443 -m comment --comment AWGM_TG_MTPROTO_WAN -j ACCEPT",
 	}, "\n")
 	pubRules = strings.Join([]string{
-		`-A _NDM_IP_PUBLIC -p tcp -m tcp --dport 8443 -m comment --comment "AWGM_TG_MTPROTO_WAN" -j ACCEPT`,
+		`-A _NDM_IP_PUBLIC -i qmi_br0 -p tcp -m tcp --dport 8443 -m comment --comment "AWGM_TG_MTPROTO_WAN" -j ACCEPT`,
+		`-A _NDM_IP_PUBLIC -p tcp -m tcp --dport 9443 -m comment --comment AWGM_TG_MTPROTO_WAN -j ACCEPT`,
+		`-A _NDM_IP_PUBLIC -i qmi_br0 -p tcp -m tcp --dport 9443 -m comment --comment AWGM_TG_MTPROTO_WAN -j ACCEPT`,
 		`-A _NDM_IP_PUBLIC -p tcp -m tcp --dport 9009 -m comment --comment AWGM_INGRESS_WAN -j ACCEPT`,
 	}, "\n")
 	shRuns = nil
 	delArgs = nil
 
-	SyncDirectWANFirewall(9443, true)
+	if err := SyncDirectWANFirewall(9443, true); err != nil {
+		t.Fatalf("SyncDirectWANFirewall(9443, true): %v", err)
+	}
 	hookBytes, err := os.ReadFile(hookPath)
 	if err != nil {
 		t.Fatalf("read updated hook: %v", err)
@@ -175,33 +303,44 @@ func TestSyncDirectWANFirewall_LifecycleAndCleanup(t *testing.T) {
 	if !strings.Contains(string(hookBytes), `PORT="9443"`) {
 		t.Fatalf("expected hook updated to 9443, got:\n%s", string(hookBytes))
 	}
-	if len(delArgs) != 2 {
-		t.Fatalf("expected exactly 2 stale rule deletions (INPUT 8443 & _NDM_IP_PUBLIC 8443), got %+v", delArgs)
+	if len(delArgs) != 4 {
+		t.Fatalf("expected 4 deletions (INPUT 8443, INPUT 9443, _NDM_IP_PUBLIC qmi_br0 8443, unscoped _NDM_IP_PUBLIC 9443), got %+v", delArgs)
 	}
 	wantDel0 := []string{"-w", "5", "-D", "INPUT", "-p", "tcp", "-m", "tcp", "--dport", "8443", "-m", "comment", "--comment", "AWGM_TG_MTPROTO_WAN", "-j", "ACCEPT"}
-	wantDel1 := []string{"-w", "5", "-D", "_NDM_IP_PUBLIC", "-p", "tcp", "-m", "tcp", "--dport", "8443", "-m", "comment", "--comment", "AWGM_TG_MTPROTO_WAN", "-j", "ACCEPT"}
-	if !reflect.DeepEqual(delArgs[0], wantDel0) || !reflect.DeepEqual(delArgs[1], wantDel1) {
-		t.Fatalf("unexpected delete args: got %+v, want [%v, %v]", delArgs, wantDel0, wantDel1)
+	wantDel1 := []string{"-w", "5", "-D", "INPUT", "-p", "tcp", "-m", "tcp", "--dport", "9443", "-m", "comment", "--comment", "AWGM_TG_MTPROTO_WAN", "-j", "ACCEPT"}
+	wantDel2 := []string{"-w", "5", "-D", "_NDM_IP_PUBLIC", "-i", "qmi_br0", "-p", "tcp", "-m", "tcp", "--dport", "8443", "-m", "comment", "--comment", "AWGM_TG_MTPROTO_WAN", "-j", "ACCEPT"}
+	wantDel3 := []string{"-w", "5", "-D", "_NDM_IP_PUBLIC", "-p", "tcp", "-m", "tcp", "--dport", "9443", "-m", "comment", "--comment", "AWGM_TG_MTPROTO_WAN", "-j", "ACCEPT"}
+	if !reflect.DeepEqual(delArgs[0], wantDel0) || !reflect.DeepEqual(delArgs[1], wantDel1) ||
+		!reflect.DeepEqual(delArgs[2], wantDel2) || !reflect.DeepEqual(delArgs[3], wantDel3) {
+		t.Fatalf("unexpected delete args: got %+v", delArgs)
 	}
 
-	// 4. IsDirectWANPortOpen inspects both INPUT and _NDM_IP_PUBLIC accurately
-	inputRules = "-A INPUT -p tcp -m tcp --dport 9443 -m comment --comment AWGM_TG_MTPROTO_WAN -j ACCEPT\n"
-	pubRules = "-A _NDM_IP_PUBLIC -p tcp -m tcp --dport 9443 -m comment --comment AWGM_TG_MTPROTO_WAN -j ACCEPT\n"
+	// 4. CheckDirectWANFirewall & IsDirectWANPortOpen inspect _NDM_IP_PUBLIC scoped to WAN interfaces without requiring INPUT
+	inputRules = "-P INPUT DROP\n"
+	pubRules = "-A _NDM_IP_PUBLIC -i qmi_br0 -p tcp -m tcp --dport 9443 -m comment --comment AWGM_TG_MTPROTO_WAN -j ACCEPT\n"
+	if st, err := CheckDirectWANFirewall(9443); err != nil || st != DirectWANFirewallOpen {
+		t.Fatalf("expected CheckDirectWANFirewall(9443)=open, got state=%q err=%v", st, err)
+	}
 	if !IsDirectWANPortOpen(9443) {
-		t.Fatalf("expected IsDirectWANPortOpen(9443)=true when both chains accept it")
+		t.Fatalf("expected IsDirectWANPortOpen(9443)=true when _NDM_IP_PUBLIC allows WAN interface")
 	}
-	if IsDirectWANPortOpen(8443) {
-		t.Fatalf("expected IsDirectWANPortOpen(8443)=false when absent")
+	if st, err := CheckDirectWANFirewall(8443); err != nil || st != DirectWANFirewallClosed {
+		t.Fatalf("expected CheckDirectWANFirewall(8443)=closed when absent, got state=%q err=%v", st, err)
 	}
-	pubRules = "-P _NDM_IP_PUBLIC RETURN\n"
-	if IsDirectWANPortOpen(9443) {
-		t.Fatalf("expected IsDirectWANPortOpen(9443)=false when missing from _NDM_IP_PUBLIC")
+	// Rule scoped only to guest br1 / VPN opkgtun10 does NOT count as WAN open
+	pubRules = "-A _NDM_IP_PUBLIC -i br1 -p tcp -m tcp --dport 9443 -j ACCEPT\n" +
+		"-A _NDM_IP_PUBLIC -i opkgtun10 -p tcp -m tcp --dport 9443 -j ACCEPT\n"
+	if st, err := CheckDirectWANFirewall(9443); err != nil || st != DirectWANFirewallClosed {
+		t.Fatalf("expected CheckDirectWANFirewall(9443)=closed when only br1/opkgtun10 present, got state=%q err=%v", st, err)
 	}
 
 	// 5. Disable -> deletes hook and cleans up rules
 	delArgs = nil
-	pubRules = "-A _NDM_IP_PUBLIC -p tcp -m tcp --dport 9443 -m comment --comment AWGM_TG_MTPROTO_WAN -j ACCEPT\n"
-	SyncDirectWANFirewall(0, false)
+	inputRules = "-A INPUT -p tcp -m tcp --dport 9443 -m comment --comment AWGM_TG_MTPROTO_WAN -j ACCEPT\n"
+	pubRules = "-A _NDM_IP_PUBLIC -i qmi_br0 -p tcp -m tcp --dport 9443 -m comment --comment AWGM_TG_MTPROTO_WAN -j ACCEPT\n"
+	if err := SyncDirectWANFirewall(0, false); err != nil {
+		t.Fatalf("SyncDirectWANFirewall(0, false): %v", err)
+	}
 	if _, err := os.Stat(hookPath); !os.IsNotExist(err) {
 		t.Fatalf("expected hook file to be removed when disabled")
 	}
@@ -218,8 +357,9 @@ func TestService_DirectWANFirewallLifecycle(t *testing.T) {
 		enabled bool
 	}
 	var calls []fwCall
-	svc.directWANFirewall = func(port int, enabled bool) {
+	svc.directWANFirewall = func(port int, enabled bool) error {
 		calls = append(calls, fwCall{port: port, enabled: enabled})
+		return nil
 	}
 
 	// Start in default ScenarioDual (port 8443) -> opens 8443
@@ -285,7 +425,9 @@ func TestService_DirectWANFirewallLifecycle(t *testing.T) {
 
 	// Serialized public SyncDirectWANFirewall() uses live s.config
 	callsBeforeSync := len(calls)
-	svc.SyncDirectWANFirewall()
+	if err := svc.SyncDirectWANFirewall(); err != nil {
+		t.Fatalf("SyncDirectWANFirewall: %v", err)
+	}
 	if len(calls) != callsBeforeSync+1 || calls[len(calls)-1] != (fwCall{port: 0, enabled: false}) {
 		t.Fatalf("expected SyncDirectWANFirewall() to sync current disabled state, got %+v", calls[callsBeforeSync:])
 	}
@@ -396,13 +538,15 @@ func TestValidateDirectPort_AndHardenedWANFirewall(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 1. SyncDirectWANFirewall refuses privileged port 22 (does NOT write hook, cleans up existing rules)
+	// 1. SyncDirectWANFirewall refuses privileged port 22 (does NOT write hook, cleans up existing rules, returns error)
 	if err := os.WriteFile(hookPath, []byte("stale"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	var delArgs [][]string
 	inputRules := "-A INPUT -p tcp -m tcp --dport 8443 -m comment --comment AWGM_TG_MTPROTO_WAN -j ACCEPT\n" +
 		"-A INPUT -p tcp -m tcp --dport 8444 -m comment --comment AWGM_TG_MTPROTO_WAN_EXTRA -j ACCEPT\n"
+	ndmInputRules := "-A _NDM_INPUT -i eth3 -m ndmslin --slin 3 (public) -j _NDM_IP_PUBLIC\n" +
+		"-A _NDM_INPUT -i ppp0 -m ndmslin --slin 3 (public) -j _NDM_IP_PUBLIC\n"
 	pubRules := "-P _NDM_IP_PUBLIC RETURN\n"
 	failWithW := false
 
@@ -417,10 +561,14 @@ func TestValidateDirectPort_AndHardenedWANFirewall(t *testing.T) {
 		if (len(args) >= 2 && args[0] == "-S") ||
 			(len(args) >= 3 && args[0] == "-w" && args[1] == "-S") ||
 			(len(args) >= 4 && args[0] == "-w" && args[1] == "5" && args[2] == "-S") {
-			if chain == "INPUT" {
+			switch chain {
+			case "INPUT":
 				return []byte(inputRules), nil
+			case "_NDM_INPUT":
+				return []byte(ndmInputRules), nil
+			default:
+				return []byte(pubRules), nil
 			}
-			return []byte(pubRules), nil
 		}
 		if (len(args) >= 2 && args[0] == "-D") ||
 			(len(args) >= 3 && args[0] == "-w" && args[1] == "-D") ||
@@ -430,7 +578,9 @@ func TestValidateDirectPort_AndHardenedWANFirewall(t *testing.T) {
 		return nil, nil
 	})
 
-	SyncDirectWANFirewall(22, true)
+	if err := SyncDirectWANFirewall(22, true); !errors.Is(err, ErrInvalidDirectPort) {
+		t.Fatalf("expected SyncDirectWANFirewall(22, true) to return ErrInvalidDirectPort, got %v", err)
+	}
 	if _, err := os.Stat(hookPath); !os.IsNotExist(err) {
 		t.Fatalf("expected unsafe port 22 not to create/retain hook")
 	}
@@ -443,66 +593,152 @@ func TestValidateDirectPort_AndHardenedWANFirewall(t *testing.T) {
 	failWithW = true
 	delArgs = nil
 	inputRules = "-A INPUT -p tcp -m tcp --dport 8443 -m comment --comment AWGM_TG_MTPROTO_WAN -j ACCEPT\n"
-	pubRules = "-A _NDM_IP_PUBLIC -p tcp -m tcp --dport 8443 -m comment --comment AWGM_TG_MTPROTO_WAN -j ACCEPT\n"
-	if !IsDirectWANPortOpen(8443) {
-		t.Fatalf("expected IsDirectWANPortOpen to succeed via fallback without -w")
+	pubRules = "-A _NDM_IP_PUBLIC -i ppp0 -p tcp -m tcp --dport 8443 -m comment --comment AWGM_TG_MTPROTO_WAN -j ACCEPT\n"
+	if st, err := CheckDirectWANFirewall(8443); err != nil || st != DirectWANFirewallOpen {
+		t.Fatalf("expected CheckDirectWANFirewall to succeed via fallback without -w, got state=%q err=%v", st, err)
 	}
-	cleanupDirectWANRules(0)
+	if err := cleanupDirectWANRules(0, nil); err != nil {
+		t.Fatalf("expected cleanupDirectWANRules fallback without -w to succeed, got %v", err)
+	}
 	if len(delArgs) != 2 || delArgs[0][0] != "-D" || delArgs[1][0] != "-D" {
 		t.Fatalf("expected cleanup fallback without -w to delete both rules, got %+v", delArgs)
 	}
 
-	// 3. Rejects LAN / source-scoped / negated rules, accepts PPP WAN interface
+	// 3. Rejects LAN / guest / VPN / source-scoped / negated rules, accepts PPP WAN interface in _NDM_IP_PUBLIC
 	failWithW = false
-	pubRules = "-A _NDM_IP_PUBLIC -p tcp -m tcp --dport 8443 -j ACCEPT\n"
 	for _, badRule := range []string{
-		"-A INPUT -i br0 -p tcp -m tcp --dport 8443 -j ACCEPT\n",
-		"-A INPUT -i lo -p tcp -m tcp --dport 8443 -j ACCEPT\n",
-		"-A INPUT -i nwg0 -p tcp -m tcp --dport 8443 -j ACCEPT\n",
-		"-A INPUT -s 192.168.1.0/24 -p tcp -m tcp --dport 8443 -j ACCEPT\n",
-		"-A INPUT -p tcp -m tcp ! --dport 8443 -j ACCEPT\n",
-		"-A INPUT ! -p tcp --dport 8443 -j ACCEPT\n",
+		"-A _NDM_IP_PUBLIC -i br0 -p tcp -m tcp --dport 8443 -j ACCEPT\n",
+		"-A _NDM_IP_PUBLIC -i br1 -p tcp -m tcp --dport 8443 -j ACCEPT\n",
+		"-A _NDM_IP_PUBLIC -i lo -p tcp -m tcp --dport 8443 -j ACCEPT\n",
+		"-A _NDM_IP_PUBLIC -i nwg0 -p tcp -m tcp --dport 8443 -j ACCEPT\n",
+		"-A _NDM_IP_PUBLIC -i opkgtun10 -p tcp -m tcp --dport 8443 -j ACCEPT\n",
+		"-A _NDM_IP_PUBLIC -s 192.168.1.0/24 -p tcp -m tcp --dport 8443 -j ACCEPT\n",
+		"-A _NDM_IP_PUBLIC -p tcp -m tcp ! --dport 8443 -j ACCEPT\n",
+		"-A _NDM_IP_PUBLIC ! -p tcp --dport 8443 -j ACCEPT\n",
 	} {
-		inputRules = badRule
-		if IsDirectWANPortOpen(8443) {
-			t.Fatalf("expected IsDirectWANPortOpen to reject scoped/negated rule: %q", badRule)
+		pubRules = badRule
+		if st, err := CheckDirectWANFirewall(8443); err != nil || st != DirectWANFirewallClosed {
+			t.Fatalf("expected CheckDirectWANFirewall to treat %q as closed, got state=%q err=%v", badRule, st, err)
 		}
 	}
-	inputRules = "-A INPUT -i ppp0 -p tcp -m tcp --dport 8443 -j ACCEPT\n"
-	if !IsDirectWANPortOpen(8443) {
-		t.Fatalf("expected IsDirectWANPortOpen to accept explicit WAN interface rule")
+	pubRules = "-A _NDM_IP_PUBLIC -i ppp0 -p tcp -m tcp --dport 8443 -j ACCEPT\n"
+	if st, err := CheckDirectWANFirewall(8443); err != nil || st != DirectWANFirewallOpen {
+		t.Fatalf("expected CheckDirectWANFirewall to accept explicit WAN interface rule, got state=%q err=%v", st, err)
 	}
 
-	// 4. Distinguishes missing _NDM_IP_PUBLIC chain from transient xtables lock/exec error
-	inputRules = "-A INPUT -p tcp -m tcp --dport 8443 -m comment --comment AWGM_TG_MTPROTO_WAN -j ACCEPT\n"
+	// 4. Distinguishes missing _NDM_IP_PUBLIC chain (Closed) from transient xtables lock/exec error (Unknown)
 	stubDirectWANSeams(t, nfDir, hookPath, func(env []string, name string, args ...string) ([]byte, error) {
-		chain := args[len(args)-1]
-		if chain == "INPUT" {
-			return []byte(inputRules), nil
-		}
 		return []byte("iptables: No chain/target/match by that name.\n"), errors.New("exit status 1")
 	})
-	if !IsDirectWANPortOpen(8443) {
-		t.Fatalf("expected IsDirectWANPortOpen=true when _NDM_IP_PUBLIC chain simply does not exist")
+	if st, err := CheckDirectWANFirewall(8443); err != nil || st != DirectWANFirewallClosed {
+		t.Fatalf("expected Closed/nil when _NDM_IP_PUBLIC chain does not exist, got state=%q err=%v", st, err)
 	}
 
 	stubDirectWANSeams(t, nfDir, hookPath, func(env []string, name string, args ...string) ([]byte, error) {
 		chain := args[len(args)-1]
-		if chain == "INPUT" {
-			return []byte(inputRules), nil
+		if chain == "_NDM_IP_PUBLIC" {
+			return []byte("Another app is currently holding the xtables lock.\n"), errors.New("exit status 4")
 		}
-		return []byte("Another app is currently holding the xtables lock.\n"), errors.New("exit status 4")
+		return []byte(ndmInputRules), nil
 	})
-	if IsDirectWANPortOpen(8443) {
-		t.Fatalf("expected IsDirectWANPortOpen to fail closed on transient _NDM_IP_PUBLIC error")
+	if st, err := CheckDirectWANFirewall(8443); st != DirectWANFirewallUnknown || err == nil {
+		t.Fatalf("expected Unknown + err on transient _NDM_IP_PUBLIC error, got state=%q err=%v", st, err)
 	}
 
-	// 5. Fail-closed when iptables fails completely on Keenetic
+	// 5. Unknown when _NDM_INPUT fails on Keenetic
 	stubDirectWANSeams(t, nfDir, hookPath, func(env []string, name string, args ...string) ([]byte, error) {
-		return nil, errors.New("iptables unavailable")
+		chain := args[len(args)-1]
+		if chain == "_NDM_IP_PUBLIC" {
+			return []byte("-A _NDM_IP_PUBLIC -i ppp0 -p tcp -m tcp --dport 8443 -j ACCEPT\n"), nil
+		}
+		return []byte("iptables unavailable"), errors.New("iptables unavailable")
 	})
-	if IsDirectWANPortOpen(8443) {
-		t.Fatalf("expected IsDirectWANPortOpen to fail closed when iptables query fails on Keenetic")
+	if st, err := CheckDirectWANFirewall(8443); st != DirectWANFirewallUnknown || err == nil {
+		t.Fatalf("expected CheckDirectWANFirewall to return Unknown when _NDM_INPUT query fails, got state=%q err=%v", st, err)
+	}
+}
+
+func TestSyncDirectWANFirewall_CleanupErrorPropagation(t *testing.T) {
+	tmp := t.TempDir()
+	nfDir := filepath.Join(tmp, "netfilter.d")
+	hookPath := filepath.Join(nfDir, "68-awgm-tg-mtproto-wan.sh")
+	if err := os.MkdirAll(nfDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. iptables -D failure on disable (SyncDirectWANFirewall(0, false)) returns non-nil error
+	stubDirectWANSeams(t, nfDir, hookPath, func(env []string, name string, args ...string) ([]byte, error) {
+		if len(args) >= 4 && args[2] == "-S" {
+			if args[3] == "_NDM_IP_PUBLIC" {
+				return []byte("-A _NDM_IP_PUBLIC -i eth3 -p tcp -m tcp --dport 8443 -m comment --comment AWGM_TG_MTPROTO_WAN -j ACCEPT\n"), nil
+			}
+			return []byte("-P INPUT DROP\n"), nil
+		}
+		if len(args) >= 3 && (args[0] == "-D" || (args[0] == "-w" && (args[1] == "-D" || (len(args) >= 3 && args[2] == "-D")))) {
+			return []byte("iptables: Resource temporarily unavailable"), errors.New("exit status 1")
+		}
+		return nil, nil
+	})
+	err := SyncDirectWANFirewall(0, false)
+	if err == nil || !strings.Contains(err.Error(), "delete _NDM_IP_PUBLIC rule") {
+		t.Fatalf("expected SyncDirectWANFirewall(0, false) to propagate iptables -D error, got %v", err)
+	}
+
+	// 2. iptables -D failure on port change (8443 -> 9443) returns non-nil error
+	err = SyncDirectWANFirewall(9443, true)
+	if err == nil || !strings.Contains(err.Error(), "delete _NDM_IP_PUBLIC rule") {
+		t.Fatalf("expected SyncDirectWANFirewall(9443, true) to propagate stale rule delete error, got %v", err)
+	}
+
+	// 3. iptables -S read error (non-NoSuchChain) propagates instead of silently skipping chain
+	stubDirectWANSeams(t, nfDir, hookPath, func(env []string, name string, args ...string) ([]byte, error) {
+		if len(args) >= 4 && args[len(args)-2] == "-S" && args[len(args)-1] == "_NDM_IP_PUBLIC" {
+			return []byte("Another app is currently holding the xtables lock."), errors.New("exit status 4")
+		}
+		if len(args) >= 2 && args[len(args)-2] == "-S" && args[len(args)-1] == "_NDM_IP_PUBLIC" {
+			return []byte("Another app is currently holding the xtables lock."), errors.New("exit status 4")
+		}
+		return nil, nil
+	})
+	if err := cleanupDirectWANRules(0, nil); err == nil || !strings.Contains(err.Error(), "read _NDM_IP_PUBLIC rules") {
+		t.Fatalf("expected cleanupDirectWANRules to return chain read error, got %v", err)
+	}
+
+	// 4. Service lifecycle methods propagate directWANFirewall cleanup/sync errors
+	svc, _, _ := setupTestService(t)
+	if err := svc.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	simErr := errors.New("simulated iptables delete failure")
+	svc.directWANFirewall = func(port int, enabled bool) error {
+		return simErr
+	}
+
+	if err := svc.SyncDirectWANFirewall(); !errors.Is(err, simErr) {
+		t.Fatalf("expected Service.SyncDirectWANFirewall to propagate error, got %v", err)
+	}
+	if err := svc.UpdateConfig(Config{Scenario: ScenarioCDNHTTP}); !errors.Is(err, simErr) {
+		t.Fatalf("expected UpdateConfig(cdn_http) to propagate firewall cleanup error, got %v", err)
+	}
+	if err := svc.Stop(); !errors.Is(err, simErr) {
+		t.Fatalf("expected Service.Stop to propagate firewall cleanup error, got %v", err)
+	}
+
+	cand := svc.GetInternalConfig()
+	cand.Enabled = true
+	cand.Scenario = ScenarioDirectFakeTLS
+	cand.DirectPort = 9443
+	txID, err := svc.PrepareCandidate("tx-fw-err", cand)
+	if err != nil {
+		t.Fatalf("PrepareCandidate: %v", err)
+	}
+	if err := svc.CommitPrepared(txID); !errors.Is(err, simErr) {
+		t.Fatalf("expected CommitPrepared to propagate firewall sync error and roll back, got %v", err)
+	}
+
+	if err := svc.FactoryReset(context.Background()); !errors.Is(err, simErr) {
+		t.Fatalf("expected FactoryReset to propagate firewall cleanup error, got %v", err)
 	}
 }
 
