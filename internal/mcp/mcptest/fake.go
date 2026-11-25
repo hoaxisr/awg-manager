@@ -258,11 +258,11 @@ func New() *Fake {
 		WGServers:       []mcpsrv.WireguardServer{{ID: "Wireguard0", Description: "Home", Address: "10.0.0.1", Mask: "24", ListenPort: 51820, NATMode: "full", PeerCount: 2}},
 		GeoFiles: []mcpsrv.GeoFile{
 			{Type: "geoip", Path: "/opt/etc/awg-manager/geo/geoip.dat", Host: "github.com", Size: 4096, TagCount: 3, Updated: "2026-09-01T00:00:00Z"},
-			{Type: "geosite", Path: "/opt/etc/HydraRoute/geosite.dat", Size: 2048, TagCount: 1, External: true},
+			{Type: "geosite", Path: "/opt/etc/awg-manager/geo/geosite.dat", Size: 2048, TagCount: 1},
 		},
 		GeoTagsByPath: map[string][]mcpsrv.GeoTag{
-			"/opt/etc/awg-manager/geo/geoip.dat": {{Name: "ru", Count: 90000}, {Name: "us", Count: 50000}, {Name: "nl", Count: 9000}},
-			"/opt/etc/HydraRoute/geosite.dat":    {{Name: "youtube", Count: 300}},
+			"/opt/etc/awg-manager/geo/geoip.dat":   {{Name: "ru", Count: 90000}, {Name: "us", Count: 50000}, {Name: "nl", Count: 9000}},
+			"/opt/etc/awg-manager/geo/geosite.dat": {{Name: "youtube", Count: 300}},
 		},
 		Conns: []mcpsrv.Connection{
 			{Protocol: "tcp", Src: "192.168.1.10", SrcPort: 51234, Dst: "142.250.1.1", DstPort: 443, State: "ESTABLISHED", Interface: "nwg0", TunnelID: "tn-1", TunnelName: "Amsterdam", ClientName: "laptop"},
@@ -2792,7 +2792,7 @@ func (f *Fake) UpdateGeoFiles(_ context.Context, path string) (mcpsrv.GeoUpdate,
 	defer f.mu.Unlock()
 	n := 0
 	for i, g := range f.GeoFiles {
-		if g.External || (path != "" && g.Path != path) {
+		if path != "" && g.Path != path {
 			continue
 		}
 		f.GeoFiles[i].Updated = "2026-09-02T00:00:00Z"

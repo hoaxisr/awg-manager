@@ -591,7 +591,6 @@ const api_GeoExpandData: v.GenericSchema = v.looseObject({
 });
 
 const api_GeoFileEntryDTO: v.GenericSchema = v.looseObject({
-	external: v.optional(v.nullable(v.boolean())),
 	path: v.optional(v.nullable(v.string())),
 	size: v.optional(v.nullable(v.number())),
 	tagCount: v.optional(v.nullable(v.number())),

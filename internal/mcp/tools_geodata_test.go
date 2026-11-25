@@ -15,8 +15,8 @@ func TestTools_GeoData(t *testing.T) {
 	if tags, _ := out["tags"].(map[string]any); res.IsError || tags == nil || tags["total"] != float64(3) || len(tags["tags"].([]any)) != 2 {
 		t.Fatalf("%s / %v", toolText(res), out)
 	}
-	if res, out := callTool(t, s, "update_geo_files", nil); res.IsError || out["updated"] != float64(1) {
-		t.Fatalf("external files are not updated: %s / %v", toolText(res), out)
+	if res, out := callTool(t, s, "update_geo_files", nil); res.IsError || out["updated"] != float64(2) {
+		t.Fatalf("%s / %v", toolText(res), out)
 	}
 	for name, c := range map[string]struct {
 		tool string
@@ -24,7 +24,7 @@ func TestTools_GeoData(t *testing.T) {
 	}{
 		"relative path":    {"list_geo_files", map[string]any{"path": "geoip.dat"}},
 		"dotdot path":      {"list_geo_files", map[string]any{"path": "/opt/../etc/passwd"}},
-		"negative offset":  {"list_geo_files", map[string]any{"path": "/opt/etc/HydraRoute/geosite.dat", "offset": -1}},
+		"negative offset":  {"list_geo_files", map[string]any{"path": "/opt/etc/awg-manager/geo/geosite.dat", "offset": -1}},
 		"unknown geo file": {"list_geo_files", map[string]any{"path": "/opt/x.dat"}},
 		"update dotdot":    {"update_geo_files", map[string]any{"path": "/opt/../x"}},
 	} {

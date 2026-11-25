@@ -1769,9 +1769,6 @@ definitions:
     type: object
   api.GeoFileEntryDTO:
     properties:
-      external:
-        example: true
-        type: boolean
       path:
         example: /opt/etc/awg-manager/geo/geosite.dat
         type: string
@@ -12247,8 +12244,7 @@ paths:
       - geo
   /geo/files/delete:
     delete:
-      description: 'Removes the tracked geo data file at the given path. A file of
-        another program (external) stays on disk: only the catalog entry is removed.'
+      description: Removes the tracked geo data file at the given path.
       parameters:
       - description: Filesystem path of the geo file
         in: query

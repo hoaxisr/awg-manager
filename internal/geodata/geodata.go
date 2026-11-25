@@ -141,7 +141,9 @@ func NewGeoDataStore(dataDir string) *GeoDataStore {
 	return s
 }
 
-// List returns a copy of all tracked geo file entries.
+// List returns a copy of the panel's own geo file entries. Files of HydraRoute
+// recorded by an older version are not listed: they only keep feeding the rules
+// that already use them (GeoFilePaths, ExpandGeoTag).
 // Reconciles first so manual deletes on disk and stale JSON are reflected
 // without requiring a service restart (UI refresh calls this path).
 func (s *GeoDataStore) List() []GeoFileEntry {
@@ -152,8 +154,12 @@ func (s *GeoDataStore) List() []GeoFileEntry {
 		_ = s.saveUnlocked()
 	}
 
-	result := make([]GeoFileEntry, len(s.entries))
-	copy(result, s.entries)
+	result := make([]GeoFileEntry, 0, len(s.entries))
+	for _, e := range s.entries {
+		if !e.External {
+			result = append(result, e)
+		}
+	}
 	return result
 }
 
@@ -215,7 +221,7 @@ func (s *GeoDataStore) DownloadWithClientVia(ctx context.Context, fileType, rawU
 	// Count existing + in-flight reserved entries of this type.
 	count := 0
 	for _, e := range s.entries {
-		if e.Type == fileType {
+		if e.Type == fileType && !e.External {
 			count++
 		}
 	}
@@ -333,11 +339,14 @@ func (s *GeoDataStore) DownloadWithClientVia(ctx context.Context, fileType, rawU
 }
 
 // Delete removes the tracked entry and its file from disk. A file of another
-// program (isHRPath) stays on disk: only the entry goes.
+// program (isHRPath) is refused.
 func (s *GeoDataStore) Delete(path string) error {
 	path = filepath.Clean(path)
 	if !s.isManagedPath(path) {
 		return fmt.Errorf("path outside managed geo directories")
+	}
+	if s.isHRPath(path) {
+		return fmt.Errorf("файл принадлежит другой программе и не удаляется")
 	}
 
 	s.mu.Lock()
@@ -351,10 +360,8 @@ func (s *GeoDataStore) Delete(path string) error {
 		return fmt.Errorf("geo file is already being updated")
 	}
 
-	if !s.isHRPath(path) {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("remove file: %w", err)
-		}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove file: %w", err)
 	}
 
 	s.entries = append(s.entries[:idx], s.entries[idx+1:]...)
