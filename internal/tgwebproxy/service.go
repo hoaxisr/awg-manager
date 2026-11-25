@@ -48,6 +48,7 @@ type Service struct {
 	directWANFirewall    func(port int, enabled bool) error
 	directWANErr         error
 	appLog               *logging.ScopedLogger
+	workerLog            *logging.ScopedLogger
 	egressValidator      EgressValidator
 	tproxyValidator      TproxyValidator
 	runtimeDCProbe       func(device string) bool
@@ -570,6 +571,17 @@ func validateUpstreamsWithEgress(upstreams []UpstreamSpec, validator EgressValid
 }
 
 func (s *Service) applyConfigLocked(newCfg Config) error {
+	return s.applyLocked(newCfg, false)
+}
+
+// applyUserEditLocked — правка пользователей и секретов. Применяется к движкам,
+// которые работают; не поднявшийся слушатель её не отменяет: доступ отозван,
+// раз сохранён.
+func (s *Service) applyUserEditLocked(newCfg Config) error {
+	return s.applyLocked(newCfg, true)
+}
+
+func (s *Service) applyLocked(newCfg Config, userEdit bool) error {
 	if s.recoveryRequired {
 		return ErrRecoveryRequired
 	}
@@ -667,6 +679,7 @@ func (s *Service) applyConfigLocked(newCfg Config) error {
 		tproxyWasRunning: tproxyWasRunning,
 		prevCfg:          prevCfg,
 		muxWasRunning:    muxWasRunning,
+		userEdit:         userEdit,
 	}
 
 	if err := s.tc.ExecuteTransaction(txID, files, txHook, newCfg, validator); err != nil {
@@ -705,6 +718,7 @@ func (s *Service) SetAppLogger(appLogger logging.AppLogger) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.appLog = logging.NewScopedLogger(appLogger, logging.GroupServer, logging.SubFirewall)
+	s.workerLog = logging.NewScopedLogger(appLogger, logging.GroupServer, logging.SubProxy)
 }
 
 // SyncDirectWANFirewall reconciles Keenetic's WAN firewall rule with the current config under s.mu.
@@ -773,6 +787,7 @@ type serviceTxHook struct {
 	prevCfg          Config
 	muxWasRunning    bool
 	firewallSynced   bool
+	userEdit         bool
 }
 
 func (h *serviceTxHook) CaptureWorkerStates() map[string]WorkerProcessState {
@@ -782,7 +797,30 @@ func (h *serviceTxHook) CaptureWorkerStates() map[string]WorkerProcessState {
 	return h.svc.workers.CaptureWorkerStates()
 }
 
+// applyUserEdit доносит правку до работающих слушателей. Который не принял её —
+// останавливается: оставить его с прежними секретами значило бы не отозвать доступ.
+func (h *serviceTxHook) applyUserEdit(cfg Config) {
+	var errs []error
+	if ws := h.svc.workers; ws != nil {
+		errs = append(errs, ws.ApplyToRunning(cfg, h.tproxyChanged))
+	}
+	if h.svc.mux != nil && h.muxWasRunning {
+		if err := h.svc.mux.StartWithSecrets(cfg.ListenPort, h.endpoints, cfg.ActiveSecrets()); err != nil {
+			errs = append(errs, err, h.svc.mux.Stop())
+		}
+	}
+	if err := errors.Join(errs...); err != nil {
+		h.svc.workerLog.Warn("apply-user-edit", "telegram", err.Error())
+	}
+	_ = h.svc.syncDirectWANFirewallLocked(cfg)
+}
+
 func (h *serviceTxHook) ApplyWorkers(cfg Config) error {
+	if h.userEdit && h.svc != nil {
+		h.firewallSynced = true
+		h.applyUserEdit(cfg)
+		return nil
+	}
 	if h.svc != nil && h.svc.workers != nil {
 		if err := h.svc.workers.ApplyWorkers(cfg); err != nil {
 			return err
@@ -817,6 +855,9 @@ func (h *serviceTxHook) ApplyWorkers(cfg Config) error {
 }
 
 func (h *serviceTxHook) CheckReadiness(cfg Config) error {
+	if h.userEdit {
+		return nil
+	}
 	if h.svc != nil && h.svc.workers != nil {
 		if err := h.svc.workers.CheckReadiness(cfg); err != nil {
 			return err
@@ -1099,7 +1140,7 @@ func (s *Service) RotateSecret() error {
 	}
 	newCfg.LegacyExpiresAt = time.Now().UTC().Add(DefaultLegacyGraceTTL).Format(time.RFC3339)
 
-	if err := s.applyConfigLocked(newCfg); err != nil {
+	if err := s.applyUserEditLocked(newCfg); err != nil {
 		return err
 	}
 
@@ -1166,7 +1207,7 @@ func (s *Service) CreateUserWithSecret(remark string, rawSecret string) error {
 		newCfg.Secret = sec
 	}
 
-	if err := s.applyConfigLocked(newCfg); err != nil {
+	if err := s.applyUserEditLocked(newCfg); err != nil {
 		return err
 	}
 
@@ -1239,7 +1280,7 @@ func (s *Service) UpdateUserWithOptions(id string, opts UpdateUserOptions) error
 
 	newCfg.Users = users
 
-	if err := s.applyConfigLocked(newCfg); err != nil {
+	if err := s.applyUserEditLocked(newCfg); err != nil {
 		return err
 	}
 
@@ -1281,7 +1322,7 @@ func (s *Service) DeleteUser(id string) error {
 		}
 	}
 
-	if err := s.applyConfigLocked(newCfg); err != nil {
+	if err := s.applyUserEditLocked(newCfg); err != nil {
 		return err
 	}
 
@@ -1301,7 +1342,7 @@ func (s *Service) RevokeLegacySecret() error {
 	newCfg.LegacySecret = ""
 	newCfg.LegacyExpiresAt = ""
 
-	if err := s.applyConfigLocked(newCfg); err != nil {
+	if err := s.applyUserEditLocked(newCfg); err != nil {
 		return err
 	}
 
@@ -1405,7 +1446,7 @@ func (s *Service) reconcileExpiredLegacySecret() {
 	newCfg.LegacySecret = ""
 	newCfg.LegacyExpiresAt = ""
 
-	if err := s.applyConfigLocked(newCfg); err != nil {
+	if err := s.applyUserEditLocked(newCfg); err != nil {
 		return
 	}
 	s.notifyReload()
