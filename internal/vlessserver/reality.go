@@ -99,6 +99,7 @@ type RealityNetworkInfo struct {
 	ExternalIP    string `json:"external_ip,omitempty"`
 	WANAddress    string `json:"wan_address,omitempty"`
 	WhiteIP       bool   `json:"white_ip"`
+	GrayIP        bool   `json:"gray_ip"` // WAN заведомо серый; оба false — адрес неизвестен
 	Reason        string `json:"reason,omitempty"`
 	CheckedAt     string `json:"checked_at,omitempty"`
 }

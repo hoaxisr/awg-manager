@@ -146,7 +146,11 @@
 			const updated = await api.updateDispatcherConfig(config);
 			config = updated;
 			onStatusChange?.(Boolean(updated.running));
-			notifications.success(m.servers_cdn_saved());
+			if (updated.warning) {
+				notifications.warning(updated.warning);
+			} else {
+				notifications.success(m.servers_cdn_saved());
+			}
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : m.servers_cdn_save_error());
 		} finally {

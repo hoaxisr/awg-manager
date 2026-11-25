@@ -6,9 +6,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/serveringress"
 	"github.com/hoaxisr/awg-manager/internal/testing"
 	"github.com/hoaxisr/awg-manager/internal/vlessserver"
 )
+
+// probeExternalIP — подменяется в тестах: проверка ходит в интернет.
+var probeExternalIP = testing.GetWANIPBound
 
 // realityNetworkInfo detects whether the router has a public ("white") IPv4 on
 // its WAN and which host clients should use for the direct REALITY entry.
@@ -16,50 +20,63 @@ func (a *app) realityNetworkInfo(ctx context.Context) vlessserver.RealityNetwork
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	var info vlessserver.RealityNetworkInfo
-	keenDNSDirect := ""
-	var wanKernel string
+	var wanAddr, extIP, keenDNSDirect, wanKernel string
 	if a.ndmsQueries != nil {
 		if a.ndmsQueries.KeenDNS != nil {
 			if kd, err := a.ndmsQueries.KeenDNS.Get(ctx); err == nil && kd != nil && kd.DirectAccess() {
 				keenDNSDirect = strings.TrimSpace(kd.Domain)
 			}
 		}
-		if addr, err := a.ndmsQueries.WANInterfaceAddress(ctx); err == nil {
-			info.WANAddress = strings.TrimSpace(addr)
-		}
-		if a.ndmsQueries.Routes != nil && a.ndmsQueries.Interfaces != nil {
-			if name, err := a.ndmsQueries.Routes.GetDefaultGatewayInterface(ctx); err == nil && name != "" {
-				wanKernel = a.ndmsQueries.Interfaces.ResolveSystemName(ctx, name)
-			}
+		// Канал провайдера, а не default-маршрут: тот может идти через VPN, и
+		// адрес туннеля выглядел бы серым WAN.
+		if iface := serveringress.ResolveWANInterface(ctx, a.ndmsQueries); iface != nil {
+			wanAddr = strings.TrimSpace(iface.Address)
+			wanKernel = a.ndmsQueries.Interfaces.ResolveSystemName(ctx, iface.ID)
 		}
 	}
-	if ext, err := testing.GetWANIPBound(ctx, wanKernel, nil); err == nil {
-		info.ExternalIP = strings.TrimSpace(ext)
+	// Без имени ядра проба ушла бы по default-маршруту, возможно в туннель.
+	if shouldProbeExternalIP(net.ParseIP(wanAddr)) && (wanAddr == "" || wanKernel != "") {
+		if ext, err := probeExternalIP(ctx, wanKernel, nil); err == nil {
+			extIP = strings.TrimSpace(ext)
+		}
 	}
-	info.KeenDNSDomain = keenDNSDirect
+	return classifyRealityNetworkInfo(wanAddr, extIP, keenDNSDirect)
+}
+
+func shouldProbeExternalIP(wanIP net.IP) bool {
+	return wanIP == nil || isPublicUnicast(wanIP)
+}
+
+func classifyRealityNetworkInfo(wanAddr, extIP, keenDNSDirect string) vlessserver.RealityNetworkInfo {
+	info := vlessserver.RealityNetworkInfo{
+		WANAddress:    strings.TrimSpace(wanAddr),
+		ExternalIP:    strings.TrimSpace(extIP),
+		KeenDNSDomain: strings.TrimSpace(keenDNSDirect),
+	}
 
 	wanIP := net.ParseIP(info.WANAddress)
-	extIP := net.ParseIP(info.ExternalIP)
+	parsedExtIP := net.ParseIP(info.ExternalIP)
 	switch {
-	case wanIP == nil && extIP == nil:
+	case wanIP == nil && parsedExtIP == nil:
 		info.Reason = "не удалось определить адрес WAN и внешний IP"
 	case wanIP == nil:
 		info.Reason = "адрес WAN-интерфейса неизвестен"
 	case !isPublicUnicast(wanIP):
+		info.GrayIP = true
 		info.Reason = "на WAN-интерфейсе серый (приватный / CGNAT) адрес " + info.WANAddress
-	case extIP == nil:
+	case parsedExtIP == nil:
 		info.Reason = "не удалось проверить внешний IP (нет ответа сервисов проверки)"
 		info.WhiteIP = true
-	case !wanIP.Equal(extIP):
+	case !wanIP.Equal(parsedExtIP):
+		info.GrayIP = true
 		info.Reason = "внешний IP " + info.ExternalIP + " не совпадает с адресом WAN " + info.WANAddress + " (NAT у провайдера)"
 	default:
 		info.WhiteIP = true
 	}
 
 	switch {
-	case keenDNSDirect != "":
-		info.PublicHost = keenDNSDirect
+	case info.KeenDNSDomain != "":
+		info.PublicHost = info.KeenDNSDomain
 	case info.WhiteIP && info.ExternalIP != "":
 		info.PublicHost = info.ExternalIP
 	case info.WhiteIP && info.WANAddress != "":

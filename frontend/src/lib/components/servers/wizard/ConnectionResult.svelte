@@ -64,7 +64,7 @@
 		<RevealGate {loading} {onreveal} />
 	{:else}
 		{#if kind === 'both'}
-			<div class="format-tabs" style="margin-bottom: 12px;">
+			<div class="format-tabs">
 				<button
 					type="button"
 					class="tab-btn"
@@ -126,7 +126,7 @@
 									value={creds.direct_link}
 									class="field-input mono"
 								/>
-								<Button size="sm" variant="secondary" onclick={() => copy(creds.direct_link!, 'direct')}>
+								<Button size="sm" variant="secondary" ariaLabel={m.common_copy()} onclick={() => copy(creds.direct_link!, 'direct')}>
 									{#if copiedKey === 'direct'}
 										<Check size={14} class="text-success" />
 									{:else}
@@ -146,7 +146,7 @@
 									value={creds.web_link}
 									class="field-input mono"
 								/>
-								<Button size="sm" variant="secondary" onclick={() => copy(creds.web_link!, 'web')}>
+								<Button size="sm" variant="secondary" ariaLabel={m.common_copy()} onclick={() => copy(creds.web_link!, 'web')}>
 									{#if copiedKey === 'web'}
 										<Check size={14} class="text-success" />
 									{:else}
@@ -221,7 +221,7 @@
 				</div>
 
 				{#if activeFormat === 'vless'}
-					<div class="result-grid items-center">
+					<div class="result-grid">
 						<div class="qr-panel">
 							{#if qrDataUrl}
 								<button
@@ -243,7 +243,7 @@
 									value={creds.vless_url}
 									class="field-input mono"
 								/>
-								<Button size="sm" variant="secondary" onclick={() => copy(creds.vless_url!, 'vless')}>
+								<Button size="sm" variant="secondary" ariaLabel={m.common_copy()} onclick={() => copy(creds.vless_url!, 'vless')}>
 									{#if copiedKey === 'vless'}
 										<Check size={14} class="text-success" />
 									{:else}
@@ -321,8 +321,8 @@
 
 	.result-grid {
 		display: grid;
-		grid-template-columns: 1fr 1.2fr;
-		gap: 1.5rem;
+		grid-template-columns: minmax(0, 240px) minmax(0, 1fr);
+		gap: 1.25rem;
 		align-items: start;
 	}
 
@@ -362,8 +362,10 @@
 	}
 
 	.qr-img {
-		width: 240px;
-		height: 240px;
+		width: 200px;
+		max-width: 100%;
+		height: auto;
+		aspect-ratio: 1 / 1;
 		image-rendering: crisp-edges;
 		display: block;
 	}
@@ -378,6 +380,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: 1rem;
+		min-width: 0;
 	}
 
 	.form-group {
@@ -401,12 +404,13 @@
 	.field-input {
 		flex: 1;
 		min-width: 0;
+		height: 28px;
 		background: var(--color-bg-primary);
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-sm);
 		color: var(--color-text-primary);
 		font-size: 0.75rem;
-		padding: 0.4375rem 0.625rem;
+		padding: 0 0.625rem;
 		line-height: 1.4;
 	}
 
@@ -422,6 +426,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.5rem;
+		min-width: 0;
 	}
 
 	.params-header {
@@ -434,8 +439,9 @@
 
 	.params-grid {
 		display: grid;
-		grid-template-columns: auto 1fr;
-		gap: 0.375rem 0.75rem;
+		grid-template-columns: auto minmax(0, 1fr);
+		align-items: baseline;
+		gap: 0.4rem 0.75rem;
 		font-family: var(--font-mono);
 		font-size: 0.6875rem;
 	}
@@ -447,9 +453,11 @@
 	.param-val {
 		color: var(--color-text-primary);
 		text-align: right;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
+		min-width: 0;
+		overflow-wrap: anywhere;
+		word-break: break-all;
+		line-height: 1.4;
+		user-select: text;
 	}
 
 	.client-meta-row {

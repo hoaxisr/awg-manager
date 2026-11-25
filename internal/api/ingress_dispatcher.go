@@ -38,7 +38,8 @@ func NewIngressDispatcherHandler(coord *serveringress.Coordinator, disp *cdndisp
 
 type dispatcherConfigResponse struct {
 	cdndispatcher.Config
-	Running bool `json:"running"`
+	Running bool   `json:"running"`
+	Warning string `json:"warning,omitempty"`
 }
 
 func (h *IngressDispatcherHandler) dispatcherRunning() bool {
@@ -76,7 +77,8 @@ func (h *IngressDispatcherHandler) UpdateDispatcherConfig(w http.ResponseWriter,
 		return
 	}
 
-	if err := h.coord.ApplyDispatcherConfig(r.Context(), cfg); err != nil {
+	warning, err := h.coord.ApplyDispatcherConfig(r.Context(), cfg)
+	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "failed to apply dispatcher config: "+err.Error())
 		return
 	}
@@ -84,6 +86,7 @@ func (h *IngressDispatcherHandler) UpdateDispatcherConfig(w http.ResponseWriter,
 	WriteJSON(w, http.StatusOK, dispatcherConfigResponse{
 		Config:  h.coord.GetDispatcherConfig(),
 		Running: h.dispatcherRunning(),
+		Warning: warning,
 	})
 }
 

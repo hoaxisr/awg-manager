@@ -12,8 +12,12 @@
 
 	let expanded = $state<Record<string, boolean>>({});
 
-	function toggleExpand(id: string) {
-		expanded[id] = !expanded[id];
+	function isExpanded(check: PreflightCheck): boolean {
+		return expanded[check.id] ?? check.status === 'blocked';
+	}
+
+	function toggleExpand(check: PreflightCheck) {
+		expanded[check.id] = !isExpanded(check);
 	}
 </script>
 
@@ -53,9 +57,9 @@
 						<IconButton
 							ariaLabel={m.servers_wizard_preflight_details()}
 							title={m.servers_wizard_preflight_details()}
-							onclick={() => toggleExpand(check.id)}
+							onclick={() => toggleExpand(check)}
 						>
-							{#if expanded[check.id]}
+							{#if isExpanded(check)}
 								<ChevronUp size={16} />
 							{:else}
 								<ChevronDown size={16} />
@@ -64,7 +68,7 @@
 					{/if}
 				</div>
 
-				{#if (check.details || check.remediation) && expanded[check.id]}
+				{#if (check.details || check.remediation) && isExpanded(check)}
 					<div class="check-extra">
 						{#if check.details}
 							<div class="detail-block">
@@ -159,12 +163,16 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 0.5rem;
+		flex-wrap: wrap;
 	}
 
 	.check-title {
 		font-size: 0.8125rem;
 		font-weight: 600;
 		color: var(--color-text-primary);
+		min-width: 0;
+		overflow-wrap: anywhere;
+		word-break: break-word;
 	}
 
 	.status-badge {
@@ -200,6 +208,9 @@
 		color: var(--color-text-secondary);
 		margin: 0;
 		line-height: 1.4;
+		min-width: 0;
+		overflow-wrap: anywhere;
+		word-break: break-word;
 	}
 
 	.check-extra {
@@ -237,8 +248,9 @@
 	}
 
 	.remediation-block {
-		background: var(--color-warning-tint);
-		border: 1px solid var(--color-warning-border);
+		background: var(--color-bg-secondary);
+		border: 1px solid var(--color-border);
+		border-left: 3px solid var(--color-warning);
 		border-radius: var(--radius-sm);
 		padding: 0.5rem 0.75rem;
 		display: flex;
@@ -257,5 +269,8 @@
 		color: var(--color-text-primary);
 		margin: 0;
 		line-height: 1.4;
+		min-width: 0;
+		overflow-wrap: anywhere;
+		word-break: break-word;
 	}
 </style>

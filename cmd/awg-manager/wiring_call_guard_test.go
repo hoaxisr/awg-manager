@@ -137,3 +137,18 @@ func TestRunCleanup_ReleasesNetfilterBeforeCleanupAll(t *testing.T) {
 		t.Error("ReleaseNetfilterForRemoval стоит ПОСЛЕ CleanupAll: окно, когда перехват ведёт в остановленный sing-box")
 	}
 }
+
+// Порты на WAN (REALITY и MTProto) открыты правилами ядра: снос хуков в prerm их
+// не убирает, и после удаления пакета порт оставался бы открытым.
+// Мутация: убрать любой из вызовов → красный.
+func TestRunCleanup_ClosesWANPorts(t *testing.T) {
+	src, err := os.ReadFile("cleanup.go")
+	if err != nil {
+		t.Fatalf("чтение cleanup.go: %v", err)
+	}
+	for _, call := range []string{"realityserver.SyncWANFirewall(0, false)", "tgwebproxy.SyncDirectWANFirewall(0, false)"} {
+		if !strings.Contains(string(src), call) {
+			t.Fatalf("runCleanup не снимает порт на WAN: нет %s", call)
+		}
+	}
+}

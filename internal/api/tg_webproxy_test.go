@@ -8,6 +8,9 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -739,5 +742,177 @@ func TestTgWebProxy_RevealWithNoUsersNotRateLimited(t *testing.T) {
 		if w.Code != http.StatusOK || revealSecretOf(t, w) != "" {
 			t.Fatalf("empty reveal #%d: %d %s", i+1, w.Code, w.Body.String())
 		}
+	}
+}
+
+func TestTgWebProxyAction_DeleteLastUserThenStopAndStartDoesNotResurrect(t *testing.T) {
+	handler, svc, _, sessionToken, tempDir := setupTestTgWebProxyHandler(t)
+	coord := serveringress.New(tempDir, nil, nil, svc)
+	handler.SetCoordinator(coord)
+
+	directPort := testutil.FreePort(t)
+	listenPort := testutil.FreePort(t)
+	epListenPort := testutil.FreePort(t)
+	epAdminPort := testutil.FreePort(t)
+	rawPort := testutil.FreePort(t)
+
+	initialCfg := svc.GetInternalConfig()
+	initialCfg.Enabled = true
+	initialCfg.Scenario = tgwebproxy.ScenarioDirectFakeTLS
+	initialCfg.DirectHost = "127.0.0.1"
+	initialCfg.DirectPort = directPort
+	initialCfg.ListenPort = listenPort
+	initialCfg.AdminPort = epAdminPort
+	initialCfg.Backend = (&net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: rawPort}).String()
+	initialCfg.Endpoints = []tgwebproxy.WebProxyEndpoint{{
+		ID:          "ep-1",
+		Hostname:    "tg.example.com",
+		ListenPort:  epListenPort,
+		AdminPort:   epAdminPort,
+		IsCDN:       true,
+		CarrierMode: tgwebproxy.DefaultCarrierMode,
+	}}
+	if err := coord.ApplyTelegramConfig(context.Background(), initialCfg); err != nil {
+		t.Fatalf("initial ApplyTelegramConfig: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = coord.SetTelegramEnabled(context.Background(), false)
+	})
+
+	decodeUsers := func(t *testing.T, body []byte) []tgwebproxy.TelegramUser {
+		t.Helper()
+		var env struct {
+			Data tgwebproxy.Status `json:"data"`
+		}
+		if err := json.Unmarshal(body, &env); err != nil {
+			t.Fatalf("decode action status: %v: %s", err, string(body))
+		}
+		return env.Data.Users
+	}
+
+	userID := svc.GetConfig().Users[0].ID
+	wDel := postTgAction(t, handler, sessionToken, `{"action":"delete_user","user_id":"`+userID+`"}`)
+	if wDel.Code != http.StatusOK {
+		t.Fatalf("delete_user failed (%d): %s", wDel.Code, wDel.Body.String())
+	}
+	if users := decodeUsers(t, wDel.Body.Bytes()); len(users) != 0 {
+		t.Fatalf("expected 0 users after delete_user, got %+v", users)
+	}
+	if cfg := svc.GetInternalConfig(); cfg.Secret != "" || len(cfg.ActiveSecrets()) != 0 {
+		t.Fatalf("expected cleared secret after delete_user, got %+v", cfg)
+	}
+
+	wStop := postTgAction(t, handler, sessionToken, `{"action":"stop"}`)
+	if wStop.Code != http.StatusOK {
+		t.Fatalf("stop action failed (%d): %s", wStop.Code, wStop.Body.String())
+	}
+	if users := decodeUsers(t, wStop.Body.Bytes()); len(users) != 0 {
+		t.Fatalf("stop resurrected users: %+v", users)
+	}
+	if cfg := svc.GetInternalConfig(); cfg.Enabled || cfg.Secret != "" || len(cfg.ActiveSecrets()) != 0 {
+		t.Fatalf("expected disabled config with empty secret after stop, got %+v", cfg)
+	}
+
+	wStart := postTgAction(t, handler, sessionToken, `{"action":"start"}`)
+	if wStart.Code != http.StatusOK {
+		t.Fatalf("start action failed (%d): %s", wStart.Code, wStart.Body.String())
+	}
+	if users := decodeUsers(t, wStart.Body.Bytes()); len(users) != 0 {
+		t.Fatalf("start resurrected users: %+v", users)
+	}
+	if cfg := svc.GetInternalConfig(); !cfg.Enabled || cfg.Secret != "" || len(cfg.ActiveSecrets()) != 0 {
+		t.Fatalf("expected enabled config with empty secret after start, got %+v", cfg)
+	}
+
+	wRot := postTgAction(t, handler, sessionToken, `{"action":"rotate_secret"}`)
+	if wRot.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 Not Found on rotate_secret with 0 users, got %d: %s", wRot.Code, wRot.Body.String())
+	}
+	if users := svc.GetStatus().Users; len(users) != 0 {
+		t.Fatalf("rotate_secret with 0 users mutated users: %+v", users)
+	}
+}
+
+func TestTgWebProxy_UpdateConfig_InvalidDirectPortReturns400(t *testing.T) {
+	handler, _, _, sessionToken, _ := setupTestTgWebProxyHandler(t)
+	token := getValidCSRFToken(t, handler, sessionToken)
+
+	for _, body := range []string{
+		`{"scenario":"direct_fake_tls","direct_port":2222}`,
+		`{"scenario":"direct_fake_tls","direct_port":443}`,
+	} {
+		req := httptest.NewRequest(http.MethodPut, "http://192.168.10.1:2222/api/servers/tgwebproxy", bytes.NewReader([]byte(body)))
+		req.Host = "192.168.10.1:2222"
+		req.Header.Set("Origin", "http://192.168.10.1:2222")
+		req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: sessionToken})
+		req.Header.Set("X-CSRF-Token", token)
+
+		w := httptest.NewRecorder()
+		handler.UpdateConfig(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("body=%s: expected 400 Bad Request, got %d: %s", body, w.Code, w.Body.String())
+		}
+	}
+}
+
+// Мутация: убрать ErrInvalidDirectPort из Action → 500.
+func TestTgWebProxyAction_StartWithStoredInvalidPortReturns400(t *testing.T) {
+	handler, svc, _, sessionToken, tempDir := setupTestTgWebProxyHandler(t)
+	cfgPath := filepath.Join(tempDir, "tproxy", "tgwebproxy-settings.json")
+	cfg := svc.GetInternalConfig()
+	cfg.DirectPort = 443
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	legacy := tgwebproxy.New(tempDir, nil)
+	legacy.SetRuntimeDCProbeForTest(func(string) bool { return true })
+	t.Cleanup(func() { _ = legacy.Close() })
+	handler.svc = legacy
+
+	for _, coord := range []*serveringress.Coordinator{nil, serveringress.New(tempDir, nil, nil, legacy)} {
+		handler.coord = nil
+		if coord != nil {
+			handler.SetCoordinator(coord)
+		}
+		w := postTgAction(t, handler, sessionToken, `{"action":"start"}`)
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "Смените прямой порт") {
+			t.Fatalf("coord=%v: ждали 400 с подсказкой, получили %d: %s", coord != nil, w.Code, w.Body.String())
+		}
+		if coord != nil {
+			if need, reason := coord.IsRecoveryRequired(); need {
+				t.Fatalf("отказ по порту увёл координатор в восстановление: %s", reason)
+			}
+		}
+	}
+}
+
+// Мутация: звать UpdateConfig и при присланном direct_host → адрес не снимается.
+func TestTgWebProxy_UpdateConfig_EmptyDirectHostClears(t *testing.T) {
+	handler, svc, _, sessionToken, _ := setupTestTgWebProxyHandler(t)
+	put := func(body string) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPut, "http://192.168.10.1:2222/api/servers/tgwebproxy", strings.NewReader(body))
+		req.Host = "192.168.10.1:2222"
+		req.Header.Set("Origin", "http://192.168.10.1:2222")
+		req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: sessionToken})
+		req.Header.Set("X-CSRF-Token", getValidCSRFToken(t, handler, sessionToken))
+		w := httptest.NewRecorder()
+		handler.UpdateConfig(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", body, w.Code, w.Body.String())
+		}
+	}
+	put(`{"direct_host":"203.0.113.10","tls_domain":"www.example.com"}`)
+	put(`{"tls_domain":"www.example.org"}`)
+	if got := svc.GetConfig().DirectHost; got != "203.0.113.10" {
+		t.Fatalf("поле не прислали, адрес изменился: %q", got)
+	}
+	put(`{"direct_host":""}`)
+	if got := svc.GetConfig(); got.DirectHost != "" || got.TlsDomain != "www.example.org" {
+		t.Fatalf("адрес не снят: %+v", got)
 	}
 }

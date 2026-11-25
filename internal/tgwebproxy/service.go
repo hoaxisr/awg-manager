@@ -16,12 +16,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -44,6 +46,11 @@ type Service struct {
 	mux                  *Mux
 	legacyTimer          *time.Timer
 	onReload             func()
+	directWANFirewall    func(port int, enabled bool) error
+	directWANErr         error
+	directWANNoChain     int // повторы подряд без цепочки _NDM_IP_PUBLIC
+	appLog               *logging.ScopedLogger
+	workerLog            *logging.ScopedLogger
 	egressValidator      EgressValidator
 	tproxyValidator      TproxyValidator
 	runtimeDCProbe       func(device string) bool
@@ -72,6 +79,7 @@ func New(dataDir string, onReload func()) *Service {
 		workers:              workers,
 		mux:                  NewMux(),
 		onReload:             onReload,
+		directWANFirewall:    SyncDirectWANFirewall,
 		egressValidator:      DefaultEgressValidator,
 		tproxyValidator:      defaultTproxyValidator,
 		runtimeDCProbe:       defaultRuntimeDCProbe,
@@ -333,7 +341,8 @@ func (s *Service) loadAndMigrateConfig() error {
 		return fmt.Errorf("decode config json: %w", err)
 	}
 
-	needsMigration := (rawCheck.SchemaVersion == nil) || (*rawCheck.SchemaVersion < CurrentSchemaVersion)
+	isLegacySchema := (rawCheck.SchemaVersion == nil) || (*rawCheck.SchemaVersion < CurrentSchemaVersion)
+	needsMigration := isLegacySchema
 
 	var loaded Config
 	if err := json.Unmarshal(data, &loaded); err != nil {
@@ -427,11 +436,22 @@ func (s *Service) loadAndMigrateConfig() error {
 			migrated.AdminPort = DefaultAdminPort
 		}
 		if migrated.Secret == "" {
-			sec, err := randomHexSecret(s.randReader)
-			if err != nil {
-				return fmt.Errorf("generate migrated secret: %w", err)
+			for _, u := range migrated.Users {
+				if strings.TrimSpace(u.Secret) != "" {
+					migrated.Secret = u.Secret
+					break
+				}
 			}
-			migrated.Secret = sec
+			// Only backfill a missing top-level Secret when migrating a legacy
+			// pre-v2 config; a v2 config with 0 users intentionally leaves both
+			// Users and Secret empty so "default" is not resurrected.
+			if migrated.Secret == "" && len(migrated.Users) == 0 && isLegacySchema {
+				sec, err := randomHexSecret(s.randReader)
+				if err != nil {
+					return fmt.Errorf("generate migrated secret: %w", err)
+				}
+				migrated.Secret = sec
+			}
 		}
 		migrated.SchemaVersion = CurrentSchemaVersion
 		s.config = migrated
@@ -552,20 +572,42 @@ func validateUpstreamsWithEgress(upstreams []UpstreamSpec, validator EgressValid
 	return nil
 }
 
+// needsEgressCheck: доступность выхода важна при включении и при его смене.
+// Остановить прокси и отозвать доступ упавший выход не мешает.
+func needsEgressCheck(old, next Config) bool {
+	return (next.Enabled && !old.Enabled) ||
+		!reflect.DeepEqual(old.EffectiveUpstreams(), next.EffectiveUpstreams())
+}
+
 func (s *Service) applyConfigLocked(newCfg Config) error {
+	return s.applyLocked(newCfg, false)
+}
+
+// applyUserEditLocked — правка пользователей и секретов. Применяется к движкам,
+// которые работают; не поднявшийся слушатель её не отменяет: доступ отозван,
+// раз сохранён.
+func (s *Service) applyUserEditLocked(newCfg Config) error {
+	return s.applyLocked(newCfg, true)
+}
+
+func (s *Service) applyLocked(newCfg Config, userEdit bool) error {
 	if s.recoveryRequired {
 		return ErrRecoveryRequired
 	}
 
 	// 1. Pre-apply Egress & port/upstream validation
+	var checkEgress EgressValidator
+	if needsEgressCheck(s.config, newCfg) {
+		checkEgress = s.egressValidator
+	}
 	if len(newCfg.Upstreams) > 0 {
 		newCfg.Upstreams = NormalizeUpstreams(newCfg.Upstreams)
-		if err := validateUpstreamsWithEgress(newCfg.Upstreams, s.egressValidator); err != nil {
+		if err := validateUpstreamsWithEgress(newCfg.Upstreams, checkEgress); err != nil {
 			return err
 		}
 		newCfg.UpstreamDevice = newCfg.PrimaryUpstreamDevice()
-	} else if s.egressValidator != nil && newCfg.UpstreamDevice != "" {
-		if err := s.egressValidator(newCfg.UpstreamDevice); err != nil {
+	} else if checkEgress != nil && newCfg.UpstreamDevice != "" {
+		if err := checkEgress(newCfg.UpstreamDevice); err != nil {
 			return fmt.Errorf("egress validation failed: %w", err)
 		}
 	}
@@ -650,6 +692,7 @@ func (s *Service) applyConfigLocked(newCfg Config) error {
 		tproxyWasRunning: tproxyWasRunning,
 		prevCfg:          prevCfg,
 		muxWasRunning:    muxWasRunning,
+		userEdit:         userEdit,
 	}
 
 	if err := s.tc.ExecuteTransaction(txID, files, txHook, newCfg, validator); err != nil {
@@ -683,6 +726,70 @@ func (s *Service) applyConfigLocked(newCfg Config) error {
 	return nil
 }
 
+// SetAppLogger подключает журнал приложения.
+func (s *Service) SetAppLogger(appLogger logging.AppLogger) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.appLog = logging.NewScopedLogger(appLogger, logging.GroupServer, logging.SubFirewall)
+	s.workerLog = logging.NewScopedLogger(appLogger, logging.GroupServer, logging.SubProxy)
+}
+
+// SyncDirectWANFirewall reconciles Keenetic's WAN firewall rule with the current config under s.mu.
+func (s *Service) SyncDirectWANFirewall() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.recoveryRequired {
+		return nil
+	}
+	return s.syncDirectWANFirewallLocked(s.config)
+}
+
+// syncDirectWANFirewallLocked приводит правило WAN к cfg. Ошибка уходит в
+// журнал и в статус (DirectWANError). Возвращённую ошибку вызывающий учитывает,
+// только если cfg открывает порт заново (opensDirectWANAnew).
+func (s *Service) syncDirectWANFirewallLocked(cfg Config) error {
+	s.directWANNoChain = 0
+	return s.runDirectWANFirewallLocked(cfg)
+}
+
+func (s *Service) runDirectWANFirewallLocked(cfg Config) error {
+	if s.directWANFirewall == nil {
+		return nil
+	}
+	port := 0
+	if cfg.OpensDirectWAN() {
+		port = cfg.effectiveDirectPort()
+	}
+	s.directWANErr = s.directWANFirewall(port, port > 0)
+	if s.directWANErr != nil {
+		s.appLog.Warn("wan-firewall", "telegram-mtproto", s.directWANErr.Error())
+	}
+	return s.directWANErr
+}
+
+// maxDirectWANNoChainRetries — сколько тиков (по 30 с) ждать цепочку ndm: на
+// загрузке файрвол может быть ещё не собран, а на неподходящей прошивке её не
+// будет никогда. Дальше — до следующей правки, запуска или перезапуска.
+const maxDirectWANNoChainRetries = 10
+
+// retryDirectWANFirewall повторяет неудачную сверку: на загрузке WAN может быть
+// ещё не поднят, а блокировка xtables — временной. Недопустимый порт повтором
+// не исправить.
+func (s *Service) retryDirectWANFirewall() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.directWANErr == nil || s.recoveryRequired || errors.Is(s.directWANErr, ErrInvalidDirectPort) {
+		return
+	}
+	if errors.Is(s.directWANErr, ErrDirectWANNoChain) {
+		if s.directWANNoChain >= maxDirectWANNoChainRetries {
+			return
+		}
+		s.directWANNoChain++
+	}
+	_ = s.runDirectWANFirewallLocked(s.config)
+}
+
 func hasTproxyFileChanges(tproxyDir string, files []FilePayload) bool {
 	cleanDir := filepath.Clean(tproxyDir)
 	for _, fp := range files {
@@ -708,6 +815,8 @@ type serviceTxHook struct {
 	tproxyWasRunning bool
 	prevCfg          Config
 	muxWasRunning    bool
+	firewallSynced   bool
+	userEdit         bool
 }
 
 func (h *serviceTxHook) CaptureWorkerStates() map[string]WorkerProcessState {
@@ -717,7 +826,30 @@ func (h *serviceTxHook) CaptureWorkerStates() map[string]WorkerProcessState {
 	return h.svc.workers.CaptureWorkerStates()
 }
 
+// applyUserEdit доносит правку до работающих слушателей. Который не принял её —
+// останавливается: оставить его с прежними секретами значило бы не отозвать доступ.
+func (h *serviceTxHook) applyUserEdit(cfg Config) {
+	var errs []error
+	if ws := h.svc.workers; ws != nil {
+		errs = append(errs, ws.ApplyToRunning(cfg, h.tproxyChanged))
+	}
+	if h.svc.mux != nil && h.muxWasRunning {
+		if err := h.svc.mux.StartWithSecrets(cfg.ListenPort, h.endpoints, cfg.ActiveSecrets()); err != nil {
+			errs = append(errs, err, h.svc.mux.Stop())
+		}
+	}
+	if err := errors.Join(errs...); err != nil {
+		h.svc.workerLog.Warn("apply-user-edit", "telegram", err.Error())
+	}
+	_ = h.svc.syncDirectWANFirewallLocked(cfg)
+}
+
 func (h *serviceTxHook) ApplyWorkers(cfg Config) error {
+	if h.userEdit && h.svc != nil {
+		h.firewallSynced = true
+		h.applyUserEdit(cfg)
+		return nil
+	}
 	if h.svc != nil && h.svc.workers != nil {
 		if err := h.svc.workers.ApplyWorkers(cfg); err != nil {
 			return err
@@ -742,10 +874,19 @@ func (h *serviceTxHook) ApplyWorkers(cfg Config) error {
 			}
 		}
 	}
+	if h.svc != nil {
+		h.firewallSynced = true
+		if err := h.svc.syncDirectWANFirewallLocked(cfg); err != nil && opensDirectWANAnew(h.prevCfg, cfg) {
+			return fmt.Errorf("открыть порт MTProto на WAN: %w", err)
+		}
+	}
 	return nil
 }
 
 func (h *serviceTxHook) CheckReadiness(cfg Config) error {
+	if h.userEdit {
+		return nil
+	}
 	if h.svc != nil && h.svc.workers != nil {
 		if err := h.svc.workers.CheckReadiness(cfg); err != nil {
 			return err
@@ -766,8 +907,12 @@ func (h *serviceTxHook) CheckReadiness(cfg Config) error {
 func (h *serviceTxHook) RestoreWorkerStates(states map[string]WorkerProcessState) error {
 	var errs []error
 	if h.svc != nil && h.svc.workers != nil {
-		if err := h.svc.workers.RestoreWorkerStates(states); err != nil {
-			errs = append(errs, err)
+		if err := h.svc.workers.RestoreConfig(h.prevCfg, states); err != nil {
+			errs = append(errs, fmt.Errorf("restore workers: %w", err))
+		} else if h.prevCfg.Enabled && h.prevCfg.IsWebEnabled() && h.tproxyChanged && h.tproxyWasRunning {
+			if err := h.svc.workers.RestartWorker(workerTproxy); err != nil {
+				errs = append(errs, fmt.Errorf("restart restored tproxy worker: %w", err))
+			}
 		}
 	}
 	if h.svc != nil && h.svc.mux != nil {
@@ -780,6 +925,9 @@ func (h *serviceTxHook) RestoreWorkerStates(states map[string]WorkerProcessState
 				errs = append(errs, err)
 			}
 		}
+	}
+	if h.firewallSynced && h.svc != nil {
+		_ = h.svc.syncDirectWANFirewallLocked(h.prevCfg)
 	}
 	if len(errs) > 0 {
 		return errors.Join(errs...)
@@ -810,6 +958,16 @@ func tuneRuntimeNetwork(upstreamDevice string) {
 }
 
 func (s *Service) UpdateConfig(cfg Config) error {
+	return s.updateConfig(cfg, cfg.DirectHost != "")
+}
+
+// UpdateConfigWithDirectHost — UpdateConfig, где прямой адрес задан явно:
+// пустой снимает его, а с ним и порт на WAN.
+func (s *Service) UpdateConfigWithDirectHost(cfg Config) error {
+	return s.updateConfig(cfg, true)
+}
+
+func (s *Service) updateConfig(cfg Config, setDirectHost bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -887,11 +1045,14 @@ func (s *Service) UpdateConfig(cfg Config) error {
 	if cfg.PublicHostname != "" {
 		newCfg.PublicHostname = cfg.PublicHostname
 	}
-	if cfg.DirectHost != "" {
-		newCfg.DirectHost = cfg.DirectHost
+	if setDirectHost {
+		newCfg.DirectHost = strings.TrimSpace(cfg.DirectHost)
 	}
-	if cfg.DirectPort > 0 {
+	if cfg.DirectPort != 0 {
 		newCfg.DirectPort = cfg.DirectPort
+	}
+	if err := ValidateDirectPortTransition(s.config, newCfg); err != nil {
+		return err
 	}
 	if cfg.Secret != "" && cfg.Secret != s.config.Secret {
 		newCfg.LegacySecret = s.config.Secret
@@ -985,6 +1146,9 @@ func (s *Service) RotateSecret() error {
 	}
 
 	newCfg := s.config
+	if len(newCfg.GetUsers()) == 0 {
+		return fmt.Errorf("%w: нет пользователей для смены секрета", ErrUserNotFound)
+	}
 	oldSecret := s.config.Secret
 	newCfg.LegacySecret = oldSecret
 	sec, err := randomHexSecret(s.randReader)
@@ -1005,7 +1169,7 @@ func (s *Service) RotateSecret() error {
 	}
 	newCfg.LegacyExpiresAt = time.Now().UTC().Add(DefaultLegacyGraceTTL).Format(time.RFC3339)
 
-	if err := s.applyConfigLocked(newCfg); err != nil {
+	if err := s.applyUserEditLocked(newCfg); err != nil {
 		return err
 	}
 
@@ -1072,7 +1236,7 @@ func (s *Service) CreateUserWithSecret(remark string, rawSecret string) error {
 		newCfg.Secret = sec
 	}
 
-	if err := s.applyConfigLocked(newCfg); err != nil {
+	if err := s.applyUserEditLocked(newCfg); err != nil {
 		return err
 	}
 
@@ -1145,7 +1309,7 @@ func (s *Service) UpdateUserWithOptions(id string, opts UpdateUserOptions) error
 
 	newCfg.Users = users
 
-	if err := s.applyConfigLocked(newCfg); err != nil {
+	if err := s.applyUserEditLocked(newCfg); err != nil {
 		return err
 	}
 
@@ -1178,6 +1342,8 @@ func (s *Service) DeleteUser(id string) error {
 	if len(remaining) == 0 {
 		newCfg.Users = []TelegramUser{}
 		newCfg.Secret = ""
+		newCfg.LegacySecret = ""
+		newCfg.LegacyExpiresAt = ""
 	} else {
 		newCfg.Users = remaining
 		if deletedSecret != "" && newCfg.Secret == deletedSecret {
@@ -1185,7 +1351,7 @@ func (s *Service) DeleteUser(id string) error {
 		}
 	}
 
-	if err := s.applyConfigLocked(newCfg); err != nil {
+	if err := s.applyUserEditLocked(newCfg); err != nil {
 		return err
 	}
 
@@ -1205,7 +1371,7 @@ func (s *Service) RevokeLegacySecret() error {
 	newCfg.LegacySecret = ""
 	newCfg.LegacyExpiresAt = ""
 
-	if err := s.applyConfigLocked(newCfg); err != nil {
+	if err := s.applyUserEditLocked(newCfg); err != nil {
 		return err
 	}
 
@@ -1309,7 +1475,7 @@ func (s *Service) reconcileExpiredLegacySecret() {
 	newCfg.LegacySecret = ""
 	newCfg.LegacyExpiresAt = ""
 
-	if err := s.applyConfigLocked(newCfg); err != nil {
+	if err := s.applyUserEditLocked(newCfg); err != nil {
 		return
 	}
 	s.notifyReload()
@@ -1325,6 +1491,9 @@ func (s *Service) Start() error {
 
 	newCfg := s.config
 	newCfg.Enabled = true
+	if err := ValidateDirectPortTransition(s.config, newCfg); err != nil {
+		return err
+	}
 
 	if err := s.applyConfigLocked(newCfg); err != nil {
 		return err
@@ -1422,6 +1591,7 @@ func (s *Service) FactoryReset(ctx context.Context) error {
 	}
 
 	s.config = defCfg
+	_ = s.syncDirectWANFirewallLocked(defCfg)
 	s.recoveryRequired = false
 	s.lastStartupError = ""
 
@@ -1454,6 +1624,7 @@ func (s *Service) Restart() error {
 	if err := s.workers.ApplyWorkers(s.config); err != nil {
 		return err
 	}
+	_ = s.syncDirectWANFirewallLocked(s.config)
 	s.notifyReload()
 	return nil
 }
@@ -1468,6 +1639,7 @@ func (s *Service) StartConfigured() error {
 	}
 
 	if !s.config.Enabled {
+		_ = s.syncDirectWANFirewallLocked(s.config)
 		return nil
 	}
 
@@ -1505,12 +1677,16 @@ func (s *Service) StartConfigured() error {
 	}
 
 	if err := s.workers.ApplyWorkers(s.config); err != nil {
+		runtimeStopCfg := s.config
+		runtimeStopCfg.Enabled = false
+		_ = s.syncDirectWANFirewallLocked(runtimeStopCfg)
 		return err
 	}
 	if err := s.workers.CheckReadiness(s.config); err != nil {
 		runtimeStopCfg := s.config
 		runtimeStopCfg.Enabled = false
 		stopErr := s.workers.ApplyWorkers(runtimeStopCfg)
+		_ = s.syncDirectWANFirewallLocked(runtimeStopCfg)
 		if stopErr != nil {
 			return errors.Join(err, fmt.Errorf("rollback tg workers after readiness failure: %w", stopErr))
 		}
@@ -1519,6 +1695,7 @@ func (s *Service) StartConfigured() error {
 	if s.config.IsWebEnabled() && s.mux != nil {
 		_ = s.mux.StartWithSecrets(s.config.ListenPort, s.config.GetEndpoints(), s.config.ActiveSecrets())
 	}
+	_ = s.syncDirectWANFirewallLocked(s.config)
 	go tuneRuntimeNetworkUpstreams(s.config.EnabledUpstreams())
 	return nil
 }
@@ -1673,9 +1850,14 @@ func (s *Service) runBackgroundHealthWorker() {
 		case <-s.stopCh:
 			return
 		case <-ticker.C:
-			s.checkUpstreamHealth()
+			s.backgroundTick()
 		}
 	}
+}
+
+func (s *Service) backgroundTick() {
+	s.checkUpstreamHealth()
+	s.retryDirectWANFirewall()
 }
 
 func (s *Service) Close() error {
@@ -1829,6 +2011,9 @@ func linkableEndpoints(cfg Config) []WebProxyEndpoint {
 // buildStatusWebProxyLinks describes the linkable endpoints without any
 // secret-derived material, for the regular status response.
 func buildStatusWebProxyLinks(cfg Config) []WebProxyStatusLink {
+	if cfg.Scenario == ScenarioDirectFakeTLS {
+		return nil
+	}
 	var out []WebProxyStatusLink
 	for _, ep := range linkableEndpoints(cfg) {
 		out = append(out, WebProxyStatusLink{
@@ -1848,32 +2033,34 @@ func buildSingleUserLinks(cfg Config, activeSecret string) (string, string, stri
 	mtproxySecret := "ee" + activeSecret + hexDomain
 
 	var webProxies []WebProxyLink
-	for _, ep := range linkableEndpoints(cfg) {
-		epTgURL := fmt.Sprintf("tg://webproxy?server=%s&secret=%s", ep.Hostname, activeSecret)
-		epTmeURL := fmt.Sprintf("https://t.me/webproxy?server=%s&secret=%s", ep.Hostname, activeSecret)
-		epBridgeURL := DeriveBridgeURL(ep.Hostname, activeSecret)
-		webProxies = append(webProxies, WebProxyLink{
-			ID:          ep.ID,
-			Hostname:    ep.Hostname,
-			Description: ep.Description,
-			Preset:      InferEndpointPreset(ep, cfg),
-			CarrierMode: EffectiveEndpointCarrierMode(ep, cfg),
-			TgURL:       epTgURL,
-			TmeURL:      epTmeURL,
-			BridgeURL:   epBridgeURL,
-			IsCDN:       ep.IsCDN,
-		})
-	}
-
 	var tgURL, tmeURL, bridgeURL string
-	if cfg.PublicHostname != "" {
-		tgURL = fmt.Sprintf("tg://webproxy?server=%s&secret=%s", cfg.PublicHostname, activeSecret)
-		tmeURL = fmt.Sprintf("https://t.me/webproxy?server=%s&secret=%s", cfg.PublicHostname, activeSecret)
-		bridgeURL = DeriveBridgeURL(cfg.PublicHostname, activeSecret)
-	} else if len(webProxies) > 0 {
-		tgURL = webProxies[0].TgURL
-		tmeURL = webProxies[0].TmeURL
-		bridgeURL = webProxies[0].BridgeURL
+	if cfg.Scenario != ScenarioDirectFakeTLS {
+		for _, ep := range linkableEndpoints(cfg) {
+			epTgURL := fmt.Sprintf("tg://webproxy?server=%s&secret=%s", ep.Hostname, activeSecret)
+			epTmeURL := fmt.Sprintf("https://t.me/webproxy?server=%s&secret=%s", ep.Hostname, activeSecret)
+			epBridgeURL := DeriveBridgeURL(ep.Hostname, activeSecret)
+			webProxies = append(webProxies, WebProxyLink{
+				ID:          ep.ID,
+				Hostname:    ep.Hostname,
+				Description: ep.Description,
+				Preset:      InferEndpointPreset(ep, cfg),
+				CarrierMode: EffectiveEndpointCarrierMode(ep, cfg),
+				TgURL:       epTgURL,
+				TmeURL:      epTmeURL,
+				BridgeURL:   epBridgeURL,
+				IsCDN:       ep.IsCDN,
+			})
+		}
+
+		if cfg.PublicHostname != "" {
+			tgURL = fmt.Sprintf("tg://webproxy?server=%s&secret=%s", cfg.PublicHostname, activeSecret)
+			tmeURL = fmt.Sprintf("https://t.me/webproxy?server=%s&secret=%s", cfg.PublicHostname, activeSecret)
+			bridgeURL = DeriveBridgeURL(cfg.PublicHostname, activeSecret)
+		} else if len(webProxies) > 0 {
+			tgURL = webProxies[0].TgURL
+			tmeURL = webProxies[0].TmeURL
+			bridgeURL = webProxies[0].BridgeURL
+		}
 	}
 
 	var mtproxyURL, mtproxyTmeURL string
@@ -1949,6 +2136,10 @@ func (s *Service) GetStatus() Status {
 	workers := s.workers
 	recovery := s.recoveryRequired
 	startupErr := s.lastStartupError
+	directWANErr := ""
+	if s.directWANErr != nil {
+		directWANErr = s.directWANErr.Error()
+	}
 	s.mu.Unlock()
 
 	var directOnline, rawOnline, webProxyOnline bool
@@ -2015,6 +2206,7 @@ func (s *Service) GetStatus() Status {
 		LegacyExpiredPendingReconcile: legacyExpiredPending,
 		RecoveryRequired:              recovery,
 		LastStartupError:              startupErr,
+		DirectWANError:                directWANErr,
 		WebProxies:                    buildStatusWebProxyLinks(cfg),
 		Users:                         cfg.GetPublicUsers(),
 	}

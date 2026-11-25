@@ -2,6 +2,7 @@ package tgwebproxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -133,6 +134,51 @@ func (ws *WorkerSupervisor) CheckReadiness(cfg Config) error {
 		}
 	}
 	return nil
+}
+
+// runningOnly — cfg для движков, работавших в states; остальным — та же
+// конфигурация выключенной, чтобы последующий Restart не поднял прежнюю.
+func runningOnly(cfg Config, states map[string]WorkerProcessState) (mtgCfg, tproxyCfg Config) {
+	mtgCfg, tproxyCfg = cfg, cfg
+	if !states[workerDirect].Running && !states[workerRaw].Running {
+		mtgCfg.Enabled = false
+	}
+	if !states[workerTproxy].Running {
+		tproxyCfg.Enabled = false
+	}
+	return mtgCfg, tproxyCfg
+}
+
+// RestoreConfig возвращает движкам прежнюю конфигурацию. Движок, который до
+// транзакции не работал, не запускается: его старт мог бы провалить откат.
+// Apply, а не Restart: тот поднял бы последнюю, отвергнутую конфигурацию.
+func (ws *WorkerSupervisor) RestoreConfig(prev Config, states map[string]WorkerProcessState) error {
+	if ws == nil {
+		return nil
+	}
+	mtgCfg, tproxyCfg := runningOnly(prev, states)
+	return errors.Join(ws.mtg.Apply(mtgCfg), ws.tproxy.Apply(tproxyCfg))
+}
+
+// ApplyToRunning применяет cfg к работающим движкам, остальные не поднимает.
+// Движок, не принявший cfg, останавливается.
+func (ws *WorkerSupervisor) ApplyToRunning(cfg Config, tproxyChanged bool) error {
+	if ws == nil {
+		return nil
+	}
+	mtgCfg, tproxyCfg := runningOnly(cfg, ws.CaptureWorkerStates())
+	mtgErr := ws.mtg.Apply(mtgCfg)
+	if mtgErr != nil {
+		ws.mtg.Stop()
+	}
+	tproxyErr := ws.tproxy.Apply(tproxyCfg)
+	if tproxyErr == nil && tproxyChanged && ws.tproxy.IsPrimaryRunning() {
+		tproxyErr = ws.tproxy.Restart()
+	}
+	if tproxyErr != nil {
+		ws.tproxy.Stop()
+	}
+	return errors.Join(mtgErr, tproxyErr)
 }
 
 func (ws *WorkerSupervisor) RestoreWorkerStates(states map[string]WorkerProcessState) error {

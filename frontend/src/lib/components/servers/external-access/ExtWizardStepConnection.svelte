@@ -13,7 +13,10 @@
 		draft: ExternalAccessWizardDraft;
 		realityMode: WizardRealityMode;
 		isRealityOnly: boolean;
+		isTgDirectOnly: boolean;
 		wantXray: boolean;
+		wantTgDirect?: boolean;
+		grayIPDetected?: boolean;
 		realityPort: number;
 		realityState: XrayRealityState | null;
 		realityWhiteIP: boolean;
@@ -21,15 +24,22 @@
 		checkingFacts: boolean;
 		showRouterFacts: boolean;
 		keendnsInfo: KeenDNSDiscovery | null;
+		canReturnToSavedScheme?: boolean;
 		oncheckreality: () => void;
 		oncheckfacts: () => void;
+		onswitchtowebbridge: () => void;
+		onswitchtowebonly?: () => void;
+		onswitchtovlessdomain?: () => void;
 	}
 
 	let {
 		draft = $bindable(),
 		realityMode = $bindable(),
 		isRealityOnly,
+		isTgDirectOnly,
 		wantXray,
+		wantTgDirect = false,
+		grayIPDetected = false,
 		realityPort,
 		realityState,
 		realityWhiteIP,
@@ -37,15 +47,123 @@
 		checkingFacts,
 		showRouterFacts,
 		keendnsInfo,
+		canReturnToSavedScheme = true,
 		oncheckreality,
 		oncheckfacts,
+		onswitchtowebbridge,
+		onswitchtowebonly,
+		onswitchtovlessdomain,
 	}: Props = $props();
 </script>
 
 <div class="step-section">
 	<h3 class="step-heading">{m.servers_ext_wiz_s2_heading()}</h3>
 
-	{#if draft.isEditMode && draft.keepExistingConnectionScheme}
+	{#if isTgDirectOnly}
+		<div class="origin-box">
+			<div class="choice-top">
+				<span class="choice-title">{m.servers_ext_wiz_s2_tg_direct_title()}</span>
+				<span class="tech-sub-badge badge-ok">
+					{m.servers_ext_wiz_s2_tg_direct_port_badge({ port: draft.directPort || 8443 })}
+				</span>
+			</div>
+			<div class="choice-text">
+				{m.servers_ext_wiz_s2_tg_direct_desc()}
+			</div>
+		</div>
+
+		<div class="origin-box">
+			<div class="question-header-row">
+				<span class="field-label">{m.servers_ext_wiz_s2_q_tg_white_ip()}</span>
+				<Button
+					variant="secondary"
+					size="sm"
+					onclick={() => {
+						oncheckreality();
+						oncheckfacts();
+					}}
+					disabled={checkingFacts || realityNetChecking}
+				>
+					<RefreshCw size={13} class={checkingFacts || realityNetChecking ? 'spin' : ''} />
+					{checkingFacts || realityNetChecking ? m.servers_wizard_checks_running() : m.common_check()}
+				</Button>
+			</div>
+
+			<div
+				class="reality-wan-box"
+				class:ok={realityState?.network ? realityWhiteIP : Boolean(keendnsInfo?.wan_ip && !keendnsInfo.wan_ip_private)}
+				class:warn={realityState?.network ? !realityWhiteIP : Boolean(keendnsInfo?.wan_ip_private || grayIPDetected)}
+			>
+				{#if realityState?.network}
+					{#if realityWhiteIP}
+						<CheckCircle2 size={15} class="icon-success-soft" />
+						<span>
+							{m.servers_ext_wiz_s2_tg_ip_confirmed()} <strong class="mono">{realityState.network.external_ip || realityState.network.wan_address}</strong>
+							{realityState.network.keendns_domain ? ` · ${m.servers_ext_wiz_s2_tg_direct_domain_also({ domain: realityState.network.keendns_domain })}` : ''}
+						</span>
+					{:else}
+						<AlertTriangle size={15} class="icon-warning-soft" />
+						<div class="warn-banner-body">
+							<span>
+								{m.servers_ext_wiz_s2_tg_ip_not_found({ reason: realityState.network.reason || m.servers_ext_wiz_s2_tg_ip_cgnat_reason() })}
+							</span>
+							<div>
+								<Button variant="primary" size="sm" onclick={onswitchtowebbridge}>
+									{m.servers_ext_wiz_s2_tg_switch_web()}
+								</Button>
+							</div>
+							<label class="checkbox-row">
+								<input type="checkbox" bind:checked={draft.confirmDirectBehindNAT} />
+								<span>{m.servers_ext_wiz_s2_confirm_behind_nat()}</span>
+							</label>
+						</div>
+					{/if}
+				{:else if keendnsInfo?.wan_ip}
+					{#if !keendnsInfo.wan_ip_private}
+						<CheckCircle2 size={15} class="icon-success-soft" />
+						<span>
+							{m.servers_ext_wiz_s2_tg_wan_public()} <strong class="mono">{keendnsInfo.wan_ip}</strong>
+						</span>
+					{:else}
+						<AlertTriangle size={15} class="icon-warning-soft" />
+						<div class="warn-banner-body">
+							<span>
+								{m.servers_ext_wiz_s2_tg_wan_cgnat_before()}<strong class="mono">{keendnsInfo.wan_ip}</strong>{m.servers_ext_wiz_s2_tg_wan_cgnat_after()}
+							</span>
+							<div>
+								<Button variant="primary" size="sm" onclick={onswitchtowebbridge}>
+									{m.servers_ext_wiz_s2_tg_switch_web()}
+								</Button>
+							</div>
+							<label class="checkbox-row">
+								<input type="checkbox" bind:checked={draft.confirmDirectBehindNAT} />
+								<span>{m.servers_ext_wiz_s2_confirm_behind_nat()}</span>
+							</label>
+						</div>
+					{/if}
+				{:else if grayIPDetected}
+					<AlertTriangle size={15} class="icon-warning-soft" />
+					<div class="warn-banner-body">
+						<span>
+							{m.servers_ext_wiz_s2_tg_ip_not_found({ reason: m.servers_ext_wiz_s2_tg_ip_cgnat_reason() })}
+						</span>
+						<div>
+							<Button variant="primary" size="sm" onclick={onswitchtowebbridge}>
+								{m.servers_ext_wiz_s2_tg_switch_web()}
+							</Button>
+						</div>
+						<label class="checkbox-row">
+							<input type="checkbox" bind:checked={draft.confirmDirectBehindNAT} />
+							<span>{m.servers_ext_wiz_s2_confirm_behind_nat()}</span>
+						</label>
+					</div>
+				{:else}
+					<AlertTriangle size={15} class="icon-warning-soft" />
+					<span>{m.servers_ext_wiz_s2_ip_unchecked()}</span>
+				{/if}
+			</div>
+		</div>
+	{:else if draft.isEditMode && draft.keepExistingConnectionScheme}
 		<div class="saved-scheme-card">
 			<div class="saved-scheme-top">
 				<div class="saved-scheme-badge">
@@ -75,7 +193,7 @@
 			{/if}
 		</div>
 	{:else}
-		{#if draft.isEditMode}
+		{#if draft.isEditMode && canReturnToSavedScheme}
 			<div class="return-saved-row">
 				<button
 					type="button"
@@ -89,13 +207,16 @@
 
 		<div class="field-block">
 			<span class="field-label">{m.servers_ext_wiz_s2_q_way()}</span>
-			<div class="cards-grid">
+			<div class="cards-grid cols-2">
 				<button
 					type="button"
 					class="choice-card"
 					class:selected={!isRealityOnly && draft.connectionWay === 'direct'}
 					onclick={() => {
-						if (realityMode === 'only') realityMode = 'off';
+						if (realityMode === 'only') {
+							realityMode = 'off';
+							draft.confirmDirectBehindNAT = false;
+						}
 						draft.connectionWay = 'direct';
 					}}
 				>
@@ -110,7 +231,10 @@
 					class="choice-card"
 					class:selected={!isRealityOnly && draft.connectionWay === 'external_https'}
 					onclick={() => {
-						if (realityMode === 'only') realityMode = 'off';
+						if (realityMode === 'only') {
+							realityMode = 'off';
+							draft.confirmDirectBehindNAT = false;
+						}
 						draft.connectionWay = 'external_https';
 						draft.publicPort = 443;
 					}}
@@ -126,7 +250,10 @@
 						type="button"
 						class="choice-card choice-card-full"
 						class:selected={isRealityOnly}
-						onclick={() => (realityMode = 'only')}
+						onclick={() => {
+							realityMode = 'only';
+							draft.confirmDirectBehindNAT = false;
+						}}
 					>
 						<div class="choice-top">
 							<span class="choice-title">{m.servers_ext_wiz_s2_reality_title()}</span>
@@ -152,25 +279,40 @@
 						onclick={() => oncheckreality()}
 						disabled={realityNetChecking}
 					>
-						<RefreshCw size={13} class="mr-1" />
+						<RefreshCw size={13} class={realityNetChecking ? 'spin' : ''} />
 						{realityNetChecking ? m.servers_wizard_checks_running() : m.common_check()}
 					</Button>
 				</div>
 				<div class="reality-wan-box" class:ok={realityWhiteIP} class:warn={!realityWhiteIP}>
-					{#if !realityState?.network}
-						<AlertTriangle size={15} class="icon-warning-soft" />
-						<span>{m.servers_ext_wiz_s2_ip_unchecked()}</span>
-					{:else if realityWhiteIP}
+					{#if realityState?.network && realityWhiteIP}
 						<CheckCircle2 size={15} class="icon-success-soft" />
 						<span>
 							{m.servers_ext_wiz_s2_ip_confirmed()} <strong class="mono">{realityState.network.external_ip || realityState.network.wan_address}</strong>
 							{realityState.network.keendns_domain ? ` · ${m.servers_ext_wiz_s2_links_on_keendns({ domain: realityState.network.keendns_domain })}` : ''}
 						</span>
+					{:else if (realityState?.network && !realityWhiteIP) || grayIPDetected}
+						<AlertTriangle size={15} class="icon-warning-soft" />
+						<div class="warn-banner-body">
+							<span>
+								{realityState?.network
+									? m.servers_ext_wiz_s2_ip_not_found({ reason: realityState.network.reason || m.servers_ext_wiz_s2_ip_unreachable() })
+									: m.servers_ext_wiz_s2_reality_cgnat_warn()}
+							</span>
+							{#if onswitchtovlessdomain}
+								<div>
+									<Button variant="primary" size="sm" onclick={onswitchtovlessdomain}>
+										{m.servers_ext_wiz_s2_switch_vless_domain()}
+									</Button>
+								</div>
+							{/if}
+							<label class="checkbox-row">
+								<input type="checkbox" bind:checked={draft.confirmDirectBehindNAT} />
+								<span>{m.servers_ext_wiz_s2_reality_confirm_behind_nat()}</span>
+							</label>
+						</div>
 					{:else}
 						<AlertTriangle size={15} class="icon-warning-soft" />
-						<span>
-							{m.servers_ext_wiz_s2_ip_not_found({ reason: realityState.network.reason || m.servers_ext_wiz_s2_ip_unreachable() })}
-						</span>
+						<span>{m.servers_ext_wiz_s2_ip_unchecked()}</span>
 					{/if}
 				</div>
 			</div>
@@ -184,17 +326,20 @@
 					onclick={oncheckfacts}
 					disabled={checkingFacts}
 				>
-					<HelpCircle size={13} class="mr-1" />
+					<HelpCircle size={13} />
 					{checkingFacts ? m.servers_wizard_checks_running() : m.servers_ext_wiz_s2_dont_know()}
 				</Button>
 			</div>
 
-			<div class="cards-grid">
+			<div class="cards-grid cols-2">
 				<button
 					type="button"
 					class="choice-card compact"
 					class:selected={draft.originType === 'public_address'}
-					onclick={() => (draft.originType = 'public_address')}
+					onclick={() => {
+						draft.originType = 'public_address';
+						draft.confirmDirectBehindNAT = false;
+					}}
 				>
 					<div class="choice-title">
 						{m.servers_ext_wiz_s2_public_ip()}
@@ -208,7 +353,10 @@
 					type="button"
 					class="choice-card compact"
 					class:selected={draft.originType === 'cloud_address'}
-					onclick={() => (draft.originType = 'cloud_address')}
+					onclick={() => {
+						draft.originType = 'cloud_address';
+						draft.confirmDirectBehindNAT = false;
+					}}
 				>
 					<div class="choice-title">
 						{m.servers_ext_wiz_s2_private_ip()}
@@ -218,6 +366,36 @@
 					</div>
 				</button>
 			</div>
+
+			{#if grayIPDetected && draft.originType === 'public_address'}
+				{@const detectedPrivateIP = keendnsInfo?.wan_ip || realityState?.network?.wan_address || ''}
+				<div class="reality-wan-box warn" style="margin-top: 6px;">
+					<AlertTriangle size={15} class="icon-warning-soft" />
+					<div class="warn-banner-body">
+						<span>
+							{detectedPrivateIP
+								? m.servers_ext_wiz_s2_public_ip_cgnat_mismatch({ ip: detectedPrivateIP })
+								: m.servers_ext_wiz_s2_public_ip_cgnat_mismatch_generic()}
+						</span>
+						<div>
+							<Button
+								variant="primary"
+								size="sm"
+								onclick={() => {
+									draft.originType = 'cloud_address';
+									draft.confirmDirectBehindNAT = false;
+								}}
+							>
+								{m.servers_ext_wiz_s2_switch_private_ip()}
+							</Button>
+						</div>
+						<label class="checkbox-row">
+							<input type="checkbox" bind:checked={draft.confirmDirectBehindNAT} />
+							<span>{m.servers_ext_wiz_s2_public_ip_confirm_behind_nat()}</span>
+						</label>
+					</div>
+				</div>
+			{/if}
 
 			{#if showRouterFacts && keendnsInfo}
 				<div class="router-facts-box">
@@ -260,30 +438,61 @@
 			{/if}
 		</div>
 
-		{#if wantXray}
-			<label class="reality-opt-box" class:selected={realityMode === 'also'}>
-				<input
-					type="checkbox"
-					checked={realityMode === 'also'}
-					onchange={(e) => {
-						realityMode = e.currentTarget.checked ? 'also' : 'off';
-					}}
-				/>
-				<div class="reality-opt-body">
-					<div class="reality-opt-head">
-						<Zap size={14} class="icon-accent-soft" />
-						<span class="choice-title">{m.servers_ext_wiz_s2_reality_also()}</span>
-						{#if realityState?.network}
-							<span class="tech-sub-badge" class:badge-ok={realityWhiteIP} class:badge-warn={!realityWhiteIP}>
-								{realityWhiteIP ? m.servers_ext_wiz_s2_white_ip_found() : m.servers_ext_wiz_s2_white_ip_required()}
-							</span>
-						{/if}
-					</div>
-					<div class="choice-text">
-						{draft.connectionWay === 'external_https' ? m.servers_ext_wiz_s2_reality_also_ext({ port: realityPort }) : m.servers_ext_wiz_s2_reality_also_direct({ port: realityPort })}
+		{#if wantTgDirect && (draft.originType === 'cloud_address' || grayIPDetected) && onswitchtowebonly}
+			<div class="reality-wan-box warn">
+				<AlertTriangle size={15} class="icon-warning-soft" />
+				<div class="warn-banner-body">
+					<span>{m.servers_ext_wiz_s2_dual_cgnat_warn()}</span>
+					<div>
+						<Button variant="secondary" size="sm" onclick={onswitchtowebonly}>
+							{m.servers_ext_wiz_s2_switch_web_only()}
+						</Button>
 					</div>
 				</div>
-			</label>
+			</div>
+		{/if}
+
+		{#if wantXray}
+			<div class="reality-opt-box" class:selected={realityMode === 'also'}>
+				<label class="reality-opt-toggle">
+					<input
+						type="checkbox"
+						checked={realityMode === 'also'}
+						onchange={(e) => {
+							realityMode = e.currentTarget.checked ? 'also' : 'off';
+							draft.confirmDirectBehindNAT = false;
+						}}
+					/>
+					<div class="reality-opt-body">
+						<div class="reality-opt-head">
+							<Zap size={14} class="icon-accent-soft" />
+							<span class="choice-title">{m.servers_ext_wiz_s2_reality_also()}</span>
+							{#if realityState?.network}
+								<span class="tech-sub-badge" class:badge-ok={realityWhiteIP} class:badge-warn={!realityWhiteIP}>
+									{realityWhiteIP ? m.servers_ext_wiz_s2_white_ip_found() : m.servers_ext_wiz_s2_white_ip_required()}
+								</span>
+							{/if}
+						</div>
+						<div class="choice-text">
+							{draft.connectionWay === 'external_https' ? m.servers_ext_wiz_s2_reality_also_ext({ port: realityPort }) : m.servers_ext_wiz_s2_reality_also_direct({ port: realityPort })}
+						</div>
+					</div>
+				</label>
+				{#if realityMode === 'also' && grayIPDetected && !realityWhiteIP}
+					<div class="reality-opt-warn">
+						<div class="scheme-warn-note">
+							<AlertTriangle size={14} />
+							<span>{m.servers_ext_wiz_s2_reality_also_cgnat_note()}</span>
+						</div>
+						{#if draft.originType !== 'public_address'}
+							<label class="checkbox-row">
+								<input type="checkbox" bind:checked={draft.confirmDirectBehindNAT} />
+								<span>{m.servers_ext_wiz_s2_reality_confirm_behind_nat()}</span>
+							</label>
+						{/if}
+					</div>
+				{/if}
+			</div>
 		{/if}
 		{/if}
 	{/if}
@@ -337,10 +546,22 @@
 
 	.scheme-warn-note {
 		display: flex;
-		align-items: center;
+		align-items: flex-start;
 		gap: 8px;
 		font-size: 12px;
+		line-height: 1.4;
 		color: var(--color-warning);
+	}
+
+	.scheme-warn-note > :global(svg) {
+		flex-shrink: 0;
+		margin-top: 2px;
+	}
+
+	.scheme-warn-note > span {
+		min-width: 0;
+		flex: 1;
+		overflow-wrap: anywhere;
 	}
 
 	.return-saved-row {
@@ -378,6 +599,7 @@
 		flex-direction: column;
 		gap: 8px;
 		font-size: 12px;
+		min-width: 0;
 	}
 
 	.facts-title {
@@ -394,6 +616,11 @@
 		color: var(--color-text-secondary);
 	}
 
+	.facts-list li {
+		overflow-wrap: anywhere;
+		word-break: break-word;
+	}
+
 	.facts-scope {
 		font-size: 11.5px;
 		color: var(--color-text-muted);
@@ -407,13 +634,12 @@
 
 	.reality-opt-box {
 		display: flex;
-		align-items: flex-start;
-		gap: 10px;
+		flex-direction: column;
+		gap: 8px;
 		padding: 11px 13px;
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-sm);
 		background: var(--color-bg-primary);
-		cursor: pointer;
 		transition: border-color 0.15s, background 0.15s;
 	}
 
@@ -426,13 +652,27 @@
 		background: var(--color-accent-tint);
 	}
 
-	.reality-opt-box input[type='checkbox'] {
+	.reality-opt-toggle {
+		display: flex;
+		align-items: flex-start;
+		gap: 10px;
+		cursor: pointer;
+	}
+
+	.reality-opt-toggle > input[type='checkbox'] {
 		margin-top: 2px;
 		width: 16px;
 		height: 16px;
 		accent-color: var(--color-accent);
 		cursor: pointer;
 		flex-shrink: 0;
+	}
+
+	.reality-opt-warn {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		padding-left: 26px;
 	}
 
 	.reality-opt-body {
@@ -452,7 +692,7 @@
 
 	.reality-wan-box {
 		display: flex;
-		align-items: center;
+		align-items: flex-start;
 		gap: 8px;
 		font-size: 12px;
 		line-height: 1.45;
@@ -460,6 +700,17 @@
 		border-radius: var(--radius-sm);
 		border: 1px solid var(--color-border);
 		color: var(--color-text-primary);
+	}
+
+	.reality-wan-box > :global(svg) {
+		flex-shrink: 0;
+		margin-top: 2px;
+	}
+
+	.reality-wan-box > span {
+		min-width: 0;
+		flex: 1;
+		overflow-wrap: anywhere;
 	}
 
 	.reality-wan-box.ok {
@@ -470,5 +721,13 @@
 	.reality-wan-box.warn {
 		border-color: var(--color-warning-border);
 		background: var(--color-warning-tint);
+	}
+
+	.warn-banner-body {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		min-width: 0;
+		flex: 1;
 	}
 </style>

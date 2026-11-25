@@ -2,6 +2,8 @@ export type WizardKind = 'tgwebproxy' | 'xray' | 'both';
 
 export type CheckStatus = 'ok' | 'warning' | 'blocked';
 
+export type VerificationCheckStatus = CheckStatus | 'not_applicable';
+
 export interface PreflightCheck {
 	id: string;
 	title: string;
@@ -208,13 +210,14 @@ export type VerificationErrorCategory =
 	| 'http_origin'
 	| 'auth'
 	| 'egress'
-	| 'timeout';
+	| 'timeout'
+	| 'firewall';
 
 export interface VerificationCheck {
 	id: string;
 	service: 'xray' | 'tg_mtproto' | 'tg_web' | 'dispatcher' | 'egress';
 	title: string;
-	status: CheckStatus;
+	status: VerificationCheckStatus;
 	category?: VerificationErrorCategory;
 	message: string;
 	remediation?: string;
@@ -227,6 +230,6 @@ export interface VerificationReport {
 	state_fingerprint: string;
 	scope: string;
 	scope_note: string;
-	overall_status: CheckStatus;
+	overall_status: 'ok' | 'warning' | 'blocked';
 	checks: VerificationCheck[];
 }

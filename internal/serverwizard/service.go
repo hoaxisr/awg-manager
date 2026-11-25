@@ -57,20 +57,21 @@ type WizardCapabilitiesResponse struct {
 }
 
 type WizardService struct {
-	coord        CoordinatorBridge
-	xray         XrayServerComponent
-	tg           TgWebProxyComponent
-	disp         DispatcherComponent
-	preflight    *PreflightEngine
-	fingerprint  *FingerprintEngine
-	planStore    *PlanStore
-	jobRunner    *JobRunner
-	egress       *egress.Adapter
-	keendns      serveringress.KeenDNSOperator
-	dialTimeout  func(network, address string, timeout time.Duration) (net.Conn, error)
-	httpDoer     HTTPDoer
-	lookupHost   func(ctx context.Context, host string) ([]string, error)
-	tlsCertProbe TLSCertProbeFunc
+	coord                    CoordinatorBridge
+	xray                     XrayServerComponent
+	tg                       TgWebProxyComponent
+	disp                     DispatcherComponent
+	preflight                *PreflightEngine
+	fingerprint              *FingerprintEngine
+	planStore                *PlanStore
+	jobRunner                *JobRunner
+	egress                   *egress.Adapter
+	keendns                  serveringress.KeenDNSOperator
+	dialTimeout              func(network, address string, timeout time.Duration) (net.Conn, error)
+	httpDoer                 HTTPDoer
+	lookupHost               func(ctx context.Context, host string) ([]string, error)
+	tlsCertProbe             TLSCertProbeFunc
+	directWANFirewallChecker func(port int) (tgwebproxy.DirectWANFirewallState, error)
 }
 
 // HTTPDoer abstracts HTTP requests for readiness probing and testing.
@@ -122,6 +123,18 @@ func (s *WizardService) SetLookupHost(fn func(ctx context.Context, host string) 
 // SetTLSCertProbe configures a dedicated TLS certificate verification probe for a specific FQDN.
 func (s *WizardService) SetTLSCertProbe(fn TLSCertProbeFunc) {
 	s.tlsCertProbe = fn
+}
+
+// SetDirectWANFirewallChecker configures a custom WAN firewall state probe for testing.
+func (s *WizardService) SetDirectWANFirewallChecker(fn func(port int) (tgwebproxy.DirectWANFirewallState, error)) {
+	s.directWANFirewallChecker = fn
+}
+
+func (s *WizardService) checkDirectWANFirewall(port int) (tgwebproxy.DirectWANFirewallState, error) {
+	if s.directWANFirewallChecker != nil {
+		return s.directWANFirewallChecker(port)
+	}
+	return tgwebproxy.CheckDirectWANFirewall(port)
 }
 
 func (s *WizardService) probeFQDNCertStatus(ctx context.Context, fqdn string) string {
@@ -372,18 +385,37 @@ func (s *WizardService) buildTelegramPlan(desired DesiredWizardConfig, fp string
 	var items []PlanItem
 
 	if desired.Scenario == "direct_fake_tls" || desired.Scenario == "dual" {
-		items = append(items, PlanItem{
-			Action:      "enable",
-			Target:      "telemt",
-			Description: fmt.Sprintf("MTProto Fake-TLS direct прокси на порту %d", directPort),
-			NewValue:    fmt.Sprintf(":%d", directPort),
-		})
+		items = append(items,
+			PlanItem{
+				Action:      "enable",
+				Target:      "telemt",
+				Description: fmt.Sprintf("MTProto Fake-TLS direct прокси на порту %d", directPort),
+				NewValue:    fmt.Sprintf(":%d", directPort),
+			},
+		)
 		if desired.DirectHost != "" {
+			items = append(items, PlanItem{
+				Action:      "enable",
+				Target:      "wan_firewall",
+				Description: fmt.Sprintf("Автоматическое открытие TCP-порта %d в WAN-фаерволе Keenetic для MTProto", directPort),
+				NewValue:    fmt.Sprintf("tcp/%d", directPort),
+			})
 			items = append(items, PlanItem{
 				Action:      "modify",
 				Target:      "direct_host",
 				Description: fmt.Sprintf("Прямой хост подключения: %s", desired.DirectHost),
 				NewValue:    desired.DirectHost,
+			})
+		}
+	}
+
+	if desired.Scenario == "cdn_http" && s.tg != nil {
+		if cur := s.tg.GetConfig(); cur.OpensDirectWAN() {
+			items = append(items, PlanItem{
+				Action:      "disable",
+				Target:      "wan_firewall",
+				Description: fmt.Sprintf("Закрытие TCP-порта %d MTProto в WAN-фаерволе Keenetic", cur.DirectPort),
+				OldValue:    fmt.Sprintf("tcp/%d", cur.DirectPort),
 			})
 		}
 	}
@@ -420,7 +452,7 @@ func (s *WizardService) buildTelegramPlan(desired DesiredWizardConfig, fp string
 		NewValue:    upstream,
 	})
 
-	if desired.KeenDNSLabel != "" {
+	if desired.KeenDNSLabel != "" && (desired.Scenario == "cdn_http" || desired.Scenario == "dual") {
 		items = append(items, s.buildKeenDNSPlanItem(context.Background(), desired.KeenDNSLabel, dispPort))
 	}
 
@@ -433,8 +465,16 @@ func (s *WizardService) buildTelegramPlan(desired DesiredWizardConfig, fp string
 		})
 	}
 
+	summary := "Настройка сервера Telegram (MTProto Fake-TLS + Web CDN)"
+	switch desired.Scenario {
+	case "direct_fake_tls":
+		summary = "Настройка прокси Telegram (MTProto Fake-TLS)"
+	case "cdn_http":
+		summary = "Настройка сервера Telegram Web Proxy (Web CDN)"
+	}
+
 	return ChangePlan{
-		Summary:          "Настройка сервера Telegram Web Proxy (MTProto Fake-TLS + Web CDN)",
+		Summary:          summary,
 		Items:            items,
 		RestartRequired:  true,
 		StateFingerprint: fp,
@@ -879,9 +919,12 @@ func (s *WizardService) executeApplyJob(ctx context.Context, jobID string, rec *
 		if tgListenPort <= 0 {
 			tgListenPort = 8085
 		}
-		tgPublicHost := rec.Desired.TgPublicHostname
-		if tgPublicHost == "" {
-			tgPublicHost = rec.Desired.PublicHostname
+		tgPublicHost := ""
+		if rec.Desired.Scenario != "direct_fake_tls" {
+			tgPublicHost = rec.Desired.TgPublicHostname
+			if tgPublicHost == "" {
+				tgPublicHost = rec.Desired.PublicHostname
+			}
 		}
 		tgCfg := tgwebproxy.Config{
 			Enabled:        true,
@@ -959,15 +1002,23 @@ func (s *WizardService) executeApplyJob(ctx context.Context, jobID string, rec *
 		case "xray":
 			services = []string{"xray"}
 		case "tgwebproxy":
-			services = []string{"tgwebproxy"}
+			if rec.Desired.Scenario != "direct_fake_tls" {
+				services = []string{"tgwebproxy"}
+			}
 		case "both":
-			services = []string{"xray", "tgwebproxy"}
+			if rec.Desired.Scenario != "direct_fake_tls" {
+				services = []string{"xray", "tgwebproxy"}
+			} else {
+				services = []string{"xray"}
+			}
 		}
-		txParams.KeenDNS = &serveringress.KeenDNSPublicationCandidate{
-			Label:        rec.Desired.KeenDNSLabel,
-			UpstreamHost: "127.0.0.1",
-			UpstreamPort: dispPort,
-			Services:     services,
+		if len(services) > 0 {
+			txParams.KeenDNS = &serveringress.KeenDNSPublicationCandidate{
+				Label:        rec.Desired.KeenDNSLabel,
+				UpstreamHost: "127.0.0.1",
+				UpstreamPort: dispPort,
+				Services:     services,
+			}
 		}
 	}
 

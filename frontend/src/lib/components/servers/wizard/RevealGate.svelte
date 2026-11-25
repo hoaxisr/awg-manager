@@ -23,7 +23,7 @@
 		</p>
 	</div>
 	<Button variant="primary" onclick={onreveal} disabled={loading}>
-		<Eye size={16} class="mr-2" />
+		<Eye size={16} />
 		{loading ? m.servers_wizard_result_revealing() : m.servers_wizard_result_reveal()}
 	</Button>
 </div>

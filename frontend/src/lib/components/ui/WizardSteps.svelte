@@ -89,7 +89,7 @@
 	.steps {
 		display: flex;
 		align-items: center;
-		gap: 0.25rem;
+		gap: 0.2rem;
 		list-style: none;
 		margin: 0 0 1rem;
 		padding: 0;
@@ -99,14 +99,14 @@
 	.step-btn {
 		display: flex;
 		align-items: center;
-		gap: 0.4rem;
-		padding: 0.375rem 0.625rem;
+		gap: 0.35rem;
+		padding: 0.35rem 0.5rem;
 		background: none;
 		border: none;
 		border-radius: 999px;
 		cursor: pointer;
 		color: var(--color-text-muted);
-		font-size: 0.8125rem;
+		font-size: 0.8rem;
 	}
 
 	.step-btn:disabled {
@@ -158,5 +158,17 @@
 		padding-top: 1rem;
 		border-top: 1px solid var(--color-border);
 		flex-wrap: wrap;
+	}
+
+	@media (max-width: 640px) {
+		.steps {
+			gap: 0.2rem;
+			margin-bottom: 0.75rem;
+		}
+		.step-btn {
+			padding: 0.25rem 0.45rem;
+			font-size: 0.75rem;
+			gap: 0.3rem;
+		}
 	}
 </style>

@@ -532,6 +532,7 @@ export class ServersClient extends SystemClient {
 		reality: XrayRealityUpdate,
 		options?: {
 			preserve_existing_clients?: boolean;
+			disable_other_service?: boolean;
 			outbound_mode?: string;
 			outbound_interface?: string;
 		}

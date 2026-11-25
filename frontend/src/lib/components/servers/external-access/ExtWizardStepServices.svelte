@@ -3,22 +3,28 @@
 	import { m } from '$lib/i18n';
 	import type { WizardKind } from '$lib/types/serverWizard';
 	import type { ExternalAccessWizardDraft } from './externalAccessModel';
-	import { Shield, Send, Layers, AlertTriangle } from 'lucide-svelte';
+	import { Shield, Send, Layers, AlertTriangle, RefreshCw } from 'lucide-svelte';
 
 	interface Props {
 		draft: ExternalAccessWizardDraft;
 		wantTg: boolean;
+		initializing?: boolean;
+		grayIPDetected?: boolean;
 		otherServiceCurrentlyEnabled: boolean;
 		otherServiceLabel: string;
 		onselectkind: (kind: WizardKind) => void;
+		onselectscenario: (scenario: string) => void;
 	}
 
 	let {
 		draft = $bindable(),
 		wantTg,
+		initializing = false,
+		grayIPDetected = false,
 		otherServiceCurrentlyEnabled,
 		otherServiceLabel,
 		onselectkind,
+		onselectscenario,
 	}: Props = $props();
 </script>
 
@@ -27,12 +33,19 @@
 	<p class="step-desc">
 		{m.servers_ext_wiz_s1_desc()}
 	</p>
+	{#if initializing}
+		<div class="init-loading-note">
+			<RefreshCw size={13} class="spin" />
+			<span>{m.servers_ext_wiz_s1_loading()}</span>
+		</div>
+	{/if}
 
 	<div class="cards-grid">
 		<button
 			type="button"
 			class="choice-card"
 			class:selected={draft.selectedKind === 'xray'}
+			disabled={initializing}
 			onclick={() => onselectkind('xray')}
 		>
 			<div class="choice-top">
@@ -51,6 +64,7 @@
 			type="button"
 			class="choice-card"
 			class:selected={draft.selectedKind === 'tgwebproxy'}
+			disabled={initializing}
 			onclick={() => onselectkind('tgwebproxy')}
 		>
 			<div class="choice-top">
@@ -69,6 +83,7 @@
 			type="button"
 			class="choice-card"
 			class:selected={draft.selectedKind === 'both'}
+			disabled={initializing}
 			onclick={() => onselectkind('both')}
 		>
 			<div class="choice-top">
@@ -110,11 +125,15 @@
 				type="button"
 				class="choice-card compact"
 				class:selected={draft.tgScenario === 'direct_fake_tls'}
-				onclick={() => (draft.tgScenario = 'direct_fake_tls')}
+				disabled={initializing}
+				onclick={() => onselectscenario('direct_fake_tls')}
 			>
-				<div class="choice-top">
-					<span class="choice-title">{m.servers_ext_wiz_s1_tg_direct_title()}</span>
+				<div class="choice-title">{m.servers_ext_wiz_s1_tg_direct_title()}</div>
+				<div class="badges-row">
 					<span class="tech-sub-badge">MTProto / Fake-TLS</span>
+					{#if grayIPDetected}
+						<span class="tech-sub-badge badge-warn">{m.servers_ext_wiz_s1_white_ip_badge()}</span>
+					{/if}
 				</div>
 				<div class="choice-text">
 					{m.servers_ext_wiz_s1_tg_direct_text()}
@@ -125,11 +144,15 @@
 				type="button"
 				class="choice-card compact"
 				class:selected={draft.tgScenario === 'cdn_http'}
-				onclick={() => (draft.tgScenario = 'cdn_http')}
+				disabled={initializing}
+				onclick={() => onselectscenario('cdn_http')}
 			>
-				<div class="choice-top">
-					<span class="choice-title">{m.servers_ext_wiz_s1_tg_domain_title()}</span>
+				<div class="choice-title">{m.servers_ext_wiz_s1_tg_domain_title()}</div>
+				<div class="badges-row">
 					<span class="tech-sub-badge">{m.servers_ext_wiz_s1_tg_domain_badge()}</span>
+					{#if grayIPDetected}
+						<span class="current-pill">{m.servers_ext_wiz_recommended()}</span>
+					{/if}
 				</div>
 				<div class="choice-text">
 					{m.servers_ext_wiz_s1_tg_domain_text()}
@@ -140,11 +163,15 @@
 				type="button"
 				class="choice-card compact"
 				class:selected={draft.tgScenario === 'dual'}
-				onclick={() => (draft.tgScenario = 'dual')}
+				disabled={initializing}
+				onclick={() => onselectscenario('dual')}
 			>
-				<div class="choice-top">
-					<span class="choice-title">{m.servers_ext_wiz_s1_tg_dual_title()}</span>
+				<div class="choice-title">{m.servers_ext_wiz_s1_tg_dual_title()}</div>
+				<div class="badges-row">
 					<span class="tech-sub-badge">{m.servers_ext_wiz_s1_tg_dual_badge()}</span>
+					{#if grayIPDetected}
+						<span class="tech-sub-badge badge-warn">{m.servers_ext_wiz_s1_white_ip_badge()}</span>
+					{/if}
 				</div>
 				<div class="choice-text">
 					{m.servers_ext_wiz_s1_tg_dual_text()}
@@ -155,6 +182,34 @@
 </div>
 
 <style>
+	.badges-row {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+		flex-wrap: wrap;
+	}
+
+	.init-loading-note {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 12px;
+		color: var(--color-text-muted);
+	}
+
+	.init-loading-note :global(.spin) {
+		animation: ext-wiz-spin 1s linear infinite;
+	}
+
+	@keyframes ext-wiz-spin {
+		from {
+			transform: rotate(0deg);
+		}
+		to {
+			transform: rotate(360deg);
+		}
+	}
+
 	.other-service-warning {
 		display: flex;
 		align-items: flex-start;
@@ -169,6 +224,8 @@
 		display: flex;
 		flex-direction: column;
 		gap: 6px;
+		min-width: 0;
+		flex: 1;
 	}
 
 	.other-service-title {

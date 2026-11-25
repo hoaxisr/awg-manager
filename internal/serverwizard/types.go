@@ -38,16 +38,17 @@ var (
 type CheckStatus string
 
 const (
-	CheckStatusOK      CheckStatus = "ok"
-	CheckStatusWarning CheckStatus = "warning"
-	CheckStatusBlocked CheckStatus = "blocked"
+	CheckStatusOK            CheckStatus = "ok"
+	CheckStatusWarning       CheckStatus = "warning"
+	CheckStatusBlocked       CheckStatus = "blocked"
+	CheckStatusNotApplicable CheckStatus = "not_applicable"
 )
 
 // PreflightCheck represents a single health or validation check before configuration.
 type PreflightCheck struct {
 	ID          string      `json:"id"`
 	Title       string      `json:"title"`
-	Status      CheckStatus `json:"status"` // "ok", "warning", "blocked"
+	Status      CheckStatus `json:"status"` // "ok", "warning", "blocked", "not_applicable"
 	Message     string      `json:"message"`
 	Details     string      `json:"details,omitempty"`
 	Remediation string      `json:"remediation,omitempty"`
@@ -210,13 +211,14 @@ const (
 	VerifyCategoryAuth       VerificationErrorCategory = "auth"
 	VerifyCategoryEgress     VerificationErrorCategory = "egress"
 	VerifyCategoryTimeout    VerificationErrorCategory = "timeout"
+	VerifyCategoryFirewall   VerificationErrorCategory = "firewall"
 )
 
 type VerificationCheck struct {
 	ID            string                    `json:"id"`
 	Service       string                    `json:"service"` // "xray", "tg_mtproto", "tg_web", "dispatcher", "egress"
 	Title         string                    `json:"title"`
-	Status        CheckStatus               `json:"status"` // "ok", "warning", "blocked"
+	Status        CheckStatus               `json:"status"` // "ok", "warning", "blocked", "not_applicable"
 	Category      VerificationErrorCategory `json:"category,omitempty"`
 	Message       string                    `json:"message"`
 	Remediation   string                    `json:"remediation,omitempty"`

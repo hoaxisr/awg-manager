@@ -19,7 +19,16 @@
 	import {
 		createInitialWizardDraft,
 		buildPlanRequestFromDraft,
+		doesStep2RequireNATConfirm,
+		isCloudKeenDNSHost,
 		isDraftEgressValid,
+		isGrayIPNetwork,
+		isTgDirectOnlyDraft,
+		isValidMtprotoDirectPort,
+		pickDefaultKeenDNSActionMode,
+		pickDefaultMtprotoDirectHost,
+		resolveEffectiveMtprotoDirectHost,
+		shouldKeepExistingSchemeAfterStep1Change,
 		validateKeenDNSLabelClient,
 		type ExternalAccessInput,
 		type ExternalAccessWizardDraft,
@@ -58,7 +67,14 @@
 	];
 
 	let stepIndex = $state(0);
-	let loading = $state(false);
+	let initializing = $state(false);
+	let capsLoading = $state(false);
+	let planLoading = $state(false);
+	let loading = $derived(initializing || capsLoading || planLoading);
+	let initSeq = 0;
+	let capsSeq = 0;
+	let planSeq = 0;
+	let userTouchedTgScenario = false;
 	let showAdvancedAddresses = $state(false);
 	let showTechnicalPlan = $state(false);
 
@@ -74,12 +90,19 @@
 
 	let preflight = $state<PreflightResponse | null>(null);
 	let planRecord = $state<ServerPlanRecord | null>(null);
+	let planKey = $state('');
 	let jobStatus = $state<JobStatusResponse | null>(null);
 	let creds = $state<RevealCredentials | null>(null);
 	let revealLoading = $state(false);
 	let cancelling = $state(false);
 	let applyPhase = $state<'review' | 'applying' | 'done'>('review');
+	let jobStopped = $derived(
+		applyPhase === 'applying' &&
+			['failed', 'cancelled', 'recovery_required'].includes(jobStatus?.phase ?? '')
+	);
 	let stopJobPoll: (() => void) | null = null;
+	let initialEditWasTgDirectOnly = $state(false);
+	let initialEditWasRealityOnly = $state(false);
 
 	// Direct VLESS + REALITY entry (white-IP preset)
 	type WizardRealityMode = 'off' | 'also' | 'only';
@@ -109,6 +132,67 @@
 	);
 	let wantTgWeb = $derived(
 		wantTg && (draft.tgScenario === 'dual' || draft.tgScenario === 'cdn_http')
+	);
+	let isTgDirectOnly = $derived(isTgDirectOnlyDraft(draft));
+	let detectedMtprotoWhiteIP = $derived(
+		(realityState?.network?.white_ip
+			? realityState.network.external_ip || realityState.network.wan_address || ''
+			: '') ||
+			(keendnsInfo?.wan_ip && !keendnsInfo.wan_ip_private ? keendnsInfo.wan_ip : '')
+	);
+	let keenDNSBaseDomain = $derived(
+		(
+			realityState?.network?.keendns_domain ||
+			(keendnsInfo?.enabled ? keendnsInfo.domain : '') ||
+			''
+		).trim()
+	);
+	let keenDNSBaseIsDirect = $derived(
+		Boolean(
+			realityState?.network?.keendns_domain ||
+				(keendnsInfo?.enabled && keendnsInfo.mode === 'direct')
+		)
+	);
+	let detectedMtprotoDirectDomain = $derived(keenDNSBaseIsDirect ? keenDNSBaseDomain : '');
+	let grayIPDetected = $derived(
+		isGrayIPNetwork({
+			realityWhiteIP,
+			realityGrayIP: realityState?.network?.gray_ip,
+			wanIPPrivate: keendnsInfo?.wan_ip_private,
+			keendnsEnabled: keendnsInfo?.enabled,
+			keendnsMode: keendnsInfo?.mode,
+		})
+	);
+	let effectiveDirectHost = $derived(resolveEffectiveMtprotoDirectHost(draft));
+	let isDirectHostCloudKeenDNS = $derived(
+		isCloudKeenDNSHost(effectiveDirectHost, keenDNSBaseDomain, keenDNSBaseIsDirect)
+	);
+	let isDirectPortInvalid = $derived(wantTgDirect && !isValidMtprotoDirectPort(draft.directPort));
+	let isRealityPublicHostCloudKeenDNS = $derived(
+		usesReality &&
+			Boolean(realityPublicHost.trim()) &&
+			isCloudKeenDNSHost(realityPublicHost, keenDNSBaseDomain, keenDNSBaseIsDirect)
+	);
+	let realityPublicHostRequired = $derived(
+		usesReality && grayIPDetected && !realityWhiteIP && !realityPublicHost.trim()
+	);
+	let canReturnToSavedScheme = $derived(
+		draft.isEditMode &&
+			!(initialEditWasTgDirectOnly && !isTgDirectOnly) &&
+			!(initialEditWasRealityOnly && !isRealityOnly)
+	);
+	let step2NeedsNATConfirm = $derived(
+		doesStep2RequireNATConfirm({
+			isEditMode: draft.isEditMode,
+			keepExistingConnectionScheme: draft.keepExistingConnectionScheme,
+			isTgDirectOnly,
+			isRealityOnly,
+			wantXray,
+			realityMode,
+			originType: draft.originType,
+			grayIPDetected,
+			realityWhiteIP,
+		})
 	);
 
 	let otherServiceCurrentlyEnabled = $derived(
@@ -218,6 +302,13 @@
 		if (open) {
 			void initWizard(initialKind);
 		} else {
+			initSeq++;
+			capsSeq++;
+			planSeq++;
+			initializing = false;
+			capsLoading = false;
+			planLoading = false;
+			realityNetChecking = false;
 			stopPolling();
 		}
 	});
@@ -254,11 +345,16 @@
 	}
 
 	async function initWizard(preferredKind?: WizardKind) {
+		const seq = ++initSeq;
+		userTouchedTgScenario = false;
 		stepIndex = 0;
 		applyPhase = 'review';
 		showAdvancedAddresses = false;
 		showTechnicalPlan = false;
 		showRouterFacts = false;
+		caps = null;
+		keendnsInfo = null;
+		realityState = null;
 		preflight = null;
 		planRecord = null;
 		jobStatus = null;
@@ -267,19 +363,28 @@
 		realityResultError = null;
 		realityNetChecking = false;
 
-		loading = true;
+		initializing = true;
 		try {
 			const [input, rSt] = await Promise.all([
 				resolveCurrentInput(),
-				api.getXrayReality(true).catch(() => null),
+				api.getXrayReality(false).catch(() => null),
 			]);
-			const initial = createInitialWizardDraft(input, preferredKind);
+			if (seq !== initSeq || !open) return;
+
+			const draftInput: ExternalAccessInput = {
+				...input,
+				realityEnabled: Boolean(rSt?.settings?.enabled),
+				realityPort: rSt?.settings?.port,
+				realityPublicHost: rSt?.settings?.public_host,
+			};
+			const initial = createInitialWizardDraft(draftInput, preferredKind);
 			// Имя первого устройства — данные (уходят на сервер как remark и
 			// правятся в поле ввода), а не подпись: язык момента открытия верен.
 			draft =
 				initial.existingClientCount === 0 && !initial.isEditMode
 					? { ...initial, clientRemark: m.servers_ext_wiz_my_phone() }
 					: initial;
+			initialEditWasTgDirectOnly = draft.isEditMode && isTgDirectOnlyDraft(draft);
 			realityState = rSt;
 			const rEnabled = Boolean(rSt?.settings?.enabled);
 			realityInitiallyEnabled = rEnabled;
@@ -298,6 +403,9 @@
 				realityPublicHost = '';
 			}
 			const hasCdnDomain = Boolean((input.xrayConfig?.public_domain || '').trim());
+			initialEditWasRealityOnly = Boolean(
+				draft.isEditMode && draft.selectedKind === 'xray' && rEnabled && !hasCdnDomain
+			);
 			if (draft.selectedKind === 'xray' && rEnabled && !hasCdnDomain) {
 				realityMode = 'only';
 			} else if ((draft.selectedKind === 'xray' || draft.selectedKind === 'both') && rEnabled) {
@@ -305,9 +413,79 @@
 			} else {
 				realityMode = 'off';
 			}
-			await loadCapabilities(draft.selectedKind);
+			const loadedCaps = await loadCapabilities(draft.selectedKind, seq);
+			if (seq !== initSeq || !open) return;
+
+			if (!draft.isEditMode && !userTouchedTgScenario) {
+				const kd = loadedCaps?.keendns ?? null;
+				const grayNow = isGrayIPNetwork({
+					realityWhiteIP: rSt?.network?.white_ip,
+					realityGrayIP: rSt?.network?.gray_ip,
+					wanIPPrivate: kd?.wan_ip_private,
+					keendnsEnabled: kd?.enabled,
+					keendnsMode: kd?.mode,
+				});
+				const kdAvailable = Boolean(
+					kd && kd.enabled && kd.domain && kd.state !== 'unconfigured' && kd.state !== 'unsupported'
+				);
+				const kdHasCompatPubs = Boolean((kd?.publications ?? []).some((p) => p.compatible));
+				if (grayNow && (draft.selectedKind === 'tgwebproxy' || draft.selectedKind === 'both')) {
+					draft.tgScenario = 'cdn_http';
+					draft.originType = 'cloud_address';
+					if (kdAvailable) {
+						draft.connectionWay = 'direct';
+						setKeenDNSActionMode(
+							pickDefaultKeenDNSActionMode({
+								keendnsAvailable: kdAvailable,
+								hasCompatiblePublications: kdHasCompatPubs,
+							})
+						);
+					}
+				}
+			}
 		} finally {
-			loading = false;
+			if (seq === initSeq) {
+				initializing = false;
+			}
+		}
+		if (seq === initSeq && open && !realityState?.network) {
+			void refreshRealityNetworkInBackground(seq);
+		}
+	}
+
+	async function refreshRealityNetworkInBackground(seq: number) {
+		realityNetChecking = true;
+		try {
+			const fresh = await api.getXrayReality(true).catch(() => null);
+			if (seq !== initSeq || !open || !fresh) return;
+			realityState = fresh;
+			if (wantTgDirect) {
+				prefillMtprotoDirectHostIfEmpty();
+			}
+			if (
+				!draft.isEditMode &&
+				!userTouchedTgScenario &&
+				stepIndex === 0 &&
+				(draft.selectedKind === 'tgwebproxy' || draft.selectedKind === 'both') &&
+				draft.tgScenario === 'dual' &&
+				fresh.network?.gray_ip
+			) {
+				draft.tgScenario = 'cdn_http';
+				draft.originType = 'cloud_address';
+				if (keendnsAvailable) {
+					draft.connectionWay = 'direct';
+					setKeenDNSActionMode(
+						pickDefaultKeenDNSActionMode({
+							keendnsAvailable,
+							hasCompatiblePublications: compatibleKeenDNSPublications.length > 0,
+						})
+					);
+				}
+			}
+		} finally {
+			if (seq === initSeq) {
+				realityNetChecking = false;
+			}
 		}
 	}
 
@@ -315,6 +493,9 @@
 		realityNetChecking = true;
 		try {
 			realityState = await api.getXrayReality(true);
+			if (wantTgDirect) {
+				prefillMtprotoDirectHostIfEmpty();
+			}
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : m.servers_ext_wiz_err_wan_check());
 		} finally {
@@ -322,20 +503,35 @@
 		}
 	}
 
-	async function loadCapabilities(kind: WizardKind) {
-		loading = true;
+	async function loadCapabilities(
+		kind: WizardKind,
+		expectedInitSeq?: number
+	): Promise<CapabilitiesResponse | null> {
+		const reqSeq = ++capsSeq;
+		capsLoading = true;
 		try {
 			const res = await api.getWizardCapabilities(kind);
+			if (reqSeq !== capsSeq) return null;
+			if (expectedInitSeq !== undefined && (expectedInitSeq !== initSeq || !open)) return null;
 			caps = res;
 			if (res.keendns) {
 				keendnsInfo = res.keendns;
 			}
+			if (wantTgDirect) {
+				prefillMtprotoDirectHostIfEmpty();
+			}
+			return res;
 		} catch (e) {
-			notifications.error(
-				e instanceof Error ? e.message : m.servers_ext_wiz_err_caps()
-			);
+			if (reqSeq === capsSeq) {
+				notifications.error(
+					e instanceof Error ? e.message : m.servers_ext_wiz_err_caps()
+				);
+			}
+			return null;
 		} finally {
-			loading = false;
+			if (reqSeq === capsSeq) {
+				capsLoading = false;
+			}
 		}
 	}
 
@@ -344,6 +540,12 @@
 		showRouterFacts = true;
 		try {
 			keendnsInfo = await api.getWizardKeenDNS(draft.selectedKind);
+			if (!draft.isEditMode && keendnsInfo?.wan_ip_private) {
+				draft.originType = 'cloud_address';
+			}
+			if (wantTgDirect) {
+				prefillMtprotoDirectHostIfEmpty();
+			}
 		} catch (e) {
 			notifications.error(
 				e instanceof Error ? e.message : m.servers_ext_wiz_err_keendns()
@@ -353,15 +555,103 @@
 		}
 	}
 
+	function prefillMtprotoDirectHostIfEmpty() {
+		if (draft.directHost.trim()) return;
+		const suggested = pickDefaultMtprotoDirectHost({
+			directDomain: detectedMtprotoDirectDomain,
+			whiteIP: detectedMtprotoWhiteIP,
+		});
+		if (suggested) {
+			draft.directHost = suggested;
+		}
+	}
+
 	function selectServiceKind(kind: WizardKind) {
+		if (initializing) return;
 		draft.selectedKind = kind;
 		draft.disableOtherService = false;
+		draft.confirmDirectBehindNAT = false;
 		if (kind === 'tgwebproxy') {
 			realityMode = 'off';
+			if (draft.tgScenario === 'direct_fake_tls') {
+				draft.keendnsMode = 'manual';
+				draft.connectionWay = 'direct';
+				draft.originType = 'public_address';
+			}
 		} else if (kind === 'both' && realityMode === 'only') {
 			realityMode = 'also';
 		}
+		draft.keepExistingConnectionScheme = shouldKeepExistingSchemeAfterStep1Change(
+			initialEditWasTgDirectOnly,
+			draft
+		);
+		if (
+			(kind === 'tgwebproxy' || kind === 'both') &&
+			(draft.tgScenario === 'dual' || draft.tgScenario === 'direct_fake_tls')
+		) {
+			prefillMtprotoDirectHostIfEmpty();
+		}
 		void loadCapabilities(kind);
+	}
+
+	function selectTgScenario(scenario: string) {
+		if (initializing) return;
+		userTouchedTgScenario = true;
+		draft.tgScenario = scenario;
+		draft.confirmDirectBehindNAT = false;
+		if (draft.selectedKind === 'tgwebproxy' && scenario === 'direct_fake_tls') {
+			draft.keendnsMode = 'manual';
+			draft.connectionWay = 'direct';
+			draft.originType = 'public_address';
+		}
+		draft.keepExistingConnectionScheme = shouldKeepExistingSchemeAfterStep1Change(
+			initialEditWasTgDirectOnly,
+			draft
+		);
+		if (scenario === 'dual' || scenario === 'direct_fake_tls') {
+			prefillMtprotoDirectHostIfEmpty();
+		}
+	}
+
+	function switchToWebBridgeFromCGNAT() {
+		userTouchedTgScenario = true;
+		draft.tgScenario = 'cdn_http';
+		draft.keepExistingConnectionScheme = false;
+		draft.confirmDirectBehindNAT = false;
+		draft.originType = 'cloud_address';
+		draft.connectionWay = 'direct';
+		draft.directHost = '';
+		setKeenDNSActionMode(
+			pickDefaultKeenDNSActionMode({
+				keendnsAvailable,
+				hasCompatiblePublications: compatibleKeenDNSPublications.length > 0,
+			})
+		);
+	}
+
+	function switchToWebBridgeOnly() {
+		userTouchedTgScenario = true;
+		draft.tgScenario = 'cdn_http';
+		draft.confirmDirectBehindNAT = false;
+		draft.directHost = '';
+	}
+
+	function switchToVlessDomain() {
+		realityMode = 'off';
+		draft.confirmDirectBehindNAT = false;
+		draft.keepExistingConnectionScheme = false;
+		if (keendnsAvailable) {
+			draft.connectionWay = 'direct';
+			draft.originType = 'cloud_address';
+			setKeenDNSActionMode(
+				pickDefaultKeenDNSActionMode({
+					keendnsAvailable,
+					hasCompatiblePublications: compatibleKeenDNSPublications.length > 0,
+				})
+			);
+		} else {
+			draft.connectionWay = 'external_https';
+		}
 	}
 
 	function setKeenDNSActionMode(mode: 'manual' | 'existing' | 'create') {
@@ -451,26 +741,57 @@
 	}
 
 	function buildRequest(): WizardPlanRequest {
-		if (draft.keendnsMode === 'create' && keendnsAvailable) {
+		if (!isTgDirectOnly && draft.keendnsMode === 'create' && keendnsAvailable) {
 			syncKeenDNSToAddresses();
 		}
 		return buildPlanRequestFromDraft(draft);
 	}
+
+	// Имя устройства правится на последнем шаге, план под него обновляет startApply.
+	function requestKey(req: WizardPlanRequest): string {
+		return JSON.stringify({ ...req, client_remark: undefined });
+	}
+
+	let planCurrent = $derived(
+		Boolean(planRecord) && planKey === requestKey(buildPlanRequestFromDraft(draft))
+	);
+
+	// Черновик изменился под готовым планом (фоновая проверка сети) — план заново.
+	$effect(() => {
+		if (open && stepIndex === 4 && applyPhase === 'review' && planRecord && !planCurrent) {
+			untrack(() => void prepareStep5Plan());
+		}
+	});
 
 	let realityStep2Valid = $derived(
 		!usesReality ||
 			(Number.isInteger(Number(realityPort)) &&
 				Number(realityPort) >= 1024 &&
 				Number(realityPort) <= 65535 &&
-				Boolean(realityDest.trim()))
+				Boolean(realityDest.trim()) &&
+				!isRealityPublicHostCloudKeenDNS &&
+				!realityPublicHostRequired)
 	);
 
 	let canProceedStep = $derived.by(() => {
 		if (stepIndex === 0) return true;
-		if (stepIndex === 1) return true;
+		if (stepIndex === 1) {
+			if (step2NeedsNATConfirm && !draft.confirmDirectBehindNAT) {
+				return false;
+			}
+			return true;
+		}
 		if (stepIndex === 2) {
 			if (isRealityOnly) {
 				return realityStep2Valid;
+			}
+			if (isTgDirectOnly) {
+				if (isDirectHostCloudKeenDNS) return false;
+				return Boolean(
+					draft.directHost.trim() &&
+						effectiveTlsDomain &&
+						isValidMtprotoDirectPort(draft.directPort)
+				);
 			}
 			if (draft.keendnsMode === 'create') {
 				if (!keendnsAvailable || !keendnsValidation.valid || Boolean(keendnsLabelConflict)) {
@@ -492,11 +813,20 @@
 				return false;
 			}
 			if (wantTgDirect) {
-				const dHost =
-					draft.directHost.trim() ||
-					draft.originHost.trim() ||
-					effectivePhoneDomain;
-				if (!dHost || !effectiveTlsDomain) return false;
+				const dHost = resolveEffectiveMtprotoDirectHost({
+					...draft,
+					publicDomain: effectivePhoneDomain,
+				});
+				if (isCloudKeenDNSHost(dHost, keenDNSBaseDomain, keenDNSBaseIsDirect)) {
+					return false;
+				}
+				if (
+					!dHost ||
+					!effectiveTlsDomain ||
+					!isValidMtprotoDirectPort(draft.directPort)
+				) {
+					return false;
+				}
 			}
 			return realityStep2Valid;
 		}
@@ -515,27 +845,54 @@
 		return false;
 	});
 
-	async function prepareStep5Plan() {
-		loading = true;
+	/** Проверка и план под текущий черновик. Прежние сбрасываются сразу: сбой не оставляет устаревший план. */
+	async function prepareStep5Plan(): Promise<boolean> {
+		const seq = ++planSeq; // закрытие мастера и новый запуск отменяют прежний
+		planLoading = true;
+		preflight = null;
+		planRecord = null;
 		try {
 			const req = buildRequest();
-			const pre = await api.runWizardPreflight(draft.selectedKind, req);
+			const kind = draft.selectedKind;
+			const pre = await api.runWizardPreflight(kind, req);
+			if (seq !== planSeq) return false;
 			preflight = pre;
 			if (pre.can_proceed) {
-				planRecord = await api.createWizardPlan(draft.selectedKind, req);
-			} else {
-				planRecord = null;
+				const plan = await api.createWizardPlan(kind, req);
+				if (seq !== planSeq) return false;
+				planRecord = plan;
+				planKey = requestKey(req);
 			}
+			return true;
 		} catch (e) {
+			if (seq !== planSeq) return false;
 			notifications.error(
 				e instanceof Error ? e.message : m.servers_ext_wiz_err_plan()
 			);
+			return false;
 		} finally {
-			loading = false;
+			if (seq === planSeq) planLoading = false;
 		}
 	}
 
 	async function handleNext() {
+		if (stepIndex === 1 && !isTgDirectOnly && !isRealityOnly) {
+			if (
+				draft.connectionWay === 'direct' &&
+				draft.keendnsMode === 'manual' &&
+				!draft.publicDomain.trim() &&
+				keendnsAvailable
+			) {
+				setKeenDNSActionMode(
+					pickDefaultKeenDNSActionMode({
+						keendnsAvailable,
+						hasCompatiblePublications: compatibleKeenDNSPublications.length > 0,
+					})
+				);
+			}
+			stepIndex += 1;
+			return;
+		}
 		if (stepIndex < 3) {
 			stepIndex += 1;
 			return;
@@ -547,9 +904,7 @@
 				}
 				return;
 			}
-			if (!isRealityOnly) {
-				await prepareStep5Plan();
-			}
+			if (!isRealityOnly && !(await prepareStep5Plan())) return;
 			applyPhase = 'review';
 			stepIndex = 4;
 			return;
@@ -587,7 +942,7 @@
 
 	async function startApply() {
 		if (isRealityOnly) {
-			loading = true;
+			planLoading = true;
 			realityResultLink = '';
 			realityResultError = null;
 			try {
@@ -597,6 +952,9 @@
 					buildRealityPayload(),
 					{
 						preserve_existing_clients: draft.existingClientCount > 0,
+						disable_other_service: draft.tgInitiallyEnabled
+							? draft.disableOtherService
+							: false,
 						...egress,
 					}
 				);
@@ -609,12 +967,12 @@
 			} catch (e) {
 				notifications.error(e instanceof Error ? e.message : m.servers_ext_wiz_err_reality_setup());
 			} finally {
-				loading = false;
+				planLoading = false;
 			}
 			return;
 		}
 		if (!planRecord) return;
-		loading = true;
+		planLoading = true;
 		try {
 			// If first client remark was edited in Step 5, refresh plan before apply
 			let activePlanId = planRecord.plan_id;
@@ -640,7 +998,7 @@
 				e instanceof Error ? e.message : m.servers_ext_wiz_err_apply_start()
 			);
 		} finally {
-			loading = false;
+			planLoading = false;
 		}
 	}
 
@@ -665,6 +1023,15 @@
 		} catch {
 			// ignore transient poll error
 		}
+	}
+
+	/** Назад к проверке после остановленного применения: план уже использован, нужен новый. */
+	function backToReview() {
+		applyPhase = 'review';
+		jobStatus = null;
+		planRecord = null;
+		preflight = null;
+		void prepareStep5Plan();
 	}
 
 	async function handleCancelJob() {
@@ -736,7 +1103,7 @@
 	{open}
 	title={draft.isEditMode ? m.servers_ext_wiz_title_edit() : m.servers_ext_wiz_title_new()}
 	{onclose}
-	size="xl"
+	width="820px"
 >
 	<div class="ext-wizard">
 		<p class="wizard-subtitle">{m.servers_ext_wiz_subtitle()}</p>
@@ -747,22 +1114,34 @@
 			canBack={applyPhase === 'review'}
 			busy={loading}
 			ongo={go}
-			finish={applyPhase === 'review' ? applyAction : undefined}
+			finish={applyPhase === 'review'
+				? applyAction
+				: applyPhase === 'done'
+					? doneAction
+					: jobStopped
+						? stoppedAction
+						: undefined}
 		>
 			{#if stepIndex === 0}
 				<ExtWizardStepServices
 					bind:draft
 					{wantTg}
+					{initializing}
+					{grayIPDetected}
 					{otherServiceCurrentlyEnabled}
 					{otherServiceLabel}
 					onselectkind={selectServiceKind}
+					onselectscenario={selectTgScenario}
 				/>
 			{:else if stepIndex === 1}
 				<ExtWizardStepConnection
 					bind:draft
 					bind:realityMode
 					{isRealityOnly}
+					{isTgDirectOnly}
 					{wantXray}
+					{wantTgDirect}
+					{grayIPDetected}
 					{realityPort}
 					{realityState}
 					{realityWhiteIP}
@@ -770,17 +1149,32 @@
 					{checkingFacts}
 					{showRouterFacts}
 					{keendnsInfo}
+					{canReturnToSavedScheme}
 					oncheckreality={() => void checkRealityNetwork()}
 					oncheckfacts={() => void checkRouterFacts()}
+					onswitchtowebbridge={switchToWebBridgeFromCGNAT}
+					onswitchtowebonly={switchToWebBridgeOnly}
+					onswitchtovlessdomain={switchToVlessDomain}
 				/>
 			{:else if stepIndex === 2}
 				<ExtWizardStepAddresses
 					bind:draft
 					{isRealityOnly}
+					{isTgDirectOnly}
 					{usesReality}
 					{wantXray}
 					{wantTgWeb}
 					{wantTgDirect}
+					{grayIPDetected}
+					{effectiveDirectHost}
+					{isDirectHostCloudKeenDNS}
+					{isDirectPortInvalid}
+					{isRealityPublicHostCloudKeenDNS}
+					{realityPublicHostRequired}
+					{detectedMtprotoWhiteIP}
+					{keenDNSBaseDomain}
+					{keenDNSBaseIsDirect}
+					{detectedMtprotoDirectDomain}
 					{keendnsInfo}
 					{keendnsAvailable}
 					{keendnsValidation}
@@ -797,6 +1191,9 @@
 					onsetkeendnsmode={setKeenDNSActionMode}
 					onapplypublication={applyExistingPublication}
 					onsynckeendns={syncKeenDNSToAddresses}
+					onswitchtowebbridge={switchToWebBridgeFromCGNAT}
+					onswitchtowebonly={switchToWebBridgeOnly}
+					onswitchtovlessdomain={switchToVlessDomain}
 				/>
 			{:else if stepIndex === 3}
 				<ExtWizardStepEgress
@@ -821,9 +1218,14 @@
 					bind:draft
 					{applyPhase}
 					{isRealityOnly}
+					{isTgDirectOnly}
+					{grayIPDetected}
 					{usesReality}
 					{wantXray}
 					{wantTg}
+					{wantTgDirect}
+					{effectiveDirectHost}
+					{effectiveTlsDomain}
 					{keendnsAvailable}
 					{previewKeenDNSFqdn}
 					{realityState}
@@ -857,12 +1259,34 @@
 	</Button>
 {/snippet}
 
+{#snippet stoppedAction()}
+	<Button variant="ghost" onclick={backToReview}>{m.servers_ext_wiz_back_to_review()}</Button>
+	<Button variant="primary" onclick={onclose}>{m.common_close()}</Button>
+{/snippet}
+
+{#snippet doneAction()}
+	<Button variant="primary" onclick={onclose}>
+		{m.common_close()}
+	</Button>
+{/snippet}
+
 <style>
 	.wizard-subtitle {
 		font-size: 0.75rem;
 		color: var(--color-text-muted);
 		margin: 0 0 0.75rem;
 		line-height: 1.4;
+	}
+
+	/* Подвал не уходит ниже сгиба: прокручивается содержимое шага. Отступ
+	   закрывает нижний padding тела модалки, иначе под подвалом видна прокрутка. */
+	.ext-wizard :global(> .foot) {
+		position: sticky;
+		bottom: -1rem;
+		z-index: 1;
+		margin-bottom: -1rem;
+		padding-bottom: 1rem;
+		background: var(--color-bg-secondary);
 	}
 
 	:where(.ext-wizard) :global(.step-section) {
@@ -887,8 +1311,12 @@
 
 	:where(.ext-wizard) :global(.cards-grid) {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+		grid-template-columns: repeat(auto-fit, minmax(195px, 1fr));
 		gap: 10px;
+	}
+
+	:where(.ext-wizard) :global(.cards-grid.cols-2) {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
 	}
 
 	:where(.ext-wizard) :global(.choice-card) {
@@ -926,7 +1354,7 @@
 		color: var(--color-warning);
 	}
 
-	:where(.ext-wizard) :global(.choice-card:hover) {
+	:where(.ext-wizard) :global(.choice-card:hover:not(:disabled)) {
 		border-color: var(--color-accent);
 	}
 
@@ -1015,17 +1443,21 @@
 		display: flex;
 		flex-direction: column;
 		gap: 6px;
+		min-width: 0;
 	}
 
 	:where(.ext-wizard) :global(.field-label) {
 		font-size: 12.5px;
 		font-weight: 500;
 		color: var(--color-text-primary);
+		margin-bottom: 0;
+		line-height: 1.35;
 	}
 
 	:where(.ext-wizard) :global(.field-hint) {
 		font-size: 11px;
 		color: var(--color-text-muted);
+		line-height: 1.4;
 	}
 
 	:where(.ext-wizard) :global(.text-input),
@@ -1044,10 +1476,19 @@
 
 	:where(.ext-wizard) :global(.checkbox-row) {
 		display: flex;
-		align-items: center;
+		align-items: flex-start;
 		gap: 8px;
 		font-size: 12px;
+		line-height: 1.4;
+		margin-bottom: 0;
 		color: var(--color-text-secondary);
+		cursor: pointer;
+	}
+
+	:where(.ext-wizard) :global(.checkbox-row input[type='checkbox']) {
+		margin-top: 2px;
+		flex-shrink: 0;
+		accent-color: var(--color-accent);
 		cursor: pointer;
 	}
 
@@ -1076,10 +1517,6 @@
 		gap: 10px;
 	}
 
-	:where(.ext-wizard) :global(.step-section .mr-1) {
-		margin-right: 4px;
-	}
-
 	:where(.ext-wizard) :global(.badge-ok) {
 		background: var(--color-success-tint);
 		color: var(--color-success);
@@ -1096,6 +1533,7 @@
 
 	@media (max-width: 640px) {
 		:where(.ext-wizard) :global(.cards-grid),
+		:where(.ext-wizard) :global(.cards-grid.cols-2),
 		:where(.ext-wizard) :global(.form-grid-2),
 		:where(.ext-wizard) :global(.form-grid-3) {
 			grid-template-columns: 1fr;

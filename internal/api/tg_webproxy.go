@@ -200,13 +200,21 @@ func (h *TgWebProxyHandler) UpdateConfig(w http.ResponseWriter, r *http.Request)
 		WriteError(w, http.StatusForbidden, "CSRF_INVALID: missing or invalid csrf token")
 		return
 	}
-	var cfg tgwebproxy.Config
-	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+	var body struct {
+		tgwebproxy.Config
+		DirectHost *string `json:"direct_host"` // nil — не прислали, пустая строка снимает адрес
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		WriteError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
+	update := h.svc.UpdateConfig
+	if body.DirectHost != nil {
+		body.Config.DirectHost = *body.DirectHost
+		update = h.svc.UpdateConfigWithDirectHost
+	}
 	if err := h.withIngressLock("update-config", func() error {
-		return h.svc.UpdateConfig(cfg)
+		return update(body.Config)
 	}); err != nil {
 		if errors.Is(err, tgwebproxy.ErrRecoveryRequired) || errors.Is(err, serveringress.ErrRecoveryRequired) {
 			WriteError(w, http.StatusServiceUnavailable, err.Error())
@@ -216,7 +224,7 @@ func (h *TgWebProxyHandler) UpdateConfig(w http.ResponseWriter, r *http.Request)
 			WriteError(w, http.StatusConflict, "operation in progress")
 			return
 		}
-		if errors.Is(err, tgwebproxy.ErrInvalidUpstream) {
+		if errors.Is(err, tgwebproxy.ErrInvalidUpstream) || errors.Is(err, tgwebproxy.ErrInvalidDirectPort) {
 			WriteError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -412,8 +420,12 @@ func (h *TgWebProxyHandler) Action(w http.ResponseWriter, r *http.Request) {
 			WriteError(w, http.StatusConflict, "operation in progress")
 			return
 		}
-		if errors.Is(err, tgwebproxy.ErrInvalidSecret) || errors.Is(err, tgwebproxy.ErrDuplicateSecret) || errors.Is(err, tgwebproxy.ErrInvalidUpstream) {
+		if errors.Is(err, tgwebproxy.ErrInvalidSecret) || errors.Is(err, tgwebproxy.ErrDuplicateSecret) || errors.Is(err, tgwebproxy.ErrInvalidUpstream) || errors.Is(err, tgwebproxy.ErrInvalidDirectPort) {
 			WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if errors.Is(err, tgwebproxy.ErrUserNotFound) {
+			WriteError(w, http.StatusNotFound, err.Error())
 			return
 		}
 		WriteError(w, http.StatusInternalServerError, err.Error())

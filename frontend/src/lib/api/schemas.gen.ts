@@ -3438,6 +3438,7 @@ const vlessserver_EndpointConfig: v.GenericSchema = v.looseObject({
 const vlessserver_RealityNetworkInfo: v.GenericSchema = v.looseObject({
 	checked_at: v.optional(v.nullable(v.string())),
 	external_ip: v.optional(v.nullable(v.string())),
+	gray_ip: v.optional(v.nullable(v.boolean())),
 	keendns_domain: v.optional(v.nullable(v.string())),
 	public_host: v.optional(v.nullable(v.string())),
 	reason: v.optional(v.nullable(v.string())),

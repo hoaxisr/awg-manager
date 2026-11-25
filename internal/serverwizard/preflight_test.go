@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/serveringress"
 	"github.com/hoaxisr/awg-manager/internal/sys/procnet"
 	"github.com/hoaxisr/awg-manager/internal/tgwebproxy"
 	"github.com/hoaxisr/awg-manager/internal/vlessserver"
@@ -99,6 +100,7 @@ func TestPreflightEngine_TelegramChecks(t *testing.T) {
 	resp = engine.Run(ctx, WizardPlanRequest{
 		Kind:         "tgwebproxy",
 		Scenario:     "dual",
+		DirectHost:   "203.0.113.10",
 		DirectPort:   8443,
 		ListenPort:   8085,
 		CdnProfileID: "cdn_get",
@@ -345,5 +347,293 @@ func TestPreflightAndDesired_TgWebProxyPortAvoidsXrayLoop(t *testing.T) {
 	}
 	if _, err := BuildDesiredConfig(context.Background(), nil, reqColl); err == nil {
 		t.Fatalf("expected BuildDesiredConfig to reject DirectPort == ListenPort collision")
+	}
+}
+
+func TestPreflightEngine_InProcessPIDPortIsolationAndCollisions(t *testing.T) {
+	xray := &mockXrayReader{}
+	disp := &mockDispReader{}
+	tg := &mockTgReader{
+		cfg: tgwebproxy.PublicConfig{
+			Enabled:    true,
+			DirectPort: 8443,
+			ListenPort: 8085,
+		},
+		st: tgwebproxy.Status{
+			InstalledTelemt: true,
+			DirectOnline:    true,
+			DirectPID:       os.Getpid(),
+			DirectPort:      8443,
+		},
+	}
+	rec := &mockRecReader{required: false}
+	engine := NewPreflightEngine(xray, disp, tg, rec, nil)
+	engine.statFn = func(path string) (os.FileInfo, error) {
+		return mockFileInfo{name: path, size: 1000}, nil
+	}
+	engine.findProcFn = func(procDir, addr string, port int) (procnet.ListenerLookup, error) {
+		switch port {
+		case 2053, 2222, 8443:
+			return procnet.ListenerLookup{SocketFound: true, SocketInode: "inproc", PID: os.Getpid()}, nil
+		default:
+			return procnet.ListenerLookup{SocketFound: false}, nil
+		}
+	}
+
+	ctx := context.Background()
+
+	// 1. Active in-process Reality (:2053) and Web UI (:2222) share os.Getpid() -> must be BLOCKED
+	for _, occupiedPort := range []int{2053, 2222} {
+		resp := engine.Run(ctx, WizardPlanRequest{
+			Kind:       "tgwebproxy",
+			Scenario:   "direct_fake_tls",
+			DirectHost: "203.0.113.10",
+			DirectPort: occupiedPort,
+			TlsDomain:  "www.google.com",
+		})
+		if resp.CanProceed {
+			t.Fatalf("expected in-process port %d owned by os.Getpid() to be BLOCKED for MTProto", occupiedPort)
+		}
+	}
+
+	// 2. Own active MTProto port (8443) -> ALLOWED
+	respOwn := engine.Run(ctx, WizardPlanRequest{
+		Kind:       "tgwebproxy",
+		Scenario:   "direct_fake_tls",
+		DirectHost: "203.0.113.10",
+		DirectPort: 8443,
+		TlsDomain:  "www.google.com",
+	})
+	if !respOwn.CanProceed {
+		t.Fatalf("expected active own DirectPort 8443 to pass, got %+v", respOwn.Checks)
+	}
+
+	// 3. Reserved tproxy-server backend port 8084 -> BLOCKED
+	resp8084 := engine.Run(ctx, WizardPlanRequest{
+		Kind:       "tgwebproxy",
+		Scenario:   "direct_fake_tls",
+		DirectHost: "203.0.113.10",
+		DirectPort: 8084,
+		TlsDomain:  "www.google.com",
+	})
+	if resp8084.CanProceed {
+		t.Fatalf("expected reserved DirectPort 8084 to be BLOCKED")
+	}
+
+	// 4. Single-service dual mode collision DirectPort == ListenPort (8085) -> BLOCKED
+	respColl := engine.Run(ctx, WizardPlanRequest{
+		Kind:         "tgwebproxy",
+		Scenario:     "dual",
+		PublicDomain: "tg.example.com",
+		DirectHost:   "203.0.113.10",
+		DirectPort:   8085,
+		ListenPort:   8085,
+		TlsDomain:    "www.google.com",
+	})
+	if respColl.CanProceed {
+		t.Fatalf("expected dual mode DirectPort == ListenPort (8085) to be BLOCKED")
+	}
+}
+
+func TestPreflightEngine_CdnHTTPAndCloudKeenDNSWarnings(t *testing.T) {
+	xray := &mockXrayReader{}
+	disp := &mockDispReader{}
+	tg := &mockTgReader{
+		st: tgwebproxy.Status{PID: 1234},
+	}
+	rec := &mockRecReader{required: false}
+	engine := NewPreflightEngine(xray, disp, tg, rec, nil)
+	engine.findProcFn = func(procDir, addr string, port int) (procnet.ListenerLookup, error) {
+		return procnet.ListenerLookup{SocketFound: false}, nil
+	}
+
+	ctx := context.Background()
+
+	// 1. cdn_http omits bin_telemt and includes bin_tproxy
+	respCDN := engine.Run(ctx, WizardPlanRequest{
+		Kind:         "tgwebproxy",
+		Scenario:     "cdn_http",
+		PublicDomain: "tg.example.com",
+		ListenPort:   8085,
+		CdnProfileID: "cdn_get",
+	})
+	if !respCDN.CanProceed {
+		t.Fatalf("expected cdn_http preflight CanProceed=true, got %+v", respCDN.Checks)
+	}
+	hasTelemt, hasTproxy := false, false
+	for _, c := range respCDN.Checks {
+		if c.ID == "bin_telemt" {
+			hasTelemt = true
+		}
+		if c.ID == "bin_tproxy" {
+			hasTproxy = true
+		}
+	}
+	if hasTelemt {
+		t.Fatalf("expected cdn_http preflight to omit bin_telemt")
+	}
+	if !hasTproxy {
+		t.Fatalf("expected cdn_http preflight to include bin_tproxy")
+	}
+
+	// 2. Cloud KeenDNS BaseFQDN triggers direct_host_keendns_cloud BLOCKED for direct_fake_tls & dual
+	kdCloud := &mockKeenDNSOperator{
+		disc: serveringress.KeenDNSDiscovery{
+			State:      "supported",
+			BaseFQDN:   "dacha.example.keenetic.pro",
+			AccessMode: "cloud",
+		},
+	}
+	engine.SetKeenDNS(kdCloud)
+
+	for _, tc := range []struct {
+		scenario   string
+		directHost string
+		pubDomain  string
+		cdnProfile string
+	}{
+		{
+			scenario:   "direct_fake_tls",
+			directHost: "dacha.example.keenetic.pro",
+			cdnProfile: "direct",
+		},
+		{
+			scenario:   "dual",
+			directHost: "connect.dacha.example.keenetic.pro",
+			pubDomain:  "connect.dacha.example.keenetic.pro",
+			cdnProfile: "cdn_get",
+		},
+	} {
+		resp := engine.Run(ctx, WizardPlanRequest{
+			Kind:         "tgwebproxy",
+			Scenario:     tc.scenario,
+			DirectHost:   tc.directHost,
+			DirectPort:   8443,
+			ListenPort:   8085,
+			PublicDomain: tc.pubDomain,
+			TlsDomain:    "www.google.com",
+			CdnProfileID: tc.cdnProfile,
+		})
+		if resp.CanProceed {
+			t.Fatalf("expected CanProceed=false for %s (%s), got %+v", tc.scenario, tc.directHost, resp)
+		}
+		foundBlocked := false
+		for _, c := range resp.Checks {
+			if c.ID == "direct_host_keendns_cloud" && c.Status == CheckStatusBlocked {
+				foundBlocked = true
+			}
+		}
+		if !foundBlocked {
+			t.Fatalf("expected direct_host_keendns_cloud blocked for %s (%s), got %+v", tc.scenario, tc.directHost, resp.Checks)
+		}
+	}
+
+	// 3. cdn_http does NOT trigger direct_host_keendns_cloud even with leftover DirectHost
+	respCDNLeftover := engine.Run(ctx, WizardPlanRequest{
+		Kind:         "tgwebproxy",
+		Scenario:     "cdn_http",
+		DirectHost:   "connect.dacha.example.keenetic.pro",
+		PublicDomain: "connect.dacha.example.keenetic.pro",
+		ListenPort:   8085,
+		CdnProfileID: "cdn_get",
+	})
+	for _, c := range respCDNLeftover.Checks {
+		if c.ID == "direct_host_keendns_cloud" {
+			t.Fatalf("unexpected direct_host_keendns_cloud check for cdn_http: %+v", c)
+		}
+	}
+
+	// 4. Direct-mode KeenDNS does NOT trigger direct_host_keendns_cloud
+	engine.SetKeenDNS(&mockKeenDNSOperator{
+		disc: serveringress.KeenDNSDiscovery{
+			State:      "supported",
+			BaseFQDN:   "router.example.keenetic.pro",
+			AccessMode: "direct",
+		},
+	})
+	respDirectMode := engine.Run(ctx, WizardPlanRequest{
+		Kind:         "tgwebproxy",
+		Scenario:     "direct_fake_tls",
+		DirectHost:   "router.example.keenetic.pro",
+		DirectPort:   8443,
+		TlsDomain:    "www.google.com",
+		CdnProfileID: "direct",
+	})
+	for _, c := range respDirectMode.Checks {
+		if c.ID == "direct_host_keendns_cloud" {
+			t.Fatalf("unexpected direct_host_keendns_cloud check for direct KeenDNS: %+v", c)
+		}
+	}
+
+	// 5. Private/CGNAT WAN emits wan_cgnat_direct_mtproto warning for direct_fake_tls & dual, never for cdn_http
+	engine.SetKeenDNS(&mockKeenDNSOperator{
+		disc: serveringress.KeenDNSDiscovery{
+			State:      "supported",
+			BaseFQDN:   "dacha.example.keenetic.pro",
+			AccessMode: "cloud",
+			WANAddress: "10.20.30.40",
+			WANPrivate: true,
+		},
+	})
+	for _, tc := range []struct {
+		scenario   string
+		directHost string
+		pubDomain  string
+		cdnProfile string
+		wantWarn   bool
+	}{
+		{"direct_fake_tls", "vps.example.com", "", "direct", true},
+		{"dual", "vps.example.com", "connect.dacha.example.keenetic.pro", "cdn_get", true},
+		{"cdn_http", "", "connect.dacha.example.keenetic.pro", "cdn_get", false},
+	} {
+		resp := engine.Run(ctx, WizardPlanRequest{
+			Kind:         "tgwebproxy",
+			Scenario:     tc.scenario,
+			DirectHost:   tc.directHost,
+			DirectPort:   8443,
+			ListenPort:   8085,
+			PublicDomain: tc.pubDomain,
+			TlsDomain:    "www.google.com",
+			CdnProfileID: tc.cdnProfile,
+		})
+		foundWanWarn := false
+		for _, c := range resp.Checks {
+			if c.ID == "wan_cgnat_direct_mtproto" && c.Status == CheckStatusWarning {
+				foundWanWarn = true
+			}
+		}
+		if foundWanWarn != tc.wantWarn {
+			t.Fatalf("scenario=%s: foundWanWarn=%v, want %v; checks=%+v", tc.scenario, foundWanWarn, tc.wantWarn, resp.Checks)
+		}
+	}
+}
+
+func TestPreflightEngine_InvalidDirectPortSkipsDuplicateConflict(t *testing.T) {
+	pe := NewPreflightEngine(nil, nil, nil, nil, nil)
+	resp := pe.Run(context.Background(), WizardPlanRequest{
+		Kind:         "tgwebproxy",
+		Scenario:     "direct_fake_tls",
+		DirectHost:   "203.0.113.10",
+		DirectPort:   2222,
+		TlsDomain:    "www.google.com",
+		CdnProfileID: "direct",
+	})
+	if resp.CanProceed {
+		t.Fatalf("expected CanProceed=false for reserved port 2222, checks=%+v", resp.Checks)
+	}
+	var sawValidBlocked, sawDuplicatePortCheck bool
+	for _, c := range resp.Checks {
+		if c.ID == "port_direct_valid" && c.Status == CheckStatusBlocked {
+			sawValidBlocked = true
+		}
+		if c.ID == "port_direct" || c.ID == "port_direct_conflict" {
+			sawDuplicatePortCheck = true
+		}
+	}
+	if !sawValidBlocked {
+		t.Fatalf("expected port_direct_valid blocked check, got %+v", resp.Checks)
+	}
+	if sawDuplicatePortCheck {
+		t.Fatalf("did not expect duplicate port_direct/port_direct_conflict check when ValidateDirectPort fails: %+v", resp.Checks)
 	}
 }

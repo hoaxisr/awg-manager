@@ -10,6 +10,8 @@ import (
 	"io"
 	mrand "math/rand"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -368,5 +370,124 @@ func TestMtgUpstreamPool_FailoverCooldownSocks5AndWeights(t *testing.T) {
 	}
 	if heavyFirst < 85 {
 		t.Fatalf("expected heavy upstream weight=100 to win majority of draws vs weight=1, won %d/100", heavyFirst)
+	}
+}
+
+func TestDeleteLastUser_SurvivesCandidateStopStartAndReload(t *testing.T) {
+	svc, tempDir, _ := setupTestService(t)
+	if err := svc.UpdateConfig(Config{
+		Enabled:    true,
+		Scenario:   ScenarioDirectFakeTLS,
+		DirectHost: "127.0.0.1",
+		DirectPort: 8443,
+	}); err != nil {
+		t.Fatalf("UpdateConfig failed: %v", err)
+	}
+	if err := svc.RotateSecret(); err != nil {
+		t.Fatalf("RotateSecret failed: %v", err)
+	}
+	if svc.GetInternalConfig().LegacySecret == "" {
+		t.Fatal("expected LegacySecret to be set before deleting user")
+	}
+
+	if err := svc.DeleteUser("default"); err != nil {
+		t.Fatalf("DeleteUser default failed: %v", err)
+	}
+	cfgAfterDelete := svc.GetInternalConfig()
+	if len(svc.GetStatus().Users) != 0 || cfgAfterDelete.Secret != "" || cfgAfterDelete.LegacySecret != "" || len(cfgAfterDelete.ActiveSecrets()) != 0 {
+		t.Fatalf("expected 0 users and cleared secrets after DeleteUser, got cfg=%+v statusUsers=%+v", cfgAfterDelete, svc.GetStatus().Users)
+	}
+
+	// Stop via Coordinator/Candidate lifecycle must NOT mint a new Secret or resurrect "default".
+	stopCfg := cfgAfterDelete
+	stopCfg.Enabled = false
+	txStop, err := svc.PrepareCandidate("tx-stop-empty-users", stopCfg)
+	if err != nil {
+		t.Fatalf("PrepareCandidate stop failed: %v", err)
+	}
+	if err := svc.CommitPrepared(txStop); err != nil {
+		t.Fatalf("CommitPrepared stop failed: %v", err)
+	}
+	if err := svc.FinalizePrepared(txStop); err != nil {
+		t.Fatalf("FinalizePrepared stop failed: %v", err)
+	}
+	if st := svc.GetStatus(); len(st.Users) != 0 || svc.GetInternalConfig().Secret != "" || len(svc.GetInternalConfig().ActiveSecrets()) != 0 {
+		t.Fatalf("stop via candidate resurrected user/secret: cfg=%+v statusUsers=%+v", svc.GetInternalConfig(), st.Users)
+	}
+
+	// Reload from disk (Users becomes nil because of json omitempty) and start via candidate lifecycle.
+	workers, _ := newFakeWorkers()
+	reloaded := &Service{
+		dataDir:         tempDir,
+		tc:              NewTransactionCoordinator(filepath.Join(tempDir, "tproxy")),
+		workers:         workers,
+		tproxyValidator: func(string) error { return nil },
+		stopCh:          make(chan struct{}),
+	}
+	if err := reloaded.loadAndMigrateConfig(); err != nil {
+		t.Fatalf("reload failed: %v", err)
+	}
+	if got := reloaded.GetInternalConfig(); len(got.GetUsers()) != 0 || got.Secret != "" {
+		t.Fatalf("reload resurrected user: %+v", got)
+	}
+
+	startCfg := reloaded.GetInternalConfig()
+	startCfg.Enabled = true
+	txStart, err := reloaded.PrepareCandidate("tx-start-empty-users", startCfg)
+	if err != nil {
+		t.Fatalf("PrepareCandidate start failed: %v", err)
+	}
+	if err := reloaded.CommitPrepared(txStart); err != nil {
+		t.Fatalf("CommitPrepared start failed: %v", err)
+	}
+	if err := reloaded.FinalizePrepared(txStart); err != nil {
+		t.Fatalf("FinalizePrepared start failed: %v", err)
+	}
+	if st := reloaded.GetStatus(); len(st.Users) != 0 || reloaded.GetInternalConfig().Secret != "" || len(reloaded.GetInternalConfig().ActiveSecrets()) != 0 {
+		t.Fatalf("start via candidate after reload resurrected user/secret: cfg=%+v statusUsers=%+v", reloaded.GetInternalConfig(), st.Users)
+	}
+
+	// v2 config with 0 users triggering field-fill migration (e.g. empty carrier_mode) must preserve 0 users.
+	v2Dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(v2Dir, "tproxy"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	v2Raw := []byte(`{"schema_version":2,"enabled":false,"scenario":"direct_fake_tls","listen_port":8085,"admin_port":8086,"direct_port":8443}`)
+	if err := os.WriteFile(filepath.Join(v2Dir, "tproxy", "tgwebproxy-settings.json"), v2Raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	v2Svc := &Service{dataDir: v2Dir}
+	if err := v2Svc.loadAndMigrateConfig(); err != nil {
+		t.Fatalf("v2 migration reload failed: %v", err)
+	}
+	if got := v2Svc.GetInternalConfig(); len(got.GetUsers()) != 0 || got.Secret != "" {
+		t.Fatalf("v2 field migration resurrected default user: %+v", got)
+	}
+
+	// RotateSecret with 0 users must fail with ErrUserNotFound instead of recreating "default".
+	if err := svc.RotateSecret(); !errors.Is(err, ErrUserNotFound) {
+		t.Fatalf("expected ErrUserNotFound on RotateSecret with 0 users, got %v", err)
+	}
+	if len(svc.GetStatus().Users) != 0 || svc.GetInternalConfig().Secret != "" {
+		t.Fatalf("failed RotateSecret mutated users: %+v", svc.GetInternalConfig())
+	}
+}
+
+// Кандидат без пользователей и секрета применяется как есть: секрет чеканят
+// первый запуск, создание пользователя и мастер, а не подготовка.
+// Мутация: вернуть чеканку в PrepareCandidate → красный.
+func TestPrepareCandidate_DoesNotMintSecret(t *testing.T) {
+	svc, _, _ := setupTestService(t)
+	cand := svc.GetInternalConfig()
+	cand.Enabled, cand.Secret, cand.Users = true, "", nil
+	txID, err := svc.PrepareCandidate("tx-no-mint", cand)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.CommitPrepared(txID); err != nil {
+		t.Fatal(err)
+	}
+	if got := svc.GetInternalConfig(); got.Secret != "" || len(got.GetUsers()) != 0 {
+		t.Fatalf("подготовка создала секрет: %+v", got)
 	}
 }

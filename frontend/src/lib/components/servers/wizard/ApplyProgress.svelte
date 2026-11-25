@@ -12,7 +12,7 @@
 
 	let { job, cancelling = false, oncancel }: Props = $props();
 
-	const isFinished = $derived(job.phase === 'succeeded' || job.phase === 'failed' || job.phase === 'cancelled');
+	const isFinished = $derived(job.phase === 'succeeded' || job.phase === 'failed' || job.phase === 'cancelled' || job.phase === 'recovery_required');
 	const canCancel = $derived(!isFinished && job.phase !== 'committing' && !cancelling);
 </script>
 
@@ -84,7 +84,7 @@
 				title={job.phase === 'committing' ? m.servers_wizard_apply_commit_uncancellable() : m.servers_wizard_apply_abort()}
 			>
 				{#if cancelling}
-					<Loader2 size={14} class="animate-spin mr-1.5" />
+					<Loader2 size={14} class="animate-spin" />
 					{m.servers_wizard_apply_cancelling()}
 				{:else}
 					{m.servers_wizard_apply_cancel()}
@@ -222,6 +222,10 @@
 		display: flex;
 		align-items: center;
 		gap: 0.375rem;
+	}
+
+	.error-header > :global(svg) {
+		flex-shrink: 0;
 	}
 
 	.error-msg {

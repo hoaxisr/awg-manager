@@ -56,17 +56,22 @@ func (s *Service) PrepareCandidate(txID string, candidate Config) (string, error
 	}
 
 	// Normalize defaults for candidate
-	if candidate.DirectPort <= 0 {
+	if candidate.Scenario == "" {
+		candidate.Scenario = ScenarioDual
+	}
+	if candidate.DirectPort == 0 {
 		candidate.DirectPort = DefaultDirectPort
+	}
+	if candidate.Scenario != ScenarioCDNHTTP {
+		if err := ValidateDirectPortTransition(s.config, candidate); err != nil {
+			return "", err
+		}
 	}
 	if candidate.ListenPort <= 0 {
 		candidate.ListenPort = DefaultListenPort
 	}
 	if candidate.AdminPort <= 0 {
 		candidate.AdminPort = DefaultAdminPort
-	}
-	if candidate.Scenario == "" {
-		candidate.Scenario = ScenarioDual
 	}
 	if candidate.Backend == "" {
 		candidate.Backend = DefaultBackend
@@ -75,11 +80,12 @@ func (s *Service) PrepareCandidate(txID string, candidate Config) (string, error
 		candidate.CarrierMode = DefaultCarrierMode
 	}
 	if candidate.Secret == "" {
-		sec, err := randomHexSecret(s.randReader)
-		if err != nil {
-			return "", err
+		for _, u := range candidate.Users {
+			if strings.TrimSpace(u.Secret) != "" {
+				candidate.Secret = u.Secret
+				break
+			}
 		}
-		candidate.Secret = sec
 	}
 	if candidate.SchemaVersion <= 0 {
 		candidate.SchemaVersion = CurrentSchemaVersion
@@ -127,18 +133,18 @@ func (s *Service) PrepareCandidate(txID string, candidate Config) (string, error
 		}
 	}
 
+	var validator EgressValidator
+	if candidate.Enabled && needsEgressCheck(s.config, candidate) {
+		validator = s.egressValidator
+	}
 	if len(candidate.Upstreams) > 0 {
 		candidate.Upstreams = NormalizeUpstreams(candidate.Upstreams)
-		var validator EgressValidator
-		if candidate.Enabled {
-			validator = s.egressValidator
-		}
 		if err := validateUpstreamsWithEgress(candidate.Upstreams, validator); err != nil {
 			return "", err
 		}
 		candidate.UpstreamDevice = candidate.PrimaryUpstreamDevice()
-	} else if candidate.Enabled && s.egressValidator != nil && candidate.UpstreamDevice != "" {
-		if err := s.egressValidator(candidate.UpstreamDevice); err != nil {
+	} else if validator != nil && candidate.UpstreamDevice != "" {
+		if err := validator(candidate.UpstreamDevice); err != nil {
 			return "", fmt.Errorf("egress validation failed: %w", err)
 		}
 	}
@@ -429,6 +435,9 @@ func (s *Service) CommitPrepared(txID string) error {
 		}
 	}
 
+	if err := s.syncDirectWANFirewallLocked(candidate); err != nil && opensDirectWANAnew(manifest.OldConfig, candidate) {
+		return rollbackAndJoin(fmt.Errorf("открыть порт MTProto на WAN: %w", err))
+	}
 	s.config = candidate
 
 	// 3. Mark manifest active
@@ -561,6 +570,7 @@ func (s *Service) rollbackLocked(txID string, manifest *SnapshotManifest) error 
 	}
 
 	s.config = manifest.OldConfig
+	_ = s.syncDirectWANFirewallLocked(manifest.OldConfig)
 
 	if len(rollbackErrs) > 0 {
 		return errors.Join(rollbackErrs...)

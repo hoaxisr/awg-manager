@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -674,6 +675,15 @@ func validateTopologyAndChains(desired IngressTopology, candXray *vlessserver.Co
 	return nil
 }
 
+// validateTgDirectPort отказывает до журнала и подготовки: откатывать после
+// такого отказа нечего.
+func (c *Coordinator) validateTgDirectPort(candidate *tgwebproxy.Config) error {
+	if candidate == nil || c.tgSvc == nil || candidate.Scenario == tgwebproxy.ScenarioCDNHTTP {
+		return nil
+	}
+	return tgwebproxy.ValidateDirectPortTransition(c.tgSvc.GetInternalConfig(), *candidate)
+}
+
 func (c *Coordinator) applyLocked(ctx context.Context, txID string, desired IngressTopology, candidateXray *vlessserver.Config, candidateTg *tgwebproxy.Config) error {
 	prev := c.getCurrentTopology()
 	if candidateXray != nil {
@@ -681,6 +691,9 @@ func (c *Coordinator) applyLocked(ctx context.Context, txID string, desired Ingr
 		desired.FircServerRouting = candidateXray.Enabled && candidateXray.OutboundMode == "router"
 	}
 	if err := validateTopologyAndChains(desired, candidateXray, candidateTg); err != nil {
+		return err
+	}
+	if err := c.validateTgDirectPort(candidateTg); err != nil {
 		return err
 	}
 	affected := c.calculateAffected(prev, desired)
@@ -1011,6 +1024,7 @@ func (c *Coordinator) applyLocked(ctx context.Context, txID string, desired Ingr
 		return fmt.Errorf("%w: archive journal: %v", ErrRecoveryRequired, err)
 	}
 
+	c.syncWANIngressFirewall()
 	return nil
 }
 
@@ -1109,7 +1123,23 @@ func (c *Coordinator) failAndRollback(j *TransactionJournal, origErr error) erro
 		return errors.Join(append([]error{ErrRecoveryRequired, origErr}, persistErrs...)...)
 	}
 
+	c.syncWANIngressFirewall()
 	return origErr
+}
+
+func tgScenarioNeedsWebIngress(scenario string) bool {
+	s := strings.TrimSpace(scenario)
+	return s == "" || s == "cdn_http" || s == "dual" || s == "cdn_domain" || s == "both"
+}
+
+func recomputePublicHostname(topo IngressTopology) string {
+	if topo.XrayEnabled && strings.TrimSpace(topo.XrayPublicHostname) != "" {
+		return strings.TrimSpace(topo.XrayPublicHostname)
+	}
+	if topo.TgEnabled && tgScenarioNeedsWebIngress(topo.TgScenario) && strings.TrimSpace(topo.TgPublicHostname) != "" {
+		return strings.TrimSpace(topo.TgPublicHostname)
+	}
+	return ""
 }
 
 func (c *Coordinator) topologyForXrayConfig(cfg vlessserver.Config) IngressTopology {
@@ -1154,7 +1184,7 @@ func (c *Coordinator) topologyForXrayConfig(cfg vlessserver.Config) IngressTopol
 
 	// Dispatcher needed check
 	desired.DispatcherEnabled = (desired.XrayEnabled && desired.XrayPublicHostname != "") ||
-		(desired.TgEnabled && (desired.TgScenario == "cdn_http" || desired.TgScenario == "dual"))
+		(desired.TgEnabled && tgScenarioNeedsWebIngress(desired.TgScenario))
 	return desired
 }
 
@@ -1196,15 +1226,23 @@ func (c *Coordinator) topologyForTelegramConfig(cfg tgwebproxy.Config) IngressTo
 		desired.TgWebPort = 8085
 		desired.TgPort = 8085
 	}
-	if cfg.PublicHostname != "" {
-		desired.TgPublicHostname = cfg.PublicHostname
+	if desired.TgScenario == tgwebproxy.ScenarioDirectFakeTLS {
+		desired.TgPublicHostname = ""
+		desired.PublicHostname = recomputePublicHostname(desired)
+	} else {
+		if cfg.PublicHostname != "" {
+			desired.TgPublicHostname = cfg.PublicHostname
+		}
+		if desired.TgPublicHostname != "" && desired.PublicHostname == "" {
+			desired.PublicHostname = desired.TgPublicHostname
+		}
 	}
 	if desired.DispatcherPort <= 0 {
 		desired.DispatcherPort = 9009
 	}
 
 	desired.DispatcherEnabled = (desired.XrayEnabled && desired.XrayPublicHostname != "") ||
-		(desired.TgEnabled && (desired.TgScenario == "cdn_http" || desired.TgScenario == "dual"))
+		(desired.TgEnabled && tgScenarioNeedsWebIngress(desired.TgScenario))
 	return desired
 }
 
@@ -1324,6 +1362,25 @@ func (c *Coordinator) IsDispatcherRunning() bool {
 	return c.dispatcher != nil && c.dispatcher.IsRunning()
 }
 
+// SyncWANIngressFirewall synchronizes WAN firewall ports for MTProto direct ingress
+// when coordinator is not in recovery mode.
+func (c *Coordinator) SyncWANIngressFirewall() error {
+	if needed, _ := c.IsRecoveryRequired(); needed {
+		return nil
+	}
+	if syncer, ok := c.tgSvc.(interface{ SyncDirectWANFirewall() error }); ok {
+		return syncer.SyncDirectWANFirewall()
+	}
+	return nil
+}
+
+// syncWANIngressFirewall — сверка после уже зафиксированной транзакции, отката
+// или сброса. Её ошибка не отменяет сделанное (открытие порта проверено и
+// откатано раньше, в самом сервисе): сервис пишет её в журнал и в статус.
+func (c *Coordinator) syncWANIngressFirewall() {
+	_ = c.SyncWANIngressFirewall()
+}
+
 // HydrateDispatcherRoutes checks if dispatcher routes are configured; if empty,
 // hydrates initial rules from Xray and Telegram domain settings (SSOT migration).
 func (c *Coordinator) HydrateDispatcherRoutes(ctx context.Context) error {
@@ -1427,7 +1484,7 @@ func (c *Coordinator) HydrateDispatcherRoutes(ctx context.Context) error {
 	var tgDomains []string
 	if c.tgSvc != nil {
 		tCfg := c.tgSvc.GetConfig()
-		if tCfg.PublicHostname != "" {
+		if tCfg.Scenario != tgwebproxy.ScenarioDirectFakeTLS && tCfg.PublicHostname != "" {
 			for _, d := range strings.Split(tCfg.PublicHostname, ",") {
 				d = strings.ToLower(strings.TrimSpace(d))
 				if d != "" {
@@ -1513,10 +1570,11 @@ func (c *Coordinator) HydrateDispatcherRoutes(ctx context.Context) error {
 }
 
 // ApplyDispatcherConfig atomically updates dispatcher routing rules and persists them without restarting Xray.
-
-func (c *Coordinator) ApplyDispatcherConfig(ctx context.Context, cfg cdndispatcher.Config) error {
+// Предупреждение — маршруты сохранены, а домены Telegram обновить не удалось.
+func (c *Coordinator) ApplyDispatcherConfig(ctx context.Context, cfg cdndispatcher.Config) (string, error) {
+	warning := ""
 	txID := fmt.Sprintf("ing-disp-%d-%d", time.Now().UnixNano(), os.Getpid())
-	return c.withIngressLock(txID, func() error {
+	err := c.withIngressLock(txID, func() error {
 		if c.recoveryFlagged() {
 			return ErrRecoveryRequired
 		}
@@ -1563,16 +1621,33 @@ func (c *Coordinator) ApplyDispatcherConfig(ctx context.Context, cfg cdndispatch
 
 		if c.tgSvc != nil {
 			tgCfg := c.tgSvc.GetInternalConfig()
-			if len(tgDomains) > 0 {
+			if !sameDomains(tgDomains, strings.Split(tgCfg.PublicHostname, ",")) {
 				tgCfg.PublicHostname = strings.Join(tgDomains, ",")
-			} else {
-				tgCfg.PublicHostname = ""
+				if err := c.tgSvc.UpdateConfig(tgCfg); err != nil {
+					warning = "маршруты сохранены, домены Telegram не обновлены: " + err.Error()
+				}
 			}
-			_ = c.tgSvc.UpdateConfig(tgCfg)
 		}
 
+		c.syncWANIngressFirewall()
 		return nil
 	})
+	return warning, err
+}
+
+// sameDomains сравнивает наборы доменов без учёта порядка, регистра и пустых.
+func sameDomains(a, b []string) bool {
+	norm := func(in []string) []string {
+		var out []string
+		for _, d := range in {
+			if d = strings.ToLower(strings.TrimSpace(d)); d != "" {
+				out = append(out, d)
+			}
+		}
+		slices.Sort(out)
+		return slices.Compact(out)
+	}
+	return slices.Equal(norm(a), norm(b))
 }
 
 // ExecuteIngressTransaction executes a full coordinated transaction for Server Wizards with candidate isolation and readiness probes.
@@ -1692,7 +1767,7 @@ func (c *Coordinator) ExecuteIngressTransaction(ctx context.Context, params Ingr
 			desiredTopo.TgWebAddress = "127.0.0.1"
 			desiredTopo.TgWebPort = candTg.ListenPort
 			desiredTopo.TgPort = candTg.ListenPort
-			if candTg.Scenario == "direct_fake_tls" {
+			if candTg.Scenario == tgwebproxy.ScenarioDirectFakeTLS {
 				desiredTopo.TgPublicHostname = ""
 			} else {
 				desiredTopo.TgPublicHostname = candTg.PublicHostname
@@ -1702,17 +1777,16 @@ func (c *Coordinator) ExecuteIngressTransaction(ctx context.Context, params Ingr
 			}
 		}
 
+		desiredTopo.PublicHostname = recomputePublicHostname(desiredTopo)
+
 		// Dispatcher required if Xray or TG uses CDN ingress
 		needsDispatcher := false
 		if desiredTopo.XrayEnabled && (desiredTopo.XrayPublicHostname != "" || desiredTopo.PublicHostname != "" || desiredTopo.XrayPathPrefix != "") {
 			needsDispatcher = true
 		}
-		if desiredTopo.TgEnabled {
-			scenario := desiredTopo.TgScenario
-			if scenario == "cdn_http" || scenario == "dual" || scenario == "cdn_domain" || scenario == "both" || scenario == "" {
-				if desiredTopo.TgPublicHostname != "" || desiredTopo.PublicHostname != "" {
-					needsDispatcher = true
-				}
+		if desiredTopo.TgEnabled && tgScenarioNeedsWebIngress(desiredTopo.TgScenario) {
+			if desiredTopo.TgPublicHostname != "" || desiredTopo.PublicHostname != "" {
+				needsDispatcher = true
 			}
 		}
 		desiredTopo.DispatcherEnabled = needsDispatcher
@@ -1757,6 +1831,9 @@ func (c *Coordinator) ExecuteIngressTransaction(ctx context.Context, params Ingr
 		}
 
 		if err := validateTopologyAndChains(desiredTopo, candXray, candTg); err != nil {
+			return err
+		}
+		if err := c.validateTgDirectPort(candTg); err != nil {
 			return err
 		}
 
@@ -2103,6 +2180,7 @@ func (c *Coordinator) ExecuteIngressTransaction(ctx context.Context, params Ingr
 			return fmt.Errorf("%w: archive journal: %v", ErrRecoveryRequired, err)
 		}
 
+		c.syncWANIngressFirewall()
 		return nil
 	})
 }
@@ -2817,6 +2895,7 @@ func (c *Coordinator) ResetVless(ctx context.Context, opts ResetOptions) (ResetR
 			_ = os.Remove(c.journalPath())
 		}
 		c.setRecovery(false, "")
+		c.syncWANIngressFirewall()
 		res.Reset = true
 		return nil
 	})

@@ -30,6 +30,7 @@ export interface ExternalAccessWizardDraft {
 	disableOtherService: boolean;
 	existingClientCount: number;
 	keepExistingConnectionScheme: boolean;
+	confirmDirectBehindNAT: boolean;
 	/** Текст для показа: в черновике ($state) лежит отложенным вызовом i18n. */
 	connectionSchemeSummary: UiText;
 	connectionSchemeWarning: UiText;
@@ -168,6 +169,137 @@ export interface ExternalAccessInput {
 	tgStatus?: TgWebProxyStatus | null;
 	dispatcherConfig?: CDNDispatcherConfig | null;
 	egressOptions?: EgressOption[];
+	realityEnabled?: boolean;
+	realityPort?: number;
+	realityPublicHost?: string;
+}
+
+export const RESERVED_MTPROTO_DIRECT_PORTS = new Set([
+	1099, 2222, 2398, 3553, 8084, 8085, 8086, 9007, 9008, 9009, 51820,
+]);
+
+export function isValidMtprotoDirectPort(port: number | string): boolean {
+	const n = Number(port);
+	return Number.isInteger(n) && n >= 1024 && n <= 65535 && !RESERVED_MTPROTO_DIRECT_PORTS.has(n);
+}
+
+export type DirectWanState = 'unused' | 'no_host' | 'bad_port' | 'opens';
+
+/** Откроется ли прямой порт MTProto на WAN — как решает бэкенд. */
+export function directWanState(
+	scenario?: string,
+	directHost?: string | null,
+	directPort?: number | null
+): DirectWanState {
+	if (scenario === 'cdn_http') return 'unused';
+	if (!isValidMtprotoDirectPort(directPort || 8443)) return 'bad_port';
+	return (directHost || '').trim() ? 'opens' : 'no_host';
+}
+
+export function isTgDirectOnlyDraft(
+	draft: Pick<ExternalAccessWizardDraft, 'selectedKind' | 'tgScenario'>
+): boolean {
+	return draft.selectedKind === 'tgwebproxy' && draft.tgScenario === 'direct_fake_tls';
+}
+
+export function draftNeedsWebIngress(
+	draft: Pick<ExternalAccessWizardDraft, 'selectedKind' | 'tgScenario'>
+): boolean {
+	return !isTgDirectOnlyDraft(draft);
+}
+
+export function pickDefaultMtprotoDirectHost(opts: {
+	directDomain?: string | null;
+	whiteIP?: string | null;
+}): string {
+	const domain = (opts.directDomain || '').trim();
+	if (domain) return domain;
+	return (opts.whiteIP || '').trim();
+}
+
+export function isGrayIPNetwork(opts: {
+	realityWhiteIP?: boolean | null;
+	realityGrayIP?: boolean | null;
+	wanIPPrivate?: boolean | null;
+	keendnsEnabled?: boolean;
+	keendnsMode?: string | null;
+}): boolean {
+	if (opts.realityWhiteIP) return false;
+	// Оба флага сброшены — адрес WAN неизвестен: решают остальные признаки.
+	if (opts.realityGrayIP) return true;
+	if (opts.wanIPPrivate === true) return true;
+	if (opts.wanIPPrivate === false) return false;
+	if (Boolean(opts.keendnsEnabled) && opts.keendnsMode === 'cloud') return true;
+	return false;
+}
+
+export function doesStep2RequireNATConfirm(opts: {
+	isEditMode: boolean;
+	keepExistingConnectionScheme: boolean;
+	isTgDirectOnly: boolean;
+	isRealityOnly: boolean;
+	wantXray: boolean;
+	realityMode: 'off' | 'also' | 'only';
+	originType: 'public_address' | 'cloud_address';
+	grayIPDetected: boolean;
+	realityWhiteIP: boolean;
+}): boolean {
+	if (!opts.grayIPDetected) return false;
+	if (opts.isTgDirectOnly) return true;
+	if (opts.isEditMode && opts.keepExistingConnectionScheme) return false;
+	if (opts.isRealityOnly) return true;
+	if (opts.originType === 'public_address') return true;
+	if (opts.wantXray && opts.realityMode === 'also' && !opts.realityWhiteIP) return true;
+	return false;
+}
+
+export function isCloudKeenDNSHost(
+	host?: string | null,
+	baseDomain?: string | null,
+	baseIsDirect?: boolean
+): boolean {
+	const h = (host || '').trim().toLowerCase().replace(/\.$/, '');
+	const base = (baseDomain || '').trim().toLowerCase().replace(/\.$/, '');
+	if (!h || !base || baseIsDirect) return false;
+	return h === base || h.endsWith('.' + base);
+}
+
+export function pickDefaultKeenDNSActionMode(opts: {
+	keendnsAvailable: boolean;
+	hasCompatiblePublications: boolean;
+}): 'existing' | 'create' | 'manual' {
+	if (opts.hasCompatiblePublications) return 'existing';
+	if (opts.keendnsAvailable) return 'create';
+	return 'manual';
+}
+
+export function resolveEffectiveMtprotoDirectHost(
+	draft: Pick<
+		ExternalAccessWizardDraft,
+		| 'selectedKind'
+		| 'tgScenario'
+		| 'directHost'
+		| 'originHost'
+		| 'publicDomain'
+		| 'keendnsMode'
+		| 'originType'
+		| 'connectionWay'
+	>
+): string {
+	if (isTgDirectOnlyDraft(draft)) {
+		return draft.directHost.trim();
+	}
+	if (draft.selectedKind !== 'xray' && draft.tgScenario !== 'cdn_http') {
+		if (draft.directHost.trim()) return draft.directHost.trim();
+		if (draft.originType === 'cloud_address' && draft.keendnsMode !== 'manual') {
+			return '';
+		}
+		if (draft.originHost.trim()) return draft.originHost.trim();
+		// Домен за внешним сервисом ведёт на его узлы, а не на роутер.
+		if (draft.connectionWay === 'external_https') return '';
+		return (draft.publicDomain.split(',')[0] || '').trim();
+	}
+	return (draft.directHost || draft.originHost).trim();
 }
 
 export function formatDomainList(raw?: string | null): string {
@@ -275,39 +407,44 @@ export function buildExternalAccessSummary(input: ExternalAccessInput): External
 		}
 	}
 
-	const tgEndpoints = (tCfg?.endpoints ?? []).filter((e) => e.hostname && e.hostname.trim() !== '');
+	const tgWebActive = tgScenario !== 'direct_fake_tls';
+	const tgEndpoints = tgWebActive
+		? (tCfg?.endpoints ?? []).filter((e) => e.hostname && e.hostname.trim() !== '')
+		: [];
 	const tgWebDomains: string[] = [];
 	const tgCarrierByDomain = new Map<string, string>();
 	const webEndpoints: ExternalAccessWebEndpointSummary[] = [];
 
-	for (const ep of tgEndpoints) {
-		const host = ep.hostname.trim().toLowerCase();
-		if (!tgWebDomains.includes(host)) {
-			tgWebDomains.push(host);
-		}
-		if (ep.carrier_mode) {
-			tgCarrierByDomain.set(host, ep.carrier_mode);
-		}
-		webEndpoints.push({
-			id: ep.id || host,
-			hostname: ep.hostname.trim(),
-			carrierMode: formatTelegramCarrierLabel(ep.carrier_mode || tCfg?.carrier_mode),
-			isCdn: Boolean(ep.is_cdn),
-			enabled: ep.enabled !== false,
-		});
-	}
-	for (const d of splitDomains(tCfg?.public_hostname || tSt?.public_host)) {
-		if (!tgWebDomains.includes(d)) {
-			tgWebDomains.push(d);
-		}
-		if (webEndpoints.length === 0) {
+	if (tgWebActive) {
+		for (const ep of tgEndpoints) {
+			const host = ep.hostname.trim().toLowerCase();
+			if (!tgWebDomains.includes(host)) {
+				tgWebDomains.push(host);
+			}
+			if (ep.carrier_mode) {
+				tgCarrierByDomain.set(host, ep.carrier_mode);
+			}
 			webEndpoints.push({
-				id: d,
-				hostname: d,
-				carrierMode: formatTelegramCarrierLabel(tCfg?.carrier_mode || tSt?.carrier_mode),
-				isCdn: tgScenario === 'cdn_http' || tgScenario === 'dual',
-				enabled: true,
+				id: ep.id || host,
+				hostname: ep.hostname.trim(),
+				carrierMode: formatTelegramCarrierLabel(ep.carrier_mode || tCfg?.carrier_mode),
+				isCdn: Boolean(ep.is_cdn),
+				enabled: ep.enabled !== false,
 			});
+		}
+		for (const d of splitDomains(tCfg?.public_hostname || tSt?.public_host)) {
+			if (!tgWebDomains.includes(d)) {
+				tgWebDomains.push(d);
+			}
+			if (webEndpoints.length === 0) {
+				webEndpoints.push({
+					id: d,
+					hostname: d,
+					carrierMode: formatTelegramCarrierLabel(tCfg?.carrier_mode || tSt?.carrier_mode),
+					isCdn: tgScenario === 'cdn_http' || tgScenario === 'dual',
+					enabled: true,
+				});
+			}
 		}
 	}
 
@@ -502,19 +639,25 @@ export function createInitialWizardDraft(
 	const vlessDomains = splitDomains(xCfg?.public_domain);
 	const xClients = xCfg?.clients?.length ? xCfg.clients : (xSt?.clients ?? []);
 	const vlessConfigured = Boolean(
-		xCfg?.enabled || vlessDomains.length > 0 || xClients.length > 0
+		xCfg?.enabled || vlessDomains.length > 0 || xClients.length > 0 || input.realityEnabled
 	);
 
-	const tgEndpoints = (tCfg?.endpoints ?? []).filter(
-		(e) => e.hostname && e.hostname.trim() !== ''
-	);
+	const tgScenarioRaw = tCfg?.scenario || 'dual';
+	const tgEndpoints =
+		tgScenarioRaw === 'direct_fake_tls'
+			? []
+			: (tCfg?.endpoints ?? []).filter(
+					(e) => e.hostname && e.hostname.trim() !== ''
+				);
 	const tgDomains: string[] = [];
-	for (const ep of tgEndpoints) {
-		const host = ep.hostname.trim().toLowerCase();
-		if (!tgDomains.includes(host)) tgDomains.push(host);
-	}
-	for (const d of splitDomains(tCfg?.public_hostname || tSt?.public_host)) {
-		if (!tgDomains.includes(d)) tgDomains.push(d);
+	if (tgScenarioRaw !== 'direct_fake_tls') {
+		for (const ep of tgEndpoints) {
+			const host = ep.hostname.trim().toLowerCase();
+			if (!tgDomains.includes(host)) tgDomains.push(host);
+		}
+		for (const d of splitDomains(tCfg?.public_hostname || tSt?.public_host)) {
+			if (!tgDomains.includes(d)) tgDomains.push(d);
+		}
 	}
 	const directHostRaw = (tCfg?.direct_host || tSt?.direct_host || '').trim();
 	const tgConfigured = Boolean(
@@ -540,6 +683,7 @@ export function createInitialWizardDraft(
 			disableOtherService: false,
 			existingClientCount: 0,
 			keepExistingConnectionScheme: false,
+			confirmDirectBehindNAT: false,
 			connectionSchemeSummary: '',
 			connectionSchemeWarning: '',
 			keendnsMode: 'manual',
@@ -587,10 +731,13 @@ export function createInitialWizardDraft(
 		tgEndpoints[0]?.carrier_mode || tCfg?.carrier_mode || tSt?.carrier_mode || 'https-lanes';
 
 	const vlessDomainStr = formatDomainList(xCfg?.public_domain);
+	const vlessRealityOnly = Boolean(vlessConfigured && !vlessDomainStr && input.realityEnabled);
 	const tgDomainStr =
-		tgDomains.length > 0
-			? tgDomains.join(', ')
-			: formatDomainList(tCfg?.public_hostname || tSt?.public_host);
+		tgScenario === 'direct_fake_tls'
+			? ''
+			: tgDomains.length > 0
+				? tgDomains.join(', ')
+				: formatDomainList(tCfg?.public_hostname || tSt?.public_host);
 
 	const publicDomain = vlessDomainStr || tgDomainStr;
 	const useSeparateTgDomain = Boolean(
@@ -627,7 +774,8 @@ export function createInitialWizardDraft(
 	const originType: 'public_address' | 'cloud_address' =
 		xCfg?.origin_type === 'public_address' || xCfg?.origin_type === 'cloud_address'
 			? xCfg.origin_type
-			: originHost && /^\d+\.\d+\.\d+\.\d+$/.test(originHost)
+			: (!vlessConfigured && tgScenario === 'direct_fake_tls') ||
+				  (originHost && /^\d+\.\d+\.\d+\.\d+$/.test(originHost))
 				? 'public_address'
 				: 'cloud_address';
 
@@ -686,27 +834,42 @@ export function createInitialWizardDraft(
 	// Части схемы — отложенными вызовами: черновик живёт в $state мастера,
 	// и готовая строка застыла бы на языке момента открытия.
 	const schemeParts: (() => string)[] = [];
-	if (connectionWay === 'direct') {
-		schemeParts.push(() => m.servers_ext_model_scheme_router_domain());
+	if (selectedKind === 'tgwebproxy' && tgScenario === 'direct_fake_tls') {
+		schemeParts.push(() => m.servers_ext_wiz_s2_tg_direct_title());
+		if (directHost) {
+			const direct = `${directHost}:${directPort}`;
+			schemeParts.push(() => m.servers_ext_model_scheme_mtproto_addr({ addr: direct }));
+		}
+	} else if (selectedKind === 'xray' && vlessRealityOnly) {
+		schemeParts.push(() => m.servers_ext_wiz_s2_reality_title());
+		const rHost = (input.realityPublicHost || '').trim();
+		if (rHost) {
+			const rAddr = `${rHost}:${input.realityPort || 2053}`;
+			schemeParts.push(() => m.servers_ext_model_scheme_phone_addr({ addr: rAddr }));
+		}
 	} else {
-		schemeParts.push(() => m.servers_ext_model_scheme_own_domain());
-	}
-	if (publicDomain) {
-		schemeParts.push(() => m.servers_ext_model_scheme_phone_addr({ addr: publicDomain }));
-	}
-	if (originHost) {
-		const origin = `${originScheme}://${originHost}:${originPort}`;
-		schemeParts.push(() => m.servers_ext_model_scheme_router_addr({ addr: origin }));
-	} else if (directHost) {
-		const direct = `${directHost}:${directPort}`;
-		schemeParts.push(() => m.servers_ext_model_scheme_mtproto_addr({ addr: direct }));
+		if (connectionWay === 'direct') {
+			schemeParts.push(() => m.servers_ext_model_scheme_router_domain());
+		} else {
+			schemeParts.push(() => m.servers_ext_model_scheme_own_domain());
+		}
+		if (publicDomain) {
+			schemeParts.push(() => m.servers_ext_model_scheme_phone_addr({ addr: publicDomain }));
+		}
+		if (originHost) {
+			const origin = `${originScheme}://${originHost}:${originPort}`;
+			schemeParts.push(() => m.servers_ext_model_scheme_router_addr({ addr: origin }));
+		} else if (directHost) {
+			const direct = `${directHost}:${directPort}`;
+			schemeParts.push(() => m.servers_ext_model_scheme_mtproto_addr({ addr: direct }));
+		}
 	}
 
 	const schemeWarnings: (() => string)[] = [];
-	if (vlessConfigured && !vlessDomainStr) {
+	if (vlessConfigured && !vlessDomainStr && !vlessRealityOnly) {
 		schemeWarnings.push(() => m.servers_ext_model_warn_no_vless_domain());
 	}
-	if (connectionWay === 'external_https' && !originHost && vlessConfigured) {
+	if (connectionWay === 'external_https' && !originHost && vlessConfigured && !vlessRealityOnly) {
 		schemeWarnings.push(() => m.servers_ext_model_warn_no_origin());
 	}
 	if (rawTransport && !isSupportedTransport) {
@@ -720,6 +883,7 @@ export function createInitialWizardDraft(
 		disableOtherService: false,
 		existingClientCount: xClients.length,
 		keepExistingConnectionScheme: true,
+		confirmDirectBehindNAT: false,
 		connectionSchemeSummary: () => schemeParts.map((t) => t()).join(' · '),
 		connectionSchemeWarning: schemeWarnings.length ? () => schemeWarnings.map((t) => t()).join('. ') : '',
 		keendnsMode: 'manual',
@@ -902,20 +1066,36 @@ export function validateKeenDNSLabelClient(rawLabel: string): {
 	return { valid: true, normalized: clean };
 }
 
+export function shouldKeepExistingSchemeAfterStep1Change(
+	initiallyTgDirectOnly: boolean,
+	draft: Pick<
+		ExternalAccessWizardDraft,
+		'selectedKind' | 'tgScenario' | 'keepExistingConnectionScheme'
+	>
+): boolean {
+	if (!draft.keepExistingConnectionScheme) {
+		return false;
+	}
+	if (initiallyTgDirectOnly && !isTgDirectOnlyDraft(draft)) {
+		return false;
+	}
+	return true;
+}
+
 export function buildPlanRequestFromDraft(
 	draft: ExternalAccessWizardDraft
 ): WizardPlanRequest {
+	const tgDirectOnly = isTgDirectOnlyDraft(draft);
 	const effectiveTlsDomain =
 		draft.tlsPreset === '__custom__' ? draft.customTlsDomain.trim() : draft.tlsPreset;
-	const effectiveOriginHost = draft.originHost.trim();
-	const effectiveDirectHost = (draft.directHost || draft.originHost).trim();
+	const effectiveOriginHost = tgDirectOnly ? '' : draft.originHost.trim();
+	const effectiveDirectHost = resolveEffectiveMtprotoDirectHost(draft);
 	const effectiveMode =
 		draft.selectedMode === 'xhttp_get' || draft.preserveTransport
 			? draft.selectedMode
 			: 'xhttp_get';
 	const effectiveCdnProfileId =
-		(draft.selectedKind !== 'xray' && draft.tgScenario === 'direct_fake_tls') ||
-		draft.connectionWay === 'direct'
+		tgDirectOnly || draft.connectionWay === 'direct'
 			? 'direct'
 			: draft.cdnProfileId || 'cdn_get';
 	const effectiveCarrierMode =
@@ -931,14 +1111,14 @@ export function buildPlanRequestFromDraft(
 		carrier_mode: effectiveCarrierMode,
 		device_type: draft.deviceType,
 		mode: effectiveMode,
-		connection_way: draft.connectionWay,
-		origin_type: draft.originType,
+		connection_way: tgDirectOnly ? 'direct' : draft.connectionWay,
+		origin_type: tgDirectOnly ? 'public_address' : draft.originType,
 		origin_host: effectiveOriginHost || undefined,
-		origin_scheme: draft.originScheme,
-		origin_port: draft.originPort,
-		public_domain: draft.publicDomain.trim(),
+		origin_scheme: tgDirectOnly ? undefined : draft.originScheme,
+		origin_port: tgDirectOnly ? undefined : draft.originPort,
+		public_domain: tgDirectOnly ? '' : draft.publicDomain.trim(),
 		tg_public_domain:
-			draft.selectedKind === 'both' && draft.useSeparateTgDomain
+			!tgDirectOnly && draft.selectedKind === 'both' && draft.useSeparateTgDomain
 				? draft.tgPublicDomain.trim()
 				: undefined,
 		public_port: draft.publicPort,
@@ -968,9 +1148,11 @@ export function buildPlanRequestFromDraft(
 				? draft.existingClientUuid
 				: undefined,
 		keendns_mode:
-			draft.keendnsMode && draft.keendnsMode !== 'manual' ? draft.keendnsMode : undefined,
+			!tgDirectOnly && draft.keendnsMode && draft.keendnsMode !== 'manual'
+				? draft.keendnsMode
+				: undefined,
 		keendns_label:
-			draft.keendnsMode && draft.keendnsMode !== 'manual'
+			!tgDirectOnly && draft.keendnsMode && draft.keendnsMode !== 'manual'
 				? draft.keendnsLabel.trim().toLowerCase()
 				: undefined,
 		disable_other_service: draft.disableOtherService || undefined,

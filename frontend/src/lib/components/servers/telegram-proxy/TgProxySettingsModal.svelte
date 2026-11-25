@@ -5,7 +5,9 @@
 	import { api } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import type { TgWebProxyConfig, TgWebProxyStatus, TelegramUpstream, WebProxyEndpoint } from '$lib/types';
+	import type { KeenDNSDiscovery } from '$lib/types/serverWizard';
 	import { Button, Modal } from '$lib/components/ui';
+	import { isValidMtprotoDirectPort } from '../external-access/externalAccessModel';
 	import TgProxySettingsGeneral from './TgProxySettingsGeneral.svelte';
 	import TgProxySecurityPane from './TgProxySecurityPane.svelte';
 	import TgProxyDiagnosticsPane from './TgProxyDiagnosticsPane.svelte';
@@ -26,6 +28,7 @@
 		config: TgWebProxyConfig | null;
 		status: TgWebProxyStatus | null;
 		egressOptions: EgressChoice[];
+		keendnsInfo?: KeenDNSDiscovery | null;
 		egressSummaryLabel: string;
 		cardFingerprint: string;
 		onOpenDispatcher?: () => void;
@@ -41,6 +44,7 @@
 		config,
 		status,
 		egressOptions,
+		keendnsInfo = null,
 		egressSummaryLabel,
 		cardFingerprint,
 		onOpenDispatcher,
@@ -110,6 +114,12 @@
 		const draftError = upstreamsDraftError(editUpstreams);
 		if (draftError) {
 			notifications.error(draftError);
+			return;
+		}
+		// Сохранённый прежде порт сохранению не мешает, новый обязан быть допустимым.
+		const port = editConfig.direct_port;
+		if (port && port !== config?.direct_port && !isValidMtprotoDirectPort(port)) {
+			notifications.error(m.servers_ext_wiz_s3_direct_port_invalid());
 			return;
 		}
 		saveConfigLoading = true;
@@ -212,7 +222,7 @@
 		</div>
 
 		{#if settingsTab === 'general'}
-			<TgProxySettingsGeneral bind:editConfig bind:editUpstreams {egressOptions} {onrequestreset} />
+			<TgProxySettingsGeneral bind:editConfig bind:editUpstreams {egressOptions} {keendnsInfo} {onrequestreset} />
 		{:else if settingsTab === 'security'}
 			<TgProxySecurityPane {status} onchanged={onstatus} />
 		{:else if settingsTab === 'diagnostics'}

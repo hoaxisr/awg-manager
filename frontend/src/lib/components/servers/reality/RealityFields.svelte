@@ -21,6 +21,12 @@
 		showPublicHost?: boolean;
 		/** Show the transport selector (TCP / XHTTP). */
 		showTransport?: boolean;
+		/** Error shown when publicHost points to a cloud-only KeenDNS domain. */
+		cloudHostError?: string;
+		/** Required prompt when router is behind CGNAT and manual external host must be provided. */
+		publicHostRequiredHint?: string;
+		/** Optional switch-to-domain action shown inside cloudHostError. */
+		onswitchtovlessdomain?: () => void;
 		/** Visual container surface context. */
 		surface?: 'inset' | 'modal';
 		/** Called after a WAN re-check so the parent can store fresh state. */
@@ -36,6 +42,9 @@
 		publicHost = $bindable(''),
 		showPublicHost = true,
 		showTransport = true,
+		cloudHostError = '',
+		publicHostRequiredHint = '',
+		onswitchtovlessdomain,
 		surface = 'inset',
 		onrefreshed
 	}: Props = $props();
@@ -123,7 +132,34 @@
 		{#if showPublicHost}
 			<label class="rf-field">
 				<span class="rf-label">{m.servers_xray_reality_public_host()}</span>
-				<input class="rf-input mono" placeholder={net?.public_host || m.servers_xray_auto()} bind:value={publicHost} />
+				<input
+					class="rf-input mono"
+					class:rf-input-error={Boolean(cloudHostError || publicHostRequiredHint)}
+					placeholder={net?.public_host || m.servers_xray_auto()}
+					bind:value={publicHost}
+				/>
+				{#if cloudHostError}
+					<div class="rf-error-box">
+						<AlertTriangle size={14} class="rf-error-icon" />
+						<div class="rf-error-body">
+							<span>{cloudHostError}</span>
+							{#if onswitchtovlessdomain}
+								<div>
+									<Button variant="primary" size="sm" onclick={onswitchtovlessdomain}>
+										{m.servers_ext_wiz_s2_switch_vless_domain()}
+									</Button>
+								</div>
+							{/if}
+						</div>
+					</div>
+				{:else if publicHostRequiredHint}
+					<div class="rf-error-box">
+						<AlertTriangle size={14} class="rf-error-icon" />
+						<div class="rf-error-body">
+							<span>{publicHostRequiredHint}</span>
+						</div>
+					</div>
+				{/if}
 				<span class="rf-hint">{m.servers_xray_reality_public_host_hint()}</span>
 			</label>
 		{/if}
@@ -193,7 +229,8 @@
 		gap: 12px;
 	}
 	@media (max-width: 640px) {
-		.rf-row {
+		.rf-row,
+		.rf-seg {
 			grid-template-columns: 1fr;
 		}
 	}
@@ -221,6 +258,37 @@
 	.rf-input:focus {
 		outline: none;
 		border-color: var(--color-accent);
+	}
+	.rf-input.rf-input-error {
+		border-color: var(--color-error-border);
+	}
+	.rf-input.rf-input-error:focus {
+		border-color: var(--color-error);
+	}
+	.rf-error-box {
+		display: flex;
+		align-items: flex-start;
+		gap: 8px;
+		margin-top: 2px;
+		padding: 8px 10px;
+		border-radius: var(--radius-sm);
+		border: 1px solid var(--color-error-border);
+		background: var(--color-error-tint);
+		font-size: 12px;
+		line-height: 1.4;
+		color: var(--color-text-primary);
+	}
+	:global(.rf-error-icon) {
+		color: var(--color-error);
+		flex-shrink: 0;
+		margin-top: 2px;
+	}
+	.rf-error-body {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		min-width: 0;
+		flex: 1;
 	}
 	.mono {
 		font-family: var(--font-mono);
@@ -267,7 +335,6 @@
 	}
 	.rf-dest-row :global(.rf-btn-icon) {
 		flex-shrink: 0;
-		margin-right: 4px;
 	}
 	.rf-chips {
 		display: flex;
@@ -300,7 +367,7 @@
 	}
 	.rf-banner {
 		display: flex;
-		align-items: center;
+		align-items: flex-start;
 		gap: 8px;
 		flex-wrap: nowrap;
 		font-size: 12px;
@@ -309,6 +376,10 @@
 		border-radius: var(--radius-sm);
 		border: 1px solid var(--color-border);
 		color: var(--color-text-primary);
+	}
+	.rf-banner :global(.rf-banner-icon) {
+		flex-shrink: 0;
+		margin-top: 2px;
 	}
 	.rf-banner-text {
 		flex: 1;

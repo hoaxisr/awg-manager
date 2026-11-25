@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/serveringress"
 	"github.com/hoaxisr/awg-manager/internal/testutil"
+	"github.com/hoaxisr/awg-manager/internal/tgwebproxy"
 	"github.com/hoaxisr/awg-manager/internal/vlessserver"
 	"github.com/hoaxisr/awg-manager/internal/xhttpserver"
 	"github.com/xtls/reality"
@@ -177,5 +180,106 @@ func TestRealityRoute_QuickSetupPreserveClientsAndOutboundMode(t *testing.T) {
 	}
 	if !respEnv.Data.State.Runtime.Running || respEnv.Data.Links == nil {
 		t.Fatalf("expected running reality with generated links, got %+v", respEnv.Data)
+	}
+}
+
+func TestRealityRoute_QuickSetupDisableOtherServiceAndRollbackOnFailure(t *testing.T) {
+	const testDest = "dest.test:443"
+	const testSNI = "dest.test"
+	for _, alpn := range []string{"0", "1", "2"} {
+		reality.GlobalPostHandshakeRecordsLens.Store(testDest+" "+testSNI+" "+alpn, []int{})
+	}
+
+	// 1. Rollback cleans up newly added client & Reality state when ApplyXrayConfig fails
+	hFail, svcFail := setupRealityAPITestHandler(t)
+	svcFail.SetTestRuntimeHook(func(xhttpserver.Config) error {
+		return errors.New("injected xray start failure")
+	})
+	badPort := testutil.FreePort(t)
+	failBody, _ := json.Marshal(map[string]any{
+		"client_remark": "ShouldBeRolledBack",
+		"outbound_mode": "direct",
+		"reality": map[string]any{
+			"port":         badPort,
+			"transport":    "tcp",
+			"dest":         testDest,
+			"server_names": []string{testSNI},
+		},
+	})
+	reqFail := httptest.NewRequest(http.MethodPost, "/api/servers/vless/reality/quick-setup", bytes.NewReader(failBody))
+	recFail := httptest.NewRecorder()
+	hFail.RealityRoute(recFail, reqFail)
+	if recFail.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 when ApplyXrayConfig fails, got %d: %s", recFail.Code, recFail.Body.String())
+	}
+	if clients := svcFail.GetConfig().Clients; len(clients) != 0 {
+		t.Fatalf("expected orphaned client to be rolled back, got %+v", clients)
+	}
+	if st := svcFail.GetRealityState(context.Background(), false); st.Settings.Enabled || st.Settings.PublicKey != "" {
+		t.Fatalf("expected Reality state to be rolled back, got %+v", st.Settings)
+	}
+
+	// 2. disable_other_service=true disables currently active Telegram proxy
+	dir := t.TempDir()
+	svc := vlessserver.New(dir, nil)
+	svc.SetTestRuntimeHook(func(xhttpserver.Config) error { return nil })
+	svc.SetRealityNetworkInfoProvider(func(ctx context.Context) vlessserver.RealityNetworkInfo {
+		return vlessserver.RealityNetworkInfo{
+			PublicHost: "203.0.113.10",
+			ExternalIP: "203.0.113.10",
+			WANAddress: "203.0.113.10",
+			WhiteIP:    true,
+		}
+	})
+	cfg := svc.GetConfig()
+	cfg.Enabled = false
+	cfg.ListenPort = testutil.FreePort(t)
+	if err := svc.UpdateConfig(cfg); err != nil {
+		t.Fatalf("UpdateConfig: %v", err)
+	}
+
+	tgSvc := tgwebproxy.New(dir, nil)
+	tgSvc.SetRuntimeDCProbeForTest(func(string) bool { return true })
+	t.Cleanup(func() {
+		_ = tgSvc.Close()
+		_ = svc.Shutdown(context.Background())
+	})
+
+	coord := serveringress.New(dir, svc, nil, tgSvc)
+	tgCfg := tgSvc.GetInternalConfig()
+	tgCfg.Enabled = true
+	tgCfg.Scenario = tgwebproxy.ScenarioCDNHTTP
+	tgCfg.ListenPort = testutil.FreePort(t)
+	tgCfg.AdminPort = testutil.FreePort(t)
+	tgCfg.Backend = (&net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: testutil.FreePort(t)}).String()
+	tgCfg.PublicHostname = "tg.example.com"
+	if err := coord.ApplyTelegramConfig(context.Background(), tgCfg); err != nil {
+		t.Fatalf("ApplyTelegramConfig: %v", err)
+	}
+	if !tgSvc.GetInternalConfig().Enabled {
+		t.Fatal("expected tgwebproxy to start enabled before quick-setup")
+	}
+
+	h := NewVlessServerHandler(svc, coord)
+	okPort := testutil.FreePort(t)
+	okBody, _ := json.Marshal(map[string]any{
+		"client_remark":         "RealityPhone",
+		"disable_other_service": true,
+		"outbound_mode":         "direct",
+		"reality": map[string]any{
+			"port":         okPort,
+			"transport":    "tcp",
+			"dest":         testDest,
+			"server_names": []string{testSNI},
+		},
+	})
+	reqOK := httptest.NewRequest(http.MethodPost, "/api/servers/vless/reality/quick-setup", bytes.NewReader(okBody))
+	recOK := httptest.NewRecorder()
+	h.RealityRoute(recOK, reqOK)
+	if recOK.Code != http.StatusOK {
+		t.Fatalf("quick-setup with disable_other_service failed: %d %s", recOK.Code, recOK.Body.String())
+	}
+	if tgSvc.GetInternalConfig().Enabled {
+		t.Fatal("expected tgwebproxy to be disabled when disable_other_service=true")
 	}
 }

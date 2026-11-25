@@ -104,7 +104,6 @@
 		align-items: center;
 	}
 	.rr-actions :global(.rr-btn-icon) {
-		margin-right: 4px;
 		flex-shrink: 0;
 	}
 	.rr-link {

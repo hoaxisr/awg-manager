@@ -35,7 +35,7 @@
 		type EgressEntry,
 	} from './telegram-proxy/tgProxyModel';
 	import type { TgWebProxyConfig, TgWebProxyStatus, TelegramUser } from '$lib/types';
-	import type { VerificationReport } from '$lib/types/serverWizard';
+	import type { KeenDNSDiscovery, VerificationReport } from '$lib/types/serverWizard';
 	import { Power, RotateCw, Settings, Sparkles } from 'lucide-svelte';
 
 	interface Props {
@@ -110,6 +110,7 @@
 	// Выходы храним без готовых подписей: подпись собирается при показе и
 	// поэтому следует за языком.
 	let egressEntries = $state<EgressEntry[]>([{ value: 'direct', name: '', available: true }]);
+	let keendnsInfo = $state<KeenDNSDiscovery | null>(null);
 	let egressOptions = $derived<EgressChoice[]>(egressChoices(egressEntries));
 	let egressSummaryLabel = $derived(egressSummary(config, egressOptions));
 	let shortEgressLabel = $derived(shortEgressSummary(config, egressOptions));
@@ -123,6 +124,7 @@
 		try {
 			const caps = await api.getWizardCapabilities('tgwebproxy');
 			egressEntries = egressEntriesFrom(caps.egress_options || [], currentUpstream);
+			keendnsInfo = caps.keendns ?? null;
 		} catch {
 			const cur = (currentUpstream || '').trim();
 			const fallback: EgressEntry[] = [{ value: 'direct', name: '', available: true }];
@@ -474,6 +476,7 @@
 	{config}
 	{status}
 	{egressOptions}
+	{keendnsInfo}
 	{egressSummaryLabel}
 	{cardFingerprint}
 	{onOpenDispatcher}

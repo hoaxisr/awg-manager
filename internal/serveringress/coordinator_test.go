@@ -247,6 +247,7 @@ func (m *mockTgWebProxy) GetConfig() tgwebproxy.PublicConfig {
 	defer m.mu.Unlock()
 	return tgwebproxy.PublicConfig{
 		Enabled:        m.cfg.Enabled,
+		Scenario:       m.cfg.Scenario,
 		ListenPort:     m.cfg.ListenPort,
 		PublicHostname: m.cfg.PublicHostname,
 	}
@@ -1515,7 +1516,7 @@ func TestCoordinator_DispatcherHydrationAndApply(t *testing.T) {
 		Routes:        newRoutes,
 	}
 
-	if err := coord.ApplyDispatcherConfig(ctx, newCfg); err != nil {
+	if _, err := coord.ApplyDispatcherConfig(ctx, newCfg); err != nil {
 		t.Fatalf("failed to apply dispatcher config: %v", err)
 	}
 
@@ -1638,5 +1639,169 @@ func TestCoordinator_HydrateDispatcherPreservesXrayPathPrefixWhenRoutesEmpty(t *
 	}
 	if got.DefaultAction != "404" {
 		t.Fatalf("expected default_action '404', got %q", got.DefaultAction)
+	}
+}
+
+type mockTgWithFWSync struct {
+	*mockTgWebProxy
+	syncCalls int
+	syncErr   error
+}
+
+func (m *mockTgWithFWSync) SyncDirectWANFirewall() error {
+	m.syncCalls++
+	return m.syncErr
+}
+
+func TestExecuteIngressTransaction_DirectFakeTLS_TopologiesAndRoutes(t *testing.T) {
+	ctx := context.Background()
+
+	// 1. Transition dual (tg.example.com) -> direct_fake_tls (Xray disabled):
+	// clears PublicHostname, TgPublicHostname, disables and stops dispatcher.
+	dataDir := t.TempDir()
+	mockX := &mockXray{cfg: vlessserver.Config{Enabled: false, ListenPort: 9008}}
+	mockDisp := &mockDispatcher{
+		cfg: cdndispatcher.Config{
+			Enabled:        true,
+			ListenAddr:     ":9009",
+			PublicHostname: "tg.example.com",
+			Routes: []cdndispatcher.CDNRouteRule{
+				{ID: "r-tg", Domain: "tg.example.com", RouteTelegram: true, Enabled: true},
+			},
+		},
+		running: true,
+	}
+	baseTG := &mockTgWebProxy{
+		cfg: tgwebproxy.Config{
+			Enabled:        true,
+			Scenario:       tgwebproxy.ScenarioDual,
+			PublicHostname: "tg.example.com",
+			DirectHost:     "203.0.113.10",
+			DirectPort:     8443,
+			TlsDomain:      "www.google.com",
+			ListenPort:     8085,
+		},
+	}
+	mockTG := &mockTgWithFWSync{mockTgWebProxy: baseTG}
+	coord := New(dataDir, mockX, mockDisp, mockTG)
+
+	var probedTopo IngressTopology
+	err := coord.ExecuteIngressTransaction(ctx, IngressTransactionParams{
+		TxID:       "tx-dual-to-direct",
+		ServerKind: "tgwebproxy",
+		Telegram: &IngressTelegramCandidate{
+			Enabled:    true,
+			Scenario:   tgwebproxy.ScenarioDirectFakeTLS,
+			DirectHost: "203.0.113.10",
+			DirectPort: 8443,
+			TlsDomain:  "www.google.com",
+			ListenPort: 8085,
+		},
+		ReadinessProbe: func(ctx context.Context, topo IngressTopology) error {
+			probedTopo = topo
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("dual -> direct_fake_tls failed: %v", err)
+	}
+	if probedTopo.PublicHostname != "" || probedTopo.TgPublicHostname != "" {
+		t.Fatalf("expected empty PublicHostname and TgPublicHostname after direct_fake_tls transition, got %+v", probedTopo)
+	}
+	if probedTopo.DispatcherEnabled {
+		t.Fatalf("expected DispatcherEnabled=false for direct_fake_tls without Xray")
+	}
+	if mockDisp.IsRunning() {
+		t.Fatalf("expected dispatcher to be stopped after dual -> direct_fake_tls")
+	}
+
+	// 2. both (Xray vless.example.com + Telegram direct_fake_tls) clears stale RouteTelegram from shared route
+	mockDisp.mu.Lock()
+	mockDisp.running = true
+	mockDisp.cfg.Routes = []cdndispatcher.CDNRouteRule{
+		{ID: "r-shared", Domain: "vless.example.com", RouteXray: true, RouteTelegram: true, Enabled: true},
+	}
+	mockDisp.mu.Unlock()
+
+	err = coord.ExecuteIngressTransaction(ctx, IngressTransactionParams{
+		TxID:       "tx-both-direct-tls",
+		ServerKind: "both",
+		Xray: &IngressXrayCandidate{
+			Enabled:      true,
+			ListenPort:   9008,
+			PublicDomain: "vless.example.com",
+			PublicPort:   443,
+			Path:         "/cdn-bridge",
+			OutboundMode: "direct",
+			ClientRemark: "Phone",
+			ClientUUID:   "00000000-0000-0000-0000-000000000002",
+		},
+		Telegram: &IngressTelegramCandidate{
+			Enabled:    true,
+			Scenario:   tgwebproxy.ScenarioDirectFakeTLS,
+			DirectHost: "203.0.113.10",
+			DirectPort: 8443,
+			TlsDomain:  "www.google.com",
+			ListenPort: 8085,
+		},
+		ReadinessProbe: func(ctx context.Context, topo IngressTopology) error {
+			probedTopo = topo
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("both + direct_fake_tls failed: %v", err)
+	}
+	if probedTopo.PublicHostname != "vless.example.com" || probedTopo.TgPublicHostname != "" {
+		t.Fatalf("unexpected hostnames in both+direct_fake_tls topology: %+v", probedTopo)
+	}
+	dispCfg := mockDisp.GetConfig()
+	if len(dispCfg.Routes) != 1 || !dispCfg.Routes[0].RouteXray || dispCfg.Routes[0].RouteTelegram {
+		t.Fatalf("expected RouteXray=true and RouteTelegram=false on vless.example.com, got %+v", dispCfg.Routes)
+	}
+
+	// 3. topologyForTelegramConfig clears TgPublicHostname & PublicHostname on direct_fake_tls when Xray disabled
+	mockX.mu.Lock()
+	mockX.cfg.Enabled = false
+	mockX.cfg.PublicDomain = ""
+	mockX.mu.Unlock()
+	mockDisp.mu.Lock()
+	mockDisp.cfg.PublicHostname = "stale.tg.com"
+	mockDisp.mu.Unlock()
+	baseTG.mu.Lock()
+	baseTG.cfg.PublicHostname = "stale.tg.com"
+	baseTG.mu.Unlock()
+
+	topoDirect := coord.topologyForTelegramConfig(tgwebproxy.Config{
+		Enabled:        true,
+		Scenario:       tgwebproxy.ScenarioDirectFakeTLS,
+		PublicHostname: "stale.tg.com",
+	})
+	if topoDirect.TgPublicHostname != "" || topoDirect.PublicHostname != "" {
+		t.Fatalf("expected topologyForTelegramConfig to clear hostnames for direct_fake_tls, got %+v", topoDirect)
+	}
+
+	// 4. SyncWANIngressFirewall calls SyncDirectWANFirewall when healthy and is a no-op when recoveryNeeded == true
+	syncBeforeHealthy := mockTG.syncCalls
+	if err := coord.SyncWANIngressFirewall(); err != nil {
+		t.Fatalf("expected SyncWANIngressFirewall to succeed when healthy, got %v", err)
+	}
+	if mockTG.syncCalls != syncBeforeHealthy+1 {
+		t.Fatalf("expected SyncWANIngressFirewall to invoke SyncDirectWANFirewall once when healthy, got delta=%d", mockTG.syncCalls-syncBeforeHealthy)
+	}
+
+	mockTG.syncErr = errors.New("simulated cleanup error")
+	if err := coord.SyncWANIngressFirewall(); err == nil {
+		t.Fatalf("expected SyncWANIngressFirewall to return sync error")
+	}
+	mockTG.syncErr = nil
+
+	syncBefore := mockTG.syncCalls
+	coord.setRecovery(true, "simulated recovery state")
+	if err := coord.SyncWANIngressFirewall(); err != nil {
+		t.Fatalf("expected SyncWANIngressFirewall under recovery state to be a no-op, got %v", err)
+	}
+	if mockTG.syncCalls != syncBefore {
+		t.Fatalf("expected SyncWANIngressFirewall not to call SyncDirectWANFirewall under recovery state")
 	}
 }

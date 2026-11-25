@@ -7934,6 +7934,8 @@ definitions:
     properties:
       client_remark:
         type: string
+      disable_other_service:
+        type: boolean
       outbound_interface:
         type: string
       outbound_mode:
@@ -9514,6 +9516,9 @@ definitions:
         type: string
       external_ip:
         type: string
+      gray_ip:
+        description: WAN заведомо серый; оба false — адрес неизвестен
+        type: boolean
       keendns_domain:
         type: string
       public_host:

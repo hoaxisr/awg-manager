@@ -102,6 +102,7 @@ func (a *app) setupServer() {
 		a.vlessServerService.SetOrchestrator(a.sbOrch)
 	}
 	a.tgWebProxyService = tgwebproxy.New(a.dataDir, onReload)
+	a.tgWebProxyService.SetAppLogger(a.loggingService)
 
 	// Cross-Component Ingress Coordinator and Crash Recovery
 	a.ingressCoordinator = serveringress.New(a.dataDir, a.vlessServerService, a.cdnDispatcher, a.tgWebProxyService)
@@ -129,7 +130,6 @@ func (a *app) setupServer() {
 	}
 
 	xCfg := a.vlessServerService.GetConfig()
-	tCfg := a.tgWebProxyService.GetConfig()
 
 	if err := a.ingressCoordinator.HydrateDispatcherRoutes(context.Background()); err != nil {
 		a.bootLog.Error("ingress_coordinator", "hydrate_dispatcher", err.Error())
@@ -152,20 +152,7 @@ func (a *app) setupServer() {
 	}
 	a.cdnDispatcher.UpdateConfig(dispCfg)
 
-	started, autoStartErr := serveringress.StartIngressIfSafe(
-		context.Background(),
-		recoveryReq, recoveryReason,
-		vlessReq, vlessReason,
-		tgSt.RecoveryRequired, tgSt.LastStartupError,
-		xCfg.Enabled, a.vlessServerService,
-		tCfg.Enabled, a.tgWebProxyService,
-		a.cdnDispatcher,
-	)
-	if autoStartErr != nil {
-		a.bootLog.Error("ingress", "autostart", autoStartErr.Error())
-	} else if started {
-		a.bootLog.Info("ingress", "autostart", "ingress services started successfully")
-	}
+	a.startIngressServices(recoveryReq, recoveryReason, vlessReq, vlessReason)
 
 	if err := a.tgWebProxyService.ReconcileRuntime(); err != nil {
 		a.bootLog.Error("tgwebproxy", "reconcile", err.Error())
@@ -982,4 +969,28 @@ func shutdownIngressRuntime(ctx context.Context, vless *vlessserver.Service, tg 
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// startIngressServices поднимает серверы на загрузке и приводит правило
+// WAN-файрвола MTProto к конфигурации: выключенный за время простоя прокси
+// иначе оставил бы порт открытым.
+func (a *app) startIngressServices(recoveryReq bool, recoveryReason string, vlessReq bool, vlessReason string) {
+	tgSt := a.tgWebProxyService.GetStatus()
+	started, autoStartErr := serveringress.StartIngressIfSafe(
+		context.Background(),
+		recoveryReq, recoveryReason,
+		vlessReq, vlessReason,
+		tgSt.RecoveryRequired, tgSt.LastStartupError,
+		a.vlessServerService.GetConfig().Enabled, a.vlessServerService,
+		a.tgWebProxyService.GetConfig().Enabled, a.tgWebProxyService,
+		a.cdnDispatcher,
+	)
+	if autoStartErr != nil {
+		a.bootLog.Error("ingress", "autostart", autoStartErr.Error())
+		return
+	}
+	if started {
+		a.bootLog.Info("ingress", "autostart", "ingress services started successfully")
+	}
+	_ = a.ingressCoordinator.SyncWANIngressFirewall() // ошибку пишет в журнал и статус сам сервис
 }

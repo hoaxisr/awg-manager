@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/hoaxisr/awg-manager/internal/serveringress"
 	"github.com/hoaxisr/awg-manager/internal/serverwizard/cdn"
 	"github.com/hoaxisr/awg-manager/internal/serverwizard/egress"
 	"github.com/hoaxisr/awg-manager/internal/sys/procnet"
+	"github.com/hoaxisr/awg-manager/internal/tgwebproxy"
 	"github.com/hoaxisr/awg-manager/internal/xhttpserver"
 )
 
@@ -125,7 +127,19 @@ func (pe *PreflightEngine) Run(ctx context.Context, req WizardPlanRequest) Prefl
 		})
 	}
 
-	if kdLabel := strings.ToLower(strings.TrimSpace(req.KeenDNSLabel)); kdLabel != "" {
+	isTgDirectOnly := req.Kind == "tgwebproxy" && strings.TrimSpace(req.Scenario) == "direct_fake_tls"
+	kdLabel := strings.ToLower(strings.TrimSpace(req.KeenDNSLabel))
+	kdMode := strings.ToLower(strings.TrimSpace(req.KeenDNSMode))
+	kdNonManual := kdMode != "" && kdMode != "manual"
+	if isTgDirectOnly && (kdLabel != "" || kdNonManual) {
+		checks = append(checks, PreflightCheck{
+			ID:          "keendns_publication",
+			Title:       "Публикация адреса KeenDNS",
+			Status:      CheckStatusBlocked,
+			Message:     "Домен 4-го уровня KeenDNS работает только для HTTP/HTTPS (Web Proxy) и неприменим для прямого MTProto",
+			Remediation: "Для MTProto укажите белый IP роутера или прямой домен, либо переключитесь на сценарий Web Proxy / Оба способа.",
+		})
+	} else if kdLabel != "" {
 		dispPort := req.DispatcherPort
 		if dispPort <= 0 {
 			dispPort = 9009
@@ -188,15 +202,22 @@ func (pe *PreflightEngine) Run(ctx context.Context, req WizardPlanRequest) Prefl
 }
 
 func (pe *PreflightEngine) checkTelegram(ctx context.Context, req WizardPlanRequest, checks *[]PreflightCheck) {
+	scenario := strings.TrimSpace(req.Scenario)
+	if scenario == "" {
+		scenario = "dual"
+	}
+
 	// Binary checks
 	// mtg и tproxy встроены в процесс: внешних бинарей нет, проверять нечего.
-	*checks = append(*checks, PreflightCheck{
-		ID:      "bin_telemt",
-		Title:   "Встроенное ядро mtg (MTProto Fake-TLS)",
-		Status:  CheckStatusOK,
-		Message: "Ядро mtg встроено в процесс awg-manager",
-	})
-	if req.Scenario != "direct_fake_tls" {
+	if scenario != "cdn_http" {
+		*checks = append(*checks, PreflightCheck{
+			ID:      "bin_telemt",
+			Title:   "Встроенное ядро mtg (MTProto Fake-TLS)",
+			Status:  CheckStatusOK,
+			Message: "Ядро mtg встроено в процесс awg-manager",
+		})
+	}
+	if scenario != "direct_fake_tls" {
 		*checks = append(*checks, PreflightCheck{
 			ID:      "bin_tproxy",
 			Title:   "Встроенный Web Proxy (tproxy)",
@@ -206,12 +227,8 @@ func (pe *PreflightEngine) checkTelegram(ctx context.Context, req WizardPlanRequ
 	}
 
 	// Ports checks
-	scenario := strings.TrimSpace(req.Scenario)
-	if scenario == "" {
-		scenario = "dual"
-	}
 	directPort := req.DirectPort
-	if directPort <= 0 {
+	if directPort == 0 {
 		directPort = 8443
 	}
 	webPort := resolveTelegramWebPort(req)
@@ -226,16 +243,77 @@ func (pe *PreflightEngine) checkTelegram(ctx context.Context, req WizardPlanRequ
 		}
 	}
 
+	selfPID := os.Getpid()
 	var currentWebPID int
 	var currentDirectPID int
+	var currentDirectPort int
+	var currentWebPort int
+	var directOnline bool
 	if pe.tgSvc != nil {
 		st := pe.tgSvc.GetStatus()
+		cfg := pe.tgSvc.GetConfig()
 		currentWebPID = st.PID
 		currentDirectPID = st.DirectPID
+		directOnline = st.DirectOnline
+		currentDirectPort = st.DirectPort
+		if currentDirectPort <= 0 {
+			currentDirectPort = cfg.DirectPort
+		}
+		currentWebPort = st.Port
+		if currentWebPort <= 0 {
+			currentWebPort = cfg.ListenPort
+		}
+	}
+	if currentDirectPID == 0 {
+		if pidBytes, err := os.ReadFile("/opt/var/run/telemt.pid"); err == nil {
+			if p, err := strconv.Atoi(strings.TrimSpace(string(pidBytes))); err == nil {
+				currentDirectPID = p
+				directOnline = true
+			}
+		}
+	}
+
+	allowedDirectPID := 0
+	if currentDirectPID == selfPID {
+		if directOnline && currentDirectPort > 0 && directPort == currentDirectPort {
+			allowedDirectPID = currentDirectPID
+		}
+	} else if currentDirectPID > 0 && (currentDirectPort == 0 || directPort == currentDirectPort) {
+		allowedDirectPID = currentDirectPID
+	}
+
+	allowedWebPID := 0
+	if currentWebPID == selfPID {
+		if currentWebPort > 0 && webPort == currentWebPort {
+			allowedWebPID = currentWebPID
+		}
+	} else if currentWebPID > 0 && (currentWebPort == 0 || webPort == currentWebPort) {
+		allowedWebPID = currentWebPID
 	}
 
 	if scenario != "cdn_http" {
-		if directPort == 9008 || (pe.xraySvc != nil && pe.xraySvc.GetConfig().Enabled && !req.DisableOtherService && directPort == xrayPort) {
+		directPortValid := true
+		if req.DirectPort != 0 {
+			if err := tgwebproxy.ValidateDirectPort(req.DirectPort); err != nil {
+				directPortValid = false
+				*checks = append(*checks, PreflightCheck{
+					ID:          "port_direct_valid",
+					Title:       "Корректность порта MTProto",
+					Status:      CheckStatusBlocked,
+					Message:     err.Error(),
+					Remediation: "Укажите свободный TCP-порт из диапазона 1024–65535, не занятый службами роутера.",
+				})
+			}
+		}
+		if scenario != "direct_fake_tls" && directPort == webPort {
+			*checks = append(*checks, PreflightCheck{
+				ID:          "port_collision_direct",
+				Title:       "Проверка пересечения портов",
+				Status:      CheckStatusBlocked,
+				Message:     fmt.Sprintf("Порт Telegram MTProto (%d) совпадает с портом Telegram Web (%d)", directPort, webPort),
+				Remediation: "Укажите разные порты для прямого MTProto и веб-прокси Telegram.",
+			})
+		} else if directPort == 9008 || (pe.xraySvc != nil && pe.xraySvc.GetConfig().Enabled && !req.DisableOtherService && directPort == xrayPort) {
 			*checks = append(*checks, PreflightCheck{
 				ID:          "port_direct_conflict",
 				Title:       fmt.Sprintf("Порт MTProto Direct (%d)", directPort),
@@ -251,8 +329,8 @@ func (pe *PreflightEngine) checkTelegram(ctx context.Context, req WizardPlanRequ
 				Message:     fmt.Sprintf("Порт %d занят внутренним сервисом роутера", directPort),
 				Remediation: "Выберите другой порт для MTProto Direct (по умолчанию 8443).",
 			})
-		} else {
-			pe.checkPort("port_direct", fmt.Sprintf("Порт прямого подключения (%d)", directPort), directPort, currentDirectPID, checks)
+		} else if directPortValid && directPort >= 1024 && directPort <= 65535 {
+			pe.checkPort("port_direct", fmt.Sprintf("Порт прямого подключения (%d)", directPort), directPort, allowedDirectPID, checks)
 		}
 	}
 	if scenario != "direct_fake_tls" {
@@ -273,7 +351,32 @@ func (pe *PreflightEngine) checkTelegram(ctx context.Context, req WizardPlanRequ
 				Remediation: "Используйте отдельный порт для Telegram Web Proxy (по умолчанию 8085).",
 			})
 		} else {
-			pe.checkPort("port_web", fmt.Sprintf("Порт веб-прокси (%d)", webPort), webPort, currentWebPID, checks)
+			pe.checkPort("port_web", fmt.Sprintf("Порт веб-прокси (%d)", webPort), webPort, allowedWebPID, checks)
+		}
+	}
+
+	if scenario != "cdn_http" {
+		wanCheck := PreflightCheck{
+			ID:      "port_direct_wan",
+			Title:   "Порт MTProto на WAN",
+			Status:  CheckStatusOK,
+			Message: fmt.Sprintf("TCP-порт %d будет открыт на WAN роутера: задан прямой адрес", directPort),
+		}
+		if strings.TrimSpace(req.DirectHost) == "" {
+			wanCheck.Status = CheckStatusWarning
+			wanCheck.Message = fmt.Sprintf("TCP-порт %d на WAN не откроется: прямой адрес не задан", directPort)
+			wanCheck.Remediation = "Укажите прямой адрес, если MTProto должен работать из интернета."
+		} else if err := tgwebproxy.ValidateDirectPort(directPort); err != nil {
+			wanCheck.Status = CheckStatusWarning
+			wanCheck.Message = fmt.Sprintf("TCP-порт %d на WAN не откроется: порт недопустим", directPort)
+		}
+		*checks = append(*checks, wanCheck)
+	}
+
+	var kdDisc *serveringress.KeenDNSDiscovery
+	if scenario != "cdn_http" && pe.keendns != nil {
+		if disc, err := pe.keendns.Discover(ctx, dispPort); err == nil {
+			kdDisc = &disc
 		}
 	}
 
@@ -286,9 +389,39 @@ func (pe *PreflightEngine) checkTelegram(ctx context.Context, req WizardPlanRequ
 				Message:     fmt.Sprintf("Некорректный прямой хост: %v", err),
 				Remediation: "Укажите публичный IP адрес роутера или домен (KeenDNS / DynDNS).",
 			})
+		} else if serveringress.IsPrivateOrCGNATIP(req.DirectHost) && scenario != "cdn_http" {
+			*checks = append(*checks, PreflightCheck{
+				ID:          "direct_host_private_ip",
+				Title:       "Адрес прямого подключения MTProto",
+				Status:      CheckStatusWarning,
+				Message:     fmt.Sprintf("Адрес %s относится к частной/CGNAT подсети — для подключения Telegram из интернета требуется белый IP или прямой домен", req.DirectHost),
+				Remediation: "Укажите белый публичный IP роутера, прямой домен KeenDNS 3-го уровня или переключитесь на сценарий Web Proxy.",
+			})
+		} else if scenario != "cdn_http" && isCloudKeenDNSHost(req.DirectHost, kdDisc) {
+			*checks = append(*checks, PreflightCheck{
+				ID:          "direct_host_keendns_cloud",
+				Title:       "Адрес прямого подключения MTProto",
+				Status:      CheckStatusBlocked,
+				Message:     fmt.Sprintf("Домен %s работает в облачном режиме KeenDNS (только HTTP/HTTPS) — прямое TCP-подключение MTProto через него недоступно", req.DirectHost),
+				Remediation: "Переведите KeenDNS в режим «Прямой доступ» в настройках Keenetic (требуется белый IP), укажите другой белый IP/домен или переключитесь на сценарий Веб-мост (cdn_http).",
+			})
 		}
 	}
-	if req.PublicDomain != "" {
+	if scenario != "cdn_http" && kdDisc != nil && kdDisc.WANPrivate {
+		wanAddr := strings.TrimSpace(kdDisc.WANAddress)
+		wanMsg := fmt.Sprintf("На WAN-интерфейсе роутера серый (приватный/CGNAT) адрес — прямой TCP-порт %d MTProto из интернета недоступен без внешнего проброса порта (DMZ/VPS).", directPort)
+		if wanAddr != "" {
+			wanMsg = fmt.Sprintf("На WAN-интерфейсе роутера серый (приватный/CGNAT) адрес %s — прямой TCP-порт %d MTProto из интернета недоступен без внешнего проброса порта (DMZ/VPS).", wanAddr, directPort)
+		}
+		*checks = append(*checks, PreflightCheck{
+			ID:          "wan_cgnat_direct_mtproto",
+			Title:       "WAN-адрес роутера для прямого MTProto",
+			Status:      CheckStatusWarning,
+			Message:     wanMsg,
+			Remediation: "Для роутера с серым IP используйте сценарий «Веб-мост (через домен)» через облако KeenDNS либо настройте проброс TCP-порта с внешнего белого IP/VPS.",
+		})
+	}
+	if scenario != "direct_fake_tls" && req.PublicDomain != "" {
 		if err := ValidatePublicHostname(req.PublicDomain); err != nil {
 			*checks = append(*checks, PreflightCheck{
 				ID:          "public_domain_format",
@@ -673,6 +806,19 @@ func (pe *PreflightEngine) checkPort(id, title string, port int, allowedPID int,
 		Details:     fmt.Sprintf("Socket inode: %s", lookup.SocketInode),
 		Remediation: fmt.Sprintf("Остановите конфликтующий процесс (%s) или выберите другой порт.", pidInfo),
 	})
+}
+
+// isCloudKeenDNSHost reports whether host matches the router's cloud-mode KeenDNS base domain or any 4th-level subdomain under it.
+func isCloudKeenDNSHost(host string, disc *serveringress.KeenDNSDiscovery) bool {
+	if disc == nil || disc.State != "supported" || !strings.EqualFold(strings.TrimSpace(disc.AccessMode), "cloud") {
+		return false
+	}
+	base := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(disc.BaseFQDN), "."))
+	h := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+	if h == "" || base == "" {
+		return false
+	}
+	return h == base || strings.HasSuffix(h, "."+base)
 }
 
 // Ensure interface compatibility

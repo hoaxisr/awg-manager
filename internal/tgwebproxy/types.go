@@ -634,6 +634,23 @@ func (c Config) IsDirectEnabled() bool {
 	return c.Scenario == ScenarioDirectFakeTLS || c.Scenario == ScenarioDual || c.Scenario == ""
 }
 
+// OpensDirectWAN — открывать ли прямой порт на WAN. Без прямого адреса MTProto
+// слушает только для LAN: снаружи подключаться некуда.
+func (c Config) OpensDirectWAN() bool {
+	return c.IsDirectEnabled() && strings.TrimSpace(c.DirectHost) != ""
+}
+
+func (c PublicConfig) OpensDirectWAN() bool {
+	return Config{Enabled: c.Enabled, Scenario: c.Scenario, DirectHost: c.DirectHost}.OpensDirectWAN()
+}
+
+func (c Config) effectiveDirectPort() int {
+	if c.DirectPort <= 0 {
+		return DefaultDirectPort
+	}
+	return c.DirectPort
+}
+
 func (c Config) IsRawEnabled() bool {
 	if !c.Enabled {
 		return false
@@ -718,6 +735,7 @@ type Status struct {
 	LegacyExpiredPendingReconcile bool                 `json:"legacy_expired_pending_reconcile"`
 	RecoveryRequired              bool                 `json:"recovery_required"`
 	LastStartupError              string               `json:"last_startup_error,omitempty"`
+	DirectWANError                string               `json:"direct_wan_error,omitempty"` // сбой правила WAN-файрвола прямого порта
 	WebProxies                    []WebProxyStatusLink `json:"web_proxies,omitempty"`
 	Users                         []TelegramUser       `json:"users,omitempty"`
 }

@@ -560,4 +560,106 @@ describe('TelegramWebProxyCard', () => {
 		})) as HTMLInputElement;
 		expect(socksInput.value).toBe('127.0.0.1:1099');
 	});
+
+	it('offers 1-click KeenDNS 3rd-level domain fill in manual Settings and warns on cloud KeenDNS direct_host', async () => {
+		vi.mocked(api.getWizardCapabilities).mockResolvedValue({
+			egress_options: [
+				{
+					id: 'direct',
+					kind: 'direct',
+					owner: 'system',
+					name: 'WAN',
+					iface: 'direct',
+					available: true,
+					state: 'up',
+					current: true,
+					supports_tcp: true,
+					supports_udp: true,
+					generation: 1,
+				},
+			],
+			keendns: {
+				state: 'supported',
+				enabled: true,
+				domain: 'dacha.example.keenetic.pro',
+				mode: 'cloud',
+				cert_ok: false,
+				publications: [],
+				wan_ip: '10.20.30.40',
+				wan_ip_private: true,
+			},
+		} as unknown as Awaited<ReturnType<typeof api.getWizardCapabilities>>);
+		vi.mocked(api.getTgWebProxyConfig).mockResolvedValue(
+			baseConfig({ enabled: true, scenario: 'direct_fake_tls', direct_host: '' }),
+		);
+		vi.mocked(api.getTgWebProxyStatus).mockResolvedValue(
+			baseStatus({ running: true, direct_online: true }),
+		);
+
+		render(TelegramWebProxyCard, {});
+
+		const settingsBtn = await screen.findByRole('button', { name: new RegExp(m.servers_tg_settings_btn()) });
+		await fireEvent.click(settingsBtn);
+
+		const pillBtn = await screen.findByRole('button', {
+			name: new RegExp('dacha\\.example\\.keenetic\\.pro'),
+		});
+		await fireEvent.click(pillBtn);
+
+		const directHostInput = screen.getByLabelText(m.servers_tg_direct_host_label());
+		expect(directHostInput).toHaveValue('dacha.example.keenetic.pro');
+		await screen.findByText(m.servers_tg_direct_host_cloud_warn({ domain: 'dacha.example.keenetic.pro' }));
+	});
+
+	// Мутации: не блокировать новый недопустимый порт; блокировать и сохранённый;
+	// не показывать, откроется ли порт.
+	it('settings name whether the WAN port opens and refuse only a newly entered bad port', async () => {
+		vi.mocked(api.getTgWebProxyConfig).mockResolvedValue(
+			baseConfig({ enabled: true, scenario: 'dual', direct_host: 'tg.example.com', direct_port: 443 }),
+		);
+		vi.mocked(api.getTgWebProxyStatus).mockResolvedValue(baseStatus({ running: true, direct_online: true }));
+		vi.mocked(api.updateTgWebProxyConfig).mockImplementation(async (c) => c as TgWebProxyConfig);
+
+		render(TelegramWebProxyCard, {});
+		const openSettings = async () =>
+			fireEvent.click(await screen.findByRole('button', { name: new RegExp(m.servers_tg_settings_btn()) }));
+		await openSettings();
+		const port = () => screen.getByLabelText(m.servers_tg_direct_port_label());
+		const save = () => fireEvent.click(screen.getByRole('button', { name: m.servers_tg_settings_save() }));
+
+		expect((await screen.findByRole('alert')).textContent).toContain(m.servers_tg_direct_wan_bad_port());
+		await save(); // сохранённый 443 сохранению не мешает
+		await waitFor(() => expect(api.updateTgWebProxyConfig).toHaveBeenCalledTimes(1));
+
+		await openSettings();
+		await fireEvent.input(port(), { target: { value: '22' } });
+		await save();
+		expect(api.updateTgWebProxyConfig).toHaveBeenCalledTimes(1);
+		expect(notifications.error).toHaveBeenCalledWith(m.servers_ext_wiz_s3_direct_port_invalid());
+
+		await fireEvent.input(port(), { target: { value: '9443' } });
+		await screen.findByText(m.servers_tg_direct_wan_opens({ port: 9443 }));
+		await fireEvent.input(screen.getByLabelText(m.servers_tg_direct_host_label()), { target: { value: '' } });
+		await screen.findByText(m.servers_tg_direct_wan_no_host({ port: 9443 }));
+		await save();
+		await waitFor(() => expect(api.updateTgWebProxyConfig).toHaveBeenCalledTimes(2));
+		expect(vi.mocked(api.updateTgWebProxyConfig).mock.calls[1][0]).toMatchObject({ direct_host: '', direct_port: 9443 });
+	});
+
+	// Мутация: убрать direct_wan_error из TgProxyMethods.
+	it('shows the WAN firewall error and the closed port on the card', async () => {
+		vi.mocked(api.getTgWebProxyConfig).mockResolvedValue(
+			baseConfig({ enabled: true, scenario: 'direct_fake_tls', direct_host: '' }),
+		);
+		vi.mocked(api.getTgWebProxyStatus).mockResolvedValue(baseStatus({ running: true, direct_online: true }));
+		const view = render(TelegramWebProxyCard, {});
+		await screen.findByText(m.servers_tg_direct_wan_no_host({ port: 8443 }));
+		view.unmount();
+
+		vi.mocked(api.getTgWebProxyStatus).mockResolvedValue(
+			baseStatus({ running: true, direct_online: true, direct_wan_error: 'xtables lock' }),
+		);
+		render(TelegramWebProxyCard, {});
+		await screen.findByText(m.servers_tg_direct_wan_error({ error: 'xtables lock' }));
+	});
 });

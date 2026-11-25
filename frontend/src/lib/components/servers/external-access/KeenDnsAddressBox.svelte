@@ -67,7 +67,7 @@
 				class:active={mode === 'create'}
 				onclick={() => onsetmode('create')}
 			>
-				<Sparkles size={12} class="mr-1" />
+				<Sparkles size={12} />
 				{m.servers_ext_wiz_kd_create()}
 			</button>
 			<button
@@ -111,18 +111,20 @@
 					{/if}
 				</div>
 
-				<div class="keendns-preview-box">
-					<Globe size={15} class="icon-info-soft" />
-					<div>
-						<div class="preview-line">
-							{variant === 'direct' ? m.servers_ext_wiz_kd_preview_direct() : m.servers_ext_wiz_kd_preview_ext()}
-							<strong class="mono">https://{previewFqdn}</strong>
-						</div>
-						<div class="preview-sub">
-							{m.servers_ext_wiz_kd_preview_note_before()} (<code>system.configuration.save</code>){m.servers_ext_wiz_kd_preview_note_after()}
+				{#if !validation.error && !labelConflict}
+					<div class="keendns-preview-box">
+						<Globe size={15} class="icon-info-soft" />
+						<div>
+							<div class="preview-line">
+								{variant === 'direct' ? m.servers_ext_wiz_kd_preview_direct() : m.servers_ext_wiz_kd_preview_ext()}
+								<strong class="mono">https://{previewFqdn}</strong>
+							</div>
+							<div class="preview-sub">
+								{m.servers_ext_wiz_kd_preview_note_before()} (<code>system.configuration.save</code>){m.servers_ext_wiz_kd_preview_note_after()}
+							</div>
 						</div>
 					</div>
-				</div>
+				{/if}
 			</div>
 		{:else}
 			<div class="keendns-unavailable-box">
@@ -228,6 +230,18 @@
 		border: 1px solid var(--color-accent-border);
 	}
 
+	.keendns-preview-box > :global(svg),
+	.keendns-unavailable-box > :global(svg) {
+		flex-shrink: 0;
+		margin-top: 2px;
+	}
+
+	.keendns-preview-box > div,
+	.keendns-unavailable-box > div {
+		min-width: 0;
+		flex: 1;
+	}
+
 	.preview-line {
 		font-size: 12.5px;
 		color: var(--color-text-primary);
@@ -285,13 +299,24 @@
 	.pill-btn {
 		display: inline-flex;
 		align-items: center;
+		gap: 5px;
+		max-width: 100%;
 		padding: 5px 10px;
 		border-radius: var(--radius-sm);
 		border: 1px solid var(--color-border);
 		background: var(--color-bg-secondary);
 		color: var(--color-text-secondary);
 		font-size: 12px;
+		line-height: 1.35;
+		text-align: left;
+		overflow-wrap: anywhere;
 		cursor: pointer;
+		transition: border-color 0.15s, background 0.15s, color 0.15s;
+	}
+
+	.pill-btn:hover {
+		border-color: var(--color-accent);
+		color: var(--color-text-primary);
 	}
 
 	.pill-btn.active {
