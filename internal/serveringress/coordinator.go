@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1569,10 +1570,11 @@ func (c *Coordinator) HydrateDispatcherRoutes(ctx context.Context) error {
 }
 
 // ApplyDispatcherConfig atomically updates dispatcher routing rules and persists them without restarting Xray.
-
-func (c *Coordinator) ApplyDispatcherConfig(ctx context.Context, cfg cdndispatcher.Config) error {
+// Предупреждение — маршруты сохранены, а домены Telegram обновить не удалось.
+func (c *Coordinator) ApplyDispatcherConfig(ctx context.Context, cfg cdndispatcher.Config) (string, error) {
+	warning := ""
 	txID := fmt.Sprintf("ing-disp-%d-%d", time.Now().UnixNano(), os.Getpid())
-	return c.withIngressLock(txID, func() error {
+	err := c.withIngressLock(txID, func() error {
 		if c.recoveryFlagged() {
 			return ErrRecoveryRequired
 		}
@@ -1617,23 +1619,35 @@ func (c *Coordinator) ApplyDispatcherConfig(ctx context.Context, cfg cdndispatch
 			}
 		}
 
-		var tgErr error
 		if c.tgSvc != nil {
 			tgCfg := c.tgSvc.GetInternalConfig()
-			if len(tgDomains) > 0 {
+			if !sameDomains(tgDomains, strings.Split(tgCfg.PublicHostname, ",")) {
 				tgCfg.PublicHostname = strings.Join(tgDomains, ",")
-			} else {
-				tgCfg.PublicHostname = ""
+				if err := c.tgSvc.UpdateConfig(tgCfg); err != nil {
+					warning = "маршруты сохранены, домены Telegram не обновлены: " + err.Error()
+				}
 			}
-			tgErr = c.tgSvc.UpdateConfig(tgCfg)
 		}
 
 		c.syncWANIngressFirewall()
-		if tgErr != nil {
-			return fmt.Errorf("маршруты диспетчера сохранены, домены Telegram не обновлены: %w", tgErr)
-		}
 		return nil
 	})
+	return warning, err
+}
+
+// sameDomains сравнивает наборы доменов без учёта порядка, регистра и пустых.
+func sameDomains(a, b []string) bool {
+	norm := func(in []string) []string {
+		var out []string
+		for _, d := range in {
+			if d = strings.ToLower(strings.TrimSpace(d)); d != "" {
+				out = append(out, d)
+			}
+		}
+		slices.Sort(out)
+		return slices.Compact(out)
+	}
+	return slices.Equal(norm(a), norm(b))
 }
 
 // ExecuteIngressTransaction executes a full coordinated transaction for Server Wizards with candidate isolation and readiness probes.

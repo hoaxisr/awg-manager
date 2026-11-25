@@ -1516,7 +1516,7 @@ func TestCoordinator_DispatcherHydrationAndApply(t *testing.T) {
 		Routes:        newRoutes,
 	}
 
-	if err := coord.ApplyDispatcherConfig(ctx, newCfg); err != nil {
+	if _, err := coord.ApplyDispatcherConfig(ctx, newCfg); err != nil {
 		t.Fatalf("failed to apply dispatcher config: %v", err)
 	}
 

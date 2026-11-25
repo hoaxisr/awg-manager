@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { m } from '$lib/i18n';
 import type { CDNDispatcherConfig } from '$lib/types';
+import { notifications } from '$lib/stores/notifications';
 import CDNDispatcherCard from './CDNDispatcherCard.svelte';
 
 const { getDispatcherConfig, updateDispatcherConfig } = vi.hoisted(() => ({
@@ -77,5 +78,19 @@ describe('CDNDispatcherCard', () => {
 			m.servers_dispatcher_running_hint({ port: '9443' }),
 		);
 		await waitFor(() => expect(onStatusChange).toHaveBeenCalledWith(true));
+	});
+
+	// Мутация: показывать успех при предупреждении.
+	it('shows the warning when routes are saved but Telegram domains are not', async () => {
+		const cfg: CDNDispatcherConfig = {
+			enabled: true, running: true, listen_addr: ':9009', xray_target: '', tg_target: '', routes: [], default_action: '404',
+		};
+		getDispatcherConfig.mockResolvedValueOnce(cfg);
+		updateDispatcherConfig.mockResolvedValueOnce({ ...cfg, warning: 'домены Telegram не обновлены' });
+		render(CDNDispatcherCard, { props: {} });
+		await screen.findByTestId('dispatcher-status-badge');
+		await fireEvent.click(screen.getByRole('button', { name: new RegExp(m.servers_cdn_save_changes()) }));
+		await waitFor(() => expect(notifications.warning).toHaveBeenCalledWith('домены Telegram не обновлены'));
+		expect(notifications.success).not.toHaveBeenCalled();
 	});
 });

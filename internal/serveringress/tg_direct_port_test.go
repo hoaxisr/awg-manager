@@ -3,6 +3,9 @@ package serveringress
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/cdndispatcher"
@@ -44,13 +47,34 @@ func TestTelegramStart_InvalidStoredPortRefusedBeforeTransaction(t *testing.T) {
 	}))
 }
 
-// Мутация: снова глотать ошибку UpdateConfig → красный.
-func TestApplyDispatcherConfig_ReturnsTelegramUpdateError(t *testing.T) {
-	boom := errors.New("boom")
-	tg := &mockTgWebProxy{updateError: boom}
-	coord := New(t.TempDir(), &mockXray{}, &mockDispatcher{}, tg)
-	if err := coord.ApplyDispatcherConfig(context.Background(), cdndispatcher.Config{}); !errors.Is(err, boom) {
-		t.Fatalf("ошибка UpdateConfig потеряна: %v", err)
+// Маршруты сохранены — сбой Telegram не ошибка, а предупреждение; без смены его
+// доменов Telegram не трогаем вовсе.
+// Мутации: глотать ошибку UpdateConfig; возвращать её ошибкой; звать UpdateConfig
+// без смены доменов → красный.
+func TestApplyDispatcherConfig_TelegramUpdateIsWarning(t *testing.T) {
+	dir := t.TempDir()
+	tg := &mockTgWebProxy{cfg: tgwebproxy.Config{PublicHostname: "B.example.com, a.example.com"}, updateError: errors.New("boom")}
+	coord := New(dir, &mockXray{}, &mockDispatcher{}, tg)
+	routes := func(domains ...string) cdndispatcher.Config {
+		var cfg cdndispatcher.Config
+		for _, d := range domains {
+			cfg.Routes = append(cfg.Routes, cdndispatcher.CDNRouteRule{ID: d, Domain: d, RouteTelegram: true, Enabled: true})
+		}
+		return cfg
+	}
+	if w, err := coord.ApplyDispatcherConfig(context.Background(), routes("a.example.com", "b.example.com")); err != nil || w != "" {
+		t.Fatalf("домены прежние: %q, %v", w, err)
+	}
+	w, err := coord.ApplyDispatcherConfig(context.Background(), routes("c.example.com"))
+	if err != nil || !strings.Contains(w, "boom") {
+		t.Fatalf("сбой Telegram: %q, %v", w, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, "dispatcher", "config.json")); err != nil || !strings.Contains(string(data), "c.example.com") {
+		t.Fatalf("маршруты не сохранены: %v", err)
+	}
+	tg.updateError = nil
+	if w, err := coord.ApplyDispatcherConfig(context.Background(), routes("c.example.com")); err != nil || w != "" || tg.cfg.PublicHostname != "c.example.com" {
+		t.Fatalf("обновление: %q, %v, %q", w, err, tg.cfg.PublicHostname)
 	}
 }
 
@@ -67,7 +91,7 @@ func TestWANFirewallSyncErrorDoesNotFailCommittedWork(t *testing.T) {
 	if err := coord.SetTelegramEnabled(ctx, false); err != nil || tg.cfg.Enabled {
 		t.Fatalf("выключение: err=%v enabled=%v", err, tg.cfg.Enabled)
 	}
-	if err := coord.ApplyDispatcherConfig(ctx, cdndispatcher.Config{}); err != nil {
+	if _, err := coord.ApplyDispatcherConfig(ctx, cdndispatcher.Config{}); err != nil {
 		t.Fatalf("ApplyDispatcherConfig: %v", err)
 	}
 	tg.prepError = errors.New("подготовка не удалась")

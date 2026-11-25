@@ -466,6 +466,8 @@ export interface CDNRouteRule {
 export interface CDNDispatcherConfig {
 	enabled: boolean;
 	running?: boolean;
+	/** Ответ на сохранение: маршруты сохранены, но что-то рядом не обновилось. */
+	warning?: string;
 	listen_addr: string;
 	xray_target: string;
 	tg_target: string;
