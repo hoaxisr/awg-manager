@@ -311,12 +311,17 @@ func TestXHTTPServer_PreAuthAutoExpiry(t *testing.T) {
 			t.Fatalf("POST %s: expected 200 OK, got %d", sid, r.StatusCode)
 		}
 	}
+	start := time.Now()
 	for i := 0; i < 4; i++ {
 		post("preauth_ok_" + strconv.Itoa(i))
 	}
 	testutil.WaitFor(t, func() bool {
 		return srv.SessionCount() == 0 && srv.PreAuthSessionCount() == 0 && srv.TotalPreAuthBufferedBytes() == 0
 	}, "expected automatic C reaper cleanup to zero pre-auth counters")
+	// Срок по умолчанию — 10 с: раньше него снимает только заданный TTL.
+	if d := time.Since(start); d >= 10*time.Second {
+		t.Fatalf("expiry took %s: daemon ignored pre_auth_ttl_ms", d)
+	}
 	post("preauth_after_ttl")
 }
 
