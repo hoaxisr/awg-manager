@@ -157,21 +157,23 @@
 						</div>
 					{/if}
 
-					<div class="params-box">
-						<div class="params-header">{m.servers_wizard_result_manual_params()}</div>
-						<div class="params-grid">
-							<span class="param-name">{m.servers_wizard_result_param_server()}</span>
-							<span class="param-val">{creds.direct_host || 'router.local'}</span>
-							<span class="param-name">{m.servers_wizard_result_param_port()}</span>
-							<span class="param-val">{creds.direct_port || 8443}</span>
-							<span class="param-name">{m.servers_wizard_result_param_secret()}</span>
-							<span class="param-val">{creds.tg_secret || '••••'}</span>
-							{#if creds.tg_egress}
-								<span class="param-name">{m.servers_wizard_result_param_egress()}</span>
-								<span class="param-val">{creds.tg_egress}</span>
-							{/if}
+					{#if creds.direct_link && creds.mtproxy_secret}
+						<div class="params-box">
+							<div class="params-header">{m.servers_wizard_result_manual_params()}</div>
+							<div class="params-grid">
+								<span class="param-name">{m.servers_wizard_result_param_server()}</span>
+								<span class="param-val">{creds.direct_host || 'router.local'}</span>
+								<span class="param-name">{m.servers_wizard_result_param_port()}</span>
+								<span class="param-val">{creds.direct_port || 8443}</span>
+								<span class="param-name">{m.servers_wizard_result_param_secret()}</span>
+								<span class="param-val">{creds.mtproxy_secret}</span>
+								{#if creds.tg_egress}
+									<span class="param-name">{m.servers_wizard_result_param_egress()}</span>
+									<span class="param-val">{creds.tg_egress}</span>
+								{/if}
+							</div>
 						</div>
-					</div>
+					{/if}
 				</div>
 			</div>
 

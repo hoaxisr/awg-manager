@@ -174,16 +174,19 @@ type JobStatusResponse struct {
 
 // RevealCredentials stores credentials revealed ONLY via authenticated, rate-limited endpoint.
 type RevealCredentials struct {
-	Kind              string `json:"kind"` // "tgwebproxy", "xray", or "both"
-	VlessURL          string `json:"vless_url,omitempty"`
-	HappJSON          string `json:"happ_json,omitempty"`
-	SingboxJSON       string `json:"singbox_json,omitempty"`
-	MihomoYAML        string `json:"mihomo_yaml,omitempty"`
-	UUID              string `json:"uuid,omitempty"`
-	Remark            string `json:"remark,omitempty"`
-	DirectLink        string `json:"direct_link,omitempty"`
-	WebLink           string `json:"web_link,omitempty"`
-	TgSecret          string `json:"tg_secret,omitempty"`
+	Kind        string `json:"kind"` // "tgwebproxy", "xray", or "both"
+	VlessURL    string `json:"vless_url,omitempty"`
+	HappJSON    string `json:"happ_json,omitempty"`
+	SingboxJSON string `json:"singbox_json,omitempty"`
+	MihomoYAML  string `json:"mihomo_yaml,omitempty"`
+	UUID        string `json:"uuid,omitempty"`
+	Remark      string `json:"remark,omitempty"`
+	DirectLink  string `json:"direct_link,omitempty"`
+	WebLink     string `json:"web_link,omitempty"`
+	TgSecret    string `json:"tg_secret,omitempty"`
+	// MtproxySecret — секрет для ручного ввода прямого MTProxy (ee + секрет +
+	// домен Fake-TLS); пуст, когда прямого MTProxy нет.
+	MtproxySecret     string `json:"mtproxy_secret,omitempty"`
 	DirectHost        string `json:"direct_host,omitempty"`
 	DirectPort        int    `json:"direct_port,omitempty"`
 	PublicHost        string `json:"public_host,omitempty"`

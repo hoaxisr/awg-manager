@@ -191,6 +191,8 @@ export interface RevealCredentials {
 	direct_link?: string;
 	web_link?: string;
 	tg_secret?: string;
+	/** Секрет прямого MTProxy для ручного ввода (ee + секрет + домен Fake-TLS). */
+	mtproxy_secret?: string;
 	direct_host?: string;
 	direct_port?: number;
 	public_host?: string;
