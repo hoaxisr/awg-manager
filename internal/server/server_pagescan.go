@@ -12,6 +12,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/api"
 	"github.com/hoaxisr/awg-manager/internal/firc"
 	"github.com/hoaxisr/awg-manager/internal/ipinspect"
+	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/pagescan"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
 )
@@ -274,23 +275,26 @@ func (s *Server) pageScanInterfaceLister(fircTunnels func(context.Context) []fir
 					}
 				}
 				if ifaces, err := client.GetInterfaces(probeCtx); err == nil {
+					var ownedProxies map[string]bool
+					hasT2S := false
 					for _, iface := range ifaces {
-						id := strings.TrimSpace(iface.ID)
-						if id == "" {
-							continue
+						if strings.HasPrefix(strings.ToLower(strings.TrimSpace(iface.ID)), "t2s") {
+							hasT2S = true
+							break
 						}
-						_, isFircTunnel := tunnelDesc[id]
-						if !strings.EqualFold(strings.TrimSpace(iface.Role), "tunnel") && !isFircTunnel {
-							continue
+					}
+					if hasT2S && s.singboxOp != nil {
+						if ownedNames, oErr := s.singboxOp.ListOwnedProxies(probeCtx); oErr == nil {
+							ownedProxies = make(map[string]bool, len(ownedNames))
+							for _, n := range ownedNames {
+								if k := strings.ToLower(strings.TrimSpace(n)); k != "" {
+									ownedProxies[k] = true
+								}
+							}
 						}
-						label := tunnelDesc[id]
-						if label == "" {
-							label = strings.TrimSpace(iface.Name)
-						}
-						if label == "" {
-							label = strings.TrimSpace(iface.NDMSName)
-						}
-						add(id, label)
+					}
+					for _, opt := range filterPageScanFircInterfaces(ifaces, tunnelDesc, ownedProxies) {
+						add(opt.Name, opt.Label)
 					}
 				}
 				for _, t := range tunnels {
@@ -314,6 +318,39 @@ func (s *Server) pageScanInterfaceLister(fircTunnels func(context.Context) []fir
 
 		return out
 	}
+}
+
+func filterPageScanFircInterfaces(ifaces []firc.SystemInterface, tunnelDesc map[string]string, ownedProxies map[string]bool) []pagescan.InterfaceOption {
+	out := make([]pagescan.InterfaceOption, 0, len(ifaces))
+	for _, iface := range ifaces {
+		id := strings.TrimSpace(iface.ID)
+		if id == "" {
+			continue
+		}
+		if strings.Contains(strings.ToLower(iface.Name), "[awg-manager:singbox:") ||
+			strings.Contains(strings.ToLower(iface.NDMSName), "[awg-manager:singbox:") {
+			continue
+		}
+		if strings.HasPrefix(strings.ToLower(id), "t2s") && ownedProxies[strings.ToLower(id)] {
+			continue
+		}
+		_, isFircTunnel := tunnelDesc[id]
+		role := strings.TrimSpace(iface.Role)
+		isTunnelRole := strings.EqualFold(role, "tunnel") ||
+			(strings.EqualFold(role, "wan") && ndmsquery.IsNonISPInterface(id))
+		if !isTunnelRole && !isFircTunnel {
+			continue
+		}
+		label := tunnelDesc[id]
+		if label == "" {
+			label = strings.TrimSpace(iface.Name)
+		}
+		if label == "" {
+			label = strings.TrimSpace(iface.NDMSName)
+		}
+		out = append(out, pagescan.InterfaceOption{Name: id, Label: label})
+	}
+	return out
 }
 
 func (s *Server) pageScanProxyLister(fircTunnels func(context.Context) []firc.Tunnel) func(context.Context) []pagescan.ProxyOption {

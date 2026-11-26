@@ -342,6 +342,7 @@ export interface FircInterfaceOption {
 	ndmsName?: string;
 	role?: 'tunnel' | 'wan' | 'lan' | 'other';
 	up?: boolean;
+	awgmSingboxProxy?: boolean;
 }
 
 export interface FircHost {

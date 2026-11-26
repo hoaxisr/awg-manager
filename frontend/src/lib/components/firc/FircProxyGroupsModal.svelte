@@ -5,8 +5,8 @@
 	import { ArrowDown, ArrowUp, Plus, RefreshCw, Trash2, X, Zap } from 'lucide-svelte';
 	import {
 		formatProbeLatency,
-		isSelectableFircFallbackInterface,
 		probeLatencyTone,
+		selectSelectableFircFallbackInterfaces,
 	} from '$lib/utils/fircFallback';
 	import {
 		MAX_GROUP_IFACES,
@@ -229,7 +229,7 @@
 				<div class="pg-candidates">
 					<div class="sec-cap">{m.firc_groups_pg_candidates_cap()}</div>
 					<div class="pg-cand-grid">
-						{#each rt.interfaces.filter(isSelectableFircFallbackInterface) as opt (opt.id)}
+						{#each selectSelectableFircFallbackInterfaces(rt.interfaces) as opt (opt.id)}
 							{@const idxInPg = pg.interfaces.indexOf(opt.id)}
 							{@const isWan = opt.role === 'wan'}
 							{@const cHealth = resolveIfaceState(rt, undefined, opt.id)}

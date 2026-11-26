@@ -348,3 +348,102 @@ func TestSyncProxies_ForeignSlot_SkippedContinues(t *testing.T) {
 		t.Fatalf("E=%d фантомов=%d", f.E, f.Phantoms)
 	}
 }
+
+type staticSubProxySet []SubscriptionProxy
+
+func (s staticSubProxySet) SubscriptionProxies() []SubscriptionProxy { return s }
+
+func TestProxyRecordIsOurs(t *testing.T) {
+	tunnelProxies := map[string]string{"Proxy3": "A"}
+	subProxies := map[string][]string{
+		"Proxy0": {"OldSub"},
+		"Proxy1": {"LiveSub", "StaleZebra"},
+	}
+	deferred := map[string]ProxyMark{
+		"Proxy6": {Name: "Proxy6", Desc: ""},
+		"Proxy7": {Name: "Proxy7", Desc: "RemovedSub"},
+	}
+
+	cases := []struct {
+		name string
+		id   string
+		desc string
+		bare bool
+		want bool
+	}{
+		{"stale subscription index reused by Xray", "Proxy0", "!Xray_Nuxt_t2s0", false, false},
+		{"matching subscription label when slot collides with stale sub", "Proxy1", "LiveSub", false, true},
+		{"tunnel slot matching tag", "Proxy3", "A", false, true},
+		{"tunnel slot reused by Xray", "Proxy3", "!Xray_OD_PRG_t2s3", false, false},
+		{"foreign proxy with same tag on wrong slot", "Proxy0", "A", false, false},
+		{"singbox marker in description", "Proxy2", "VOX [awg-manager:singbox:sub:5090]", false, true},
+		{"bare proxy with bare mark", "Proxy6", "", true, true},
+		{"bare mark does not match renamed Xray proxy", "Proxy6", "!Xray_OD_Hels", false, false},
+		{"bare proxy without mark", "Proxy8", "", false, false},
+		{"deferred mark matching desc", "Proxy7", "RemovedSub", false, true},
+		{"deferred mark with changed desc", "Proxy7", "!Xray_Foreign", false, false},
+	}
+	for _, tc := range cases {
+		if got := proxyRecordIsOurs(tc.id, tc.desc, tc.bare, tunnelProxies, subProxies, deferred); got != tc.want {
+			t.Errorf("%s: proxyRecordIsOurs(%q, %q, %v) = %v, want %v", tc.name, tc.id, tc.desc, tc.bare, got, tc.want)
+		}
+	}
+}
+
+func TestOperator_ListOwnedProxies_VerifiesDescription(t *testing.T) {
+	op, _, f, _ := f562Stand(t)
+	ctx := context.Background()
+
+	// Overwrite Proxy0 with a foreign Xray proxy even though subProxies tracks index 0,
+	// add live subscription Proxy1 alongside a colliding stale entry at index 1, bare Proxy6, and deferred-removal Proxy7.
+	f.Remove("Proxy0")
+	f.DrainHooks()
+	f.Add(ndms.Interface{ID: "Proxy0", Type: "Proxy", Description: "!Xray_Nuxt_t2s0", State: "up", SystemName: "t2s0"})
+	f.Add(ndms.Interface{ID: "Proxy1", Type: "Proxy", Description: "LiveSub", State: "up", SystemName: "t2s1"})
+	f.Add(ndms.Interface{ID: "Proxy7", Type: "Proxy", Description: "RemovedSub", State: "up", SystemName: "t2s7"})
+	f.DrainHooks()
+
+	op.SetSubscriptionProxySet(staticSubProxySet{
+		{Index: 0, Port: 1090, Label: "StaleSub"},
+		{Index: 1, Port: 1091, Label: "LiveSub"},
+		{Index: 1, Port: 1092, Label: "StaleZebra"},
+	})
+	op.deferProxyRemoval("Proxy6", "")
+	op.deferProxyRemoval("Proxy7", "RemovedSub")
+
+	got, err := op.ListOwnedProxies(ctx)
+	if err != nil {
+		t.Fatalf("ListOwnedProxies: %v", err)
+	}
+	slices.Sort(got)
+	want := []string{"t2s1", "t2s3", "t2s4", "t2s6", "t2s7"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("ListOwnedProxies = %v, want %v", got, want)
+	}
+
+	// Reassign Proxy3 (tunnel slot) and Proxy6 (bare mark) and Proxy7 (deferred) to Xray:
+	// none of them may be flagged as owned anymore.
+	f.Remove("Proxy3")
+	f.Remove("Proxy6")
+	f.Remove("Proxy7")
+	f.DrainHooks()
+	f.Add(ndms.Interface{ID: "Proxy3", Type: "Proxy", Description: "!Xray_OD_PRG_t2s3", State: "up", SystemName: "t2s3"})
+	f.Add(ndms.Interface{ID: "Proxy6", Type: "Proxy", Description: "!Xray_OD_Hels_t2s6", State: "up", SystemName: "t2s6"})
+	f.Add(ndms.Interface{ID: "Proxy7", Type: "Proxy", Description: "!Xray_Foreign_t2s7", State: "up", SystemName: "t2s7"})
+	f.DrainHooks()
+	op.proxyMgr.(*ProxyManager).queries.Interfaces.Invalidate("Proxy3")
+
+	gotAfter, err := op.ListOwnedProxies(ctx)
+	if err != nil {
+		t.Fatalf("ListOwnedProxies after Xray reassignment: %v", err)
+	}
+	slices.Sort(gotAfter)
+	wantAfter := []string{"t2s1", "t2s4"}
+	if !slices.Equal(gotAfter, wantAfter) {
+		t.Fatalf("ListOwnedProxies after Xray reassignment = %v, want %v", gotAfter, wantAfter)
+	}
+	if len(f.Posts) != 0 {
+		t.Fatalf("unexpected NDMS POST commands during ListOwnedProxies: %v", f.Posts)
+	}
+	clean(t, f)
+}

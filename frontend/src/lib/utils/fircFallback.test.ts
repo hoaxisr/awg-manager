@@ -12,11 +12,13 @@ import {
 	formatProbeLatency,
 	friendlyIfaceLabel,
 	getEffectiveInterfaceProbe,
+	isAwgmSingboxProxyInterface,
 	isInternalServerFircInterface,
 	isSelectableFircFallbackInterface,
 	probeLatencyTone,
 	resolveGroupActiveInterface,
 	resolveProxyGroupRuntime,
+	selectSelectableFircFallbackInterfaces,
 } from './fircFallback';
 
 const IFACES: FircInterfaceOption[] = [
@@ -360,10 +362,71 @@ describe('fircFallback', () => {
 		expect(
 			isSelectableFircFallbackInterface({
 				id: 't2s0',
-				name: 'Sing-box',
+				ndmsName: 'Proxy0',
+				role: 'tunnel',
+			}),
+		).toBe(true);
+		expect(
+			isSelectableFircFallbackInterface({
+				id: 't2s0',
+				name: 'Proxy',
+				role: 'wan',
+			}),
+		).toBe(true);
+		expect(
+			isSelectableFircFallbackInterface({
+				id: 't2s0',
+				name: 'Proxy',
+				role: 'other',
+			}),
+		).toBe(false);
+		expect(
+			isSelectableFircFallbackInterface({
+				id: 't2s0',
+				name: 'Proxy',
+				role: 'lan',
+			}),
+		).toBe(false);
+		expect(
+			isSelectableFircFallbackInterface({
+				id: 't2s0',
+				name: 'Proxy',
+			}),
+		).toBe(false);
+		expect(
+			isSelectableFircFallbackInterface({
+				id: 't2s1',
+				name: 'NL-Singbox',
+				role: 'tunnel',
+				awgmSingboxProxy: true,
+			}),
+		).toBe(false);
+		expect(
+			isSelectableFircFallbackInterface({
+				id: 't2s2',
+				name: 'VOX [awg-manager:singbox:subscription:5090]',
 				role: 'tunnel',
 			}),
 		).toBe(false);
+		expect(isAwgmSingboxProxyInterface({ id: 't2s0', ndmsName: 'Proxy0' })).toBe(false);
+		expect(isAwgmSingboxProxyInterface({ id: 't2s1', awgmSingboxProxy: true })).toBe(true);
+		expect(
+			isAwgmSingboxProxyInterface({
+				id: 't2s2',
+				name: 'VOX [awg-manager:singbox:subscription:5090]',
+			}),
+		).toBe(true);
+		expect(
+			selectSelectableFircFallbackInterfaces([
+				{ id: 'eth3', name: 'Broadband', role: 'wan' },
+				{ id: 't2s10', name: 'P10', role: 'tunnel' },
+				{ id: 't2s1', name: 'Singbox', role: 'tunnel', awgmSingboxProxy: true },
+				{ id: 't2s2', name: 'P2', role: 'tunnel' },
+				{ id: 'nwg0', name: 'AWG', role: 'tunnel' },
+				{ id: 't2s0', ndmsName: 'Proxy0', role: 'tunnel' },
+				{ id: 'tunvless0', name: 'VLESS', role: 'tunnel' },
+			]).map((o) => o.id),
+		).toEqual(['tunvless0', 'nwg0', 't2s0', 't2s2', 't2s10', 'eth3']);
 		expect(
 			isSelectableFircFallbackInterface({
 				id: 'eth3',

@@ -476,6 +476,9 @@ func (o *Operator) clearBareMark(name string) {
 // Proxy interfaces — bind targets for router direct outbounds (#323). Assembles
 // the proxyIsOurs ownership sets and delegates.
 func (o *Operator) ListNativeProxies(ctx context.Context) ([]string, error) {
+	if !o.proxyMgrReady() {
+		return nil, errors.New("proxy queries unavailable")
+	}
 	cfg, err := o.loadConfig()
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err
@@ -491,6 +494,41 @@ func (o *Operator) ListNativeProxies(ctx context.Context) ([]string, error) {
 		subProxyIdx[sp.Index] = true
 	}
 	return o.proxyMgr.ListNativeProxies(ctx, tunnelTags, subProxyIdx)
+}
+
+// ListOwnedProxies returns kernel names (e.g. "t2s1") of NDMS Proxy interfaces
+// created and currently owned by awg-manager, verified by interface description
+// against live tunnels, subscriptions, and deferred proxy removal marks.
+func (o *Operator) ListOwnedProxies(ctx context.Context) ([]string, error) {
+	if !o.proxyMgrReady() {
+		return nil, errors.New("proxy queries unavailable")
+	}
+	cfg, err := o.loadConfig()
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	tunnelProxies := map[string]string{}
+	if cfg != nil {
+		for _, t := range cfg.Tunnels() {
+			if t.ProxyInterface != "" {
+				tunnelProxies[t.ProxyInterface] = t.Tag
+			}
+		}
+	}
+	subProxies := map[string][]string{}
+	for _, sp := range o.subscriptionProxies() {
+		name := proxyName(sp.Index)
+		subProxies[name] = append(subProxies[name], sp.Label)
+	}
+	o.deferredProxyMu.Lock()
+	deferred := make(map[string]ProxyMark, len(o.deferredProxies))
+	for name, d := range o.deferredProxies {
+		if d != nil {
+			deferred[name] = ProxyMark{Name: name, Desc: d.desc, Alt: d.alt}
+		}
+	}
+	o.deferredProxyMu.Unlock()
+	return o.proxyMgr.OwnedProxyKernelNames(ctx, tunnelProxies, subProxies, deferred)
 }
 
 func parseProxyIdx(name string) (int, error) {

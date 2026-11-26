@@ -55,6 +55,7 @@ type ndmsProxies interface {
 	NextFreeIndex(ctx context.Context, reserved map[int]bool) (int, error)
 	RemoveProxy(ctx context.Context, index int, desc string) error
 	OwnedProxies(ctx context.Context, tunnelProxies, subProxies map[string]string) ([]ProxyMark, error)
+	OwnedProxyKernelNames(ctx context.Context, tunnelProxies map[string]string, subProxies map[string][]string, deferred map[string]ProxyMark) ([]string, error)
 	RemoveMarkedProxy(ctx context.Context, m ProxyMark) (MarkedOutcome, error)
 	AdoptBareProxy(ctx context.Context, name string, port int, description string) (MarkedOutcome, error)
 	ListNativeProxies(ctx context.Context, tunnelTags map[string]bool, subProxyIdx map[int]bool) ([]string, error)
@@ -426,6 +427,76 @@ func (pm *ProxyManager) ListNativeProxies(ctx context.Context, tunnelTags map[st
 		entries = append(entries, proxyEntry{idx: idx, desc: iface.Description, bare: pm.bareOurs(&iface), kernel: kernel})
 	}
 	return nativeProxyKernelNames(entries, tunnelTags, subProxyIdx), nil
+}
+
+// OwnedProxyKernelNames returns kernel names (e.g. "t2s1") of NDMS Proxy
+// interfaces that exist in the recent interface snapshot AND pass positive
+// description-verified ownership checks. Uses SnapshotRecent (2s cache) so
+// in-place description edits done in Keenetic UI are picked up without restarting.
+func (pm *ProxyManager) OwnedProxyKernelNames(
+	ctx context.Context,
+	tunnelProxies map[string]string,
+	subProxies map[string][]string,
+	deferred map[string]ProxyMark,
+) ([]string, error) {
+	snap, err := pm.queries.Interfaces.Snapshot(ctx, query.SnapshotRecent)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot interfaces: %w", err)
+	}
+	var out []string
+	for _, iface := range snap.Records() {
+		if !strings.HasPrefix(iface.ID, proxyIfacePrefix) {
+			continue
+		}
+		var idx int
+		if n, e := fmt.Sscanf(iface.ID, proxyIfacePrefix+"%d", &idx); e != nil || n != 1 {
+			continue
+		}
+		kernel := pm.queries.Interfaces.ResolveSystemName(ctx, iface.ID)
+		if kernel == "" {
+			kernel, _ = ndms.KernelName(iface.ID)
+		}
+		if kernel == "" {
+			continue
+		}
+		if proxyRecordIsOurs(iface.ID, iface.Description, pm.bareOurs(&iface), tunnelProxies, subProxies, deferred) {
+			out = append(out, kernel)
+		}
+	}
+	return out, nil
+}
+
+// proxyRecordIsOurs performs positive ownership verification for an NDMS ProxyN
+// record using both slot identity and interface description so stale
+// subscription/tunnel slots reused by user-created proxies (e.g. Xray) are never
+// misclassified as ours.
+func proxyRecordIsOurs(
+	id, desc string,
+	bare bool,
+	tunnelProxies map[string]string,
+	subProxies map[string][]string,
+	deferred map[string]ProxyMark,
+) bool {
+	if strings.Contains(strings.ToLower(desc), "[awg-manager:singbox:") {
+		return true
+	}
+	if tag, ok := tunnelProxies[id]; ok && ((tag != "" && desc == tag) || bare) {
+		return true
+	}
+	if labels, ok := subProxies[id]; ok && len(labels) > 0 {
+		if bare {
+			return true
+		}
+		for _, label := range labels {
+			if label != "" && desc == label {
+				return true
+			}
+		}
+	}
+	if m, ok := deferred[id]; ok {
+		return desc == m.Desc || (m.Alt != "" && desc == m.Alt)
+	}
+	return false
 }
 
 // SubscriptionProxy describes an NDMS ProxyN created for a subscription

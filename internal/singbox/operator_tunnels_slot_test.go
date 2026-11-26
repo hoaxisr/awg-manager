@@ -158,6 +158,9 @@ func (f *fakeProxies) RemoveProxy(_ context.Context, index int, _ string) error 
 func (f *fakeProxies) OwnedProxies(context.Context, map[string]string, map[string]string) ([]ProxyMark, error) {
 	return nil, nil
 }
+func (f *fakeProxies) OwnedProxyKernelNames(context.Context, map[string]string, map[string][]string, map[string]ProxyMark) ([]string, error) {
+	return nil, nil
+}
 func (f *fakeProxies) RemoveMarkedProxy(context.Context, ProxyMark) (MarkedOutcome, error) {
 	return MarkedRemoved, nil
 }

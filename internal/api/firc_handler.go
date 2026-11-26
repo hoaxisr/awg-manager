@@ -21,6 +21,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/firc"
 	"github.com/hoaxisr/awg-manager/internal/httpprobe"
+	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/singbox/subscription"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -37,6 +38,7 @@ type OtherEngineIntegrationHooks struct {
 	PurgeSingbox       func(ctx context.Context) (tunnelsRemoved, subsRemoved int, err error)
 	PostRestoreSync    func(ctx context.Context, restoredSingbox, restoredSettings bool) error
 	OnBeforePurgeFirc  func(ctx context.Context)
+	ListOwnedProxies   func(ctx context.Context) ([]string, error)
 }
 
 // FircHandler exposes HTTP API endpoints for managing fircd and tunvless.
@@ -2035,12 +2037,43 @@ func (h *FircHandler) handleV1Proxy(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
+			hasT2S := false
 			for _, item := range payload.Interfaces {
-				if _, hasUp := item["up"].(bool); hasUp {
+				if id, _ := item["id"].(string); strings.HasPrefix(strings.ToLower(strings.TrimSpace(id)), "t2s") {
+					hasT2S = true
+					break
+				}
+			}
+			var ownedProxies map[string]bool
+			if hasT2S && h.integrationHooks.ListOwnedProxies != nil {
+				if ownedNames, oErr := h.integrationHooks.ListOwnedProxies(r.Context()); oErr == nil {
+					ownedProxies = make(map[string]bool, len(ownedNames))
+					for _, n := range ownedNames {
+						if k := strings.ToLower(strings.TrimSpace(n)); k != "" {
+							ownedProxies[k] = true
+						}
+					}
+				}
+			}
+			for _, item := range payload.Interfaces {
+				id, _ := item["id"].(string)
+				idTrim := strings.TrimSpace(id)
+				if idTrim == "" {
 					continue
 				}
-				id, _ := item["id"].(string)
-				if id == "" {
+				if role, _ := item["role"].(string); strings.EqualFold(strings.TrimSpace(role), "wan") && ndmsquery.IsNonISPInterface(idTrim) {
+					item["role"] = "tunnel"
+				}
+				if strings.HasPrefix(strings.ToLower(idTrim), "t2s") {
+					nameStr, _ := item["name"].(string)
+					ndmsStr, _ := item["ndmsName"].(string)
+					if isOrphanedAwgmSingboxProxyLabel(nameStr) ||
+						isOrphanedAwgmSingboxProxyLabel(ndmsStr) ||
+						ownedProxies[strings.ToLower(idTrim)] {
+						item["awgmSingboxProxy"] = true
+					}
+				}
+				if _, hasUp := item["up"].(bool); hasUp {
 					continue
 				}
 				up := false
@@ -2070,6 +2103,10 @@ func (h *FircHandler) handleV1Proxy(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	proxy.ServeHTTP(w, r)
+}
+
+func isOrphanedAwgmSingboxProxyLabel(s string) bool {
+	return strings.Contains(strings.ToLower(s), "[awg-manager:singbox:")
 }
 
 func writeOfflineJSON(w http.ResponseWriter, r *http.Request, payload any) {
