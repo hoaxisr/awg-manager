@@ -106,7 +106,7 @@
 					class:selected={ctx.selectedBackend === 'kernel'}
 					class:disabled={ctx.sysInfo !== null && !ctx.sysInfo.backendAvailability?.kernel}
 					disabled={ctx.sysInfo !== null && !ctx.sysInfo.backendAvailability?.kernel}
-					title={ctx.sysInfo !== null && !ctx.sysInfo.backendAvailability?.kernel ? m.tunnel_edit_backend_kernel_unloaded() : ''}
+					title={ctx.sysInfo !== null && !ctx.sysInfo.backendAvailability?.kernel ? (ctx.sysInfo.kernelModuleLoadError || m.tunnel_edit_backend_kernel_unloaded()) : ''}
 					onclick={() => ctx.selectedBackend = 'kernel'}
 				>
 					Kernel

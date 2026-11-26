@@ -3,6 +3,7 @@ package nwg
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
 	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
+	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 )
 
 type relayKmodFixture struct {
@@ -171,5 +173,28 @@ func TestRelayKmod_UnloadReportsDelFailure(t *testing.T) {
 	err := f.m.Unload(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "del 127.0.0.1:39001") {
 		t.Fatalf("ошибка выгрузки: %v", err)
+	}
+}
+
+// Сборка awgm_relay под другое ядро (5.2 Beta 5: 4.9-ndm-6) не годится:
+// relayKoPath отказывает до insmod и взвода сторожа — Phobos идёт процессом.
+func TestRelayKoPath_RefusesModuleOfAnotherKernel(t *testing.T) {
+	if osdetect.KernelRelease() == "4.9-ndm-5" {
+		t.Skip("host kernel equals the fixture's vermagic")
+	}
+	dir := t.TempDir()
+	prev := kmod.ModulesDir
+	kmod.ModulesDir = dir
+	t.Cleanup(func() { kmod.ModulesDir = prev })
+	all := func(string) bool { return true }
+	p, err := relayKoPath("KN-1810", kmod.SoCMT7621, all)
+	if err != nil {
+		t.Fatalf("relayKoPath (no file yet): %v", err)
+	}
+	if err := os.WriteFile(p, []byte("x\x00vermagic=4.9-ndm-5 SMP mod_unload\x00"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := relayKoPath("KN-1810", kmod.SoCMT7621, all); !errors.Is(err, kmod.ErrKernelMismatch) {
+		t.Fatalf("want ErrKernelMismatch, got %v", err)
 	}
 }

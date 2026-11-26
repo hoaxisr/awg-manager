@@ -46,6 +46,14 @@ func (o *Orchestrator) maybeStartRetry(group []Action) {
 		return
 	}
 	o.mu.Lock()
+	usable := o.kernelModuleUsable
+	o.mu.Unlock()
+	// Вне o.mu: проверка зовёт lsmod.
+	if usable != nil && !usable() {
+		o.appLog.Info("start-retry", tid, "без повтора: модуль ядра amneziawg не загружается на этом ядре")
+		return
+	}
+	o.mu.Lock()
 	t := o.state.tunnels[tid]
 	if t == nil || t.Running || o.startRetry[tid] {
 		o.mu.Unlock()

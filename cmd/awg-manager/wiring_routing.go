@@ -42,6 +42,7 @@ func (a *app) setupOrchestrator() {
 	// host-route, и по нему сосед с тем же target решает, чей это маршрут.
 	a.nwgOp.SetResolvedIPPersister(a.tunnelService.PersistObfuscatorTargetIP)
 	a.orch.SetSupportsASC(ndmsinfo.SupportsWireguardASC)
+	a.orch.SetKernelModuleUsable(a.kmodLoader.Usable)
 	a.orch.SetPingCheck(a.pingCheckFacade)
 	// dnsRouteService wiring to orchestrator happens later, after ndmsCommands is built.
 	a.orch.SetClientRoute(a.clientRouteService)

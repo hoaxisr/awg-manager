@@ -70,6 +70,11 @@ func relayKoPath(model string, soc kmod.SoC, exists func(string) bool) (string, 
 	if !exists(p) {
 		return "", fmt.Errorf("нет сборки awgm_relay.ko под %s/%s", model, soc)
 	}
+	// Сборка под другое ядро: insmod не пробуем, сторож не взводим — сразу
+	// процесс (Available запоминает отказ).
+	if err := kmod.CheckKernelMatch(p); err != nil {
+		return "", err
+	}
 	return p, nil
 }
 
