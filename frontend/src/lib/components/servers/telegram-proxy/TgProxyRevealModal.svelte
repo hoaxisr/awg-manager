@@ -44,6 +44,9 @@
 	let revealData = $state<TgWebProxyRevealData | null>(null);
 	let revealQrDataUrl = $state('');
 	let qrGenerating = $state(false);
+	// Номер последнего запроса QR: вкладку, точку входа и пользователя
+	// переключают без await, и медленный старый ответ не должен лечь поверх.
+	let qrSeq = $state(0);
 	let revealSecretInput = $state('');
 	let revealSecretSaving = $state(false);
 	// Reveal returns a single user and the backend allows one disclosure of a
@@ -107,6 +110,15 @@
 			} else if (!selectedWebProxyId && revealData?.web_proxies && revealData.web_proxies.length > 0) {
 				selectedWebProxyId = revealData.web_proxies[0].id;
 			}
+			// Вкладка без ссылок (MTProto в cdn_http) — показать ту, где они есть.
+			const active = getActiveUserReveal();
+			const hasMt = expectsMt && Boolean(active?.mtproxy_url || revealData?.direct_host || !expectsWeb);
+			const hasWeb = expectsWeb || Boolean((active?.web_proxies || revealData?.web_proxies)?.length);
+			if (shareTab === 'mtproxy' && !hasMt && hasWeb) {
+				shareTab = 'webproxy';
+			} else if (shareTab === 'webproxy' && !hasWeb && hasMt) {
+				shareTab = 'mtproxy';
+			}
 			await updateRevealQR();
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : m.servers_tg_reveal_error());
@@ -137,10 +149,15 @@
 		if (!revealOpen || selectedRevealUserId !== deletedId) return;
 		if (users.length > 0) {
 			selectedRevealUserId = users[0].id;
-			revealData = await api.revealTgWebProxySecret(selectedRevealUserId);
-			rememberReveal(revealData);
-			syncRevealSecretInput();
-			await updateRevealQR();
+			try {
+				revealData = await api.revealTgWebProxySecret(selectedRevealUserId);
+				rememberReveal(revealData);
+				syncRevealSecretInput();
+				await updateRevealQR();
+			} catch (e) {
+				notifications.error(e instanceof Error ? e.message : m.servers_tg_reveal_error());
+				close();
+			}
 		} else {
 			close();
 		}
@@ -184,19 +201,22 @@
 		} else {
 			url = activeUser.mtproxy_url;
 		}
+		const seq = ++qrSeq;
 		if (!url) {
 			revealQrDataUrl = '';
+			qrGenerating = false;
 			return;
 		}
 		if (!revealQrDataUrl) {
 			qrGenerating = true;
 		}
 		try {
-			revealQrDataUrl = await renderCrispQrDataUrl(url);
+			const dataUrl = await renderCrispQrDataUrl(url);
+			if (seq === qrSeq) revealQrDataUrl = dataUrl;
 		} catch {
-			revealQrDataUrl = '';
+			if (seq === qrSeq) revealQrDataUrl = '';
 		} finally {
-			qrGenerating = false;
+			if (seq === qrSeq) qrGenerating = false;
 		}
 	}
 
@@ -231,19 +251,29 @@
 		}
 		revealSecretSaving = true;
 		try {
-			const status = await api.tgWebProxyAction(
-				'update_user',
-				regenerate ? { user_id: targetId, regenerate_secret: true } : { user_id: targetId, secret: cleaned }
-			);
+			let status: TgWebProxyStatus;
+			try {
+				status = await api.tgWebProxyAction(
+					'update_user',
+					regenerate ? { user_id: targetId, regenerate_secret: true } : { user_id: targetId, secret: cleaned }
+				);
+			} catch (e) {
+				notifications.error(e instanceof Error ? e.message : m.tg_user_secret_error());
+				return;
+			}
+			// Секрет уже сменён: родитель узнаёт об этом, даже если повторный
+			// показ ниже откажет.
 			invalidate();
-			revealData = await api.revealTgWebProxySecret(targetId);
-			rememberReveal(revealData);
-			syncRevealSecretInput();
-			await updateRevealQR();
 			notifications.success(regenerate ? m.tg_user_secret_regenerated() : m.tg_user_secret_saved());
+			try {
+				revealData = await api.revealTgWebProxySecret(targetId);
+				rememberReveal(revealData);
+				syncRevealSecretInput();
+				await updateRevealQR();
+			} catch (e) {
+				notifications.error(e instanceof Error ? e.message : m.servers_tg_reveal_error());
+			}
 			await onsecretchanged(status);
-		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : m.tg_user_secret_error());
 		} finally {
 			revealSecretSaving = false;
 		}
