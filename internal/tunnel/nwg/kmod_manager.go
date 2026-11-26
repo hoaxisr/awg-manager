@@ -271,6 +271,9 @@ func (km *KmodManager) EnsureLoaded() error {
 	if err := km.ensureKoPathLocked(); err != nil {
 		return err
 	}
+	if err := kmod.CheckKernelMatch(km.koPath); err != nil {
+		return err
+	}
 
 	km.preloadDepsLocked(ctx)
 

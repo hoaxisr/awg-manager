@@ -167,6 +167,11 @@ type Orchestrator struct {
 	// (start_retry.go): одна цепочка на туннель, хотя бут и WAN-up могут
 	// упасть на нём оба.
 	startRetry map[string]bool
+
+	// kernelModuleUsable — amneziawg.ko загружен или его можно загрузить на
+	// этом ядре. Ложь — повтор старта kernel-туннеля бессмыслен (модуль под
+	// другое ядро) и только писал бы .conf на флеш. nil — считаем пригодным.
+	kernelModuleUsable func() bool
 }
 
 // New creates a new Orchestrator.
@@ -243,6 +248,13 @@ func (o *Orchestrator) SetRecordPresenceProbe(fn func(ctx context.Context, ndmsN
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.recordPresent = fn
+}
+
+// SetKernelModuleUsable — см. поле kernelModuleUsable.
+func (o *Orchestrator) SetKernelModuleUsable(fn func() bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.kernelModuleUsable = fn
 }
 
 // SetSupportsASC sets the ASC support flag.

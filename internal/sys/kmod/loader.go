@@ -229,6 +229,15 @@ func (l *Loader) IsLoaded() bool {
 	return false
 }
 
+// Usable — модуль загружен или его файл есть и подходит ядру роутера, то
+// есть kernel-туннель имеет смысл стартовать (и повторять старт).
+func (l *Loader) Usable() bool {
+	if l.IsLoaded() {
+		return true
+	}
+	return l.ModuleExists() && CheckKernelMatch(l.modulePath) == nil
+}
+
 // Load loads the kernel module using insmod and waits for sysfs registration.
 func (l *Loader) Load(ctx context.Context) error {
 	if l.modulePath == "" {
@@ -236,6 +245,9 @@ func (l *Loader) Load(ctx context.Context) error {
 	}
 	if !l.ModuleExists() {
 		return fmt.Errorf("module not found: %s", l.modulePath)
+	}
+	if err := CheckKernelMatch(l.modulePath); err != nil {
+		return fmt.Errorf("%w; kernel-туннели на этой прошивке недоступны — используйте NativeWG", err)
 	}
 	if _, err := runCmd(ctx, "insmod", l.modulePath); err != nil {
 		return err

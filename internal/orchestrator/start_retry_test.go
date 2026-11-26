@@ -159,3 +159,14 @@ func TestStartRetry_GroupLockFailureSchedulesRetry(t *testing.T) {
 		t.Fatalf("отказ замка не завёл повтор: запланировано %d", sched.count())
 	}
 }
+
+// Модуль amneziawg на этом ядре не загружается (5.2 Beta 5): повтор старта
+// бессмыслен и только писал бы .conf — цепочка не заводится.
+func TestStartRetry_NoRetryWhenKernelModuleUnusable(t *testing.T) {
+	o, _, sched, _ := newRetryFixture(t)
+	o.SetKernelModuleUsable(func() bool { return false })
+	_ = o.executeGroup(context.Background(), bootGroup, "boot")
+	if sched.count() != 0 || o.startRetry["awg15"] {
+		t.Fatalf("повтор заведён при непригодном модуле: %d", sched.count())
+	}
+}

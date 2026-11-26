@@ -46,6 +46,7 @@ func (a *app) setupTunnels() {
 	// Create tunnel service components
 	a.wgClient = wg.New()
 	a.backendImpl = backend.NewKernel(a.swapGate)
+	a.backendImpl.SetModuleEnsure(a.kmodLoader.EnsureModule)
 	a.stateMgr = state.New(a.ndmsQueries.Interfaces, a.wgClient, a.backendImpl, a.loggingService)
 	firewallMgr := firewall.New(true /* mssClamp */, osdetect.Is5(), a.loggingService)
 

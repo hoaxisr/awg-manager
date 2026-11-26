@@ -195,7 +195,7 @@
 				class:selected={selectedBackend === 'kernel'}
 				class:disabled={systemInfo !== null && !systemInfo.backendAvailability?.kernel}
 				disabled={systemInfo !== null && !systemInfo.backendAvailability?.kernel}
-				title={systemInfo !== null && !systemInfo.backendAvailability?.kernel ? m.tunnel_edit_backend_kernel_unloaded() : ''}
+				title={systemInfo !== null && !systemInfo.backendAvailability?.kernel ? (systemInfo.kernelModuleLoadError || m.tunnel_edit_backend_kernel_unloaded()) : ''}
 				onclick={() => selectedBackend = 'kernel'}
 			>
 				<span class="backend-name">Kernel</span>

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/netdev"
+	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
 )
 
 const (
@@ -22,7 +23,29 @@ const (
 // Устройства снимаются и создаются только под барьером gate (D-N1): пока
 // запись OpkgTunN живёт без устройства, наши списки интерфейсов ждут.
 type KernelBackend struct {
-	gate *netdev.SwapGate
+	gate         *netdev.SwapGate
+	ensureModule func(context.Context) error
+}
+
+// moduleLoaded — точка подмены для тестов.
+var moduleLoaded = func() bool { _, err := os.Stat(kmod.SysfsPath); return err == nil }
+
+// SetModuleEnsure — загрузка amneziawg.ko (kmod.Loader.EnsureModule). Без
+// неё старт при выгруженном модуле падал «Operation not supported» от ip, а
+// модуль, исправленный после неудачной загрузки на буте, не подхватывался до
+// рестарта демона (F923).
+func (b *KernelBackend) SetModuleEnsure(fn func(context.Context) error) { b.ensureModule = fn }
+
+// requireModule — модуль загружен или загружается сейчас; иначе причина.
+// Зовётся до сноса старого устройства: без модуля сносить нечем заменить.
+func (b *KernelBackend) requireModule(ctx context.Context) error {
+	if b.ensureModule == nil || moduleLoaded() {
+		return nil
+	}
+	if err := b.ensureModule(ctx); err != nil {
+		return fmt.Errorf("модуль ядра amneziawg недоступен: %w", err)
+	}
+	return nil
 }
 
 // NewKernel creates a new kernel backend. gate — барьер списков, один на
@@ -114,6 +137,9 @@ func (b *KernelBackend) Start(ctx context.Context, ifaceName string) error {
 	if running, _ := b.IsRunning(ctx, ifaceName); running {
 		return nil // Already amneziawg, nothing to do
 	}
+	if err := b.requireModule(ctx); err != nil {
+		return err
+	}
 
 	// Не-amneziawg устройство на нашем имени — обычно plain tun, который NDMS
 	// пересоздал после ребута по сохранённой записи OpkgTun (держателя нет):
@@ -166,6 +192,9 @@ func (b *KernelBackend) Stop(ctx context.Context, ifaceName string) error {
 func (b *KernelBackend) Recreate(ctx context.Context, ifaceName string) error {
 	if held := b.foreignHolder(ctx, ifaceName); held != nil {
 		return held
+	}
+	if err := b.requireModule(ctx); err != nil {
+		return err
 	}
 	exists := ifaceExists(ifaceName)
 	return b.gate.Hold(ctx, func(sw netdev.Swapper) error {

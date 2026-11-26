@@ -3,10 +3,14 @@ package nwg
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/sys/exec"
+	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
+	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 )
 
 // fakeRunner records every external command EnsureLoaded fires and replays
@@ -196,5 +200,25 @@ func TestEnsureLoaded_UpToDateIsNoop(t *testing.T) {
 	}
 	if len(fr.calls) != 0 {
 		t.Errorf("up-to-date module must trigger no external commands; got %v", fr.calls)
+	}
+}
+
+// awg_proxy.ko, собранный под другое ядро (5.2 Beta 5: 4.9-ndm-6 при
+// модулях ndm-5), не доходит до insmod: отказ называет ядро.
+func TestEnsureLoaded_SkipsModuleOfAnotherKernel(t *testing.T) {
+	if osdetect.KernelRelease() == "4.9-ndm-5" {
+		t.Skip("host kernel equals the fixture's vermagic")
+	}
+	km, _, fr := newEnsureLoadedTestKM(false)
+	km.koPath = filepath.Join(t.TempDir(), "awg_proxy.ko")
+	if err := os.WriteFile(km.koPath, []byte("x\x00vermagic=4.9-ndm-5 SMP mod_unload\x00"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := km.EnsureLoaded()
+	if !errors.Is(err, kmod.ErrKernelMismatch) {
+		t.Fatalf("want ErrKernelMismatch, got %v", err)
+	}
+	if got := fr.callsWith("insmod"); len(got) != 0 {
+		t.Fatalf("insmod called: %v", got)
 	}
 }
