@@ -8405,6 +8405,7 @@
 	"firc_runtime_remove": "Удалить AWGM Route",
 	"firc_runtime_release_pending": "Проверенный runtime-пакет для этой версии ещё не опубликован.",
 	"firc_runtime_dependency_warning": "Перед изменением установки остановите AWGM Route и переключите зависимые маршруты через центр миграции.",
+	"firc_runtime_foreign_config": "Конфигурация прежнего firc отложена в {dir}: формат другой, AWGM Route начал с чистых настроек. Если она не нужна, каталог можно удалить.",
 	"firc_runtime_activation_note": "Установка не включает маршрутизацию автоматически. Активация — в разделе «Маршрутизация», через центр миграции.",
 	"firc_runtime_remove_confirm": "Удалить runtime-пакет AWGM Route и его служебные файлы?",
 	"firc_runtime_config_preserved": "Настройки сохранятся для повторной установки. Другие серверы и туннели не удаляются.",

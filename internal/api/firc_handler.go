@@ -673,7 +673,7 @@ func (h *FircHandler) handleControl(w http.ResponseWriter, r *http.Request) {
 		if target == "" {
 			target = "firc"
 		}
-		if err := h.SwitchEngineWithOptions(r.Context(), target, firc.EngineSwitchOptions{
+		if err := h.SwitchEngineWithOptions(firc.WithTurnOff(r.Context()), target, firc.EngineSwitchOptions{
 			AuthorizeDisabledStart: strings.EqualFold(target, "firc"),
 		}); err != nil {
 			if writeForeignFirc(w, err) {
@@ -1409,7 +1409,7 @@ func (h *FircHandler) handlePutSettings(w http.ResponseWriter, r *http.Request) 
 	}
 	if eng, ok := payload["routingEngine"].(string); ok && strings.TrimSpace(eng) != "" {
 		delete(payload, "routingEngine")
-		if err := h.SwitchEngineWithOptions(r.Context(), eng, firc.EngineSwitchOptions{
+		if err := h.SwitchEngineWithOptions(firc.WithTurnOff(r.Context()), eng, firc.EngineSwitchOptions{
 			AuthorizeDisabledStart: strings.EqualFold(strings.TrimSpace(eng), "firc"),
 		}); err != nil {
 			if writeForeignFirc(w, err) {
@@ -1424,7 +1424,7 @@ func (h *FircHandler) handlePutSettings(w http.ResponseWriter, r *http.Request) 
 		if sel {
 			targetEngine = "firc"
 		}
-		if err := h.SwitchEngineWithOptions(r.Context(), targetEngine, firc.EngineSwitchOptions{
+		if err := h.SwitchEngineWithOptions(firc.WithTurnOff(r.Context()), targetEngine, firc.EngineSwitchOptions{
 			AuthorizeDisabledStart: sel,
 		}); err != nil {
 			if writeForeignFirc(w, err) {
@@ -1482,7 +1482,7 @@ func (h *FircHandler) handleSwitchEngine(w http.ResponseWriter, r *http.Request)
 		response.ErrorWithStatus(w, http.StatusBadRequest, "engine is required", "BAD_REQUEST")
 		return
 	}
-	if err := h.SwitchEngineWithOptions(r.Context(), target, firc.EngineSwitchOptions{
+	if err := h.SwitchEngineWithOptions(firc.WithTurnOff(r.Context()), target, firc.EngineSwitchOptions{
 		SingboxStandby:         req.SingboxStandby,
 		AuthorizeDisabledStart: strings.EqualFold(target, "firc"),
 	}); err != nil {

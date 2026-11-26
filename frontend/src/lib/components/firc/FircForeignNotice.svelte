@@ -5,13 +5,10 @@
 -->
 <script lang="ts">
 	import { ExternalLink, Info } from 'lucide-svelte';
-	import { api } from '$lib/api/client';
 	import { m } from '$lib/i18n';
 	import { Button } from '$lib/components/ui';
-	import { notifications } from '$lib/stores/notifications';
-	import { reloadFircAll } from '$lib/stores/firc';
-	import { singboxRouter } from '$lib/stores/singboxRouter';
 	import { singboxStatus } from '$lib/stores/singbox';
+	import { leaveFircEngine } from '$lib/utils/fircLeave';
 	import { fircForeignWebUrl, type FircForeign } from '$lib/types/firc';
 
 	interface Props {
@@ -32,11 +29,7 @@
 		if (leaving) return;
 		leaving = true;
 		try {
-			await api.fircUpdateSettings({ routingEngine: 'sing-box' });
-			await Promise.all([reloadFircAll(), singboxRouter.reloadSettings()]);
-			notifications.success(m.firc_foreign_left());
-		} catch (e) {
-			notifications.error(m.firc_foreign_leave_failed({ error: (e as Error).message }));
+			await leaveFircEngine();
 		} finally {
 			leaving = false;
 		}

@@ -9,6 +9,8 @@
 	import FircForeignNotice from '$lib/components/firc/FircForeignNotice.svelte';
 	import SettingsSectionLabel from './SettingsSectionLabel.svelte';
 	import { Shield } from 'lucide-svelte';
+	import { singboxStatus } from '$lib/stores/singbox';
+	import { leaveFircEngine } from '$lib/utils/fircLeave';
 	import type { FircInstallStatus } from '$lib/types/firc';
 
 	let status = $state<FircInstallStatus | null>(null);
@@ -22,6 +24,19 @@
 	let refreshing = false;
 	let revision = 0;
 	const busy = $derived(submitting || status?.busy === true);
+	// Без sing-box с движка уходят отсюда: на его вкладку не попасть, а рантайм,
+	// пока движок выбран, не удалить.
+	const canTurnOff = $derived(status?.activeEngine === true && $singboxStatus.data?.installed === false);
+
+	async function turnOff() {
+		submitting = true;
+		try {
+			await leaveFircEngine();
+			await refresh();
+		} finally {
+			submitting = false;
+		}
+	}
 	const installedVersion = $derived(status?.installedVersion?.trim() || '');
 	const availableVersion = $derived(status?.availableVersion?.trim() || '');
 	const installed = $derived(
@@ -189,6 +204,9 @@
 						{status?.state === 'recovery_required' ? m.firc_runtime_repair() : m.firc_runtime_install()}
 					</Button>
 				{/if}
+				{#if canTurnOff}
+					<Button size="sm" variant="secondary" onclick={turnOff} disabled={busy}>{m.firc_foreign_turn_off()}</Button>
+				{/if}
 				{#if installed}
 					<Button size="sm" variant="outline-danger" onclick={() => (confirmRemoval = true)} disabled={removeDisabled}>{m.firc_runtime_remove()}</Button>
 				{/if}
@@ -206,6 +224,9 @@
 		{/if}
 		{#if fetchError || actionError || status?.error}
 			<div class="setting-row text-danger" role="alert">{fetchError || actionError || status?.error}</div>
+		{/if}
+		{#if status?.foreignConfigDir}
+			<div class="setting-row text-secondary">{m.firc_runtime_foreign_config({ dir: status.foreignConfigDir })}</div>
 		{/if}
 		<div class="setting-row text-secondary">{m.firc_runtime_activation_note()}</div>
 		{/if}

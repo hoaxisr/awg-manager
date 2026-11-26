@@ -206,9 +206,7 @@ func (a *app) buildProductionEngineSwitchHooks() firc.EngineSwitchHooks {
 				return errors.New("sing-box operator is not initialized")
 			}
 			if !a.singboxOp.IsPresent() {
-				if errors.Is(a.fircOp.CheckNotForeign(), firc.ErrForeignFirc) {
-					// Сторонний firc: с движка FIRC уходят и без sing-box —
-					// маршрутизация панели просто выключается.
+				if a.leavingWithoutSingbox(ctx) {
 					return a.singboxOp.SetStoppedByEngine(false)
 				}
 				return errors.New("sing-box binary is not installed; install sing-box first")
@@ -340,7 +338,7 @@ func (a *app) buildProductionEngineSwitchHooks() firc.EngineSwitchHooks {
 	activateTarget := func(ctx context.Context, targetEngine string) error {
 		switch targetEngine {
 		case "sing-box":
-			if a.singboxOp != nil && !a.singboxOp.IsPresent() && errors.Is(a.fircOp.CheckNotForeign(), firc.ErrForeignFirc) {
+			if a.singboxOp != nil && !a.singboxOp.IsPresent() && a.leavingWithoutSingbox(ctx) {
 				return nil // ушли с FIRC без sing-box (см. startTarget): поднимать нечего
 			}
 			if a.singboxOp != nil {
@@ -558,6 +556,13 @@ func (a *app) syncStoresAfterRestore(ctx context.Context, restoredSingbox, resto
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// leavingWithoutSingbox — с движка FIRC уходят и без установленного sing-box, и
+// маршрутизация панели просто выключается: так решил пользователь либо FIRC всё
+// равно недоступен из-за стороннего firc.
+func (a *app) leavingWithoutSingbox(ctx context.Context) bool {
+	return firc.TurnOffRequested(ctx) || errors.Is(a.fircOp.CheckNotForeign(), firc.ErrForeignFirc)
 }
 
 // wireFircEngineCoordinator registers the authoritative EngineSwitchHooks on both
