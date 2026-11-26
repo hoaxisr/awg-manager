@@ -4,7 +4,12 @@
 	import { Button, Badge, Toggle, Modal } from '$lib/components/ui';
 	import { LayoutGrid } from 'lucide-svelte';
 	import { searchFircCatalog } from '$lib/utils/fircCatalogSearch';
-	import { intervalOptions, type GroupForm } from '$lib/utils/fircGroups';
+	import {
+		PROXY_GROUP_IFACE_PREFIX,
+		intervalOptions,
+		type GroupForm,
+		type ProxyGroupSelectOption,
+	} from '$lib/utils/fircGroups';
 	import type { FircCatalog, FircListPreviewRes } from '$lib/types/firc';
 	import FircGroupDnsSection from './FircGroupDnsSection.svelte';
 
@@ -13,6 +18,8 @@
 		mode: 'create' | 'edit';
 		form: GroupForm;
 		availableInterfaces: { value: string; label: string }[];
+		proxyGroupOptions?: ProxyGroupSelectOption[];
+		hadChain?: boolean;
 		dohSupported: boolean;
 		allowDoh: boolean;
 		/** Почему форму не применить; пусто — применима. */
@@ -37,6 +44,8 @@
 		mode,
 		form = $bindable(),
 		availableInterfaces,
+		proxyGroupOptions = [],
+		hadChain = false,
 		dohSupported,
 		allowDoh,
 		formError = '',
@@ -66,7 +75,20 @@
 		openedForm = untrack(() => JSON.stringify(form));
 		attempted = false;
 	});
-	let shownError = $derived(attempted || JSON.stringify(form) !== openedForm ? formError : '');
+	let stalePgSelected = $derived(
+		form.iface.startsWith(PROXY_GROUP_IFACE_PREFIX) &&
+			!proxyGroupOptions.some((o) => o.value === form.iface),
+	);
+	let shownError = $derived(
+		attempted || stalePgSelected || JSON.stringify(form) !== openedForm ? formError : '',
+	);
+
+	function handleIfaceChange() {
+		const opt = proxyGroupOptions.find((o) => o.value === form.iface);
+		if (opt?.isChecklessChain && !hadChain && form.checkMode === 'none') {
+			form.checkMode = 'url';
+		}
+	}
 
 	function submit() {
 		attempted = true;
@@ -95,10 +117,26 @@
 			</div>
 			<div class="field">
 				<label class="lbl" for="firc-gm-iface">{m.firc_groups_form_iface()}</label>
-				<select id="firc-gm-iface" class="inp" bind:value={form.iface}>
-					{#each availableInterfaces as opt}
-						<option value={opt.value}>{opt.label}</option>
-					{/each}
+				<select id="firc-gm-iface" class="inp" bind:value={form.iface} onchange={handleIfaceChange}>
+					{#if stalePgSelected}
+						<option value={form.iface} disabled>{m.firc_groups_pg_not_found()}</option>
+					{/if}
+					{#if proxyGroupOptions.length > 0}
+						<optgroup label={m.firc_bulk_groups_proxy_groups_opt()}>
+							{#each proxyGroupOptions as opt (opt.value)}
+								<option value={opt.value}>{opt.label}</option>
+							{/each}
+						</optgroup>
+						<optgroup label={m.firc_bulk_groups_interfaces_opt()}>
+							{#each availableInterfaces as opt (opt.value)}
+								<option value={opt.value}>{opt.label}</option>
+							{/each}
+						</optgroup>
+					{:else}
+						{#each availableInterfaces as opt (opt.value)}
+							<option value={opt.value}>{opt.label}</option>
+						{/each}
+					{/if}
 				</select>
 			</div>
 		</div>

@@ -115,29 +115,3 @@ function checkKey(c: FircGroupCheck | undefined): string {
 	]);
 }
 
-/**
- * Rewrites the check of every routing group linked to a proxy group (matching proxyGroupId and chain),
- * as the backend does on save; used to keep a locally restored draft in step with saved proxy groups.
- */
-export function syncGroupChecksWithProxyGroups(
-	groups: FircGroup[],
-	proxyGroups: FircProxyGroup[],
-): { groups: FircGroup[]; changed: boolean } {
-	let changed = false;
-	const next = groups.map((g) => {
-		if (!g.proxyGroupId) return g;
-		const list = normalizeFircIfaceList(g.interface);
-		if (list.length < 2) return g;
-		const pg = proxyGroups.find(
-			(p) =>
-				p.id === g.proxyGroupId &&
-				p.interfaces.length === list.length &&
-				p.interfaces.every((v, i) => v === list[i]),
-		);
-		const desired = pg ? buildGroupCheckFromProxyGroup(pg) : undefined;
-		if (!desired || checkKey(desired) === checkKey(g.check)) return g;
-		changed = true;
-		return { ...g, check: desired };
-	});
-	return { groups: changed ? next : groups, changed };
-}

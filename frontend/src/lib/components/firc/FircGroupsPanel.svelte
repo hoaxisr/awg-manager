@@ -3,6 +3,7 @@
 	import { onMount, onDestroy, untrack } from 'svelte';
 	import { get } from 'svelte/store';
 	import { api } from '$lib/api/client';
+	import { onResourceInvalidated } from '$lib/stores/storeRegistry';
 	import { startVisiblePoll } from '$lib/utils/visiblePoll';
 	import { m } from '$lib/i18n';
 	import { notifications } from '$lib/stores/notifications';
@@ -46,15 +47,17 @@
 		clearFircGroupsDraft,
 	} from '$lib/stores/fircDraft';
 	import { friendlyIfaceLabel } from '$lib/utils/fircFallback';
-	import { syncGroupChecksWithProxyGroups } from '$lib/utils/fircGroupCheck';
 	import { groupResolveError, isDnsOnlyGroup, isDohUrl, supportsDnsOnly } from '$lib/utils/fircResolve';
 	import {
 		MANAGED_SERVER_SUBNETS,
 		MAX_GROUP_IFACES,
+		PROXY_GROUP_IFACE_PREFIX,
 		allFallbackInterfaceIds,
 		buildAvailableInterfaces,
 		buildBulkInterfaces,
 		buildCatalogTunnelOptions,
+		buildGroupCheckFromProxyGroup,
+		buildProxyGroupSelectOptions,
 		domainCopyNotice,
 		emptyExtConfig,
 		emptyGroupForm,
@@ -66,7 +69,9 @@
 		groupFromForm,
 		groupServiceKey,
 		groupsFromPresets,
+		hydrateDraftGroupLinks,
 		isSpecialIface,
+		linkedProxyGroup,
 		managingProxyGroup,
 		normalizeExtConfig,
 		normalizeGroup,
@@ -75,8 +80,12 @@
 		parseImportedGroups,
 		parseRulesText,
 		presetSrsUrl,
+		primaryIface,
+		proxyGroupFromIfaceValue,
 		proxyGroupsDraft,
 		proxyGroupsDraftError,
+		syncGroupsWithProxyGroupChanges,
+		syncRestoredDraftWithProxyGroups,
 		withGroupLinks,
 		groupLinksOf,
 		randomHexId,
@@ -119,18 +128,143 @@
 	let policies = $state<FircPolicy[]>([]);
 	let resolvers = $state<FircSystemResolver[]>([]);
 	let extConfig = $state<FircExtConfig>(emptyExtConfig());
+	let extAppliedReq = 0;
+	let baselineLinksLoaded = false;
 	let proxyGroupsModalOpen = $state(false);
 	let proxyGroupRefresh = 0;
 
-	async function refreshProxyGroups() {
+	function hasOpenGroupEditModal(): boolean {
+		return (
+			(groupForm.open && groupForm.mode === 'edit') ||
+			(devicesModalOpen && !devicesModalBulk) ||
+			bulkRulesEditorOpen ||
+			importRulesModalOpen
+		);
+	}
+
+	function syncOpenEditModalAfterLinkHydration(prevGroups: FircGroup[], hadBaselineLinks: boolean) {
+		if (hadBaselineLinks || !baselineLinksLoaded) return;
+		if (!groupForm.open || groupForm.mode !== 'edit' || groupForm.index === null) return;
+		if (groupForm.form.openedFromProxyGroup) return;
+		const prevGroup = prevGroups[groupForm.index];
+		const nextGroup = groups[groupForm.index];
+		if (!prevGroup || !nextGroup || prevGroup.id !== nextGroup.id) return;
+		if (groupForm.form.iface !== primaryIface(prevGroup.interface)) return;
+		const pg = linkedProxyGroup(extConfig.proxyGroups, nextGroup);
+		if (!pg) return;
+		groupForm.form.iface = `${PROXY_GROUP_IFACE_PREFIX}${pg.id}`;
+		groupForm.form.openedFromProxyGroup = true;
+	}
+
+	async function refreshProxyGroups(silent = false) {
 		const request = ++proxyGroupRefresh;
+		const needFreshGroups = extAppliedReq === 0 && !loading && !reloading;
 		try {
-			const saved = await api.fircGetExt();
-			if (request !== proxyGroupRefresh) return false;
-			extConfig = saved;
+			const [saved, freshGroups] = await Promise.all([
+				api.fircGetExt(),
+				needFreshGroups ? api.fircGetGroups().catch(() => null) : Promise.resolve(null),
+			]);
+			if (request <= extAppliedReq) return true;
+			if (saving || pgSaving || serviceCatalogSubmitting) return false;
+			const prevProxyGroups = extConfig.proxyGroups;
+			const prevGroups = groups;
+			const hadExt = extAppliedReq > 0;
+			const hadBaselineLinks = baselineLinksLoaded;
+			const wasDirty = isDirty;
+			const nextExt = normalizeExtConfig(saved);
+			extConfig = nextExt;
+			extAppliedReq = request;
+			if (!loading && !reloading) {
+				if (!hadExt && freshGroups) {
+					const freshServer = withGroupLinks(
+						freshGroups.map(normalizeGroup),
+						nextExt.groupLinks,
+					);
+					const modalOrderChanged =
+						!wasDirty &&
+						hasOpenGroupEditModal() &&
+						(freshServer.length !== groups.length ||
+							freshServer.some((g, i) => g.id !== groups[i].id));
+					if (modalOrderChanged) {
+						const baseWithLinks =
+							!baselineLinksLoaded && nextExt.groupLinks
+								? withGroupLinks(baselineGroups, nextExt.groupLinks)
+								: baselineGroups;
+						const syncedBase = syncRestoredDraftWithProxyGroups(
+							baseWithLinks,
+							freshServer,
+							nextExt.proxyGroups,
+						);
+						baselineGroups = syncedBase.map(normalizeGroup);
+						baselineJson = serializeForDiff(syncedBase);
+						if (nextExt.groupLinks) baselineLinksLoaded = true;
+						groups = syncedBase.map(normalizeGroup);
+					} else {
+						const prevBaseline = baselineGroups;
+						baselineGroups = freshServer.map(normalizeGroup);
+						baselineJson = serializeForDiff(freshServer);
+						baselineLinksLoaded = Boolean(nextExt.groupLinks);
+						if (!wasDirty) {
+							groups = freshServer;
+						} else {
+							if (nextExt.groupLinks) {
+								const hydratedPrevBase = withGroupLinks(prevBaseline, groupLinksOf(freshServer));
+								groups = hydrateDraftGroupLinks(groups, hydratedPrevBase);
+							}
+							const synced = syncRestoredDraftWithProxyGroups(
+								groups,
+								freshServer,
+								nextExt.proxyGroups,
+							);
+							if (serializeForDiff(synced) !== serializeForDiff(groups)) {
+								groups = synced;
+							}
+						}
+					}
+				} else {
+					if (!baselineLinksLoaded && nextExt.groupLinks) {
+						const hydratedBaseline = withGroupLinks(baselineGroups, nextExt.groupLinks);
+						baselineGroups = hydratedBaseline;
+						baselineJson = serializeForDiff(hydratedBaseline);
+						baselineLinksLoaded = true;
+						if (!wasDirty) {
+							groups = hydratedBaseline.map(normalizeGroup);
+						} else {
+							groups = hydrateDraftGroupLinks(groups, hydratedBaseline);
+						}
+					}
+					if (hadExt) {
+						const syncedBase = syncGroupsWithProxyGroupChanges(
+							baselineGroups,
+							prevProxyGroups,
+							nextExt.proxyGroups,
+							nextExt,
+						);
+						if (syncedBase.changed) {
+							baselineGroups = syncedBase.groups;
+							baselineJson = serializeForDiff(baselineGroups);
+						}
+						const syncedGroups = syncGroupsWithProxyGroupChanges(
+							groups,
+							prevProxyGroups,
+							nextExt.proxyGroups,
+							nextExt,
+						);
+						if (syncedGroups.changed) {
+							groups = syncedGroups.groups;
+						}
+					} else if (wasDirty) {
+						const synced = syncRestoredDraftWithProxyGroups(groups, baselineGroups, nextExt.proxyGroups);
+						if (serializeForDiff(synced) !== serializeForDiff(groups)) {
+							groups = synced;
+						}
+					}
+				}
+				syncOpenEditModalAfterLinkHydration(prevGroups, hadBaselineLinks);
+			}
 			return true;
 		} catch (error) {
-			if (request === proxyGroupRefresh) {
+			if (!silent && request === proxyGroupRefresh) {
 				notifications.error(error instanceof Error ? error.message : String(error));
 			}
 			return false;
@@ -140,6 +274,7 @@
 	let pgSaving = $state(false);
 
 	let loading = $state(true);
+	let reloading = $state(false);
 	let saving = $state(false);
 	let syncingGroup = $state<Record<string, boolean>>({});
 	const probes = createFircProbes(
@@ -178,8 +313,11 @@
 		lastHandledMigrationNonce = migNonce;
 		lastHandledSyncNonce = syncNonce;
 		untrack(() => {
-			if (!loading && !saving && !serviceCatalogSubmitting && !isDirty) {
-				void loadAll();
+			if (loading || reloading || saving || pgSaving || serviceCatalogSubmitting) return;
+			if (!isDirty && !hasOpenGroupEditModal()) {
+				void loadAll(true);
+			} else {
+				void refreshProxyGroups(true);
 			}
 		});
 	});
@@ -221,8 +359,14 @@
 		notifications.info(m.firc_groups_toast_discarded());
 	}
 
-	async function loadAll() {
-		loading = true;
+	async function loadAll(silent = false, knownExt?: FircExtConfig) {
+		if (!silent) loading = true;
+		reloading = true;
+		const extReq = ++proxyGroupRefresh;
+		const prevProxyGroups = extConfig.proxyGroups;
+		const prevBaselineGroups = baselineGroups;
+		const hadExt = extAppliedReq > 0;
+		const hadBaselineLinks = baselineLinksLoaded;
 		try {
 			const [groupsRes, stateRes, ifacesRes, tunStateRes, hostsRes, policiesRes, resolversRes, extRes] =
 				await Promise.all([
@@ -233,24 +377,120 @@
 					api.fircGetHosts().catch(() => []),
 					api.fircGetPolicies().catch(() => []),
 					api.fircGetResolvers().catch(() => []),
-					api.fircGetExt().catch(() => null),
+					knownExt ? Promise.resolve(knownExt) : api.fircGetExt().catch(() => null),
 				]);
-			const normalized = withGroupLinks(groupsRes.map(normalizeGroup), extRes?.groupLinks);
-			baselineGroups = normalized.map(normalizeGroup);
-			baselineJson = serializeForDiff(normalized);
+			const loadedExt = extRes ? normalizeExtConfig(extRes) : null;
+			if (loadedExt && extReq > extAppliedReq) {
+				extConfig = loadedExt;
+				extAppliedReq = extReq;
+			}
+			const effectiveExt = extAppliedReq > extReq ? extConfig : loadedExt;
+			const skipGroupsOnTransientExtError =
+				silent && !knownExt && !effectiveExt && hadBaselineLinks;
+			if (!skipGroupsOnTransientExtError) {
+				const prevGroups = groups;
+				const normalized = withGroupLinks(groupsRes.map(normalizeGroup), effectiveExt?.groupLinks);
+				const editedWhileReloading = silent && isDirty;
+				const modalOrderChanged =
+					silent &&
+					!editedWhileReloading &&
+					hasOpenGroupEditModal() &&
+					(normalized.length !== groups.length || normalized.some((g, i) => g.id !== groups[i].id));
+				if (modalOrderChanged) {
+					if (!hadExt && effectiveExt) {
+						const baseWithLinks =
+							!hadBaselineLinks && effectiveExt.groupLinks
+								? withGroupLinks(baselineGroups, effectiveExt.groupLinks)
+								: baselineGroups;
+						const syncedBase = syncRestoredDraftWithProxyGroups(
+							baseWithLinks,
+							normalized,
+							effectiveExt.proxyGroups,
+						);
+						baselineGroups = syncedBase.map(normalizeGroup);
+						baselineJson = serializeForDiff(syncedBase);
+						if (effectiveExt.groupLinks) baselineLinksLoaded = true;
+						groups = syncedBase.map(normalizeGroup);
+					} else {
+						if (!hadBaselineLinks && effectiveExt?.groupLinks) {
+							const hydratedBaseline = withGroupLinks(baselineGroups, effectiveExt.groupLinks);
+							baselineGroups = hydratedBaseline;
+							baselineJson = serializeForDiff(hydratedBaseline);
+							baselineLinksLoaded = true;
+							groups = hydratedBaseline.map(normalizeGroup);
+						}
+						if (hadExt && effectiveExt) {
+							const syncedBase = syncGroupsWithProxyGroupChanges(
+								baselineGroups,
+								prevProxyGroups,
+								effectiveExt.proxyGroups,
+								effectiveExt,
+							);
+							if (syncedBase.changed) {
+								baselineGroups = syncedBase.groups;
+								baselineJson = serializeForDiff(baselineGroups);
+							}
+							const syncedGroups = syncGroupsWithProxyGroupChanges(
+								groups,
+								prevProxyGroups,
+								effectiveExt.proxyGroups,
+								effectiveExt,
+							);
+							if (syncedGroups.changed) groups = syncedGroups.groups;
+						}
+					}
+				} else {
+					const nextBaselineJson = serializeForDiff(normalized);
+					baselineGroups = normalized.map(normalizeGroup);
+					baselineJson = nextBaselineJson;
+					baselineLinksLoaded = Boolean(effectiveExt?.groupLinks);
 
-			const existingDraft = loadFircGroupsDraft();
-			if (
-				existingDraft &&
-				Array.isArray(existingDraft.groups) &&
-				serializeForDiff(existingDraft.groups.map(normalizeGroup)) !== baselineJson
-			) {
-				groups = existingDraft.groups.map(normalizeGroup);
-				draftedAt = existingDraft.draftedAt || new Date().toISOString();
-			} else {
-				groups = normalized;
-				draftedAt = null;
-				clearFircGroupsDraft();
+					if (editedWhileReloading) {
+						if (!hadBaselineLinks && effectiveExt?.groupLinks) {
+							const hydratedPrevBase = withGroupLinks(prevBaselineGroups, groupLinksOf(normalized));
+							groups = hydrateDraftGroupLinks(groups, hydratedPrevBase);
+						}
+						if (effectiveExt) {
+							if (hadExt) {
+								const synced = syncGroupsWithProxyGroupChanges(
+									groups,
+									prevProxyGroups,
+									effectiveExt.proxyGroups,
+									effectiveExt,
+								);
+								if (synced.changed) groups = synced.groups;
+							} else {
+								const synced = syncRestoredDraftWithProxyGroups(
+									groups,
+									normalized,
+									effectiveExt.proxyGroups,
+								);
+								if (serializeForDiff(synced) !== serializeForDiff(groups)) groups = synced;
+							}
+						}
+					} else {
+						const existingDraft = loadFircGroupsDraft();
+						if (existingDraft && Array.isArray(existingDraft.groups)) {
+							const rawDraft = existingDraft.groups.map(normalizeGroup);
+							const draftGroups = effectiveExt
+								? syncRestoredDraftWithProxyGroups(rawDraft, normalized, effectiveExt.proxyGroups)
+								: rawDraft;
+							if (serializeForDiff(draftGroups) !== baselineJson) {
+								groups = draftGroups;
+								draftedAt = existingDraft.draftedAt || new Date().toISOString();
+							} else {
+								groups = normalized;
+								draftedAt = null;
+								clearFircGroupsDraft();
+							}
+						} else {
+							groups = normalized;
+							draftedAt = null;
+							clearFircGroupsDraft();
+						}
+					}
+				}
+				syncOpenEditModalAfterLinkHydration(prevGroups, hadBaselineLinks);
 			}
 			liveMap = stateRes.groups ?? {};
 			netfilterState = 'netfilter' in stateRes ? stateRes.netfilter : undefined;
@@ -259,13 +499,6 @@
 			hosts = hostsRes;
 			policies = policiesRes;
 			resolvers = resolversRes;
-			if (extRes) extConfig = normalizeExtConfig(extRes);
-			if (extRes && draftedAt !== null) {
-				const synced = syncGroupChecksWithProxyGroups(groups, extConfig.proxyGroups);
-				if (synced.changed) {
-					groups = synced.groups;
-				}
-			}
 
 			const nowSec = Math.floor(Date.now() / 1000);
 			const existingProbes = get(fircInterfaceProbeResults);
@@ -277,9 +510,12 @@
 				void probeFallbackInterfaces(staleIfaces, { silent: true });
 			}
 		} catch (e) {
-			notifications.error(m.firc_groups_toast_load_error({ error: (e as Error).message }));
+			if (!silent) {
+				notifications.error(m.firc_groups_toast_load_error({ error: (e as Error).message }));
+			}
 		} finally {
-			loading = false;
+			if (!silent) loading = false;
+			reloading = false;
 		}
 	}
 
@@ -307,6 +543,8 @@
 		}
 	}
 
+	let unsubFircInvalidation: (() => void) | null = null;
+
 	onMount(() => {
 		try {
 			const savedView = localStorage.getItem('awgm.firc.groupView');
@@ -318,6 +556,14 @@
 		// интерфейсы) меняется внутри fircd без участия панели — события нет,
 		// поэтому опрос, но через visiblePoll: спит в фоне, не накладывается.
 		stopLivePoll = startVisiblePoll(pollLiveState, 4000);
+		unsubFircInvalidation = onResourceInvalidated('firc', () => {
+			if (loading || reloading || saving || pgSaving || serviceCatalogSubmitting) return;
+			if (!isDirty && !hasOpenGroupEditModal()) {
+				void loadAll(true);
+			} else {
+				void refreshProxyGroups(true);
+			}
+		});
 		if (typeof window !== 'undefined') {
 			window.addEventListener('click', handleWindowClick);
 		}
@@ -326,6 +572,7 @@
 	onDestroy(() => {
 		probes.destroy();
 		stopLivePoll?.();
+		unsubFircInvalidation?.();
 		if (typeof window !== 'undefined') {
 			window.removeEventListener('click', handleWindowClick);
 		}
@@ -339,6 +586,7 @@
 	}
 
 	async function saveProxyGroupsModal() {
+		if (pgSaving || saving || loading || reloading || serviceCatalogSubmitting) return;
 		const draftError = proxyGroupsDraftError(pgDraft, extConfig.proxyGroups);
 		if (draftError) {
 			notifications.error(draftError);
@@ -346,15 +594,51 @@
 		}
 		pgSaving = true;
 		try {
+			const prevProxyGroups = extConfig.proxyGroups;
+			const wasDirty = isDirty;
 			const nextExt: FircExtConfig = {
 				...extConfig,
 				proxyGroups: pgDraft.map(normalizeProxyGroupForSave),
 			};
 			const saved = await api.fircSaveExt(nextExt);
-			extConfig = saved;
-			proxyGroupRefresh++;
+			const saveReq = ++proxyGroupRefresh;
+			extConfig = normalizeExtConfig(saved);
+			extAppliedReq = saveReq;
+			if (!baselineLinksLoaded && extConfig.groupLinks) {
+				const hydratedBaseline = withGroupLinks(baselineGroups, extConfig.groupLinks);
+				baselineGroups = hydratedBaseline;
+				baselineJson = serializeForDiff(hydratedBaseline);
+				baselineLinksLoaded = true;
+				if (!wasDirty) {
+					groups = hydratedBaseline.map(normalizeGroup);
+				} else {
+					groups = hydrateDraftGroupLinks(groups, hydratedBaseline);
+				}
+			}
+			const syncedBase = syncGroupsWithProxyGroupChanges(
+				baselineGroups,
+				prevProxyGroups,
+				extConfig.proxyGroups,
+				extConfig,
+			);
+			if (syncedBase.changed) {
+				baselineGroups = syncedBase.groups;
+				baselineJson = serializeForDiff(baselineGroups);
+			}
+			const syncedGroups = syncGroupsWithProxyGroupChanges(
+				groups,
+				prevProxyGroups,
+				extConfig.proxyGroups,
+				extConfig,
+			);
+			if (syncedGroups.changed) {
+				groups = syncedGroups.groups;
+				if (wasDirty) {
+					draftedAt = saveFircGroupsDraft(groups, baselineJson, draftedAt);
+				}
+			}
 			proxyGroupsModalOpen = false;
-			await loadAll();
+			await loadAll(true, extConfig);
 			notifications.success(m.firc_groups_pg_saved());
 		} catch (e) {
 			notifications.error(m.firc_groups_pg_save_error({ error: (e as Error).message }));
@@ -363,7 +647,7 @@
 		}
 	}
 
-	let catalogTunnelOptions = $derived(buildCatalogTunnelOptions(interfaces));
+	let catalogTunnelOptions = $derived(buildCatalogTunnelOptions(interfaces, extConfig.proxyGroups));
 	let filteredGroups = $derived(filterGroups(groups, searchQuery));
 	let anyExpanded = $derived(groups.some((g) => expandedGroups[g.id]));
 
@@ -466,7 +750,7 @@
 	}
 
 	async function saveAllChanges() {
-		if (saving || !isDirty) return;
+		if (saving || pgSaving || loading || reloading || serviceCatalogSubmitting || !isDirty) return;
 		for (const g of groups) {
 			const emptyRule = g.rules.find((r) => !r.rule.trim());
 			if (emptyRule) {
@@ -494,7 +778,7 @@
 			}
 
 			const payload = savePayload(groups);
-			const links = extConfig.groupLinks ? groupLinksOf(groups) : undefined;
+			const links = baselineLinksLoaded && extConfig.groupLinks ? groupLinksOf(groups) : undefined;
 			const res = await api.fircSaveGroups(payload, true, links);
 			acceptSavedGroups(withGroupLinks((res?.groups ?? payload).map(normalizeGroup), links));
 			listPages.clearEdits();
@@ -557,41 +841,65 @@
 
 	// Список зависит от выбранного в форме выхода: служебный интерфейс виден, только пока он выбран.
 	let availableInterfaces = $derived(buildAvailableInterfaces(interfaces, groupForm.form.iface));
+	let proxyGroupOptions = $derived(buildProxyGroupSelectOptions(extConfig.proxyGroups, interfaces));
 
 	let gmEditGroup = $derived(
 		groupForm.mode === 'edit' && groupForm.index !== null ? groups[groupForm.index] : undefined,
 	);
-	let gmHasChain = $derived(
-		Boolean(gmEditGroup) &&
-			normalizeIfaceList(gmEditGroup?.interface ?? '').length >= 2 &&
-			!isSpecialIface(groupForm.form.iface),
+	let gmPickedProxyGroup = $derived(
+		proxyGroupFromIfaceValue(extConfig.proxyGroups, groupForm.form.iface),
 	);
-	let gmManagedProxyGroup = $derived(
-		gmHasChain && gmEditGroup ? managingProxyGroup(extConfig.proxyGroups, gmEditGroup) : undefined,
+	let gmStaleProxyGroup = $derived(
+		groupForm.form.iface.startsWith(PROXY_GROUP_IFACE_PREFIX) && !gmPickedProxyGroup,
 	);
+	let gmHadChain = $derived(
+		Boolean(gmEditGroup) && normalizeIfaceList(gmEditGroup?.interface ?? '').length >= 2,
+	);
+	let gmHasChain = $derived.by(() => {
+		if (gmPickedProxyGroup) return gmPickedProxyGroup.interfaces.length >= 2;
+		if (gmStaleProxyGroup) return gmHadChain;
+		if (groupForm.form.openedFromProxyGroup) return false;
+		return gmHadChain && !isSpecialIface(groupForm.form.iface);
+	});
+	let gmManagedProxyGroup = $derived.by(() => {
+		if (!gmHasChain) return undefined;
+		if (gmPickedProxyGroup) {
+			return buildGroupCheckFromProxyGroup(gmPickedProxyGroup) ? gmPickedProxyGroup : undefined;
+		}
+		if (!gmEditGroup || gmStaleProxyGroup || groupForm.form.openedFromProxyGroup) return undefined;
+		const curList = normalizeIfaceList(gmEditGroup.interface);
+		const rest = curList.filter((x) => x !== groupForm.form.iface && !isSpecialIface(x));
+		const nextList = [groupForm.form.iface, ...rest].slice(0, MAX_GROUP_IFACES);
+		if (curList.length !== nextList.length || curList.some((v, i) => v !== nextList[i])) {
+			return undefined;
+		}
+		return managingProxyGroup(extConfig.proxyGroups, gmEditGroup);
+	});
 	let gmShowCheck = $derived(gmHasChain && !gmManagedProxyGroup);
 	let dohSupported = $derived(supportsDnsOnly(interfaces));
 	// Старый демон DoH не прочтёт; уже заданный адрес при этом остаётся правимым.
 	let gmAllowDoh = $derived(
 		dohSupported || (gmEditGroup ? isDnsOnlyGroup(gmEditGroup) || isDohUrl(gmEditGroup.resolve?.server ?? '') : false),
 	);
-	let gmError = $derived(
-		groupForm.open
-			? groupResolveError(
-					groupFromForm(groupForm.form, gmEditGroup, groups.length, extConfig.proxyGroups),
-					gmAllowDoh,
-				)
-			: '',
-	);
+	let gmError = $derived.by(() => {
+		if (!groupForm.open) return '';
+		if (gmStaleProxyGroup) return m.firc_groups_pg_not_found();
+		return groupResolveError(
+			groupFromForm(groupForm.form, gmEditGroup, groups.length, extConfig.proxyGroups),
+			gmAllowDoh,
+		);
+	});
 
 	function openCreateGroupModal() {
 		groupForm.openWith('create', null, emptyGroupForm(availableInterfaces[0]?.value ?? 'block'));
+		void refreshProxyGroups(true);
 	}
 
 	function openEditGroupModal(index: number) {
 		const g = groups[index];
 		if (!g) return;
-		groupForm.openWith('edit', index, groupFormFrom(g));
+		groupForm.openWith('edit', index, groupFormFrom(g, extConfig.proxyGroups));
+		void refreshProxyGroups(true);
 	}
 
 	function submitGroupModal() {
@@ -751,6 +1059,9 @@
 	function openServiceCatalog(mode: 'batch' | 'single') {
 		serviceCatalogMode = mode;
 		serviceCatalogOpen = true;
+		if (mode === 'batch') {
+			void refreshProxyGroups(true);
+		}
 	}
 
 	function handleSingleCatalogPick(presets: CatalogPreset[]) {
@@ -764,20 +1075,29 @@
 	}
 
 	async function handleBatchCatalogCreate(presets: CatalogPreset[], targetIface: string) {
-		if (presets.length === 0 || serviceCatalogSubmitting) return;
+		if (presets.length === 0 || serviceCatalogSubmitting || saving || pgSaving || loading || reloading) return;
+		if (
+			targetIface.startsWith(PROXY_GROUP_IFACE_PREFIX) &&
+			!proxyGroupFromIfaceValue(extConfig.proxyGroups, targetIface)
+		) {
+			notifications.error(m.firc_groups_catalog_error({ error: m.firc_groups_pg_not_found() }));
+			return;
+		}
 		serviceCatalogSubmitting = true;
 		try {
 			const createdGroups = groupsFromPresets(
 				presets,
 				targetIface || availableInterfaces[0]?.value || 'block',
+				extConfig.proxyGroups,
 			);
 			if (createdGroups.length === 0) {
 				serviceCatalogOpen = false;
 				return;
 			}
 
-			const payload = savePayload([...groups, ...createdGroups]);
-			const links = extConfig.groupLinks ? groupLinksOf(groups) : undefined;
+			const allGroups = [...groups, ...createdGroups];
+			const payload = savePayload(allGroups);
+			const links = baselineLinksLoaded && extConfig.groupLinks ? groupLinksOf(allGroups) : undefined;
 			const res = await api.fircSaveGroups(payload, true, links);
 			const normalized = withGroupLinks((res?.groups ?? payload).map(normalizeGroup), links);
 			acceptSavedGroups(normalized);
@@ -822,7 +1142,7 @@
 				<Button
 					variant="ghost"
 					size="sm"
-					disabled={saving}
+					disabled={saving || pgSaving || loading || reloading || serviceCatalogSubmitting}
 					onclick={() => (confirmDiscardOpen = true)}
 				>
 					{#snippet iconBefore()}<RotateCcw size={13} />{/snippet}
@@ -831,7 +1151,7 @@
 				<Button
 					variant="primary"
 					size="sm"
-					disabled={saving}
+					disabled={saving || pgSaving || loading || reloading || serviceCatalogSubmitting}
 					loading={saving}
 					onclick={saveAllChanges}
 				>
@@ -1009,6 +1329,8 @@
 	mode={groupForm.mode}
 	bind:form={groupForm.form}
 	{availableInterfaces}
+	{proxyGroupOptions}
+	hadChain={gmHadChain}
 	{dohSupported}
 	allowDoh={gmAllowDoh}
 	formError={gmError}
@@ -1054,7 +1376,7 @@
 	{rt}
 	probingIfaces={probes.ifaces}
 	probingGroups={probes.groups}
-	saving={pgSaving}
+	saving={pgSaving || saving || loading || reloading || serviceCatalogSubmitting}
 	onprobe={probeFallbackInterfaces}
 	onclose={() => (proxyGroupsModalOpen = false)}
 	onsave={saveProxyGroupsModal}
@@ -1073,7 +1395,7 @@
 	hideDownloadRouteNote={true}
 	multiple={serviceCatalogMode === 'batch'}
 	warnLargeDnsLists={false}
-	submitting={serviceCatalogSubmitting}
+	submitting={serviceCatalogSubmitting || saving || pgSaving || loading || reloading}
 	onclose={() => (serviceCatalogOpen = false)}
 	onconfirm={handleSingleCatalogPick}
 	oncreate={(presets, tunnelId) => void handleBatchCatalogCreate(presets, tunnelId)}

@@ -5,7 +5,6 @@ import {
 	carryCheckExtras,
 	clampPgIntervalSec,
 	switchGroupCheckMode,
-	syncGroupChecksWithProxyGroups,
 	withPgIntervalSec,
 } from './fircGroupCheck';
 
@@ -84,40 +83,5 @@ describe('buildGroupCheckFromProxyGroup', () => {
 	it('is none for a single interface and undefined without a check', () => {
 		expect(buildGroupCheckFromProxyGroup({ id: 'p', name: 'p', interfaces: ['a'] })).toEqual({ mode: 'none', url: '' });
 		expect(buildGroupCheckFromProxyGroup({ id: 'p', name: 'p', interfaces: ['a', 'b'] })).toBeUndefined();
-	});
-});
-
-describe('syncGroupChecksWithProxyGroups', () => {
-	const pg: FircProxyGroup = {
-		id: 'p',
-		name: 'p',
-		interfaces: ['tunvless0', 'eth3'],
-		check: { mode: 'url', url: ' http://cp.cloudflare.com/generate_204 ', intervalSec: 120 },
-	};
-
-	it('rewrites only groups linked to the proxy group with the same chain', () => {
-		const groups = [
-			group('a', ['tunvless0', 'eth3'], { mode: 'url', url: '' }, 'p'),
-			group('manual_same_chain', ['tunvless0', 'eth3'], { mode: 'none', url: '' }),
-			group('b', ['eth3', 'tunvless0'], { mode: 'url', url: '' }, 'p'),
-			group('c', 'tunvless0', undefined, 'p'),
-		];
-		const res = syncGroupChecksWithProxyGroups(groups, [pg]);
-		expect(res.changed).toBe(true);
-		expect(res.groups[0].check).toEqual({
-			mode: 'url',
-			url: 'http://cp.cloudflare.com/generate_204',
-			intervalSec: 120,
-		});
-		expect(res.groups[1]).toBe(groups[1]);
-		expect(res.groups[2]).toBe(groups[2]);
-		expect(res.groups[3]).toBe(groups[3]);
-	});
-
-	it('is a no-op when already in step', () => {
-		const synced = syncGroupChecksWithProxyGroups([group('a', ['tunvless0', 'eth3'], undefined, 'p')], [pg]).groups;
-		const again = syncGroupChecksWithProxyGroups(synced, [pg]);
-		expect(again.changed).toBe(false);
-		expect(again.groups).toBe(synced);
 	});
 });
