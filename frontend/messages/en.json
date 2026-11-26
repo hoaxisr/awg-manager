@@ -9730,6 +9730,8 @@
 	"servers_tg_user_enabled": "Access for “{name}” enabled",
 	"servers_tg_user_disabled": "Access for “{name}” disabled",
 	"servers_tg_user_toggle_error": "Failed to change the user status",
+	"servers_tg_user_rename": "Rename",
+	"servers_tg_user_rename_error": "Failed to rename the user",
 	"servers_tg_user_deleted": "User “{name}” deleted",
 	"servers_tg_user_delete_error": "Failed to delete the user",
 	"servers_tg_started": "Telegram proxy started",

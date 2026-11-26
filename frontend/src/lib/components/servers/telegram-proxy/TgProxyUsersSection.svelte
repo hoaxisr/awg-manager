@@ -1,9 +1,9 @@
 <script lang="ts">
-	// Список пользователей прокси Telegram: включение, ссылка/QR, удаление.
+	// Список пользователей прокси Telegram: включение, имя, ссылка/QR, удаление.
 	import { m } from '$lib/i18n';
 	import type { TelegramUser } from '$lib/types';
-	import { Button, IconButton, Toggle } from '$lib/components/ui';
-	import { Plus, QrCode, Trash2 } from 'lucide-svelte';
+	import { Button, IconButton, Input, Toggle } from '$lib/components/ui';
+	import { Check, Pencil, Plus, QrCode, Trash2, X } from 'lucide-svelte';
 
 	interface Props {
 		users: TelegramUser[];
@@ -11,11 +11,27 @@
 		busyId: string;
 		onadd: () => void;
 		ontoggle: (user: TelegramUser) => void;
+		/** Новое имя — уже обрезанное, непустое и отличное от прежнего. */
+		onrename: (user: TelegramUser, remark: string) => void;
 		onreveal: (user: TelegramUser) => void;
 		ondelete: (user: TelegramUser) => void;
 	}
 
-	let { users, busyId, onadd, ontoggle, onreveal, ondelete }: Props = $props();
+	let { users, busyId, onadd, ontoggle, onrename, onreveal, ondelete }: Props = $props();
+
+	let editingId = $state('');
+	let draftName = $state('');
+
+	function startRename(user: TelegramUser) {
+		editingId = user.id;
+		draftName = user.remark;
+	}
+
+	function commitRename(user: TelegramUser) {
+		const next = draftName.trim();
+		editingId = '';
+		if (next && next !== user.remark) onrename(user, next);
+	}
 </script>
 
 <section class="tg-users-section">
@@ -40,7 +56,37 @@
 							disabled={busyId === user.id}
 							onchange={() => ontoggle(user)}
 						/>
-						<span class="tg-user-name" class:muted-name={!user.enabled}>{user.remark}</span>
+						{#if editingId === user.id}
+							<Input value={draftName} ariaLabel={m.servers_tg_user_rename()} oninput={(v) => (draftName = v)} />
+							<IconButton
+								size="sm"
+								title={m.common_save()}
+								ariaLabel={m.common_save()}
+								disabled={!draftName.trim()}
+								onclick={() => commitRename(user)}
+							>
+								<Check size={14} />
+							</IconButton>
+							<IconButton
+								size="sm"
+								title={m.common_cancel()}
+								ariaLabel={m.common_cancel()}
+								onclick={() => (editingId = '')}
+							>
+								<X size={14} />
+							</IconButton>
+						{:else}
+							<span class="tg-user-name" class:muted-name={!user.enabled}>{user.remark}</span>
+							<IconButton
+								size="sm"
+								title={m.servers_tg_user_rename()}
+								ariaLabel={m.servers_tg_user_rename()}
+								disabled={busyId === user.id}
+								onclick={() => startRename(user)}
+							>
+								<Pencil size={13} />
+							</IconButton>
+						{/if}
 						<span class="badge {user.enabled ? 'badge-success' : 'badge-neutral'}">
 							{user.enabled ? m.servers_tg_user_allowed() : m.servers_tg_method_off()}
 						</span>

@@ -10132,6 +10132,8 @@
 	"servers_tg_user_enabled": "Доступ для «{name}» включён",
 	"servers_tg_user_disabled": "Доступ для «{name}» отключён",
 	"servers_tg_user_toggle_error": "Ошибка изменения статуса пользователя",
+	"servers_tg_user_rename": "Переименовать",
+	"servers_tg_user_rename_error": "Не удалось переименовать пользователя",
 	"servers_tg_user_deleted": "Пользователь «{name}» удалён",
 	"servers_tg_user_delete_error": "Ошибка удаления пользователя",
 	"servers_tg_started": "Прокси Telegram запущен",

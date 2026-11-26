@@ -209,6 +209,20 @@
 		void loadEgressOptions(config?.upstream_device);
 	}
 
+	async function handleRenameUser(user: TelegramUser, remark: string) {
+		userActionLoadingId = user.id;
+		try {
+			status = await api.tgWebProxyAction('update_user', { user_id: user.id, remark });
+			invalidateRevealCache();
+			await loadData();
+			onRefreshParent?.();
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : m.servers_tg_user_rename_error());
+		} finally {
+			userActionLoadingId = '';
+		}
+	}
+
 	async function handleToggleUser(user: TelegramUser) {
 		userActionLoadingId = user.id;
 		try {
@@ -421,6 +435,7 @@
 			busyId={userActionLoadingId}
 			onadd={() => (showAddUserModal = true)}
 			ontoggle={handleToggleUser}
+			onrename={handleRenameUser}
 			onreveal={(user) => revealModal?.show(undefined, undefined, user.id)}
 			ondelete={(user) => (deleteUserTarget = user)}
 		/>
