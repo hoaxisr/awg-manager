@@ -2,7 +2,7 @@
   import { m } from '$lib/i18n';
   import type { FircExtConfig, FircInterfaceOption } from '$lib/types/firc';
   import { fircTunnelsState } from '$lib/stores/firc';
-  import { friendlyIfaceLabel, isSelectableFircFallbackInterface } from '$lib/utils/fircFallback';
+  import { friendlyIfaceLabel, selectSelectableFircFallbackInterfaces } from '$lib/utils/fircFallback';
   import { Toggle, Button } from '$lib/components/ui';
   import { formatIfaceLabel } from './fircSettingsIface';
 
@@ -19,6 +19,31 @@
     interfaces,
     onopenproxygroups,
   }: Props = $props();
+
+  let selectableInterfaces = $derived(selectSelectableFircFallbackInterfaces(interfaces));
+
+  function withPreservedSelectedIface(
+    base: FircInterfaceOption[],
+    all: FircInterfaceOption[],
+    selectedId: string,
+  ): FircInterfaceOption[] {
+    if (!selectedId || base.some((o) => o.id === selectedId)) return base;
+    const found = all.find((o) => o.id === selectedId) ?? { id: selectedId, role: 'tunnel' };
+    return [...base, found];
+  }
+
+  let selectedGlobalIfaceId = $derived(
+    extConfig.globalTarget?.startsWith('iface:') ? extConfig.globalTarget.slice(6) : '',
+  );
+  let globalInterfaces = $derived(
+    withPreservedSelectedIface(selectableInterfaces, interfaces, selectedGlobalIfaceId),
+  );
+  let selectedKeenDnsIfaceId = $derived(
+    !extConfig.keenDnsCloud.proxyGroupId ? (extConfig.keenDnsCloud.interfaces?.[0] ?? '') : '',
+  );
+  let keenDnsInterfaces = $derived(
+    withPreservedSelectedIface(selectableInterfaces, interfaces, selectedKeenDnsIfaceId),
+  );
 
   function keenDnsTargetSelectValue(): string {
     if (extConfig.keenDnsCloud.proxyGroupId) {
@@ -52,7 +77,7 @@
     {#each extConfig.proxyGroups as pg (pg.id)}
       <option value={'pg:' + pg.id}>Global · {pg.name}</option>
     {/each}
-    {#each interfaces.filter(isSelectableFircFallbackInterface) as opt (opt.id)}
+    {#each globalInterfaces as opt (opt.id)}
       <option value={'iface:' + opt.id}>Global · {formatIfaceLabel(opt)}</option>
     {/each}
   </select>
@@ -104,9 +129,9 @@
           {/each}
         </optgroup>
       {/if}
-      {#if interfaces.filter(isSelectableFircFallbackInterface).length > 0}
+      {#if keenDnsInterfaces.length > 0}
         <optgroup label={m.firc_settings_keendns_target_ifaces()}>
-          {#each interfaces.filter(isSelectableFircFallbackInterface) as opt (opt.id)}
+          {#each keenDnsInterfaces as opt (opt.id)}
             <option value="iface:{opt.id}">{formatIfaceLabel(opt)}</option>
           {/each}
         </optgroup>

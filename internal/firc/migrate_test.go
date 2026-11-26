@@ -2595,3 +2595,347 @@ groups:
 		t.Fatalf("unexpected decoded GroupList: %+v", groups)
 	}
 }
+
+func TestReverseMigrateToSingbox_ProxyT2SAndGlobalGroup(t *testing.T) {
+	t.Run("synthesizes direct outbound and 10-tunnels skeleton for t2s0, skips c100d001 and c100d002", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		awgmDir := filepath.Join(tmpDir, "awg-manager")
+		sbDir := filepath.Join(awgmDir, "config.d")
+		fircDir := filepath.Join(tmpDir, "firc")
+		if err := os.MkdirAll(sbDir, 0755); err != nil {
+			t.Fatalf("mkdir sbDir: %v", err)
+		}
+
+		op := NewOperator(Options{ConfigDir: fircDir, InboundPort: 1099})
+		op.SetSingboxValidator(func(_ context.Context, _ string) error { return nil })
+
+		groups := []Group{
+			{
+				ID:        KeenDNSGroupID,
+				Name:      "KeenDNS",
+				Interface: []string{"t2s0"},
+				Enable:    true,
+				Rules:     []Rule{{ID: "k1", Type: "namespace", Rule: "keenetic.net", Enable: true}},
+			},
+			{
+				ID:        globalGroupID,
+				Name:      "Global",
+				Interface: []string{"t2s0"},
+				Enable:    true,
+				Rules:     []Rule{{ID: "g0", Type: "subnet", Rule: "1.0.0.0/8", Enable: true}},
+			},
+			{
+				ID:        "a1b2c3d4",
+				Name:      "SocksGroup",
+				Interface: []string{"t2s0"},
+				Enable:    true,
+				Rules:     []Rule{{ID: "r1", Type: "namespace", Rule: "example.com", Enable: true}},
+			},
+		}
+		if err := op.SaveTunnelsFile(nil); err != nil {
+			t.Fatalf("SaveTunnelsFile: %v", err)
+		}
+		if err := op.SaveGroupsFile(groups); err != nil {
+			t.Fatalf("SaveGroupsFile: %v", err)
+		}
+
+		prev, err := op.PreviewReverseToSingbox(t.Context(), sbDir, &ReverseMigrationOptions{Mode: "replace"})
+		if err != nil {
+			t.Fatalf("PreviewReverseToSingbox: %v", err)
+		}
+		if len(prev.Skipped) != 0 {
+			t.Fatalf("expected 0 skipped groups in preview, got %v", prev.Skipped)
+		}
+		if len(prev.Groups) != 1 || prev.Groups[0].OutboundTag != "proxy-t2s0" {
+			t.Fatalf("expected 1 converted group with OutboundTag proxy-t2s0, got %+v", prev.Groups)
+		}
+
+		f := false
+		revRes, err := op.ReverseMigrateToSingbox(t.Context(), sbDir, &ReverseMigrationOptions{
+			Mode:           "replace",
+			CreateSnapshot: &f,
+		}, "firc")
+		if err != nil {
+			t.Fatalf("ReverseMigrateToSingbox: %v", err)
+		}
+		if revRes.RulesMigrated != 1 {
+			t.Fatalf("expected 1 rule migrated, got %+v", revRes)
+		}
+
+		routerRaw, err := os.ReadFile(filepath.Join(sbDir, "20-router.json"))
+		if err != nil {
+			t.Fatalf("read 20-router.json: %v", err)
+		}
+		var routerDoc struct {
+			Outbounds []map[string]any `json:"outbounds"`
+			Route     struct {
+				Rules []map[string]any `json:"rules"`
+			} `json:"route"`
+		}
+		if err := json.Unmarshal(routerRaw, &routerDoc); err != nil {
+			t.Fatalf("unmarshal 20-router.json: %v", err)
+		}
+		if len(routerDoc.Outbounds) != 1 ||
+			routerDoc.Outbounds[0]["type"] != "direct" ||
+			routerDoc.Outbounds[0]["tag"] != "proxy-t2s0" ||
+			routerDoc.Outbounds[0]["bind_interface"] != "t2s0" {
+			t.Fatalf("unexpected 20-router.json outbounds: %+v", routerDoc.Outbounds)
+		}
+		if len(routerDoc.Route.Rules) != 1 || routerDoc.Route.Rules[0]["outbound"] != "proxy-t2s0" {
+			t.Fatalf("unexpected 20-router.json rules: %+v", routerDoc.Route.Rules)
+		}
+
+		tunnelsRaw, err := os.ReadFile(filepath.Join(sbDir, "10-tunnels.json"))
+		if err != nil || len(tunnelsRaw) == 0 {
+			t.Fatalf("expected 10-tunnels.json skeleton to exist, err=%v", err)
+		}
+	})
+
+	t.Run("merge mode reuses existing direct bind_interface outbound for t2s0", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		awgmDir := filepath.Join(tmpDir, "awg-manager")
+		sbDir := filepath.Join(awgmDir, "config.d")
+		fircDir := filepath.Join(tmpDir, "firc")
+		if err := os.MkdirAll(sbDir, 0755); err != nil {
+			t.Fatalf("mkdir sbDir: %v", err)
+		}
+		existing10 := `{"inbounds":[],"outbounds":[],"route":{"rules":[]}}`
+		if err := os.WriteFile(filepath.Join(sbDir, "10-tunnels.json"), []byte(existing10), 0644); err != nil {
+			t.Fatalf("write 10-tunnels.json: %v", err)
+		}
+		existing15 := `{"outbounds":[{"type":"direct","tag":"keen-socks","bind_interface":"t2s0"}]}`
+		if err := os.WriteFile(filepath.Join(sbDir, "15-awg.json"), []byte(existing15), 0644); err != nil {
+			t.Fatalf("write 15-awg.json: %v", err)
+		}
+
+		op := NewOperator(Options{ConfigDir: fircDir, InboundPort: 1099})
+		op.SetSingboxValidator(func(_ context.Context, _ string) error { return nil })
+
+		groups := []Group{
+			{
+				ID:        "a1b2c3d4",
+				Name:      "SocksGroup",
+				Interface: []string{"t2s0"},
+				Enable:    true,
+				Rules:     []Rule{{ID: "r1", Type: "domain", Rule: "example.org", Enable: true}},
+			},
+		}
+		if err := op.SaveTunnelsFile(nil); err != nil {
+			t.Fatalf("SaveTunnelsFile: %v", err)
+		}
+		if err := op.SaveGroupsFile(groups); err != nil {
+			t.Fatalf("SaveGroupsFile: %v", err)
+		}
+
+		f := false
+		revRes, err := op.ReverseMigrateToSingbox(t.Context(), sbDir, &ReverseMigrationOptions{
+			Mode:           "merge",
+			CreateSnapshot: &f,
+		}, "firc")
+		if err != nil {
+			t.Fatalf("ReverseMigrateToSingbox merge: %v", err)
+		}
+		if len(revRes.Groups) != 1 || revRes.Groups[0].OutboundTag != "keen-socks" {
+			t.Fatalf("expected reused OutboundTag keen-socks, got %+v", revRes.Groups)
+		}
+
+		routerRaw, err := os.ReadFile(filepath.Join(sbDir, "20-router.json"))
+		if err != nil {
+			t.Fatalf("read 20-router.json: %v", err)
+		}
+		if strings.Contains(string(routerRaw), "proxy-t2s0") {
+			t.Fatalf("expected no duplicate proxy-t2s0 outbound in 20-router.json, got %s", string(routerRaw))
+		}
+	})
+
+	t.Run("normalizes Proxy0 interface ID to kernel bind_interface t2s0", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		sbDir := filepath.Join(tmpDir, "awg-manager", "config.d")
+		fircDir := filepath.Join(tmpDir, "firc")
+		if err := os.MkdirAll(sbDir, 0755); err != nil {
+			t.Fatalf("mkdir sbDir: %v", err)
+		}
+
+		op := NewOperator(Options{ConfigDir: fircDir, InboundPort: 1099})
+		op.SetSingboxValidator(func(_ context.Context, _ string) error { return nil })
+
+		groups := []Group{
+			{
+				ID:        "b2c3d4e5",
+				Name:      "ProxyGroup",
+				Interface: []string{"Proxy0"},
+				Enable:    true,
+				Rules:     []Rule{{ID: "r1", Type: "namespace", Rule: "example.net", Enable: true}},
+			},
+		}
+		if err := op.SaveTunnelsFile(nil); err != nil {
+			t.Fatalf("SaveTunnelsFile: %v", err)
+		}
+		if err := op.SaveGroupsFile(groups); err != nil {
+			t.Fatalf("SaveGroupsFile: %v", err)
+		}
+
+		f := false
+		revRes, err := op.ReverseMigrateToSingbox(t.Context(), sbDir, &ReverseMigrationOptions{
+			Mode:           "replace",
+			CreateSnapshot: &f,
+		}, "firc")
+		if err != nil {
+			t.Fatalf("ReverseMigrateToSingbox: %v", err)
+		}
+		if len(revRes.Groups) != 1 || revRes.Groups[0].OutboundTag != "proxy-t2s0" {
+			t.Fatalf("expected proxy-t2s0, got %+v", revRes.Groups)
+		}
+		routerRaw, err := os.ReadFile(filepath.Join(sbDir, "20-router.json"))
+		if err != nil {
+			t.Fatalf("read 20-router.json: %v", err)
+		}
+		var routerDoc struct {
+			Outbounds []map[string]any `json:"outbounds"`
+		}
+		if err := json.Unmarshal(routerRaw, &routerDoc); err != nil {
+			t.Fatalf("unmarshal 20-router.json: %v", err)
+		}
+		if len(routerDoc.Outbounds) != 1 ||
+			routerDoc.Outbounds[0]["tag"] != "proxy-t2s0" ||
+			routerDoc.Outbounds[0]["bind_interface"] != "t2s0" {
+			t.Fatalf("unexpected synthesized outbound for Proxy0: %+v", routerDoc.Outbounds)
+		}
+	})
+
+	t.Run("merge mode reuses existing proxy-t2s0 from disabled/20-router.json without duplicate tags", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		awgmDir := filepath.Join(tmpDir, "awg-manager")
+		sbDir := filepath.Join(awgmDir, "config.d")
+		disabledDir := filepath.Join(sbDir, "disabled")
+		fircDir := filepath.Join(tmpDir, "firc")
+		if err := os.MkdirAll(disabledDir, 0755); err != nil {
+			t.Fatalf("mkdir disabledDir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(sbDir, "10-tunnels.json"), []byte(`{"inbounds":[],"outbounds":[],"route":{"rules":[]}}`), 0644); err != nil {
+			t.Fatalf("write 10-tunnels.json: %v", err)
+		}
+		disabled20 := `{"outbounds":[{"type":"direct","tag":"proxy-t2s0","bind_interface":"t2s0"}],"route":{"rules":[{"domain":["old.example"],"outbound":"proxy-t2s0"}]}}`
+		if err := os.WriteFile(filepath.Join(disabledDir, "20-router.json"), []byte(disabled20), 0644); err != nil {
+			t.Fatalf("write disabled/20-router.json: %v", err)
+		}
+
+		op := NewOperator(Options{ConfigDir: fircDir, InboundPort: 1099})
+		op.SetSingboxValidator(func(_ context.Context, _ string) error { return nil })
+
+		groups := []Group{
+			{
+				ID:        "a1b2c3d4",
+				Name:      "Socks0",
+				Interface: []string{"t2s0"},
+				Enable:    true,
+				Rules:     []Rule{{ID: "r1", Type: "domain", Rule: "one.example", Enable: true}},
+			},
+			{
+				ID:        "b2c3d4e5",
+				Name:      "Socks2",
+				Interface: []string{"t2s2"},
+				Enable:    true,
+				Rules:     []Rule{{ID: "r2", Type: "domain", Rule: "two.example", Enable: true}},
+			},
+		}
+		if err := op.SaveTunnelsFile(nil); err != nil {
+			t.Fatalf("SaveTunnelsFile: %v", err)
+		}
+		if err := op.SaveGroupsFile(groups); err != nil {
+			t.Fatalf("SaveGroupsFile: %v", err)
+		}
+
+		f := false
+		revRes, err := op.ReverseMigrateToSingbox(t.Context(), sbDir, &ReverseMigrationOptions{
+			Mode:           "merge",
+			CreateSnapshot: &f,
+		}, "firc")
+		if err != nil {
+			t.Fatalf("ReverseMigrateToSingbox merge: %v", err)
+		}
+		if len(revRes.Groups) != 2 || revRes.Groups[0].OutboundTag != "proxy-t2s0" || revRes.Groups[1].OutboundTag != "proxy-t2s2" {
+			t.Fatalf("unexpected group targets: %+v", revRes.Groups)
+		}
+
+		routerRaw, err := os.ReadFile(filepath.Join(sbDir, "20-router.json"))
+		if err != nil {
+			t.Fatalf("read 20-router.json: %v", err)
+		}
+		var routerDoc struct {
+			Outbounds []map[string]any `json:"outbounds"`
+		}
+		if err := json.Unmarshal(routerRaw, &routerDoc); err != nil {
+			t.Fatalf("unmarshal 20-router.json: %v", err)
+		}
+		tagCounts := map[string]int{}
+		for _, ob := range routerDoc.Outbounds {
+			if tag, _ := ob["tag"].(string); tag != "" {
+				tagCounts[tag]++
+			}
+		}
+		if tagCounts["proxy-t2s0"] != 1 || tagCounts["proxy-t2s2"] != 1 || len(routerDoc.Outbounds) != 2 {
+			t.Fatalf("unexpected merged outbounds (counts=%v): %+v", tagCounts, routerDoc.Outbounds)
+		}
+	})
+
+	t.Run("merge mode materializes root 20-router.json for device-only group reusing disabled/20-router.json outbound", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		awgmDir := filepath.Join(tmpDir, "awg-manager")
+		sbDir := filepath.Join(awgmDir, "config.d")
+		disabledDir := filepath.Join(sbDir, "disabled")
+		fircDir := filepath.Join(tmpDir, "firc")
+		if err := os.MkdirAll(disabledDir, 0755); err != nil {
+			t.Fatalf("mkdir disabledDir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(sbDir, "10-tunnels.json"), []byte(`{"inbounds":[],"outbounds":[],"route":{"rules":[]}}`), 0644); err != nil {
+			t.Fatalf("write 10-tunnels.json: %v", err)
+		}
+		disabled20 := `{"outbounds":[{"type":"direct","tag":"keen-socks","bind_interface":"t2s0"}],"route":{"rules":[]}}`
+		if err := os.WriteFile(filepath.Join(disabledDir, "20-router.json"), []byte(disabled20), 0644); err != nil {
+			t.Fatalf("write disabled/20-router.json: %v", err)
+		}
+
+		op := NewOperator(Options{ConfigDir: fircDir, InboundPort: 1099})
+		op.SetSingboxValidator(func(_ context.Context, _ string) error { return nil })
+
+		groups := []Group{
+			{
+				ID:        "c3d4e5f6",
+				Name:      "DeviceOnlySocks",
+				Interface: []string{"t2s0"},
+				Enable:    true,
+				Devices:   GroupDevices{Allow: []string{"192.168.1.55"}},
+			},
+		}
+		if err := op.SaveTunnelsFile(nil); err != nil {
+			t.Fatalf("SaveTunnelsFile: %v", err)
+		}
+		if err := op.SaveGroupsFile(groups); err != nil {
+			t.Fatalf("SaveGroupsFile: %v", err)
+		}
+
+		f := false
+		revRes, err := op.ReverseMigrateToSingbox(t.Context(), sbDir, &ReverseMigrationOptions{
+			Mode:           "merge",
+			CreateSnapshot: &f,
+		}, "firc")
+		if err != nil {
+			t.Fatalf("ReverseMigrateToSingbox device-only merge: %v", err)
+		}
+		if revRes.ClientRoutesMigrated != 1 || len(revRes.Groups) != 1 || revRes.Groups[0].OutboundTag != "keen-socks" {
+			t.Fatalf("unexpected reverse result: %+v", revRes)
+		}
+		routerRaw, err := os.ReadFile(filepath.Join(sbDir, "20-router.json"))
+		if err != nil {
+			t.Fatalf("expected root 20-router.json materialized, got err: %v", err)
+		}
+		if !strings.Contains(string(routerRaw), `"keen-socks"`) {
+			t.Fatalf("expected keen-socks in materialized root 20-router.json, got %s", string(routerRaw))
+		}
+		crRaw, err := os.ReadFile(filepath.Join(awgmDir, "client-routes.json"))
+		if err != nil || !strings.Contains(string(crRaw), `"keen-socks"`) {
+			t.Fatalf("expected keen-socks in client-routes.json, err=%v body=%s", err, string(crRaw))
+		}
+	})
+}

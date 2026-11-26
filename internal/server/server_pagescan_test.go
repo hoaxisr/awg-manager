@@ -320,3 +320,38 @@ func TestBuildPageScan_OptionsReadsFircTunnelsOnce(t *testing.T) {
 		t.Fatalf("fircd /tunnels requested %d times, want 1", got)
 	}
 }
+
+func TestFilterPageScanFircInterfaces_NormalizesT2SAndSkipsAwgmProxy(t *testing.T) {
+	ifaces := []firc.SystemInterface{
+		{ID: "t2s0", Name: "!Xray_Nuxt_t2s0", NDMSName: "Proxy0", Role: "wan"},
+		{ID: "t2s1", Name: "VOX", NDMSName: "Proxy1", Role: "tunnel"},
+		{ID: "t2s2", Name: "SingboxTunnel", NDMSName: "Proxy2", Role: "tunnel"},
+		{ID: "t2s4", Name: "!Xray_RawTun", Role: "tunnel"},
+		{ID: "nwg0", Name: "HomeWG", Role: "wan"},
+		{ID: "eth3", Name: "Broadband", Role: "wan"},
+		{ID: "tunvless0", Name: "VLESS", Role: "tunnel"},
+	}
+
+	// With ownedProxies flagging t2s1 and t2s2:
+	// both NDMS Proxy t2s0 (!Xray_Nuxt) and raw kernel TUN t2s4 (!Xray_RawTun) are kept.
+	got := filterPageScanFircInterfaces(ifaces, map[string]string{"tunvless0": "Main"}, map[string]bool{"t2s1": true, "t2s2": true})
+	names := make([]string, len(got))
+	for i, o := range got {
+		names[i] = o.Name
+	}
+	want := []string{"t2s0", "t2s4", "nwg0", "tunvless0"}
+	if !slices.Equal(names, want) {
+		t.Fatalf("with ownedProxies: got %v, want %v (full=%+v)", names, want, got)
+	}
+
+	// Without ownedProxies (ownership unread): every t2s* is skipped, as before ownership was checked.
+	gotFallback := filterPageScanFircInterfaces(ifaces, map[string]string{}, nil)
+	namesFallback := make([]string, len(gotFallback))
+	for i, o := range gotFallback {
+		namesFallback[i] = o.Name
+	}
+	wantFallback := []string{"nwg0", "tunvless0"}
+	if !slices.Equal(namesFallback, wantFallback) {
+		t.Fatalf("fallback without ownedProxies: got %v, want %v", namesFallback, wantFallback)
+	}
+}

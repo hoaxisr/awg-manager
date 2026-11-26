@@ -6,8 +6,11 @@ import type { CatalogPreset } from '$lib/types';
 import { detectFircRuleType } from '$lib/utils/fircBulkRules';
 import { carryCheckExtras, storedIntervalSec } from '$lib/utils/fircGroupCheck';
 import {
+	compareFircInterfaces,
+	fircTunnelSortPriority,
 	friendlyIfaceLabel,
 	getEffectiveInterfaceProbe,
+	isAwgmSingboxProxyInterface,
 	isInternalServerFircInterface,
 	resolveGroupActiveInterface,
 	resolveInterfaceHealth,
@@ -592,12 +595,6 @@ export function formatCompactOutboundLabel(
 	return formatIfaceButtonText(rt, group);
 }
 
-function tunnelSortPriority(id: string): number {
-	if (id.startsWith('tunvless')) return 0;
-	if (id.startsWith('nwg') || id.startsWith('awg')) return 1;
-	return 2;
-}
-
 export type PickerItem = { id: string; label: string; role: string };
 
 export function getPickerGroups(interfaces: FircInterfaceOption[], group: FircGroup) {
@@ -609,8 +606,7 @@ export function getPickerGroups(interfaces: FircInterfaceOption[], group: FircGr
 
 	for (const opt of interfaces) {
 		if (!opt.id || seen.has(opt.id) || isSpecialIface(opt.id)) continue;
-		// Hide legacy Sing-box t2s* interfaces unless currently selected by this group
-		if (opt.id.startsWith('t2s') && !selectedSet.has(opt.id)) continue;
+		if (isAwgmSingboxProxyInterface(opt) && !selectedSet.has(opt.id)) continue;
 		seen.add(opt.id);
 		const role = opt.role || 'other';
 		const item = { id: opt.id, label: formatIfaceOption(opt), role };
@@ -634,16 +630,18 @@ export function getPickerGroups(interfaces: FircInterfaceOption[], group: FircGr
 	}
 
 	tunnels.sort((a, b) => {
-		const pa = tunnelSortPriority(a.id);
-		const pb = tunnelSortPriority(b.id);
+		const pa = fircTunnelSortPriority(a.id);
+		const pb = fircTunnelSortPriority(b.id);
 		if (pa !== pb) return pa - pb;
 		return a.id.localeCompare(b.id, undefined, { numeric: true });
 	});
+	wans.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
+	others.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
 
 	return { tunnels, wans, others };
 }
 
-/** Варианты выхода для формы группы; служебный интерфейс и «Только DNS» у старого демона — только если уже выбраны. */
+/** Варианты выхода для формы группы; служебный интерфейс, прокси sing-box и «Только DNS» у старого демона — только если уже выбраны. */
 export function buildAvailableInterfaces(
 	interfaces: FircInterfaceOption[],
 	selectedIface: string,
@@ -651,8 +649,10 @@ export function buildAvailableInterfaces(
 	const list: { value: string; label: string; role: string }[] = [];
 	const seen = new Set<string>();
 	for (const opt of interfaces) {
-		if (!opt.id || isSpecialIface(opt.id) || seen.has(opt.id) || opt.id.startsWith('t2s')) continue;
-		if (isInternalServerFircInterface(opt) && selectedIface !== opt.id) continue;
+		if (!opt.id || isSpecialIface(opt.id) || seen.has(opt.id)) continue;
+		if ((isInternalServerFircInterface(opt) || isAwgmSingboxProxyInterface(opt)) && selectedIface !== opt.id) {
+			continue;
+		}
 		seen.add(opt.id);
 		const prefix = opt.role === 'wan' ? 'Direct: ' : '';
 		list.push({
@@ -668,8 +668,8 @@ export function buildAvailableInterfaces(
 			if (a.role === 'wan') return -1;
 			if (b.role === 'wan') return 1;
 		}
-		const pa = tunnelSortPriority(a.value);
-		const pb = tunnelSortPriority(b.value);
+		const pa = fircTunnelSortPriority(a.value);
+		const pb = fircTunnelSortPriority(b.value);
 		if (pa !== pb) return pa - pb;
 		return a.value.localeCompare(b.value, undefined, { numeric: true });
 	});
@@ -704,8 +704,14 @@ export function buildBulkInterfaces(
 export function buildCatalogTunnelOptions(interfaces: FircInterfaceOption[]): DropdownOption[] {
 	const opts: DropdownOption[] = [];
 	const seen = new Set<string>();
-	for (const opt of interfaces) {
-		if (!opt.id || seen.has(opt.id) || opt.id.startsWith('t2s') || isInternalServerFircInterface(opt)) {
+	const sorted = [...interfaces].sort(compareFircInterfaces);
+	for (const opt of sorted) {
+		if (
+			!opt.id ||
+			seen.has(opt.id) ||
+			isInternalServerFircInterface(opt) ||
+			isAwgmSingboxProxyInterface(opt)
+		) {
 			continue;
 		}
 		if (opt.role === 'tunnel') {
@@ -715,11 +721,7 @@ export function buildCatalogTunnelOptions(interfaces: FircInterfaceOption[]): Dr
 				label: formatIfaceOption(opt),
 				group: m.firc_groups_opt_tunnels(),
 			});
-		}
-	}
-	for (const opt of interfaces) {
-		if (!opt.id || seen.has(opt.id)) continue;
-		if (opt.role === 'wan') {
+		} else if (opt.role === 'wan') {
 			seen.add(opt.id);
 			opts.push({
 				value: opt.id,

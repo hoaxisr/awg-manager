@@ -651,6 +651,12 @@ func (a *app) wireFircEngineCoordinator() {
 					a.vlessServerService.SetFircRoutingOverride(false)
 				}
 			},
+			ListOwnedProxies: func(ctx context.Context) ([]string, error) {
+				if a.singboxOp == nil {
+					return nil, errors.New("sing-box operator unavailable")
+				}
+				return a.singboxOp.ListOwnedProxies(ctx)
+			},
 		})
 	}
 }

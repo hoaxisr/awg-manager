@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import type { FircGroup, FircGroupCheck, FircProxyGroup } from '$lib/types/firc';
+import type { FircGroup, FircGroupCheck, FircInterfaceOption, FircProxyGroup } from '$lib/types/firc';
 import {
 	applyProxyGroupToGroup,
+	buildAvailableInterfaces,
+	buildBulkInterfaces,
+	buildCatalogTunnelOptions,
 	buildGroupCheckFromProxyGroup,
+	getPickerGroups,
 	groupLinksOf,
 	groupFormFrom,
 	groupFromForm,
@@ -297,5 +301,133 @@ describe('proxy group check helpers', () => {
 		const grown = group('g2', { ...FULL, mode: 'none' }, 'eth3');
 		toggleBackupIface(grown, 'tunvless0');
 		expect(grown.check).toEqual(FULL);
+	});
+});
+
+describe('Proxy-интерфейсы t2s* в выборе выхода', () => {
+	const interfaces: FircInterfaceOption[] = [
+		{ id: 'eth3', name: 'Broadband', role: 'wan' },
+		{ id: 't2s10', name: 'LateSocks', role: 'tunnel' },
+		{ id: 't2s1', name: 'Proxy1', role: 'tunnel' },
+		{ id: 't2s0', ndmsName: 'Proxy0', role: 'tunnel' },
+		{ id: 't2s2', name: 'SingboxOwned', role: 'tunnel', awgmSingboxProxy: true },
+		{ id: 't2s3', name: 'VOX', role: 'tunnel', awgmSingboxProxy: true },
+		{ id: 'nwg0', name: 'Office VPN', role: 'tunnel' },
+		{ id: 'tunvless0', name: 'DE VLESS', role: 'tunnel' },
+		{ id: 'dns', role: 'other' },
+	];
+	const group = (iface: string): FircGroup => ({
+		id: 'g1',
+		name: 'G',
+		interface: iface,
+		enable: true,
+		rules: [],
+	});
+
+	it('показывает системные t2s* в детерминированном порядке, а прокси sing-box скрывает если не выбраны', () => {
+		const res = getPickerGroups(interfaces, group('nwg0'));
+		expect(res.tunnels).toEqual([
+			{ id: 'tunvless0', label: 'tunvless0 — DE VLESS', role: 'tunnel' },
+			{ id: 'nwg0', label: 'nwg0 — Office VPN', role: 'tunnel' },
+			{ id: 't2s0', label: 't2s0 — Proxy0', role: 'tunnel' },
+			{ id: 't2s1', label: 't2s1 — Proxy1', role: 'tunnel' },
+			{ id: 't2s10', label: 't2s10 — LateSocks', role: 'tunnel' },
+		]);
+	});
+
+	it('сохраняет системные t2s* в списке после снятия выбора, а sing-box прокси показывает только пока выбран', () => {
+		const pickedNative = getPickerGroups(interfaces, group('t2s0')).tunnels.map((t) => t.id);
+		const unpickedNative = getPickerGroups(interfaces, group('nwg0')).tunnels.map((t) => t.id);
+		expect(pickedNative).toContain('t2s0');
+		expect(unpickedNative).toContain('t2s0');
+
+		const pickedSingbox = getPickerGroups(interfaces, group('t2s2')).tunnels.map((t) => t.id);
+		const unpickedSingbox = getPickerGroups(interfaces, group('nwg0')).tunnels.map((t) => t.id);
+		expect(pickedSingbox).toContain('t2s2');
+		expect(unpickedSingbox).not.toContain('t2s2');
+		expect(unpickedSingbox).not.toContain('t2s3');
+	});
+
+	it('предлагает системные t2s* в форме группы, массовой смене и каталоге в едином порядке', () => {
+		const avail = buildAvailableInterfaces(interfaces, 'nwg0');
+		expect(avail.map((o) => o.value)).toEqual([
+			'tunvless0',
+			'nwg0',
+			't2s0',
+			't2s1',
+			't2s10',
+			'eth3',
+			'blackhole',
+			'block',
+			'dns',
+		]);
+		expect(avail.find((o) => o.value === 't2s0')?.label).toBe('t2s0 — Proxy0');
+		expect(buildAvailableInterfaces(interfaces, 't2s2').map((o) => o.value)).toContain('t2s2');
+
+		const bulk = buildBulkInterfaces(interfaces, [group('nwg0')]);
+		expect(bulk.map((o) => o.value)).toEqual([
+			'tunvless0',
+			'nwg0',
+			't2s0',
+			't2s1',
+			't2s10',
+			'eth3',
+			'blackhole',
+			'block',
+			'dns',
+		]);
+
+		const catalog = buildCatalogTunnelOptions(interfaces);
+		expect(catalog.map((o) => o.value)).toEqual([
+			'tunvless0',
+			'nwg0',
+			't2s0',
+			't2s1',
+			't2s10',
+			'eth3',
+			'blackhole',
+			'block',
+		]);
+		expect(catalog.find((o) => o.value === 't2s0')?.label).toBe('t2s0 — Proxy0');
+	});
+
+	it('позволяет снимать выбор с отдельных t2s* в цепочке Xray и возвращать их обратно', () => {
+		const xrayIfaces: FircInterfaceOption[] = [
+			{ id: 't2s0', name: '!Xray_Nuxt_t2s0', ndmsName: 'Proxy0', role: 'tunnel' },
+			{ id: 't2s2', name: '!Xray_OD_PRG_t2s2', ndmsName: 'Proxy2', role: 'tunnel' },
+			{ id: 't2s4', name: '!Xray_OD_Hels_t2s4', ndmsName: 'Proxy4', role: 'tunnel' },
+		];
+		const chainGroup: FircGroup = {
+			id: 'g-xray',
+			name: 'Xray Chain',
+			interface: ['t2s0', 't2s4', 't2s2'],
+			enable: true,
+			rules: [],
+		};
+
+		expect(getPickerGroups(xrayIfaces, chainGroup).tunnels.map((t) => t.id)).toEqual([
+			't2s0',
+			't2s2',
+			't2s4',
+		]);
+
+		toggleBackupIface(chainGroup, 't2s2');
+		expect(chainGroup.interface).toEqual(['t2s0', 't2s4']);
+		expect(getPickerGroups(xrayIfaces, chainGroup).tunnels.map((t) => t.id)).toEqual([
+			't2s0',
+			't2s2',
+			't2s4',
+		]);
+
+		toggleBackupIface(chainGroup, 't2s4');
+		expect(chainGroup.interface).toBe('t2s0');
+		expect(getPickerGroups(xrayIfaces, chainGroup).tunnels.map((t) => t.id)).toEqual([
+			't2s0',
+			't2s2',
+			't2s4',
+		]);
+
+		toggleBackupIface(chainGroup, 't2s2');
+		expect(chainGroup.interface).toEqual(['t2s0', 't2s2']);
 	});
 });

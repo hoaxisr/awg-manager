@@ -69,10 +69,42 @@ export function isInternalServerFircInterface(
 	return false;
 }
 
+/** Прокси sing-box (t2s*), который панель создала сама: в выбор выхода FIRC не идёт. */
+export function isAwgmSingboxProxyInterface(opt: Pick<FircInterfaceOption, 'awgmSingboxProxy'>): boolean {
+	return opt.awgmSingboxProxy === true;
+}
+
 export function isSelectableFircFallbackInterface(opt: FircInterfaceOption): boolean {
-	if (!opt.id || opt.id.startsWith('t2s')) return false;
+	if (!opt.id || isAwgmSingboxProxyInterface(opt)) return false;
 	if (opt.role === 'wan') return true;
 	return opt.role === 'tunnel' && !isInternalServerFircInterface(opt);
+}
+
+export function fircTunnelSortPriority(id: string): number {
+	if (id.startsWith('tunvless')) return 0;
+	if (id.startsWith('nwg') || id.startsWith('awg')) return 1;
+	return 2;
+}
+
+export function compareFircInterfaces(
+	a: Pick<FircInterfaceOption, 'id' | 'role'>,
+	b: Pick<FircInterfaceOption, 'id' | 'role'>,
+): number {
+	const roleRank = (role: FircInterfaceOption['role']) =>
+		role === 'tunnel' ? 0 : role === 'wan' ? 1 : 2;
+	const rDiff = roleRank(a.role) - roleRank(b.role);
+	if (rDiff !== 0) return rDiff;
+	if (a.role === 'tunnel' && b.role === 'tunnel') {
+		const pDiff = fircTunnelSortPriority(a.id) - fircTunnelSortPriority(b.id);
+		if (pDiff !== 0) return pDiff;
+	}
+	return a.id.localeCompare(b.id, undefined, { numeric: true });
+}
+
+export function selectSelectableFircFallbackInterfaces(
+	interfaces: FircInterfaceOption[],
+): FircInterfaceOption[] {
+	return interfaces.filter(isSelectableFircFallbackInterface).sort(compareFircInterfaces);
 }
 
 export function friendlyIfaceLabel(

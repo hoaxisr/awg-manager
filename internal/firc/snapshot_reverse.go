@@ -2738,18 +2738,41 @@ func (o *Operator) loadCurrentFircTunnelsAndGroups(ctx context.Context, allowLiv
 	return tunnels, groups
 }
 
-func collectExistingSingboxOutboundTags(singboxConfigDir string, include10Tunnels bool) map[string]bool {
+func normalizeReverseProxyKernelIface(name string) (string, bool) {
+	n := strings.ToLower(strings.TrimSpace(name))
+	var digits string
+	switch {
+	case strings.HasPrefix(n, "t2s"):
+		digits = n[len("t2s"):]
+	case strings.HasPrefix(n, "proxy"):
+		digits = n[len("proxy"):]
+	default:
+		return "", false
+	}
+	if digits == "" || (len(digits) > 1 && digits[0] == '0') {
+		return "", false
+	}
+	for i := 0; i < len(digits); i++ {
+		if digits[i] < '0' || digits[i] > '9' {
+			return "", false
+		}
+	}
+	return "t2s" + digits, true
+}
+
+func collectExistingSingboxOutboundState(singboxConfigDir string, include10Tunnels, include20Router bool) (map[string]bool, map[string]string) {
 	valid := map[string]bool{
 		"direct":  true,
 		"block":   true,
 		"dns-out": true,
 	}
+	bindToTag := make(map[string]string)
 	if singboxConfigDir == "" {
-		return valid
+		return valid, bindToTag
 	}
 	entries, err := os.ReadDir(singboxConfigDir)
 	if err != nil {
-		return valid
+		return valid, bindToTag
 	}
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
@@ -2758,21 +2781,52 @@ func collectExistingSingboxOutboundTags(singboxConfigDir string, include10Tunnel
 		if !include10Tunnels && entry.Name() == "10-tunnels.json" {
 			continue
 		}
+		if !include20Router && entry.Name() == "20-router.json" {
+			continue
+		}
 		data, rErr := os.ReadFile(filepath.Join(singboxConfigDir, entry.Name()))
 		if rErr != nil || len(data) == 0 {
 			continue
 		}
-		var doc struct {
-			Outbounds []map[string]any `json:"outbounds"`
+		registerSingboxOutboundsFromJSON(data, valid, bindToTag)
+	}
+	return valid, bindToTag
+}
+
+func registerSingboxOutboundsFromJSON(data []byte, valid map[string]bool, bindToTag map[string]string) {
+	var doc struct {
+		Outbounds []map[string]any `json:"outbounds"`
+	}
+	if json.Unmarshal(data, &doc) != nil {
+		return
+	}
+	for _, ob := range doc.Outbounds {
+		tag, _ := ob["tag"].(string)
+		tag = strings.TrimSpace(tag)
+		if tag == "" {
+			continue
 		}
-		if json.Unmarshal(data, &doc) == nil {
-			for _, ob := range doc.Outbounds {
-				if tag, _ := ob["tag"].(string); strings.TrimSpace(tag) != "" {
-					valid[strings.TrimSpace(tag)] = true
+		valid[tag] = true
+		typ, _ := ob["type"].(string)
+		typ = strings.ToLower(strings.TrimSpace(typ))
+		if typ == "" || typ == "direct" {
+			if bindIface, _ := ob["bind_interface"].(string); strings.TrimSpace(bindIface) != "" {
+				ifaceKey := strings.TrimSpace(bindIface)
+				if _, exists := bindToTag[ifaceKey]; !exists {
+					bindToTag[ifaceKey] = tag
+				}
+				if norm, ok := normalizeReverseProxyKernelIface(ifaceKey); ok {
+					if _, exists := bindToTag[norm]; !exists {
+						bindToTag[norm] = tag
+					}
 				}
 			}
 		}
 	}
+}
+
+func collectExistingSingboxOutboundTags(singboxConfigDir string, include10Tunnels bool) map[string]bool {
+	valid, _ := collectExistingSingboxOutboundState(singboxConfigDir, include10Tunnels, true)
 	return valid
 }
 
@@ -2812,8 +2866,12 @@ func buildReverseSingboxPayloadsWithWG(
 		}
 	}
 
-	devToTag := make(map[string]string)
-	validOutboundTags := collectExistingSingboxOutboundTags(singboxConfigDir, !(opts.isReplaceMode() && opts.includeTunnels()))
+	validOutboundTags, devToTag := collectExistingSingboxOutboundState(
+		singboxConfigDir,
+		!(opts.isReplaceMode() && opts.includeTunnels()),
+		!(opts.isReplaceMode() && opts.includeGroups()),
+	)
+	synthesizedRouterOutbounds := []map[string]any{}
 
 	// Existing Sing-box outbounds, inbounds, and tunnel route rules if merge mode
 	outbounds := []map[string]any{}
@@ -2986,9 +3044,12 @@ func buildReverseSingboxPayloadsWithWG(
 	clientRoutes := []map[string]any{}
 	var existingRouterDoc map[string]any
 	var existingRouteObj map[string]any
+	routerFromNonRoot := false
 
 	if !opts.isReplaceMode() && singboxConfigDir != "" {
-		if data, _ := loadFirstExistingSlot(singboxConfigDir, "20-router.json"); len(data) > 0 {
+		if data, routerRel := loadFirstExistingSlot(singboxConfigDir, "20-router.json"); len(data) > 0 {
+			routerFromNonRoot = routerRel != "" && routerRel != "20-router.json"
+			registerSingboxOutboundsFromJSON(data, validOutboundTags, devToTag)
 			var rawDoc map[string]any
 			if json.Unmarshal(data, &rawDoc) == nil && len(rawDoc) > 0 {
 				existingRouterDoc = rawDoc
@@ -3023,7 +3084,7 @@ func buildReverseSingboxPayloadsWithWG(
 	}
 
 	for _, grp := range groups {
-		if grp.ID == KeenDNSGroupID {
+		if isSpecialGroup(grp.ID) {
 			continue
 		}
 		if !opts.includeGroups() {
@@ -3038,6 +3099,29 @@ func buildReverseSingboxPayloadsWithWG(
 			continue
 		}
 		targetTag := resolveGroupTargetOutboundTag(grp, devToTag)
+		if !validOutboundTags[targetTag] {
+			if kernelIface, ok := normalizeReverseProxyKernelIface(targetTag); ok {
+				if existing := devToTag[kernelIface]; existing != "" && validOutboundTags[existing] {
+					devToTag[targetTag] = existing
+					targetTag = existing
+				} else {
+					baseCand := "proxy-" + kernelIface
+					cand := baseCand
+					for n := 2; validOutboundTags[cand]; n++ {
+						cand = fmt.Sprintf("%s-%d", baseCand, n)
+					}
+					synthesizedRouterOutbounds = append(synthesizedRouterOutbounds, map[string]any{
+						"type":           "direct",
+						"tag":            cand,
+						"bind_interface": kernelIface,
+					})
+					devToTag[targetTag] = cand
+					devToTag[kernelIface] = cand
+					validOutboundTags[cand] = true
+					targetTag = cand
+				}
+			}
+		}
 		if !validOutboundTags[targetTag] {
 			msg := fmt.Sprintf("group %q (%s) references outbound/interface %q which is not included or not present in target Sing-box config", grp.Name, grp.ID, targetTag)
 			if strictValidation {
@@ -3174,10 +3258,27 @@ func buildReverseSingboxPayloadsWithWG(
 	if len(subsList) > 0 || writeEmptyTunnels {
 		subsBytes, _ = json.MarshalIndent(subsList, "", "  ")
 	}
-	if len(routeRules) > 0 || len(ruleSets) > 0 || writeEmptyGroups {
+	if len(routeRules) > 0 || len(ruleSets) > 0 || len(synthesizedRouterOutbounds) > 0 || writeEmptyGroups || (routerFromNonRoot && len(clientRoutes) > 0) {
 		routerDoc := map[string]any{}
 		for k, v := range existingRouterDoc {
 			routerDoc[k] = v
+		}
+		if len(synthesizedRouterOutbounds) > 0 {
+			var mergedOutbounds []any
+			if !opts.isReplaceMode() {
+				switch existingObs := existingRouterDoc["outbounds"].(type) {
+				case []any:
+					mergedOutbounds = append(mergedOutbounds, existingObs...)
+				case []map[string]any:
+					for _, ob := range existingObs {
+						mergedOutbounds = append(mergedOutbounds, ob)
+					}
+				}
+			}
+			for _, ob := range synthesizedRouterOutbounds {
+				mergedOutbounds = append(mergedOutbounds, ob)
+			}
+			routerDoc["outbounds"] = mergedOutbounds
 		}
 		routeObj := map[string]any{}
 		for k, v := range existingRouteObj {
@@ -3195,6 +3296,22 @@ func buildReverseSingboxPayloadsWithWG(
 	}
 	if len(clientRoutes) > 0 || writeEmptyGroups {
 		clientRoutesBytes, _ = json.MarshalIndent(clientRoutes, "", "  ")
+	}
+	if len(tunnelsBytes) == 0 && (len(routerBytes) > 0 || len(subsBytes) > 0 || len(clientRoutesBytes) > 0) {
+		needSkeleton := true
+		if singboxConfigDir != "" {
+			if st, err := os.Stat(filepath.Join(singboxConfigDir, "10-tunnels.json")); err == nil && st.Size() > 0 {
+				needSkeleton = false
+			}
+		}
+		if needSkeleton {
+			skeleton := map[string]any{
+				"inbounds":  []any{},
+				"outbounds": []any{},
+				"route":     map[string]any{"rules": []any{}},
+			}
+			tunnelsBytes, _ = json.MarshalIndent(skeleton, "", "  ")
+		}
 	}
 
 	return res, tunnelsBytes, subsBytes, routerBytes, clientRoutesBytes, nil

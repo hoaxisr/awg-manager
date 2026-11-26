@@ -21,6 +21,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/events"
 	"github.com/hoaxisr/awg-manager/internal/firc"
 	"github.com/hoaxisr/awg-manager/internal/httpprobe"
+	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/singbox/subscription"
 	"github.com/hoaxisr/awg-manager/internal/storage"
@@ -37,6 +38,7 @@ type OtherEngineIntegrationHooks struct {
 	PurgeSingbox       func(ctx context.Context) (tunnelsRemoved, subsRemoved int, err error)
 	PostRestoreSync    func(ctx context.Context, restoredSingbox, restoredSettings bool) error
 	OnBeforePurgeFirc  func(ctx context.Context)
+	ListOwnedProxies   func(ctx context.Context) ([]string, error)
 }
 
 // FircHandler exposes HTTP API endpoints for managing fircd and tunvless.
@@ -2035,12 +2037,34 @@ func (h *FircHandler) handleV1Proxy(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
+			hasT2S := false
 			for _, item := range payload.Interfaces {
-				if _, hasUp := item["up"].(bool); hasUp {
+				if id, _ := item["id"].(string); strings.HasPrefix(strings.ToLower(strings.TrimSpace(id)), "t2s") {
+					hasT2S = true
+					break
+				}
+			}
+			// Владение не прочитано — прячем все t2s*, как до разбора: прокси
+			// sing-box в выборе выхода FIRC хуже, чем на время скрытый чужой.
+			var ownedProxies map[string]bool
+			if hasT2S && h.integrationHooks.ListOwnedProxies != nil {
+				ownedProxies = ownedProxySet(h.integrationHooks.ListOwnedProxies(r.Context()))
+			}
+			for _, item := range payload.Interfaces {
+				id, _ := item["id"].(string)
+				idTrim := strings.TrimSpace(id)
+				if idTrim == "" {
 					continue
 				}
-				id, _ := item["id"].(string)
-				if id == "" {
+				if role, _ := item["role"].(string); strings.EqualFold(strings.TrimSpace(role), "wan") && ndmsquery.IsNonISPInterface(idTrim) {
+					item["role"] = "tunnel"
+				}
+				if strings.HasPrefix(strings.ToLower(idTrim), "t2s") {
+					if ownedProxies == nil || ownedProxies[strings.ToLower(idTrim)] {
+						item["awgmSingboxProxy"] = true
+					}
+				}
+				if _, hasUp := item["up"].(bool); hasUp {
 					continue
 				}
 				up := false
@@ -2071,6 +2095,24 @@ func (h *FircHandler) handleV1Proxy(w http.ResponseWriter, r *http.Request) {
 	}
 	proxy.ServeHTTP(w, r)
 }
+
+// ownedProxySet — имена ядра наших ProxyN в нижнем регистре; nil — владение
+// не прочитано.
+func ownedProxySet(names []string, err error) map[string]bool {
+	if err != nil {
+		return nil
+	}
+	out := make(map[string]bool, len(names))
+	for _, n := range names {
+		if k := strings.ToLower(strings.TrimSpace(n)); k != "" {
+			out[k] = true
+		}
+	}
+	return out
+}
+
+// OwnedProxySet — ownedProxySet для пакета server (PageScan).
+func OwnedProxySet(names []string, err error) map[string]bool { return ownedProxySet(names, err) }
 
 func writeOfflineJSON(w http.ResponseWriter, r *http.Request, payload any) {
 	data, err := json.Marshal(payload)

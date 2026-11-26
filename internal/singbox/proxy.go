@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -55,9 +56,10 @@ type ndmsProxies interface {
 	NextFreeIndex(ctx context.Context, reserved map[int]bool) (int, error)
 	RemoveProxy(ctx context.Context, index int, desc string) error
 	OwnedProxies(ctx context.Context, tunnelProxies, subProxies map[string]string) ([]ProxyMark, error)
+	OwnedProxyKernelNames(ctx context.Context, tunnelTags map[string]bool, subLabels map[int][]string) ([]string, error)
 	RemoveMarkedProxy(ctx context.Context, m ProxyMark) (MarkedOutcome, error)
 	AdoptBareProxy(ctx context.Context, name string, port int, description string) (MarkedOutcome, error)
-	ListNativeProxies(ctx context.Context, tunnelTags map[string]bool, subProxyIdx map[int]bool) ([]string, error)
+	ListNativeProxies(ctx context.Context, tunnelTags map[string]bool, subLabels map[int][]string) ([]string, error)
 	SyncProxies(ctx context.Context, tunnels []TunnelInfo) error
 	ParkProxy(ctx context.Context, name, desc, alt string) (MarkedOutcome, error)
 	ResumeProxy(ctx context.Context, name, desc string) (MarkedOutcome, error)
@@ -402,15 +404,24 @@ func (pm *ProxyManager) ResumeProxy(ctx context.Context, name, desc string) (Mar
 
 // ListNativeProxies returns kernel names (e.g. "t2s0") of NDMS Proxy
 // interfaces NOT created by us — KeenOS-native SOCKS proxies the user may
-// bind a router direct outbound to (#323). Владение — proxyIsOurs (description
-// ∈ тегов при любом индексе, голая запись только с меткой — bareOurs, R40,
-// индекс подписки): тут оно только скрывает кандидатов, ничего не сносит.
-func (pm *ProxyManager) ListNativeProxies(ctx context.Context, tunnelTags map[string]bool, subProxyIdx map[int]bool) ([]string, error) {
+// bind a router direct outbound to (#323). Владение — proxyIsOurs: тут оно
+// только скрывает кандидатов, ничего не сносит.
+func (pm *ProxyManager) ListNativeProxies(ctx context.Context, tunnelTags map[string]bool, subLabels map[int][]string) ([]string, error) {
+	return pm.proxyKernelNames(ctx, tunnelTags, subLabels, false)
+}
+
+// OwnedProxyKernelNames — дополнение ListNativeProxies: имена ядра наших ProxyN
+// (их прячет выбор выхода FIRC). Правило владения то же.
+func (pm *ProxyManager) OwnedProxyKernelNames(ctx context.Context, tunnelTags map[string]bool, subLabels map[int][]string) ([]string, error) {
+	return pm.proxyKernelNames(ctx, tunnelTags, subLabels, true)
+}
+
+func (pm *ProxyManager) proxyKernelNames(ctx context.Context, tunnelTags map[string]bool, subLabels map[int][]string, ours bool) ([]string, error) {
 	ifaces, err := pm.queries.Interfaces.List(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list interfaces: %w", err)
 	}
-	var entries []proxyEntry
+	var out []string
 	for _, iface := range ifaces {
 		if !strings.HasPrefix(iface.ID, proxyIfacePrefix) {
 			continue
@@ -423,9 +434,11 @@ func (pm *ProxyManager) ListNativeProxies(ctx context.Context, tunnelTags map[st
 		if kernel == "" {
 			continue
 		}
-		entries = append(entries, proxyEntry{idx: idx, desc: iface.Description, bare: pm.bareOurs(&iface), kernel: kernel})
+		if proxyIsOurs(idx, iface.Description, pm.bareOurs(&iface), tunnelTags, subLabels) == ours {
+			out = append(out, kernel)
+		}
 	}
-	return nativeProxyKernelNames(entries, tunnelTags, subProxyIdx), nil
+	return out, nil
 }
 
 // SubscriptionProxy describes an NDMS ProxyN created for a subscription
@@ -446,41 +459,16 @@ type SubscriptionProxySet interface {
 
 // proxyIsOurs reports whether ProxyN (index idx, interface description desc) was
 // created by awg-manager for sing-box. Tunnel proxies are matched by their tag
-// description; subscription composites carry the user label as description
-// (not a tunnel tag), so they are recognised by their explicitly tracked proxy
-// index instead. Пустой description — наш, только если bareOurs (метка
-// (name, ""), R40): слот порта владения не доказывает.
-func proxyIsOurs(idx int, desc string, bare bool, tunnelTags map[string]bool, subProxyIdx map[int]bool) bool {
-	if subProxyIdx[idx] {
-		return true
+// description; a subscription composite carries the user label as description,
+// so it is ours only on its tracked index AND with that label: the index
+// outlives the subscription (MigrateOff), and a user proxy on the freed slot is
+// not ours (тот же довод у OwnedProxies). Пустой description — наш, только если
+// bareOurs (метка (name, ""), R40): слот порта владения не доказывает.
+func proxyIsOurs(idx int, desc string, bare bool, tunnelTags map[string]bool, subLabels map[int][]string) bool {
+	if desc == "" {
+		return bare
 	}
-	if desc != "" {
-		return tunnelTags[desc]
-	}
-	return bare
-}
-
-// proxyEntry is an NDMS Proxy interface candidate: NDMS slot index, NDMS
-// description, and resolved kernel name (e.g. "t2s0").
-type proxyEntry struct {
-	idx    int
-	desc   string
-	bare   bool // bareOurs: голая запись с нашей меткой
-	kernel string
-}
-
-// nativeProxyKernelNames returns kernel names of Proxy interfaces NOT created
-// by us — KeenOS-native SOCKS proxies the user may bind a router direct
-// outbound to (#323). Pure filter over proxyIsOurs; I/O lives in the caller.
-func nativeProxyKernelNames(proxies []proxyEntry, tunnelTags map[string]bool, subProxyIdx map[int]bool) []string {
-	var out []string
-	for _, p := range proxies {
-		if proxyIsOurs(p.idx, p.desc, p.bare, tunnelTags, subProxyIdx) {
-			continue
-		}
-		out = append(out, p.kernel)
-	}
-	return out
+	return tunnelTags[desc] || slices.Contains(subLabels[idx], desc)
 }
 
 // SyncProxies reconciles NDMS Proxy interfaces with current config.json tunnels.

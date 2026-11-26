@@ -2122,3 +2122,109 @@ func TestHandlePutGroups_StoresGroupLinks(t *testing.T) {
 		})
 	}
 }
+
+func TestFircV1SystemInterfaces_NormalizesTunnelRoleAndFlagsAwgmProxies(t *testing.T) {
+	runReq := func(t *testing.T, ownedFn func(context.Context) ([]string, error), mockJSON string) []map[string]any {
+		t.Helper()
+		dir := t.TempDir()
+		sock := filepath.Join(dir, "firc.sock")
+		l, err := net.Listen("unix", sock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			switch r.URL.Path {
+			case "/api/v1/system/interfaces":
+				_, _ = w.Write([]byte(mockJSON))
+			case "/api/v1/tunnels/state":
+				_, _ = w.Write([]byte(`{"tunnels":[]}`))
+			default:
+				_, _ = w.Write([]byte(`{}`))
+			}
+		})}
+		go func() { _ = srv.Serve(l) }()
+		t.Cleanup(func() { _ = srv.Close() })
+
+		h := NewFircHandler(firc.NewOperator(firc.Options{ConfigDir: dir, SocketPath: sock}))
+		if ownedFn != nil {
+			h.SetOtherEngineIntegrationHooks(OtherEngineIntegrationHooks{
+				ListOwnedProxies: ownedFn,
+			})
+		}
+		mux := http.NewServeMux()
+		h.RegisterRoutes(mux, func(next http.HandlerFunc) http.HandlerFunc { return next })
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/firc/v1/system/interfaces", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /api/firc/v1/system/interfaces: code=%d body=%s", rec.Code, rec.Body.String())
+		}
+		var parsed struct {
+			Interfaces []map[string]any `json:"interfaces"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &parsed); err != nil {
+			t.Fatalf("unmarshal response: %v (body=%s)", err, rec.Body.String())
+		}
+		return parsed.Interfaces
+	}
+
+	payload := `{
+		"interfaces": [
+			{"id":"t2s0","name":"!Xray_Nuxt_t2s0","ndmsName":"Proxy0","role":"wan","up":true},
+			{"id":"t2s1","name":"NL-Singbox","ndmsName":"Proxy1","role":"tunnel","up":false},
+			{"id":"t2s2","name":"VOX","ndmsName":"Proxy2","role":"tunnel","up":true},
+			{"id":"t2s4","name":"!Xray_RawTun","role":"tunnel","up":true},
+			{"id":"nwg0","name":"HomeWG","role":"wan","up":true},
+			{"id":"eth3","name":"Broadband","role":"wan","up":true}
+		]
+	}`
+
+	findItem := func(items []map[string]any, id string) map[string]any {
+		for _, it := range items {
+			if it["id"] == id {
+				return it
+			}
+		}
+		t.Fatalf("interface %q not found in %+v", id, items)
+		return nil
+	}
+
+	// Case 1: ListOwnedProxies identifies t2s1 and t2s2; t2s0 (!Xray_Nuxt_t2s0) and
+	// raw kernel TUN t2s4 (!Xray_RawTun) stay selectable with role=tunnel.
+	items := runReq(t, func(context.Context) ([]string, error) {
+		return []string{"t2s1", "T2S2"}, nil
+	}, payload)
+	if it := findItem(items, "t2s0"); it["role"] != "tunnel" || it["awgmSingboxProxy"] == true {
+		t.Fatalf("t2s0 expected role=tunnel without awgmSingboxProxy, got %+v", it)
+	}
+	if it := findItem(items, "t2s4"); it["role"] != "tunnel" || it["awgmSingboxProxy"] == true {
+		t.Fatalf("t2s4 expected role=tunnel without awgmSingboxProxy, got %+v", it)
+	}
+	if it := findItem(items, "t2s1"); it["awgmSingboxProxy"] != true {
+		t.Fatalf("t2s1 expected awgmSingboxProxy=true, got %+v", it)
+	}
+	if it := findItem(items, "t2s2"); it["awgmSingboxProxy"] != true {
+		t.Fatalf("t2s2 expected awgmSingboxProxy=true, got %+v", it)
+	}
+	if it := findItem(items, "nwg0"); it["role"] != "tunnel" {
+		t.Fatalf("nwg0 expected role=tunnel, got %+v", it)
+	}
+	if it := findItem(items, "eth3"); it["role"] != "wan" {
+		t.Fatalf("eth3 expected role=wan, got %+v", it)
+	}
+
+	// Case 2: ownership unread -> every t2s* is hidden, as before ownership was
+	// checked: a sing-box proxy in the FIRC exit picker is worse than a user one
+	// hidden for a while.
+	fallbackItems := runReq(t, func(context.Context) ([]string, error) {
+		return nil, errors.New("ndms unavailable")
+	}, payload)
+	for _, id := range []string{"t2s0", "t2s1", "t2s2", "t2s4"} {
+		if it := findItem(fallbackItems, id); it["awgmSingboxProxy"] != true {
+			t.Fatalf("fallback %s expected awgmSingboxProxy=true, got %+v", id, it)
+		}
+	}
+	if it := findItem(fallbackItems, "nwg0"); it["awgmSingboxProxy"] == true {
+		t.Fatalf("fallback nwg0 must not be flagged, got %+v", it)
+	}
+}

@@ -17,14 +17,13 @@ import (
 )
 
 // proxyIsOurs decides whether an NDMS ProxyN belongs to awg-manager's sing-box
-// management. Subscription composites are the regression case: their proxy
-// carries the subscription *label* as the interface description (not a tunnel
-// tag), so the tag heuristic misses it — they must be recognised via their
-// explicitly-tracked proxy index. Пустой description — наш только с меткой
-// (R40, L2): слот порта туннеля владения не доказывает.
+// management. Subscription composites carry the subscription *label* as the
+// interface description (not a tunnel tag): ours on their tracked index with
+// that label only — the index outlives the subscription, and a user proxy on
+// the freed slot is foreign. Пустой description — наш только с меткой (R40, L2).
 func TestProxyIsOurs(t *testing.T) {
 	tunnelTags := map[string]bool{"vless-1": true}
-	subProxyIdx := map[int]bool{7: true}
+	subLabels := map[int][]string{7: {"Моя подписка"}, 0: {"Старая подписка"}}
 
 	cases := []struct {
 		name string
@@ -37,34 +36,15 @@ func TestProxyIsOurs(t *testing.T) {
 		{"bare record with our mark", 3, "", true, true},
 		{"bare record without mark (even on a tunnel port slot)", 3, "", false, false},
 		{"subscription composite (label description)", 7, "Моя подписка", false, true},
+		{"stale subscription index reused by a user proxy", 0, "!Xray_Nuxt_t2s0", false, false},
+		{"subscription label on another slot", 9, "Моя подписка", false, false},
 		{"foreign proxy with description", 9, "some-other-app", false, false},
 	}
 	for _, c := range cases {
-		got := proxyIsOurs(c.idx, c.desc, c.bare, tunnelTags, subProxyIdx)
+		got := proxyIsOurs(c.idx, c.desc, c.bare, tunnelTags, subLabels)
 		if got != c.want {
 			t.Errorf("%s: proxyIsOurs(%d, %q, %v) = %v, want %v", c.name, c.idx, c.desc, c.bare, got, c.want)
 		}
-	}
-}
-
-// nativeProxyKernelNames must return kernel names of ONLY the proxies that are
-// not ours — the KeenOS-native SOCKS proxies a user can bind a router outbound
-// to (#323). Ours (by tunnel tag or by bare mark) are excluded.
-func TestNativeProxyKernelNames(t *testing.T) {
-	proxies := []proxyEntry{
-		{idx: 0, desc: "My-Socks5", kernel: "t2s0"},      // native — keep
-		{idx: 1, desc: "vless-1", kernel: "t2s1"},        // ours by tunnel tag — drop
-		{idx: 2, desc: "", bare: true, kernel: "t2s2"},   // ours by bare mark — drop
-		{idx: 3, desc: "another-native", kernel: "t2s3"}, // native — keep
-		{idx: 4, desc: "", kernel: "t2s4"},               // bare without mark — keep
-	}
-	got := nativeProxyKernelNames(proxies,
-		map[string]bool{"vless-1": true}, // tunnelTags
-		map[int]bool{},                   // subProxyIdx
-	)
-	slices.Sort(got)
-	if want := []string{"t2s0", "t2s3", "t2s4"}; !slices.Equal(got, want) {
-		t.Fatalf("native = %v, want %v", got, want)
 	}
 }
 
@@ -347,4 +327,67 @@ func TestSyncProxies_ForeignSlot_SkippedContinues(t *testing.T) {
 	if f.E != 0 || f.Phantoms != 0 {
 		t.Fatalf("E=%d фантомов=%d", f.E, f.Phantoms)
 	}
+}
+
+type staticSubProxySet []SubscriptionProxy
+
+func (s staticSubProxySet) SubscriptionProxies() []SubscriptionProxy { return s }
+
+func TestOperator_ListOwnedProxies_VerifiesDescription(t *testing.T) {
+	op, _, f, _ := f562Stand(t)
+	ctx := context.Background()
+
+	// Overwrite Proxy0 with a foreign Xray proxy even though subProxies tracks index 0,
+	// add live subscription Proxy1 alongside a colliding stale entry at index 1, bare Proxy6, and deferred-removal Proxy7.
+	f.Remove("Proxy0")
+	f.DrainHooks()
+	f.Add(ndms.Interface{ID: "Proxy0", Type: "Proxy", Description: "!Xray_Nuxt_t2s0", State: "up", SystemName: "t2s0"})
+	f.Add(ndms.Interface{ID: "Proxy1", Type: "Proxy", Description: "LiveSub", State: "up", SystemName: "t2s1"})
+	f.Add(ndms.Interface{ID: "Proxy7", Type: "Proxy", Description: "RemovedSub", State: "up", SystemName: "t2s7"})
+	f.DrainHooks()
+
+	op.SetSubscriptionProxySet(staticSubProxySet{
+		{Index: 0, Port: 1090, Label: "StaleSub"},
+		{Index: 1, Port: 1091, Label: "LiveSub"},
+		{Index: 1, Port: 1092, Label: "StaleZebra"},
+	})
+	op.deferProxyRemoval("Proxy6", "")
+	op.deferProxyRemoval("Proxy7", "RemovedSub")
+
+	got, err := op.ListOwnedProxies(ctx)
+	if err != nil {
+		t.Fatalf("ListOwnedProxies: %v", err)
+	}
+	slices.Sort(got)
+	// t2s7 — метка отложенного сноса, не владение: до тика уборки видна, как и в ListNativeProxies.
+	want := []string{"t2s1", "t2s3", "t2s4", "t2s6"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("ListOwnedProxies = %v, want %v", got, want)
+	}
+
+	// Reassign Proxy3 (tunnel slot) and Proxy6 (bare mark) and Proxy7 (deferred) to Xray:
+	// none of them may be flagged as owned anymore.
+	f.Remove("Proxy3")
+	f.Remove("Proxy6")
+	f.Remove("Proxy7")
+	f.DrainHooks()
+	f.Add(ndms.Interface{ID: "Proxy3", Type: "Proxy", Description: "!Xray_OD_PRG_t2s3", State: "up", SystemName: "t2s3"})
+	f.Add(ndms.Interface{ID: "Proxy6", Type: "Proxy", Description: "!Xray_OD_Hels_t2s6", State: "up", SystemName: "t2s6"})
+	f.Add(ndms.Interface{ID: "Proxy7", Type: "Proxy", Description: "!Xray_Foreign_t2s7", State: "up", SystemName: "t2s7"})
+	f.DrainHooks()
+	op.proxyMgr.(*ProxyManager).queries.Interfaces.Invalidate("Proxy3")
+
+	gotAfter, err := op.ListOwnedProxies(ctx)
+	if err != nil {
+		t.Fatalf("ListOwnedProxies after Xray reassignment: %v", err)
+	}
+	slices.Sort(gotAfter)
+	wantAfter := []string{"t2s1", "t2s4"}
+	if !slices.Equal(gotAfter, wantAfter) {
+		t.Fatalf("ListOwnedProxies after Xray reassignment = %v, want %v", gotAfter, wantAfter)
+	}
+	if len(f.Posts) != 0 {
+		t.Fatalf("unexpected NDMS POST commands during ListOwnedProxies: %v", f.Posts)
+	}
+	clean(t, f)
 }

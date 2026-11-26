@@ -473,12 +473,33 @@ func (o *Operator) clearBareMark(name string) {
 }
 
 // ListNativeProxies returns kernel names of KeenOS-native (non-ours) NDMS
-// Proxy interfaces — bind targets for router direct outbounds (#323). Assembles
-// the proxyIsOurs ownership sets and delegates.
+// Proxy interfaces — bind targets for router direct outbounds (#323).
 func (o *Operator) ListNativeProxies(ctx context.Context) ([]string, error) {
+	tunnelTags, subLabels, err := o.proxyOwnershipSets()
+	if err != nil {
+		return nil, err
+	}
+	return o.proxyMgr.ListNativeProxies(ctx, tunnelTags, subLabels)
+}
+
+// ListOwnedProxies — имена ядра наших ProxyN (e.g. "t2s1"), дополнение
+// ListNativeProxies по тому же правилу владения.
+func (o *Operator) ListOwnedProxies(ctx context.Context) ([]string, error) {
+	tunnelTags, subLabels, err := o.proxyOwnershipSets()
+	if err != nil {
+		return nil, err
+	}
+	return o.proxyMgr.OwnedProxyKernelNames(ctx, tunnelTags, subLabels)
+}
+
+// proxyOwnershipSets — теги туннелей и метки подписок по индексам для proxyIsOurs.
+func (o *Operator) proxyOwnershipSets() (map[string]bool, map[int][]string, error) {
+	if !o.proxyMgrReady() {
+		return nil, nil, errors.New("proxy queries unavailable")
+	}
 	cfg, err := o.loadConfig()
 	if err != nil && !os.IsNotExist(err) {
-		return nil, err
+		return nil, nil, err
 	}
 	tunnelTags := map[string]bool{}
 	if cfg != nil {
@@ -486,11 +507,11 @@ func (o *Operator) ListNativeProxies(ctx context.Context) ([]string, error) {
 			tunnelTags[t.Tag] = true
 		}
 	}
-	subProxyIdx := map[int]bool{}
+	subLabels := map[int][]string{}
 	for _, sp := range o.subscriptionProxies() {
-		subProxyIdx[sp.Index] = true
+		subLabels[sp.Index] = append(subLabels[sp.Index], sp.Label)
 	}
-	return o.proxyMgr.ListNativeProxies(ctx, tunnelTags, subProxyIdx)
+	return tunnelTags, subLabels, nil
 }
 
 func parseProxyIdx(name string) (int, error) {
