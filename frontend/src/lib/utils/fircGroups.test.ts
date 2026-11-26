@@ -409,8 +409,17 @@ describe('proxy group check helpers', () => {
 			{ value: 'pg:pg_free', isChecklessChain: true },
 		]);
 
+		// Первым (выбор окна каталога по умолчанию) остаётся туннель; прокси-группы —
+		// после туннелей и WAN, перед блокировкой.
 		const catalogOpts = buildCatalogTunnelOptions(ifaces, pgs);
-		expect(catalogOpts.slice(0, 2).map((o) => o.value)).toEqual(['pg:pg', 'pg:pg_free']);
+		expect(catalogOpts.map((o) => o.value)).toEqual([
+			'tunvless0',
+			'eth3',
+			'pg:pg',
+			'pg:pg_free',
+			'blackhole',
+			'block',
+		]);
 
 		const preset: CatalogPreset = {
 			id: 'yt',

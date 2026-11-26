@@ -1055,3 +1055,73 @@ describe('FircGroupsPanel', () => {
 		expect(links.g1).toBe('pg');
 	});
 });
+
+describe('FircGroupsPanel: правки приёмки #1308', () => {
+	beforeEach(() => {
+		localStorage.clear();
+		sessionStorage.clear();
+		localStorage.setItem('awgm.firc.groupView', 'list');
+		api.fircGetGroupsState.mockImplementation(async () => ({ groups: {} }));
+		api.fircSaveGroups.mockReset();
+		api.fircSaveGroups.mockImplementation(async (g: FircGroup[]) => ({ groups: g }));
+		api.fircGetInterfaces.mockImplementation(async () => [
+			{ id: 'eth3', name: 'WAN', role: 'wan' },
+			{ id: 'tunvless0', name: 'DE', role: 'tunnel' },
+		]);
+	});
+	afterEach(() => cleanup());
+
+	it('после отказа сохранения прокси-группы перечитывает сервер и не возвращает старую цепочку', async () => {
+		let currentGroups = structuredClone(groups);
+		let currentExt = structuredClone(ext);
+		api.fircGetGroups.mockReset();
+		api.fircGetGroups.mockImplementation(async () => structuredClone(currentGroups));
+		api.fircGetExt.mockReset();
+		api.fircGetExt.mockImplementation(async () => structuredClone(currentExt));
+		api.fircSaveExt.mockReset();
+		// Бэкенд применил новую цепочку и обновил связанную g1, но упал на позднем шаге.
+		api.fircSaveExt.mockImplementation(async (nextExt: FircExtConfig) => {
+			const plain = JSON.parse(JSON.stringify(nextExt)) as FircExtConfig;
+			currentExt = { ...plain, groupLinks: currentExt.groupLinks };
+			const pg = currentExt.proxyGroups.find((p) => p.id === 'pg')!;
+			currentGroups = currentGroups.map((g) => (g.id === 'g1' ? { ...g, interface: [...pg.interfaces] } : g));
+			throw new Error('reconcile netfilter');
+		});
+
+		render(FircGroupsPanel);
+		await screen.findByText('One');
+		await fireEvent.click(screen.getByTitle(m.firc_fallback_configure_chain()));
+		await fireEvent.click((await screen.findAllByTitle(m.firc_groups_pg_move_down()))[0]);
+		await fireEvent.click(screen.getByRole('button', { name: m.common_save() }));
+		await waitFor(() => expect(api.fircSaveExt).toHaveBeenCalledTimes(1));
+		await fireEvent.click(screen.getByRole('button', { name: m.common_cancel() }));
+
+		await fireEvent.click((await screen.findAllByTitle(m.firc_groups_move_down()))[0]);
+		const saveBtn = (await screen.findAllByRole('button', { name: m.firc_groups_save_changes() }))[0] as HTMLButtonElement;
+		await waitFor(() => expect(saveBtn.disabled).toBe(false));
+		await fireEvent.click(saveBtn);
+		await waitFor(() => expect(api.fircSaveGroups).toHaveBeenCalledTimes(1));
+		const [payload] = api.fircSaveGroups.mock.calls[0];
+		const g1 = (payload as FircGroup[]).find((g) => g.id === 'g1');
+		expect(g1?.interface).toEqual(['tunvless0', 'eth3']);
+	});
+
+	it('окно спецгруппы не предлагает прокси-группы', async () => {
+		const withGlobal: FircGroup[] = [
+			...structuredClone(groups),
+			{ id: 'c100d002', name: 'Global', interface: ['eth3', 'tunvless0'], enable: true, rules: [] },
+		];
+		api.fircGetGroups.mockReset();
+		api.fircGetGroups.mockImplementation(async () => structuredClone(withGlobal));
+		api.fircGetExt.mockReset();
+		api.fircGetExt.mockImplementation(async () => structuredClone(ext));
+
+		render(FircGroupsPanel);
+		await screen.findByText('Global');
+		const settings = screen.getAllByTitle(m.firc_groups_settings_tip());
+		await fireEvent.click(settings[settings.length - 1]);
+		const select = screen.getByLabelText<HTMLSelectElement>(m.firc_groups_form_iface());
+		expect(Array.from(select.options).map((o) => o.value)).not.toContain('pg:pg');
+	});
+});
+

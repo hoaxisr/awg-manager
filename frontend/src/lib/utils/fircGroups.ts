@@ -48,7 +48,8 @@ const KEENDNS_GROUP_ID = 'c100d001';
 /** Зарезервированная группа глобальной маршрутизации (globalGroupID в internal/firc). */
 const GLOBAL_GROUP_ID = 'c100d002';
 
-function isSpecialGroupId(id: string): boolean {
+/** KeenDNS и Global: цепочку и проверку им задают настройки, не правка группы. */
+export function isSpecialGroupId(id: string): boolean {
 	return id === KEENDNS_GROUP_ID || id === GLOBAL_GROUP_ID;
 }
 
@@ -983,13 +984,6 @@ export function buildCatalogTunnelOptions(
 	proxyGroups: FircProxyGroup[] = [],
 ): DropdownOption[] {
 	const opts: DropdownOption[] = [];
-	for (const pgOpt of buildProxyGroupSelectOptions(proxyGroups, interfaces)) {
-		opts.push({
-			value: pgOpt.value,
-			label: pgOpt.label,
-			group: m.firc_bulk_groups_proxy_groups_opt(),
-		});
-	}
 	const seen = new Set<string>();
 	const sorted = [...interfaces].sort(compareFircInterfaces);
 	for (const opt of sorted) {
@@ -1016,6 +1010,16 @@ export function buildCatalogTunnelOptions(
 				group: m.firc_groups_opt_direct_wan(),
 			});
 		}
+	}
+	// Прокси-группы — после туннелей и WAN: окно каталога берёт первый
+	// вариант по умолчанию, и им должен оставаться туннель, как до появления
+	// прокси-групп в списке.
+	for (const pgOpt of buildProxyGroupSelectOptions(proxyGroups, interfaces)) {
+		opts.push({
+			value: pgOpt.value,
+			label: pgOpt.label,
+			group: m.firc_bulk_groups_proxy_groups_opt(),
+		});
 	}
 	opts.push({
 		value: 'blackhole',

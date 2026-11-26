@@ -70,6 +70,7 @@
 		groupServiceKey,
 		groupsFromPresets,
 		hydrateDraftGroupLinks,
+		isSpecialGroupId,
 		isSpecialIface,
 		linkedProxyGroup,
 		managingProxyGroup,
@@ -128,8 +129,8 @@
 	let policies = $state<FircPolicy[]>([]);
 	let resolvers = $state<FircSystemResolver[]>([]);
 	let extConfig = $state<FircExtConfig>(emptyExtConfig());
-	let extAppliedReq = 0;
-	let baselineLinksLoaded = false;
+	let extAppliedReq = $state(0);
+	let baselineLinksLoaded = $state(false);
 	let proxyGroupsModalOpen = $state(false);
 	let proxyGroupRefresh = 0;
 
@@ -642,6 +643,10 @@
 			notifications.success(m.firc_groups_pg_saved());
 		} catch (e) {
 			notifications.error(m.firc_groups_pg_save_error({ error: (e as Error).message }));
+			// Бэкенд мог успеть применить цепочку (и связанные группы) до
+			// отказа на поздних шагах — без перечитывания черновик со старой
+			// цепочкой вернул бы её следующим сохранением.
+			await loadAll(true);
 		} finally {
 			pgSaving = false;
 		}
@@ -1329,7 +1334,7 @@
 	mode={groupForm.mode}
 	bind:form={groupForm.form}
 	{availableInterfaces}
-	{proxyGroupOptions}
+	proxyGroupOptions={gmEditGroup && isSpecialGroupId(gmEditGroup.id) ? [] : proxyGroupOptions}
 	hadChain={gmHadChain}
 	{dohSupported}
 	allowDoh={gmAllowDoh}
