@@ -1094,6 +1094,9 @@ func (a *app) wireProxyrt() {
 		ctx, cancel := context.WithTimeout(a.shutdownCtx, 30*time.Second)
 		defer cancel()
 		a.systemClientRoutes().reapply(ctx, ndmsID)
+		if a.orch != nil {
+			a.orch.RefreshChainedChildrenOf(ctx, ndmsID)
+		}
 	})
 
 	// (9) Боот — горутиной ПОСЛЕ старта HTTP: на бооте роутера RCI ещё

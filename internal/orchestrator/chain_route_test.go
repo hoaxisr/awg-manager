@@ -109,3 +109,30 @@ func TestReconcileKernel_ChainRoutesThroughParentIface(t *testing.T) {
 		t.Errorf("Reconcile получил %q/%q", fake.reconcileCfg.KernelDevice, fake.reconcileCfg.ISPInterface)
 	}
 }
+
+// NDMS перезапустил запись NativeWG-родителя сам (смена endpoint), наших
+// действий нет. ipv4=running его интерфейса обязан переустановить маршрут
+// работающего kernel-ребёнка `dev nwgN`, снесённый ядром на down.
+func TestRefreshChainedChildrenOf_NDMSBounceOfNativeWGParent(t *testing.T) {
+	fake := &fakeKernelOp{}
+	parent := &storage.AWGTunnel{ID: "awg12", Name: "warp", Backend: "nativewg", NWGIndex: 3, ISPInterface: "eth3", ActiveWAN: "eth3"}
+	o := newResumeOrch(t, fake, parent)
+	pst := tunnelStateFromStored(parent)
+	pst.Running = true
+	o.state.tunnels["awg12"] = pst
+	child := &storage.AWGTunnel{ID: "awg13", Name: "fi", ISPInterface: "tunnel:awg12", Peer: storage.AWGPeer{Endpoint: "178.17.60.242:31397"}}
+	if err := o.store.Create(child); err != nil {
+		t.Fatal(err)
+	}
+	cst := tunnelStateFromStored(child)
+	cst.Backend = "kernel"
+	cst.Running = true
+	o.state.tunnels["awg13"] = cst
+
+	o.RefreshChainedChildrenOf(context.Background(), "Wireguard3")
+
+	calls := fake.routeCalls()
+	if len(calls) != 1 || calls[0].tunnelID != "awg13" || calls[0].kernelDevice != "nwg3" {
+		t.Fatalf("маршруты детей: %+v", calls)
+	}
+}
