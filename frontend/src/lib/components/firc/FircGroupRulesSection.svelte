@@ -1,10 +1,16 @@
 <script lang="ts">
 	import { m } from '$lib/i18n';
 	import { Button, Badge, Toggle } from '$lib/components/ui';
-	import { Plus, Trash2, RefreshCw, FilePen } from 'lucide-svelte';
+	import { Plus, Trash2, RefreshCw, FilePen, AlertTriangle } from 'lucide-svelte';
 	import { FIRC_RULE_TYPES, type FircGroup, type FircListRule } from '$lib/types/firc';
 	import type { BulkRuleAction } from '$lib/utils/fircBulkRules';
 	import { PAGE_SIZE, type GroupListPageState } from '$lib/utils/fircGroups';
+	import {
+		fircListRuleOverlapId,
+		fircOwnRuleOverlapId,
+		formatFircOverlapTooltip,
+		type FircRuleOverlap,
+	} from '$lib/utils/fircOverlap';
 	import { isDnsOnlyGroup, isSubnetRuleType } from '$lib/utils/fircResolve';
 	import FircBulkRulesBar from './FircBulkRulesBar.svelte';
 
@@ -15,6 +21,9 @@
 		listPage: GroupListPageState | undefined;
 		syncing: boolean;
 		selectedRuleSet: Set<string>;
+		ruleOverlaps?: ReadonlyMap<string, FircRuleOverlap>;
+		shadowedOwnCount?: number;
+		highlightedRuleKey?: string | null;
 		onsetPage: (page: number) => void;
 		onsync: () => void;
 		onsort: () => void;
@@ -27,6 +36,8 @@
 		onopenBulkEditor: () => void;
 		onloadListPage: (offset: number) => void;
 		ontoggleListRule: (rule: FircListRule, checked: boolean) => void;
+		onjumpToRule?: (groupId: string, ruleKey: string, rawRuleId: string, isListRule: boolean) => void;
+		onremoveShadowed?: () => void;
 	}
 
 	let {
@@ -36,6 +47,9 @@
 		listPage,
 		syncing,
 		selectedRuleSet,
+		ruleOverlaps = new Map(),
+		shadowedOwnCount = 0,
+		highlightedRuleKey = null,
 		onsetPage,
 		onsync,
 		onsort,
@@ -48,12 +62,15 @@
 		onopenBulkEditor,
 		onloadListPage,
 		ontoggleListRule,
+		onjumpToRule,
+		onremoveShadowed,
 	}: Props = $props();
 
 	let dnsOnly = $derived(isDnsOnlyGroup(group));
 	let totalRulePages = $derived(Math.max(1, Math.ceil(group.rules.length / PAGE_SIZE)));
+	let effectivePage = $derived(Math.min(Math.max(1, currentPage), totalRulePages));
 	let pagedRules = $derived(
-		group.rules.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
+		group.rules.slice((effectivePage - 1) * PAGE_SIZE, effectivePage * PAGE_SIZE),
 	);
 </script>
 
@@ -88,6 +105,17 @@
 			{/if}
 		</div>
 		<div class="rules-sec-actions">
+			{#if shadowedOwnCount > 0}
+				<Button
+					variant="ghost"
+					size="sm"
+					title={m.firc_dup_remove_shadowed_tip()}
+					onclick={() => onremoveShadowed?.()}
+				>
+					{#snippet iconBefore()}<Trash2 size={13} />{/snippet}
+					{m.firc_dup_remove_shadowed_btn({ count: shadowedOwnCount })}
+				</Button>
+			{/if}
 			<Button variant="ghost" size="sm" onclick={onopenBulkEditor}>
 				{#snippet iconBefore()}<FilePen size={13} />{/snippet}
 				{m.firc_bulk_rules_edit_list_btn()}
@@ -125,11 +153,16 @@
 	{:else}
 		<div class="rules-table">
 			{#each pagedRules as rule, rIdx (rule.id)}
-				{@const absIdx = (currentPage - 1) * PAGE_SIZE + rIdx}
+				{@const absIdx = (effectivePage - 1) * PAGE_SIZE + rIdx}
+				{@const ownOverlapKey = fircOwnRuleOverlapId(group.id, rule.id)}
+				{@const ruleOverlap = ruleOverlaps.get(ownOverlapKey)}
 				<div
 					class="rule-row"
 					class:rule-disabled={!rule.enable}
 					class:rule-selected={selectedRuleSet.has(rule.id)}
+					class:rule-shadowed={ruleOverlap?.kind === 'shadowed'}
+					class:rule-highlighted={highlightedRuleKey === ownOverlapKey}
+					data-firc-rule-key={ownOverlapKey}
 				>
 					<input
 						type="checkbox"
@@ -192,6 +225,26 @@
 							{m.firc_groups_autolist_badge()}
 						</Badge>
 					{/if}
+					{#if ruleOverlap}
+						{@const ruleDupTip = `${formatFircOverlapTooltip(ruleOverlap)}. ${m.firc_dup_click_to_jump_suffix()}`}
+						<button
+							type="button"
+							class="rule-dup-indicator"
+							class:is-split={ruleOverlap.kind === 'split'}
+							data-overlap={ruleOverlap.kind}
+							title={ruleDupTip}
+							aria-label={ruleDupTip}
+							onclick={() =>
+								onjumpToRule?.(
+									ruleOverlap.groupId,
+									ruleOverlap.ruleId,
+									ruleOverlap.rawRuleId,
+									ruleOverlap.isTargetListRule,
+								)}
+						>
+							<AlertTriangle size={14} />
+						</button>
+					{/if}
 					<Toggle
 						checked={rule.enable}
 						onchange={(v) => (rule.enable = v)}
@@ -214,19 +267,19 @@
 				<Button
 					variant="ghost"
 					size="sm"
-					disabled={currentPage <= 1}
-					onclick={() => onsetPage(currentPage - 1)}
+					disabled={effectivePage <= 1}
+					onclick={() => onsetPage(effectivePage - 1)}
 				>
 					{m.common_back()}
 				</Button>
 				<span class="page-info">
-					{m.firc_groups_page_info({ page: currentPage, total: totalRulePages })}
+					{m.firc_groups_page_info({ page: effectivePage, total: totalRulePages })}
 				</span>
 				<Button
 					variant="ghost"
 					size="sm"
-					disabled={currentPage >= totalRulePages}
-					onclick={() => onsetPage(currentPage + 1)}
+					disabled={effectivePage >= totalRulePages}
+					onclick={() => onsetPage(effectivePage + 1)}
 				>
 					{m.firc_groups_page_next()}
 				</Button>
@@ -266,12 +319,40 @@
 			)}
 			<div class="rules-table">
 				{#each listPage.rules as lrule, lIdx (lrule.id)}
-					<div class="rule-row list-rule-row" class:rule-disabled={!lrule.enable}>
+					{@const listOverlapKey = fircListRuleOverlapId(group.id, lrule.id)}
+					{@const listRuleOverlap = ruleOverlaps.get(listOverlapKey)}
+					<div
+						class="rule-row list-rule-row"
+						class:rule-disabled={!lrule.enable}
+						class:rule-shadowed={listRuleOverlap?.kind === 'shadowed'}
+						class:rule-highlighted={highlightedRuleKey === listOverlapKey}
+						data-firc-rule-key={listOverlapKey}
+					>
 						<span class="rule-idx font-mono">
 							#{listPage.offset + lIdx + 1}
 						</span>
 						<Badge variant="muted" size="sm" mono>{lrule.type}</Badge>
 						<span class="list-rule-pattern font-mono">{lrule.rule}</span>
+						{#if listRuleOverlap}
+							{@const listDupTip = `${formatFircOverlapTooltip(listRuleOverlap)}. ${m.firc_dup_click_to_jump_suffix()}`}
+							<button
+								type="button"
+								class="rule-dup-indicator"
+								class:is-split={listRuleOverlap.kind === 'split'}
+								data-overlap={listRuleOverlap.kind}
+								title={listDupTip}
+								aria-label={listDupTip}
+								onclick={() =>
+									onjumpToRule?.(
+										listRuleOverlap.groupId,
+										listRuleOverlap.ruleId,
+										listRuleOverlap.rawRuleId,
+										listRuleOverlap.isTargetListRule,
+									)}
+							>
+								<AlertTriangle size={14} />
+							</button>
+						{/if}
 						<Toggle
 							checked={lrule.enable}
 							onchange={(v) => ontoggleListRule(lrule, v)}
@@ -397,6 +478,55 @@
 	.rule-row.rule-selected {
 		background: color-mix(in srgb, var(--color-accent-tint) 45%, var(--bg-secondary));
 		border-color: var(--color-accent-border);
+	}
+
+	.rule-row.rule-shadowed {
+		border-color: color-mix(in srgb, var(--color-warning) 35%, var(--border));
+	}
+
+	.rule-row.rule-highlighted {
+		animation: fircRuleFlash 1.5s ease-out;
+		border-color: var(--color-warning);
+		box-shadow: 0 0 0 1px var(--color-warning-border);
+	}
+
+	@keyframes fircRuleFlash {
+		0% {
+			background: color-mix(in srgb, var(--color-warning) 26%, var(--bg-secondary));
+		}
+		100% {
+			background: var(--bg-secondary);
+		}
+	}
+
+	.rule-dup-indicator {
+		appearance: none;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 24px;
+		height: 24px;
+		padding: 0;
+		border-radius: var(--radius-sm);
+		border: 1px solid var(--color-warning-border);
+		background: var(--color-warning-tint);
+		color: var(--color-warning);
+		cursor: pointer;
+		flex-shrink: 0;
+		transition:
+			filter 0.12s ease,
+			border-color 0.12s ease,
+			background-color 0.12s ease;
+	}
+
+	.rule-dup-indicator:hover {
+		filter: brightness(1.15);
+	}
+
+	.rule-dup-indicator.is-split {
+		color: var(--text-secondary);
+		background: var(--bg-tertiary);
+		border-color: var(--border-hover, var(--border));
 	}
 
 	.rules-sec-actions {

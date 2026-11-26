@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { m } from '$lib/i18n';
 	import { Button, Badge, IconButton, StatusDot } from '$lib/components/ui';
-	import { ArrowRight, RefreshCw, Zap } from 'lucide-svelte';
+	import { ArrowRight, RefreshCw, Zap, AlertTriangle } from 'lucide-svelte';
 	import { formatProbeLatency, probeLatencyTone } from '$lib/utils/fircFallback';
 	import {
 		devicesBadgeText,
@@ -29,10 +29,13 @@
 		probingGroups: Record<string, boolean>;
 		selectMode: boolean;
 		selected: boolean;
+		dupCount?: number;
+		dupKind?: 'shadowed' | 'split';
 		ontoggleSelected: () => void;
 		onprobe: (ids: string[], opts?: FircProbeOptions) => void;
 		onopenRules: () => void;
 		onopenSettings: () => void;
+		onopenDuplicate?: () => void;
 	}
 
 	let {
@@ -43,10 +46,13 @@
 		probingGroups,
 		selectMode,
 		selected,
+		dupCount = 0,
+		dupKind = 'shadowed',
 		ontoggleSelected,
 		onprobe,
 		onopenRules,
 		onopenSettings,
+		onopenDuplicate,
 	}: Props = $props();
 
 	let ifaceList = $derived(normalizeIfaceList(group.interface));
@@ -82,6 +88,24 @@
 		<span class="compact-priority" title={m.firc_groups_rule_priority()}>{orderStr}</span>
 		<StatusDot variant={groupStatusDotVariant(rt.liveMap, group)} size="sm" />
 		<strong>{group.name}</strong>
+		{#if dupCount > 0}
+			{@const dupTip =
+				dupKind === 'shadowed'
+					? m.firc_dup_compact_shadowed_tip({ count: dupCount })
+					: m.firc_dup_compact_split_tip({ count: dupCount })}
+			<button
+				type="button"
+				class="compact-dup-badge"
+				class:is-split={dupKind === 'split'}
+				data-overlap={dupKind}
+				title={dupTip}
+				aria-label={dupTip}
+				onclick={() => (onopenDuplicate ? onopenDuplicate() : onopenRules())}
+			>
+				<AlertTriangle size={12} />
+				<span>{dupCount}</span>
+			</button>
+		{/if}
 		<Badge variant={group.enable ? 'muted' : 'warning'} size="xs">{group.enable ? m.firc_groups_enabled() : m.firc_groups_disabled()}</Badge>
 	</div>
 	{#if isFallbackGroup}
@@ -191,6 +215,33 @@
 	.compact-group-heading { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; }
 
 	.compact-group-heading strong { overflow-wrap: anywhere; flex: 1; min-width: 100px; }
+
+	.compact-dup-badge {
+		appearance: none;
+		display: inline-flex;
+		align-items: center;
+		gap: 3px;
+		padding: 1px 5px;
+		border-radius: var(--radius-sm);
+		border: 1px solid var(--color-warning-border);
+		background: var(--color-warning-tint);
+		color: var(--color-warning);
+		font-family: var(--font-mono);
+		font-size: 10.5px;
+		font-weight: 700;
+		cursor: pointer;
+		flex-shrink: 0;
+	}
+
+	.compact-dup-badge:hover {
+		filter: brightness(1.12);
+	}
+
+	.compact-dup-badge.is-split {
+		color: var(--text-secondary);
+		background: var(--bg-tertiary);
+		border-color: var(--border-hover, var(--border));
+	}
 
 	.compact-priority, .compact-group-meta { font-size: .75rem; color: var(--text-muted); }
 

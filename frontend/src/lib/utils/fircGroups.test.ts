@@ -32,6 +32,26 @@ describe('normalizeGroup', () => {
 		expect(normalizeGroup({ ...base, cloudflare: true }).cloudflare).toBe(true);
 		expect('cloudflare' in normalizeGroup(base)).toBe(false);
 	});
+
+	it('deduplicates colliding rule IDs within a group and regenerates rule IDs on import', () => {
+		const normalized = normalizeGroup({
+			...base,
+			rules: [
+				{ id: 'dup', type: 'namespace', rule: 'a.example', enable: true },
+				{ id: 'dup', type: 'namespace', rule: 'b.example', enable: true },
+			],
+		});
+		expect(normalized.rules[0].id).toBe('dup');
+		expect(normalized.rules[1].id).not.toBe('dup');
+
+		const imported = parseImportedGroups(
+			JSON.stringify({ groups: [normalized] }),
+			new Set(['g1']),
+		);
+		expect(imported[0].id).not.toBe('g1');
+		expect(imported[0].rules[0].id).not.toBe('dup');
+		expect(new Set(imported[0].rules.map((r) => r.id)).size).toBe(2);
+	});
 });
 
 describe('proxy group check helpers', () => {

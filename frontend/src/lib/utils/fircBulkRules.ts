@@ -48,8 +48,9 @@ export function detectFircRuleType(line: string): FircRuleType {
 	const t = line.trim();
 	if (/^\d{1,3}(\.\d{1,3}){3}(\/\d{1,2})?$/.test(t)) return 'subnet';
 	if (t.includes(':') && /^[0-9a-fA-F:/]+$/.test(t)) return 'subnet6';
-	if (t.includes('*')) return 'wildcard';
+	// Check regex markers before wildcard `*` so patterns like `^.*\.google\.com$` classify as regex.
 	if (t.startsWith('^') || t.endsWith('$') || t.includes('\\')) return 'regex';
+	if (t.includes('*')) return 'wildcard';
 	return 'namespace';
 }
 
@@ -339,6 +340,7 @@ export function applyBulkRuleAction(
 	groupIndex: number,
 	selectedIds: Set<string>,
 	action: BulkRuleAction,
+	makeId?: () => string,
 ): { groups: FircGroup[]; affected: number } {
 	const src = groups[groupIndex];
 	if (!src || selectedIds.size === 0) {
@@ -353,7 +355,36 @@ export function applyBulkRuleAction(
 		if (targetIndex < 0) {
 			return { groups, affected: 0 };
 		}
-		const moved = src.rules.filter((r) => selectedIds.has(r.id));
+		const targetGroup = groups[targetIndex];
+		const usedTargetIds = new Set(targetGroup.rules.map((r) => r.id));
+		const allocateMovedId = (baseId: string): string => {
+			if (makeId) {
+				for (let attempt = 0; attempt < 16; attempt++) {
+					const candidate = makeId();
+					if (candidate && !usedTargetIds.has(candidate)) {
+						usedTargetIds.add(candidate);
+						return candidate;
+					}
+				}
+			}
+			let seq = 1;
+			let candidate = `${baseId || 'rule'}-${seq}`;
+			while (usedTargetIds.has(candidate)) {
+				seq += 1;
+				candidate = `${baseId || 'rule'}-${seq}`;
+			}
+			usedTargetIds.add(candidate);
+			return candidate;
+		};
+		const moved = src.rules
+			.filter((r) => selectedIds.has(r.id))
+			.map((r) => {
+				if (r.id && !usedTargetIds.has(r.id)) {
+					usedTargetIds.add(r.id);
+					return r;
+				}
+				return { ...r, id: allocateMovedId(r.id) };
+			});
 		if (moved.length === 0) {
 			return { groups, affected: 0 };
 		}

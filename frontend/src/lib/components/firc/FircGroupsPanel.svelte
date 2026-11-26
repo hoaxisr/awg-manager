@@ -47,10 +47,11 @@
 	} from '$lib/stores/fircDraft';
 	import { friendlyIfaceLabel } from '$lib/utils/fircFallback';
 	import { syncGroupChecksWithProxyGroups } from '$lib/utils/fircGroupCheck';
-	import { groupResolveError, isDnsOnlyGroup, isDohUrl, supportsDnsOnly } from '$lib/utils/fircResolve';
+	import { groupResolveError, isDnsOnlyGroup, isDohUrl, isSubnetRuleType, supportsDnsOnly } from '$lib/utils/fircResolve';
 	import {
 		MANAGED_SERVER_SUBNETS,
 		MAX_GROUP_IFACES,
+		PAGE_SIZE,
 		allFallbackInterfaceIds,
 		buildAvailableInterfaces,
 		buildBulkInterfaces,
@@ -73,7 +74,6 @@
 		normalizeIfaceList,
 		normalizeProxyGroupForSave,
 		parseImportedGroups,
-		parseRulesText,
 		presetSrsUrl,
 		proxyGroupsDraft,
 		proxyGroupsDraftError,
@@ -82,8 +82,15 @@
 		randomHexId,
 		savePayload,
 		serializeForDiff,
+		uniqueHexId,
 		type FircGroupsRuntime,
 	} from '$lib/utils/fircGroups';
+	import {
+		analyzeFircImportText,
+		computeFircDuplicates,
+		normalizeFircListUrl,
+		selectFircImportEntries,
+	} from '$lib/utils/fircOverlap';
 	import {
 		extractFircGroupDomainLines,
 		type FircDeviceSelector,
@@ -91,8 +98,10 @@
 		type FircGroupLive,
 		type FircHost,
 		type FircInterfaceOption,
+		type FircListRule,
 		type FircPolicy,
 		type FircRule,
+		type FircRuleType,
 		type FircSystemResolver,
 		type FircTunnelState,
 		type FircExtConfig,
@@ -154,7 +163,16 @@
 	let rulePageMap = $state<Record<string, number>>({});
 	const listPages = createFircListPages();
 	let openPickerGroupId = $state<string | null>(null);
+	let openDupMenuGroupId = $state<string | null>(null);
+	let highlightedRuleKey = $state<string | null>(null);
 	let showOthersMap = $state<Record<string, boolean>>({});
+
+	let highlightRaf: number | null = null;
+	let focusRaf: number | null = null;
+	let highlightTimer: ReturnType<typeof setTimeout> | null = null;
+	let persistedStateEpoch = 0;
+	let destroyed = false;
+	const syncTimers = new Set<ReturnType<typeof setTimeout>>();
 
 	let stopLivePoll: (() => void) | null = null;
 	let lastHandledMigrationNonce = get(fircMigrationAppliedNonce);
@@ -171,6 +189,20 @@
 		tunnelProbes: $fircProbeResults,
 	});
 
+	let activeListRulesByGroup = $derived.by<Record<string, FircListRule[]>>(() => {
+		const out: Record<string, FircListRule[]> = {};
+		for (const g of groups) {
+			const page = listPages.activePage(g);
+			if (page && page.rules.length > 0) {
+				out[g.id] = page.rules;
+			}
+		}
+		return out;
+	});
+
+	let duplicateAnalysis = $derived(computeFircDuplicates(groups, activeListRulesByGroup));
+	let duplicateGroupsCount = $derived(duplicateAnalysis.duplicateGroupIds.size);
+
 	$effect(() => {
 		const migNonce = $fircMigrationAppliedNonce;
 		const syncNonce = $fircSyncNonce;
@@ -184,7 +216,7 @@
 		});
 	});
 
-	let isDirty = $derived(serializeForDiff(groups) !== baselineJson || listPages.hasEdits);
+	let isDirty = $derived(serializeForDiff(groups) !== baselineJson || listPages.hasEditsFor(groups));
 
 	$effect(() => {
 		if (loading) return;
@@ -212,12 +244,23 @@
 		clearFircGroupsDraft();
 	}
 
+	function reloadExpandedListPages(targetGroups: readonly FircGroup[]) {
+		for (const g of targetGroups) {
+			if (expandedGroups[g.id] && g.list?.url && !listPages.activePage(g)) {
+				void listPages.load(g, 0, searchQuery);
+			}
+		}
+	}
+
 	function resetAllChanges() {
+		persistedStateEpoch++;
 		groups = baselineGroups.map(normalizeGroup);
-		listPages.clearEdits();
+		listPages.resetForGroups(baselineGroups);
+		openDupMenuGroupId = null;
 		draftedAt = null;
 		clearFircGroupsDraft();
 		confirmDiscardOpen = false;
+		reloadExpandedListPages(groups);
 		notifications.info(m.firc_groups_toast_discarded());
 	}
 
@@ -235,6 +278,7 @@
 					api.fircGetResolvers().catch(() => []),
 					api.fircGetExt().catch(() => null),
 				]);
+			if (destroyed) return;
 			const normalized = withGroupLinks(groupsRes.map(normalizeGroup), extRes?.groupLinks);
 			baselineGroups = normalized.map(normalizeGroup);
 			baselineJson = serializeForDiff(normalized);
@@ -252,6 +296,8 @@
 				draftedAt = null;
 				clearFircGroupsDraft();
 			}
+			persistedStateEpoch++;
+			listPages.resetForGroups(normalized);
 			liveMap = stateRes.groups ?? {};
 			netfilterState = 'netfilter' in stateRes ? stateRes.netfilter : undefined;
 			interfaces = ifacesRes;
@@ -266,6 +312,7 @@
 					groups = synced.groups;
 				}
 			}
+			reloadExpandedListPages(groups);
 
 			const nowSec = Math.floor(Date.now() / 1000);
 			const existingProbes = get(fircInterfaceProbeResults);
@@ -300,11 +347,22 @@
 	}
 
 	function handleWindowClick(e: MouseEvent) {
-		if (!openPickerGroupId) return;
-		const target = e.target as HTMLElement | null;
-		if (target && !target.closest('.iface-picker-root')) {
+		const target = e.target instanceof Element ? e.target : null;
+		if (openPickerGroupId && (!target || !target.closest('.iface-picker-root'))) {
 			openPickerGroupId = null;
 		}
+		if (
+			openDupMenuGroupId &&
+			(!target || (!target.closest('.dup-menu-root') && !target.closest('.dup-popover')))
+		) {
+			openDupMenuGroupId = null;
+		}
+	}
+
+	function handleWindowKeydown(e: KeyboardEvent) {
+		if (e.key !== 'Escape') return;
+		if (openDupMenuGroupId) openDupMenuGroupId = null;
+		if (openPickerGroupId) openPickerGroupId = null;
 	}
 
 	onMount(() => {
@@ -324,8 +382,25 @@
 	});
 
 	onDestroy(() => {
+		destroyed = true;
 		probes.destroy();
 		stopLivePoll?.();
+		if (highlightRaf !== null) {
+			cancelAnimationFrame(highlightRaf);
+			highlightRaf = null;
+		}
+		if (focusRaf !== null) {
+			cancelAnimationFrame(focusRaf);
+			focusRaf = null;
+		}
+		if (highlightTimer !== null) {
+			clearTimeout(highlightTimer);
+			highlightTimer = null;
+		}
+		for (const timer of syncTimers) {
+			clearTimeout(timer);
+		}
+		syncTimers.clear();
 		if (typeof window !== 'undefined') {
 			window.removeEventListener('click', handleWindowClick);
 		}
@@ -372,8 +447,8 @@
 		const next: Record<string, boolean> = {};
 		for (const g of groups) {
 			next[g.id] = nextState;
-			if (nextState && g.list && !listPages.pages[g.id]) {
-				void listPages.load(g.id, 0, searchQuery);
+			if (nextState && g.list?.url && !listPages.activePage(g)) {
+				void listPages.load(g, 0, searchQuery);
 			}
 		}
 		expandedGroups = next;
@@ -382,15 +457,120 @@
 	function toggleGroupExpand(group: FircGroup) {
 		const next = !expandedGroups[group.id];
 		expandedGroups = { ...expandedGroups, [group.id]: next };
-		if (next && group.list && !listPages.pages[group.id]) {
-			void listPages.load(group.id, 0, searchQuery);
+		if (next && group.list?.url && !listPages.activePage(group)) {
+			void listPages.load(group, 0, searchQuery);
 		}
 	}
 
 	function openGroupRules(group: FircGroup) {
 		setGroupView('list');
 		expandedGroups = { ...expandedGroups, [group.id]: true };
-		if (group.list && !listPages.pages[group.id]) void listPages.load(group.id, 0, searchQuery);
+		if (group.list?.url && !listPages.activePage(group)) {
+			void listPages.load(group, 0, searchQuery);
+		}
+	}
+
+	function escapeAttrValue(value: string): string {
+		if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
+			return CSS.escape(value);
+		}
+		return value.replace(/["\\]/g, '\\$&');
+	}
+
+	function triggerRuleHighlight(ruleKey: string) {
+		if (highlightRaf !== null) {
+			cancelAnimationFrame(highlightRaf);
+			highlightRaf = null;
+		}
+		if (highlightTimer !== null) {
+			clearTimeout(highlightTimer);
+			highlightTimer = null;
+		}
+		highlightedRuleKey = null;
+		highlightRaf = requestAnimationFrame(() => {
+			highlightRaf = null;
+			if (destroyed) return;
+			highlightedRuleKey = ruleKey;
+			highlightTimer = setTimeout(() => {
+				highlightTimer = null;
+				if (!destroyed && highlightedRuleKey === ruleKey) {
+					highlightedRuleKey = null;
+				}
+			}, 1600);
+		});
+	}
+
+	function focusGroupOrRule(
+		groupId: string,
+		ruleKey?: string,
+		rawRuleId?: string,
+		isListRule = false,
+	) {
+		const targetGroup = groups.find((g) => g.id === groupId);
+		if (!targetGroup) return;
+		if (groupView !== 'list') {
+			setGroupView('list');
+		}
+		if (searchQuery.trim() && !filteredGroups.some((entry) => entry.group.id === groupId)) {
+			searchQuery = '';
+		}
+		expandedGroups = { ...expandedGroups, [groupId]: true };
+		if (targetGroup.list?.url && !listPages.activePage(targetGroup)) {
+			void listPages.load(targetGroup, 0, searchQuery);
+		}
+		if (!isListRule && rawRuleId) {
+			const rIdx = targetGroup.rules.findIndex((r) => r.id === rawRuleId);
+			if (rIdx >= 0) {
+				rulePageMap = { ...rulePageMap, [groupId]: Math.floor(rIdx / PAGE_SIZE) + 1 };
+			}
+		}
+		if (ruleKey) {
+			triggerRuleHighlight(ruleKey);
+		}
+		if (typeof document !== 'undefined') {
+			if (focusRaf !== null) cancelAnimationFrame(focusRaf);
+			focusRaf = requestAnimationFrame(() => {
+				focusRaf = null;
+				if (destroyed) return;
+				const selector = ruleKey
+					? `[data-firc-rule-key="${escapeAttrValue(ruleKey)}"]`
+					: `[data-firc-group-id="${escapeAttrValue(groupId)}"]`;
+				const el = document.querySelector(selector);
+				if (el && typeof el.scrollIntoView === 'function') {
+					el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+				}
+			});
+		}
+	}
+
+	function removeShadowedRulesFromGroup(groupId: string) {
+		const shadowedIds = duplicateAnalysis.shadowedOwnRuleIdsByGroup.get(groupId);
+		if (!shadowedIds || shadowedIds.size === 0) return;
+		const idx = groups.findIndex((g) => g.id === groupId);
+		if (idx < 0) return;
+		const group = groups[idx];
+		const nextRules = group.rules.filter((r) => !shadowedIds.has(r.id));
+		const removedCount = group.rules.length - nextRules.length;
+		if (removedCount === 0) return;
+		groups[idx].rules = nextRules;
+		const remainingIds = new Set(nextRules.map((r) => r.id));
+		const prevSel = selection.rules(groupId);
+		if (prevSel.size > 0) {
+			selection.setRules(
+				groupId,
+				Array.from(prevSel).filter((id) => remainingIds.has(id)),
+			);
+		}
+		const maxPage = Math.max(1, Math.ceil(nextRules.length / PAGE_SIZE));
+		if ((rulePageMap[groupId] ?? 1) > maxPage) {
+			rulePageMap = { ...rulePageMap, [groupId]: maxPage };
+		}
+		notifications.success(
+			m.firc_dup_toast_removed_shadowed({
+				group: group.name || m.firc_dup_unnamed_group(),
+				count: removedCount,
+			}),
+		);
 	}
 
 	function moveGroup(index: number, delta: -1 | 1) {
@@ -406,13 +586,17 @@
 		const g = groups[index];
 		if (!g) return;
 		groups = groups.filter((_, i) => i !== index);
+		listPages.clear(g.id);
+		if (openDupMenuGroupId === g.id) openDupMenuGroupId = null;
+		if (openPickerGroupId === g.id) openPickerGroupId = null;
 	}
 
 	function addRuleToGroup(index: number) {
 		const g = groups[index];
 		if (!g) return;
+		const usedRuleIds = new Set(g.rules.map((r) => r.id));
 		const newRule: FircRule = {
-			id: randomHexId(),
+			id: uniqueHexId(usedRuleIds),
 			type: 'namespace',
 			rule: '',
 			enable: true,
@@ -436,32 +620,56 @@
 
 	async function handleSyncList(group: FircGroup) {
 		if (!group.list?.url || syncingGroup[group.id]) return;
-		syncingGroup = { ...syncingGroup, [group.id]: true };
+		const epoch = persistedStateEpoch;
+		const syncUrl = normalizeFircListUrl(group.list.url);
+		const groupId = group.id;
+		syncingGroup = { ...syncingGroup, [groupId]: true };
 		try {
-			await api.fircSyncGroupList(group.id, group.list.url);
+			await api.fircSyncGroupList(groupId, group.list.url);
+			if (destroyed) return;
 			notifications.success(m.firc_groups_toast_sync_started({ name: group.name }));
-			setTimeout(async () => {
+			const timer = setTimeout(async () => {
+				syncTimers.delete(timer);
 				try {
+					if (destroyed || epoch !== persistedStateEpoch) return;
 					const fresh = await api.fircGetGroups();
-					const match = fresh.find((x) => x.id === group.id);
-					if (match?.list) {
-						const idx = groups.findIndex((x) => x.id === group.id);
-						if (idx >= 0 && groups[idx].list) {
-							groups[idx].list!.rulesTotal = match.list.rulesTotal;
-							groups[idx].list!.lastUpdate = match.list.lastUpdate;
-							groups[idx].list!.sync = match.list.sync;
+					if (destroyed || epoch !== persistedStateEpoch) return;
+					const match = fresh.find((x) => x.id === groupId);
+					const idx = groups.findIndex((x) => x.id === groupId);
+					const currentGroup = idx >= 0 ? groups[idx] : undefined;
+					const currentUrl = normalizeFircListUrl(currentGroup?.list?.url);
+					if (
+						match?.list &&
+						currentGroup?.list &&
+						currentUrl === syncUrl &&
+						normalizeFircListUrl(match.list.url) === syncUrl
+					) {
+						groups[idx].list!.rulesTotal = match.list.rulesTotal;
+						groups[idx].list!.lastUpdate = match.list.lastUpdate;
+						groups[idx].list!.sync = match.list.sync;
+						listPages.setPersistedUrl(groupId, match.list.url);
+						const hasPendingListEdits =
+							Object.keys(listPages.activePage(groups[idx])?.edits ?? {}).length > 0;
+						if (expandedGroups[groupId] || hasPendingListEdits) {
+							await listPages.load(groups[idx], 0, searchQuery);
+						} else {
+							listPages.clear(groupId);
 						}
 					}
-					if (expandedGroups[group.id]) {
-						await listPages.load(group.id, 0, searchQuery);
-					}
+				} catch {
+					// Ignore transient post-sync refresh failures; background polling will catch up.
 				} finally {
-					syncingGroup = { ...syncingGroup, [group.id]: false };
+					if (!destroyed) {
+						syncingGroup = { ...syncingGroup, [groupId]: false };
+					}
 				}
 			}, 1800);
+			syncTimers.add(timer);
 		} catch (e) {
-			syncingGroup = { ...syncingGroup, [group.id]: false };
-			notifications.error(m.firc_groups_toast_sync_error({ error: (e as Error).message }));
+			if (!destroyed) {
+				syncingGroup = { ...syncingGroup, [groupId]: false };
+				notifications.error(m.firc_groups_toast_sync_error({ error: (e as Error).message }));
+			}
 		}
 	}
 
@@ -483,21 +691,18 @@
 		saving = true;
 		try {
 			// Save any list rule edits first
-			for (const [groupId, page] of Object.entries(listPages.pages)) {
-				const editEntries = Object.entries(page.edits).map(([id, ed]) => ({
-					id,
-					...ed,
-				}));
-				if (editEntries.length > 0) {
-					await api.fircUpdateGroupListRules(groupId, editEntries, false);
-				}
+			for (const { groupId, entries } of listPages.pendingEditsFor(groups)) {
+				await api.fircUpdateGroupListRules(groupId, entries, false);
 			}
 
 			const payload = savePayload(groups);
 			const links = extConfig.groupLinks ? groupLinksOf(groups) : undefined;
 			const res = await api.fircSaveGroups(payload, true, links);
-			acceptSavedGroups(withGroupLinks((res?.groups ?? payload).map(normalizeGroup), links));
-			listPages.clearEdits();
+			const saved = withGroupLinks((res?.groups ?? payload).map(normalizeGroup), links);
+			acceptSavedGroups(saved);
+			persistedStateEpoch++;
+			listPages.reconcileAfterSave(saved);
+			reloadExpandedListPages(groups);
 
 			await Promise.all([pollLiveState(), reloadFircAll()]);
 			lastHandledSyncNonce = get(fircSyncNonce);
@@ -537,13 +742,30 @@
 		const reader = new FileReader();
 		reader.onload = () => {
 			try {
-				const normalized = parseImportedGroups(String(reader.result));
+				const normalized = parseImportedGroups(
+					String(reader.result),
+					new Set(groups.map((g) => g.id)),
+				);
 				if (normalized.length === 0) {
 					notifications.error(m.firc_groups_import_empty());
 					return;
 				}
-				groups = [...groups, ...normalized];
-				notifications.success(m.firc_groups_import_done({ count: normalized.length }));
+				const nextGroups = [...groups, ...normalized];
+				groups = nextGroups;
+				const analysisAfter = computeFircDuplicates(nextGroups, activeListRulesByGroup);
+				const importedDupGroups = normalized.filter((g) =>
+					analysisAfter.duplicateGroupIds.has(g.id),
+				).length;
+				if (importedDupGroups > 0) {
+					notifications.warning(
+						m.firc_dup_toast_import_file_dups({
+							count: normalized.length,
+							dupCount: importedDupGroups,
+						}),
+					);
+				} else {
+					notifications.success(m.firc_groups_import_done({ count: normalized.length }));
+				}
 			} catch {
 				notifications.error(m.firc_groups_import_invalid());
 			}
@@ -599,7 +821,12 @@
 		const cur = groupForm.mode === 'edit' && idx !== null ? groups[idx] : undefined;
 		const next = groupFromForm(groupForm.form, cur, groups.length, extConfig.proxyGroups);
 		if (cur && idx !== null) {
+			const prevUrl = normalizeFircListUrl(cur.list?.url);
+			const nextUrl = normalizeFircListUrl(next.list?.url);
 			groups[idx] = next;
+			if (prevUrl !== nextUrl) {
+				listPages.handleUrlEdited(next, Boolean(expandedGroups[next.id]), searchQuery);
+			}
 		} else {
 			groups = [...groups, next];
 		}
@@ -669,6 +896,13 @@
 		groups = res.groups;
 		if (action.kind === 'delete') {
 			const remainingIds = new Set(res.groups.map((g) => g.id));
+			listPages.prune(remainingIds);
+			if (openDupMenuGroupId && !remainingIds.has(openDupMenuGroupId)) {
+				openDupMenuGroupId = null;
+			}
+			if (openPickerGroupId && !remainingIds.has(openPickerGroupId)) {
+				openPickerGroupId = null;
+			}
 			selection.setGroups(Array.from(selection.groupIds).filter((id) => remainingIds.has(id)));
 			confirmBulkDeleteGroupsOpen = false;
 			notifications.success(m.firc_bulk_groups_deleted_toast({ count: res.affected }));
@@ -683,7 +917,7 @@
 		const sel = selection.rules(src.id);
 		const targetGroup =
 			action.kind === 'move' ? groups.find((g) => g.id === action.targetGroupId) : undefined;
-		const res = applyBulkRuleAction(groups, groupIndex, sel, action);
+		const res = applyBulkRuleAction(groups, groupIndex, sel, action, randomHexId);
 		if (res.affected === 0) return;
 		groups = res.groups;
 		if (action.kind === 'move') {
@@ -720,27 +954,120 @@
 
 	// ── Modal 3: Bulk Import Rules Modal ──
 	let importRulesModalOpen = $state(false);
-	let importRulesGroupIndex = $state<number | null>(null);
+	let importRulesGroupId = $state<string | null>(null);
 	let importRulesText = $state('');
+	let importRulesForcedType = $state<'auto' | FircRuleType>('auto');
+	let importSkipBatchAndSameGroup = $state(true);
+	let importSkipOtherGroupShadowed = $state(true);
+
+	let importRulesGroupIndex = $derived(
+		importRulesGroupId ? groups.findIndex((g) => g.id === importRulesGroupId) : -1,
+	);
+	let importRulesTargetGroup = $derived(
+		importRulesGroupIndex >= 0 ? groups[importRulesGroupIndex] : undefined,
+	);
+	let importAnalysis = $derived(
+		importRulesModalOpen && importRulesGroupIndex >= 0
+			? analyzeFircImportText(
+					importRulesText,
+					importRulesGroupIndex,
+					groups,
+					activeListRulesByGroup,
+					importRulesForcedType,
+				)
+			: {
+					entries: [],
+					totalValid: 0,
+					newCount: 0,
+					batchDuplicateCount: 0,
+					sameGroupDuplicateCount: 0,
+					otherGroupShadowedCount: 0,
+					otherGroupSplitCount: 0,
+					otherGroupLaterCount: 0,
+					unsupportedDnsOnlySubnetCount: 0,
+					shadowedGroupNames: [],
+					otherNoticeGroupNames: [],
+				},
+	);
+	let importSelection = $derived(
+		selectFircImportEntries(importAnalysis, {
+			skipBatchAndSameGroup: importSkipBatchAndSameGroup,
+			skipOtherGroupShadowed: importSkipOtherGroupShadowed,
+		}),
+	);
 
 	function openImportRulesModal(index: number) {
-		importRulesGroupIndex = index;
+		const target = groups[index];
+		if (!target) return;
+		importRulesGroupId = target.id;
 		importRulesText = '';
+		importRulesForcedType = 'auto';
+		importSkipBatchAndSameGroup = true;
+		importSkipOtherGroupShadowed = true;
 		importRulesModalOpen = true;
 	}
 
 	function submitImportRules() {
-		if (importRulesGroupIndex === null || !groups[importRulesGroupIndex]) return;
-		const newRules = parseRulesText(importRulesText);
-		if (newRules.length === 0) {
+		if (importRulesGroupIndex < 0 || !groups[importRulesGroupIndex]) return;
+		if (importAnalysis.totalValid === 0) {
 			importRulesModalOpen = false;
 			return;
 		}
 		const g = groups[importRulesGroupIndex];
+		const dnsOnly = isDnsOnlyGroup(g);
+		const eligibleEntries = dnsOnly
+			? importSelection.selected.filter((entry) => !isSubnetRuleType(entry.type))
+			: importSelection.selected;
+		const skippedSubnets =
+			importSelection.skippedUnsupportedSubnet +
+			(importSelection.selected.length - eligibleEntries.length);
+		if (eligibleEntries.length === 0) {
+			if (skippedSubnets === importAnalysis.totalValid) {
+				notifications.warning(m.firc_dns_only_no_subnets());
+			} else {
+				notifications.warning(
+					m.firc_dup_toast_import_all_skipped({ count: importAnalysis.totalValid }),
+				);
+			}
+			return;
+		}
+		const usedRuleIds = new Set(g.rules.map((r) => r.id));
+		const newRules: FircRule[] = eligibleEntries.map((entry) => ({
+			id: uniqueHexId(usedRuleIds),
+			type: entry.type,
+			rule: entry.rule,
+			enable: true,
+		}));
 		groups[importRulesGroupIndex].rules = [...newRules, ...g.rules];
 		expandedGroups = { ...expandedGroups, [g.id]: true };
+		rulePageMap = { ...rulePageMap, [g.id]: 1 };
 		importRulesModalOpen = false;
-		notifications.success(m.firc_groups_rules_imported({ count: newRules.length }));
+		const skippedDups = importSelection.skippedBatchOrSame + importSelection.skippedOtherShadowed;
+		if (skippedSubnets > 0 && skippedDups > 0) {
+			notifications.success(
+				m.firc_dup_toast_import_with_skipped_and_subnets({
+					added: newRules.length,
+					skipped: skippedDups,
+					subnets: skippedSubnets,
+				}),
+			);
+		} else if (skippedSubnets > 0) {
+			notifications.success(
+				m.firc_dup_toast_import_with_skipped_subnets({
+					added: newRules.length,
+					subnets: skippedSubnets,
+				}),
+			);
+		} else if (skippedDups > 0) {
+			notifications.success(
+				m.firc_dup_toast_import_with_skipped({
+					added: newRules.length,
+					skipped: skippedDups,
+				}),
+			);
+		} else {
+			notifications.success(m.firc_groups_rules_imported({ count: newRules.length }));
+		}
 	}
 
 	// ── Modal 4: Service Catalog (Sing-box style .srs catalog) ──
@@ -776,11 +1103,20 @@
 				return;
 			}
 
+			// Flush any pending remote-list rule edits before saving groups so reconcileAfterSave
+			// does not silently drop unsaved toggles.
+			for (const { groupId, entries } of listPages.pendingEditsFor(groups)) {
+				await api.fircUpdateGroupListRules(groupId, entries, false);
+			}
+
 			const payload = savePayload([...groups, ...createdGroups]);
 			const links = extConfig.groupLinks ? groupLinksOf(groups) : undefined;
 			const res = await api.fircSaveGroups(payload, true, links);
 			const normalized = withGroupLinks((res?.groups ?? payload).map(normalizeGroup), links);
 			acceptSavedGroups(normalized);
+			persistedStateEpoch++;
+			listPages.reconcileAfterSave(normalized);
+			reloadExpandedListPages(groups);
 			serviceCatalogOpen = false;
 
 			notifications.success(m.firc_groups_catalog_created({ count: createdGroups.length }));
@@ -804,7 +1140,7 @@
 	}
 </script>
 
-<svelte:window onbeforeunload={handleBeforeUnload} />
+<svelte:window onbeforeunload={handleBeforeUnload} onkeydown={handleWindowKeydown} />
 
 <div class="firc-groups-panel">
 	{#if isDirty}
@@ -843,6 +1179,7 @@
 
 	<FircGroupsToolbar
 		groupsCount={groups.length}
+		{duplicateGroupsCount}
 		netfilterDirty={Boolean(netfilterState?.dirty)}
 		bind:searchQuery
 		{groupView}
@@ -915,12 +1252,23 @@
 				{@const isExpanded = Boolean(expandedGroups[group.id])}
 				{@const isPickerOpen = openPickerGroupId === group.id}
 				{@const selectedRuleSet = selection.rules(group.id)}
+				{@const groupDupConflicts = duplicateAnalysis.duplicateConflictsByGroup.get(group.id) ?? []}
+				{@const groupListUrlOverlap = duplicateAnalysis.listUrlOverlaps.get(group.id)}
+				{@const groupShadowedOwnCount =
+					duplicateAnalysis.shadowedOwnRuleIdsByGroup.get(group.id)?.size ?? 0}
+				{@const groupDupTotal = groupDupConflicts.length + (groupListUrlOverlap ? 1 : 0)}
+				{@const groupDupKind =
+					groupDupConflicts.some((c) => c.kind === 'shadowed') ||
+					groupListUrlOverlap?.kind === 'shadowed'
+						? 'shadowed'
+						: 'split'}
 
 				<div
 					class="card-wrap {groupAccentClass(liveMap, group)}"
 					class:disabled-card={!group.enable}
 					class:picker-open-card={isPickerOpen}
 					class:bulk-selected-card={selection.selectMode && selection.groupIds.has(group.id)}
+					data-firc-group-id={group.id}
 				>
 					{#if groupView === 'grid'}
 						<FircGroupCompactCard
@@ -931,10 +1279,20 @@
 							probingGroups={probes.groups}
 							selectMode={selection.selectMode}
 							selected={selection.groupIds.has(group.id)}
+							dupCount={groupDupTotal}
+							dupKind={groupDupKind}
 							ontoggleSelected={() => selection.toggleGroup(group.id)}
 							onprobe={probeFallbackInterfaces}
 							onopenRules={() => openGroupRules(group)}
 							onopenSettings={() => openEditGroupModal(index)}
+							onopenDuplicate={() => {
+								const first = groupDupConflicts[0];
+								if (first) {
+									focusGroupOrRule(group.id, first.ruleId, first.rawRuleId, first.isListRule);
+								} else {
+									focusGroupOrRule(group.id);
+								}
+							}}
 						/>
 					{:else}
 						<FircGroupRow
@@ -952,16 +1310,34 @@
 							syncing={Boolean(syncingGroup[group.id])}
 							pickerOpen={isPickerOpen}
 							showOthers={Boolean(showOthersMap[group.id])}
+							dupConflicts={groupDupConflicts}
+							listUrlOverlap={groupListUrlOverlap}
+							shadowedOwnCount={groupShadowedOwnCount}
+							dupMenuOpen={openDupMenuGroupId === group.id}
 							ontoggleSelected={() => selection.toggleGroup(group.id)}
 							onmove={(delta) => moveGroup(index, delta)}
 							ontoggleExpand={() => toggleGroupExpand(group)}
 							ontogglePicker={() => {
+								openDupMenuGroupId = null;
 								openPickerGroupId = isPickerOpen ? null : group.id;
 								if (!isPickerOpen) void refreshProxyGroups();
 							}}
 							onclosePicker={() => (openPickerGroupId = null)}
 							ontoggleOthers={() =>
 								(showOthersMap = { ...showOthersMap, [group.id]: !showOthersMap[group.id] })}
+							ontoggleDupMenu={() => {
+								openPickerGroupId = null;
+								openDupMenuGroupId = openDupMenuGroupId === group.id ? null : group.id;
+							}}
+							oncloseDupMenu={() => (openDupMenuGroupId = null)}
+							onjumpToRule={(gid, rk, rid, isList) => focusGroupOrRule(gid, rk, rid, isList)}
+							onjumpToGroup={(gid) => focusGroupOrRule(gid)}
+							onremoveShadowed={() => removeShadowedRulesFromGroup(group.id)}
+							onlistUrlInput={() => listPages.handleUrlEdited(group, isExpanded, searchQuery)}
+							onclearList={() => {
+								group.list = null;
+								listPages.clear(group.id);
+							}}
 							onprobe={probeFallbackInterfaces}
 							onopenProxyGroups={openProxyGroupsModal}
 							onsync={() => handleSyncList(group)}
@@ -980,9 +1356,12 @@
 									.filter((og) => og.id !== group.id)
 									.map((og) => ({ id: og.id, name: og.name }))}
 								currentPage={rulePageMap[group.id] ?? 1}
-								listPage={listPages.pages[group.id]}
+								listPage={listPages.activePage(group)}
 								syncing={Boolean(syncingGroup[group.id])}
 								{selectedRuleSet}
+								ruleOverlaps={duplicateAnalysis.ruleOverlaps}
+								shadowedOwnCount={groupShadowedOwnCount}
+								{highlightedRuleKey}
 								onsetPage={(page) => (rulePageMap = { ...rulePageMap, [group.id]: page })}
 								onsync={() => handleSyncList(group)}
 								onsort={() => sortGroupRules(index)}
@@ -993,8 +1372,10 @@
 								onaddRule={() => addRuleToGroup(index)}
 								ondeleteRule={(ruleIndex) => deleteRuleFromGroup(index, ruleIndex)}
 								onopenBulkEditor={() => openBulkRulesEditor(index)}
-								onloadListPage={(offset) => listPages.load(group.id, offset, searchQuery)}
-								ontoggleListRule={(rule, checked) => listPages.toggleRule(group.id, rule, checked)}
+								onloadListPage={(offset) => listPages.load(group, offset, searchQuery)}
+								ontoggleListRule={(rule, checked) => listPages.toggleRule(group, rule, checked)}
+								onjumpToRule={(gid, rk, rid, isList) => focusGroupOrRule(gid, rk, rid, isList)}
+								onremoveShadowed={() => removeShadowedRulesFromGroup(group.id)}
 							/>
 						{/if}
 					{/if}
@@ -1043,7 +1424,14 @@
 
 <FircImportRulesModal
 	open={importRulesModalOpen}
+	targetGroupName={importRulesTargetGroup?.name ?? ''}
+	dnsOnly={Boolean(importRulesTargetGroup && isDnsOnlyGroup(importRulesTargetGroup))}
 	bind:text={importRulesText}
+	bind:forcedType={importRulesForcedType}
+	bind:skipBatchAndSameGroup={importSkipBatchAndSameGroup}
+	bind:skipOtherGroupShadowed={importSkipOtherGroupShadowed}
+	analysis={importAnalysis}
+	selection={importSelection}
 	onclose={() => (importRulesModalOpen = false)}
 	onsubmit={submitImportRules}
 />

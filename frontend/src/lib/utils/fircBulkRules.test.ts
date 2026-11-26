@@ -14,6 +14,7 @@ describe('detectFircRuleType', () => {
 		expect(detectFircRuleType('example.com')).toBe('namespace');
 		expect(detectFircRuleType('*.openai.com')).toBe('wildcard');
 		expect(detectFircRuleType('^api\\.[a-z]+\\.org$')).toBe('regex');
+		expect(detectFircRuleType('^.*\\.google\\.com$')).toBe('regex');
 		expect(detectFircRuleType('149.154.160.0/20')).toBe('subnet');
 		expect(detectFircRuleType('1.2.3.4')).toBe('subnet');
 		expect(detectFircRuleType('2001:db8::/32')).toBe('subnet6');
@@ -129,6 +130,45 @@ describe('applyBulkRuleAction', () => {
 		expect(resDel.groups[0].rules).toEqual([]);
 		groups = resDel.groups;
 		expect(groups).toHaveLength(2);
+	});
+
+	it('deduplicates colliding rule IDs when moving rules into another group', () => {
+		const groups: FircGroup[] = [
+			{
+				id: 'g1',
+				name: 'Source',
+				interface: 'tunvless0',
+				enable: true,
+				rules: [
+					{ id: 'shared', type: 'namespace', rule: 'from-src.example', enable: true },
+					{ id: 'unique', type: 'namespace', rule: 'keep.example', enable: true },
+				],
+			},
+			{
+				id: 'g2',
+				name: 'Target',
+				interface: 'tunvless1',
+				enable: true,
+				rules: [{ id: 'shared', type: 'namespace', rule: 'in-target.example', enable: true }],
+			},
+		];
+
+		const withFactory = applyBulkRuleAction(
+			groups,
+			0,
+			new Set(['shared']),
+			{ kind: 'move', targetGroupId: 'g2' },
+			() => 'fresh-id',
+		);
+		expect(withFactory.affected).toBe(1);
+		expect(withFactory.groups[1].rules.map((r) => r.id)).toEqual(['fresh-id', 'shared']);
+
+		const fallback = applyBulkRuleAction(groups, 0, new Set(['shared']), {
+			kind: 'move',
+			targetGroupId: 'g2',
+		});
+		expect(fallback.groups[1].rules[0].id).not.toBe('shared');
+		expect(new Set(fallback.groups[1].rules.map((r) => r.id)).size).toBe(2);
 	});
 });
 
