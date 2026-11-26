@@ -305,7 +305,6 @@ func (op *NDMSKeenDNSOperator) Discover(ctx context.Context, dispatcherPort int)
 	out.Zone = strings.TrimSpace(st.Domain)
 	out.AccessMode = st.Mode
 	out.DirectAccess = st.DirectAccessible
-	out.AcmeV2 = st.AcmeV2
 
 	if op.proxyReader != nil {
 		snap, err := op.proxyReader.FetchConfigUncached(ctx)

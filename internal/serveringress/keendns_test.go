@@ -45,7 +45,6 @@ func newFakeKeenDNSState() *fakeKeenDNSState {
 			FQDN:             "example.keenetic.pro",
 			DirectAccessible: false,
 			Mode:             "cloud",
-			AcmeV2:           true,
 		},
 		sslEnabled: true,
 		entries:    make(map[string]ndmsquery.HTTPProxyEntry),
@@ -230,7 +229,6 @@ func TestNDMSKeenDNSOperator_DiscoverStates(t *testing.T) {
 		FQDN:             "example.keenetic.pro",
 		DirectAccessible: true,
 		Mode:             "direct",
-		AcmeV2:           true,
 	}
 	state.entries["tg"] = ndmsquery.HTTPProxyEntry{
 		Name:          "tg",
