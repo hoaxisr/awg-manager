@@ -135,6 +135,18 @@ func (h *TunnelsHandler) publishTunnelList(ctx context.Context) {
 	}
 }
 
+// ispLabelFor — подпись маршрута для показа. У маршрута через туннель она
+// собирается из текущего имени родителя: сохранённая при выборе подпись
+// устаревает, когда родителя переименовывают.
+func ispLabelFor(store *storage.AWGTunnelStore, stored *storage.AWGTunnel) string {
+	if tunnel.IsTunnelRoute(stored.ISPInterface) {
+		if parent, err := store.Get(tunnel.TunnelRouteID(stored.ISPInterface)); err == nil && parent.Name != "" {
+			return "Через " + parent.Name
+		}
+	}
+	return stored.ISPInterfaceLabel
+}
+
 // BuildTunnelResponse builds a consistent tunnel response with stored data.
 // Exported so Import and External handlers can reuse the same response format.
 // quiescentUntil is the orchestrator bring-up window (zero when unknown) so the
@@ -188,7 +200,7 @@ func BuildTunnelResponse(r *http.Request, svc TunnelService, store *storage.AWGT
 		}
 		resp["pingCheck"] = stored.PingCheck
 		resp["connectivityCheck"] = stored.ConnectivityCheck
-		resp["ispInterfaceLabel"] = stored.ISPInterfaceLabel
+		resp["ispInterfaceLabel"] = ispLabelFor(store, stored)
 		backend := stored.Backend
 		if backend == "" {
 			backend = "kernel"
@@ -329,7 +341,7 @@ func (h *TunnelsHandler) listItems(ctx context.Context) ([]tunnelItem, error) {
 				awgVersion = "raw"
 			}
 			ispInterface = stored.ISPInterface
-			ispInterfaceLabel = stored.ISPInterfaceLabel
+			ispInterfaceLabel = ispLabelFor(h.store, stored)
 			wdttClientID = strings.TrimSpace(stored.WdttClientID)
 			freeTurnClientID = strings.TrimSpace(stored.FreeTurnClientID)
 
