@@ -126,11 +126,12 @@
 </Card>
 
 <style>
-	/* 3. Table Responsive Styles (No horizontal scrollbar) */
+	/* Узкий экран: колонки фиксированной ширины не влезают — таблица
+	   прокручивается вбок, а не обрезается. */
 	.table-container {
 		max-height: 540px;
 		overflow-y: auto;
-		overflow-x: hidden;
+		overflow-x: auto;
 		border-radius: var(--radius-sm, 6px);
 		border: 1px solid var(--color-border);
 		background: var(--color-bg-secondary);
@@ -141,6 +142,7 @@
 		border-collapse: collapse;
 		font-size: 0.82rem;
 		table-layout: fixed;
+		min-width: 46rem;
 	}
 
 	.proc-table th {

@@ -104,3 +104,27 @@ func TestBuildTunnelResponse_RedactsPresharedKey(t *testing.T) {
 		t.Errorf("peer = %+v, want публичный ключ и endpoint на месте", peer)
 	}
 }
+
+// Подпись маршрута через туннель берётся из текущего имени родителя, а не из
+// сохранённой при выборе (родителя потом переименовали).
+func TestBuildTunnelResponse_TunnelRouteLabelFollowsParentRename(t *testing.T) {
+	dir := t.TempDir()
+	store := storage.NewAWGTunnelStoreWithLockDir(dir, filepath.Join(dir, "locks"))
+	for _, tun := range []*storage.AWGTunnel{
+		{ID: "awg12", Name: "PRAW-1 HEL"},
+		{ID: "awg13", Name: "child", ISPInterface: "tunnel:awg12", ISPInterfaceLabel: "Через PRAW DME"},
+	} {
+		if err := store.Create(tun); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+	}
+	svc := &viewStubSvc{got: &service.TunnelWithStatus{ID: "awg13", Name: "child"}}
+	req := httptest.NewRequest(http.MethodGet, "/api/tunnels/awg13", nil)
+	resp, err := BuildTunnelResponse(req, svc, store, "awg13", time.Time{})
+	if err != nil {
+		t.Fatalf("BuildTunnelResponse: %v", err)
+	}
+	if got := resp["ispInterfaceLabel"]; got != "Через PRAW-1 HEL" {
+		t.Errorf("ispInterfaceLabel = %v, want «Через PRAW-1 HEL»", got)
+	}
+}

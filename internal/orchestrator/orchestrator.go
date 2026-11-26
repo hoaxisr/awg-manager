@@ -1025,6 +1025,23 @@ func (o *Orchestrator) refreshChainedChildren(ctx context.Context, parentID stri
 	}
 }
 
+// RefreshChainedChildrenOf — ipv4=running у интерфейса работающего туннеля.
+// NDMS перезапускает запись и сам (смена endpoint, conf-settle «туннель не
+// останавливаем»): тогда наших действий нет, и refreshChainedChildren из
+// executeActions не вызывается — маршрут ребёнка `dev <iface родителя>`,
+// снесённый ядром на down, оставался снятым до ручного рестарта ребёнка.
+func (o *Orchestrator) RefreshChainedChildrenOf(ctx context.Context, ndmsName string) {
+	o.mu.Lock()
+	var parentID string
+	if t := o.state.findByNDMSName(ndmsName); t != nil && t.Running {
+		parentID = t.ID
+	}
+	o.mu.Unlock()
+	if parentID != "" {
+		o.refreshChainedChildren(ctx, parentID)
+	}
+}
+
 // groupContiguousByTunnel splits a flat action list into contiguous runs
 // sharing the same Tunnel value, preserving order. Boot/Reconnect/WANUp emit
 // each tunnel's actions contiguously, so those events are fully serialized

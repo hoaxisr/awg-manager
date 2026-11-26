@@ -4,7 +4,7 @@
 	import { formatFircSubError } from '$lib/utils/fircDiagnostics';
 	import { Button, Badge, IconButton } from '$lib/components/ui';
 	import { Plus, Trash2 } from 'lucide-svelte';
-	import { SUB_INTERVALS, formatSubUsage } from './fircTunnelEdit';
+	import { SUB_INTERVALS, formatSubUsage, parseHeadersTextToMap } from './fircTunnelEdit';
 
 	interface Props {
 		draft: FircTunnel;
@@ -27,6 +27,22 @@
 		onhappkeys,
 		onremovesource,
 	}: Props = $props();
+
+	// Заголовки подписки правятся в строке источника: раскрытое поле держит
+	// свой текст, чтобы разбор на каждом вводе не переформатировал набранное.
+	let headersOpenId = $state<string | null>(null);
+	let headersText = $state('');
+
+	function toggleHeaders(src: FircTunnel['sources'][number]) {
+		if (headersOpenId === src.id) {
+			headersOpenId = null;
+			return;
+		}
+		headersText = Object.entries(src.headers ?? {})
+			.map(([k, v]) => `${k}: ${v}`)
+			.join('\n');
+		headersOpenId = src.id;
+	}
 </script>
 
 <div class="subtab-panel">
@@ -92,10 +108,17 @@
 								bind:value={src.name}
 								placeholder={m.firc_tunnel_edit_source_name_placeholder()}
 							/>
-							{#if src.kind === 'subscription' && src.headers && Object.keys(src.headers).length > 0}
-								<Badge variant="info" size="xs" title={Object.entries(src.headers).map(([k, v]) => `${k}: ${v}`).join('\n')}>
-									{m.firc_tunnel_edit_headers_badge({ count: Object.keys(src.headers).length })}
-								</Badge>
+							{#if src.kind === 'subscription'}
+								<button
+									type="button"
+									class="badge-btn"
+									aria-expanded={headersOpenId === src.id}
+									onclick={() => toggleHeaders(src)}
+								>
+									<Badge variant="info" size="xs">
+										{m.firc_tunnel_edit_headers_badge({ count: Object.keys(src.headers ?? {}).length })}
+									</Badge>
+								</button>
 							{/if}
 							{#if src.kind === 'subscription'}
 								{@const usageText = formatSubUsage(subLive?.usage ?? undefined)}
@@ -119,6 +142,16 @@
 								bind:value={src.url}
 								placeholder={m.firc_tunnel_edit_sub_url_placeholder()}
 							/>
+							{#if headersOpenId === src.id}
+								<textarea
+									class="inp mono"
+									rows="3"
+									aria-label={m.firc_tunnel_edit_headers_label()}
+									placeholder="User-Agent: Happ/3.6.1&#10;X-HWID: ..."
+									bind:value={headersText}
+									oninput={() => (src.headers = parseHeadersTextToMap(headersText))}
+								></textarea>
+							{/if}
 							{#if subLive?.error}
 								<div
 									class="source-error-note"
@@ -278,6 +311,12 @@
 		font-size: 12px;
 		width: 100%;
 		box-sizing: border-box;
+	}
+	.badge-btn {
+		padding: 0;
+		border: 0;
+		background: none;
+		cursor: pointer;
 	}
 	select.inp {
 		padding-right: 1.75rem;
