@@ -671,8 +671,10 @@ static bool group_job_compatible(const watched_group_t *peer, const firc_ifcheck
     return true;
 }
 
+/* A leader waiting to recheck went out before a link came up: its result is stale for a newcomer. */
 static bool leader_covers_job(const watched_group_t *ld, const firc_ifcheck_group_job_t *job) {
-    if (!ld->check_in_flight || !firc_id_equal(ld->leader_id, ld->id) || ld->leader_gen != ld->probe_gen) {
+    if (!ld->check_in_flight || ld->recheck_after_flight || !firc_id_equal(ld->leader_id, ld->id) ||
+        ld->leader_gen != ld->probe_gen) {
         return false;
     }
     return group_job_compatible(ld, job);
@@ -773,7 +775,11 @@ static void tick_group_checks(firc_ifwatch_t *w, int64_t now) {
         watched_group_t *wg = &w->groups[i];
         if (wg->check_mode == FIRC_GROUP_CHECK_NONE) { continue; }
         sync_group_cand_links(w, wg, now);
-        if (wg->check_in_flight && now - wg->check_sent_ms >= FIRC_IFWATCH_LOST_MS) { wg->check_in_flight = false; }
+        if (wg->check_in_flight && now - wg->check_sent_ms >= FIRC_IFWATCH_LOST_MS) {
+            wg->check_in_flight = false;
+            /* A new gen: the lost probe's late answer must not pass for the next one's. */
+            if (firc_id_equal(wg->leader_id, wg->id) && ++wg->probe_gen == 0) { wg->probe_gen = 1; }
+        }
         if (wg->check_in_flight && !firc_id_equal(wg->leader_id, wg->id)) {
             const watched_group_t *ld = find_group(w, wg->leader_id);
             if (ld == NULL || !ld->check_in_flight || !firc_id_equal(ld->leader_id, ld->id) ||

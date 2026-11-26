@@ -1686,6 +1686,89 @@ TEST group_check_a_link_up_during_a_probe_rechecks_on_its_result(void) {
     PASS();
 }
 
+/* Catches: a rule falling due on a link up riding a probe its leader sent before the link came up, and keeping
+ * the entry dead for its own whole interval. */
+TEST group_check_a_link_up_never_joins_a_probe_sent_before_it(void) {
+    gw_begin();
+    static const char *const P[] = {"eth3", "tunvless0"};
+    firc_group_t *lead = gw_add(1, P, 2, 2);
+    lead->check.interval_sec = 10;
+    firc_group_t *fol = gw_add(2, P, 2, 2);
+    fol->check.interval_sec = 60;
+    firc_ifwatch_t *w = gw_new(NULL);
+    ASSERT(w != NULL);
+    firc_ifwatch_tick(w);
+    ASSERT_EQ_FMT((size_t)1, gw_n_jobs, "%zu");
+    gw_answer(w, 0, NULL);
+
+    gw_now += 10000;
+    firc_ifwatch_tick(w);
+    ASSERT_EQ_FMT((size_t)2, gw_n_jobs, "%zu");
+    ASSERT(firc_id_equal(gw_jobs[1].group_id, lead->id));
+    gw_now += 100;
+    gw_link_down0 = true;
+    firc_ifwatch_tick(w);
+    gw_now += 100;
+    gw_link_down0 = false;
+    firc_ifwatch_tick(w);
+    ASSERT_EQ_FMTm("the rule probes the risen link itself", (size_t)3, gw_n_jobs, "%zu");
+    ASSERT(firc_id_equal(gw_jobs[2].group_id, fol->id));
+    gw_teardown(w);
+    PASS();
+}
+
+/* Catches: the late answer of a lost probe taken for the probe queued after it. */
+TEST group_check_a_lost_probe_s_late_answer_is_dropped(void) {
+    gw_begin();
+    static const char *const P[] = {"eth3", "tunvless0"};
+    firc_group_t *g = gw_add(1, P, 2, 1);
+    firc_ifwatch_t *w = gw_new(NULL);
+    ASSERT(w != NULL);
+    firc_ifwatch_tick(w);
+    gw_now += FIRC_IFWATCH_LOST_MS;
+    firc_ifwatch_tick(w);
+    ASSERT_EQ_FMT((size_t)2, gw_n_jobs, "%zu");
+    gw_answer(w, 0, "eth3");
+    ASSERT_EQm("the lost probe's answer is dropped", FIRC_IF_UNKNOWN, gw_state(w, g, "eth3"));
+    gw_answer(w, 1, NULL);
+    ASSERT_EQ(FIRC_IF_ALIVE, gw_state(w, g, "eth3"));
+    gw_teardown(w);
+    PASS();
+}
+
+/* Catches: rules with different probe timeouts sharing one probe. */
+TEST group_check_rules_with_different_timeouts_never_share_a_probe(void) {
+    gw_begin();
+    static const char *const P[] = {"eth3", "tunvless0"};
+    gw_add(1, P, 2, 2);
+    firc_group_t *slow = gw_add(2, P, 2, 2);
+    slow->check.timeout_ms = 5000;
+    firc_ifwatch_t *w = gw_new(NULL);
+    ASSERT(w != NULL);
+    firc_ifwatch_tick(w);
+    ASSERT_EQ_FMT((size_t)2, gw_n_jobs, "%zu");
+    gw_teardown(w);
+    PASS();
+}
+
+/* Catches: an RTM_NEWLINK up during a probe not rechecking on its result (the poll path is tested above). */
+TEST group_check_a_newlink_up_during_a_probe_rechecks_on_its_result(void) {
+    gw_begin();
+    static const char *const P[] = {"eth3", "tunvless0"};
+    gw_add(1, P, 2, 2);
+    firc_ifwatch_t *w = gw_new(NULL);
+    ASSERT(w != NULL);
+    firc_ifwatch_tick(w);
+    ASSERT_EQ_FMT((size_t)1, gw_n_jobs, "%zu");
+    gw_now += 500;
+    firc_ifwatch_link(w, "eth3", true);
+    gw_answer(w, 0, NULL);
+    firc_ifwatch_tick(w);
+    ASSERT_EQ_FMTm("the link up is probed at once", (size_t)2, gw_n_jobs, "%zu");
+    gw_teardown(w);
+    PASS();
+}
+
 /* Catches: a rule recreated during a partial outage taking DEAD states from a wider rule whose failures were
  * confirmed by a candidate the new rule does not have, and blocking its traffic. */
 TEST group_check_a_new_subset_rule_never_inherits_a_wider_rule_s_dead(void) {
@@ -1825,6 +1908,10 @@ int main(int argc, char **argv) {
     RUN_TEST(group_check_a_pending_confirm_is_never_brought_forward);
     RUN_TEST(group_check_a_rule_added_later_joins_the_existing_schedule);
     RUN_TEST(group_check_a_link_up_during_a_probe_rechecks_on_its_result);
+    RUN_TEST(group_check_a_link_up_never_joins_a_probe_sent_before_it);
+    RUN_TEST(group_check_a_lost_probe_s_late_answer_is_dropped);
+    RUN_TEST(group_check_rules_with_different_timeouts_never_share_a_probe);
+    RUN_TEST(group_check_a_newlink_up_during_a_probe_rechecks_on_its_result);
     RUN_TEST(group_check_a_new_subset_rule_never_inherits_a_wider_rule_s_dead);
     RUN_TEST(group_check_drifted_subset_and_leader_meet_again);
     GREATEST_MAIN_END();
