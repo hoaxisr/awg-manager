@@ -50,10 +50,41 @@
 		$downloadOutboundsStatus === 'error' ? $downloadOutboundsError : '',
 	);
 	const routeActionsDisabled = $derived(busy !== null || !routeSettingsReady || !!routeSettingsError);
-	const GROUND_ZERRO_GEOIP_URL =
-		'https://raw.githubusercontent.com/Ground-Zerro/Geo-Aggregator/main/geodat/geoip_GA.dat';
-	const GROUND_ZERRO_GEOSITE_URL =
-		'https://raw.githubusercontent.com/Ground-Zerro/Geo-Aggregator/main/geodat/geosite_GA.dat';
+	// Готовые наборы .dat: источник, файлы и что в них.
+	const GEO_PRESETS: { name: string; hint: () => string; files: { type: 'geoip' | 'geosite'; url: string }[] }[] = [
+		{
+			name: 'Ground-Zerro',
+			hint: () => m.geodata_preset_hint(),
+			files: [
+				{ type: 'geoip', url: 'https://raw.githubusercontent.com/Ground-Zerro/Geo-Aggregator/main/geodat/geoip_GA.dat' },
+				{ type: 'geosite', url: 'https://raw.githubusercontent.com/Ground-Zerro/Geo-Aggregator/main/geodat/geosite_GA.dat' },
+			],
+		},
+		{
+			name: 'runetfreedom',
+			hint: () => m.geodata_preset_hint_runetfreedom(),
+			files: [
+				{ type: 'geoip', url: 'https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geoip.dat' },
+				{ type: 'geosite', url: 'https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geosite.dat' },
+			],
+		},
+		{
+			name: 'Loyalsoldier',
+			hint: () => m.geodata_preset_hint_loyalsoldier(),
+			files: [
+				{ type: 'geoip', url: 'https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat' },
+				{ type: 'geosite', url: 'https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat' },
+			],
+		},
+		{
+			name: 'v2fly',
+			hint: () => m.geodata_preset_hint_v2fly(),
+			files: [
+				{ type: 'geoip', url: 'https://github.com/v2fly/geoip/releases/latest/download/geoip.dat' },
+				{ type: 'geosite', url: 'https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat' },
+			],
+		},
+	];
 
 	// Progress for the currently in-flight add. Keyed by the submitted
 	// URL captured at submit time, not the live input value.
@@ -483,25 +514,22 @@
 
 	<div class="add-form">
 		<div class="form-label">{m.geodata_presets()}</div>
-		<div class="preset-row">
-			<Button
-				variant="secondary"
-				size="sm"
-				disabled={routeActionsDisabled}
-				onclick={() => addPreset('geoip', GROUND_ZERRO_GEOIP_URL)}
-			>
-				+ geoip_GA.dat
-			</Button>
-			<Button
-				variant="secondary"
-				size="sm"
-				disabled={routeActionsDisabled}
-				onclick={() => addPreset('geosite', GROUND_ZERRO_GEOSITE_URL)}
-			>
-				+ geosite_GA.dat
-			</Button>
-			<span class="preset-hint">{m.geodata_preset_hint()}</span>
-		</div>
+		{#each GEO_PRESETS as preset (preset.name)}
+			<div class="preset-row">
+				<span class="preset-name">{preset.name}</span>
+				{#each preset.files as file (file.url)}
+					<Button
+						variant="secondary"
+						size="sm"
+						disabled={routeActionsDisabled}
+						onclick={() => addPreset(file.type, file.url)}
+					>
+						+ {file.url.slice(file.url.lastIndexOf('/') + 1)}
+					</Button>
+				{/each}
+				<span class="preset-hint">{preset.hint()}</span>
+			</div>
+		{/each}
 		<div class="form-label form-label-spaced">{m.geodata_add_by_url()}</div>
 		<div class="add-row">
 			<div class="add-type-select">
@@ -779,6 +807,12 @@
 		font-size: 0.75rem;
 	}
 
+	.preset-name {
+		min-width: 96px;
+		font-size: 0.8125rem;
+		font-weight: 600;
+	}
+
 	.add-row {
 		display: grid;
 		grid-template-columns: auto 1fr auto;
@@ -959,7 +993,8 @@
 			max-height: 28px;
 		}
 
-		.preset-hint {
+		.preset-hint,
+		.preset-name {
 			grid-column: 1 / -1;
 		}
 
