@@ -1,15 +1,40 @@
 package tgwebproxy
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 )
+
+var (
+	disabledUsersDummyMu  sync.Mutex
+	disabledUsersDummyVal string
+)
+
+// disabledUsersDummySecret — секрет-заглушка профиля, когда принимать некого
+// (все пользователи выключены или секрета нет). Случайный, один на процесс:
+// файл профиля не меняется от перегенерации к перегенерации. Отказ генератора
+// не запоминается.
+func disabledUsersDummySecret() (string, error) {
+	disabledUsersDummyMu.Lock()
+	defer disabledUsersDummyMu.Unlock()
+	if disabledUsersDummyVal == "" {
+		b := make([]byte, 16)
+		if _, err := rand.Read(b); err != nil {
+			return "", fmt.Errorf("generate dummy profile secret: %w", err)
+		}
+		disabledUsersDummyVal = hex.EncodeToString(b)
+	}
+	return disabledUsersDummyVal, nil
+}
 
 // GenerateEndpointProfilesJSON produces the JSON profiles for a specific tproxy-server endpoint.
 func GenerateEndpointProfilesJSON(ep WebProxyEndpoint, cfg Config) ([]byte, error) {
@@ -39,9 +64,13 @@ func GenerateEndpointProfilesJSON(ep WebProxyEndpoint, cfg Config) ([]byte, erro
 			})
 		}
 		if len(profiles) == 0 {
+			dummySec, err := disabledUsersDummySecret()
+			if err != nil {
+				return nil, err
+			}
 			profiles = append(profiles, map[string]interface{}{
 				"name":         "default",
-				"secret":       "00000000000000000000000000000000",
+				"secret":       dummySec,
 				"backend":      backend,
 				"carrier_mode": mode,
 			})
@@ -49,7 +78,11 @@ func GenerateEndpointProfilesJSON(ep WebProxyEndpoint, cfg Config) ([]byte, erro
 	} else {
 		sec := strings.TrimSpace(cfg.Secret)
 		if sec == "" {
-			sec = "00000000000000000000000000000000"
+			var err error
+			sec, err = disabledUsersDummySecret()
+			if err != nil {
+				return nil, err
+			}
 		}
 		profiles = []map[string]interface{}{
 			{

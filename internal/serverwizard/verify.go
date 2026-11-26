@@ -403,7 +403,7 @@ func (s *WizardService) verifyTelegram(ctx context.Context, checks *[]Verificati
 				Remediation:   "Убедитесь, что порт не занят другим процессом и служба MTProto активна.",
 				TargetAddress: directTarget,
 			})
-		} else if strings.TrimSpace(cfg.TlsDomain) == "" || ValidateTlsDomain(cfg.TlsDomain) != nil {
+		} else if strings.TrimSpace(cfg.TlsDomain) != "" && ValidateTlsDomain(cfg.TlsDomain) != nil {
 			*checks = append(*checks, VerificationCheck{
 				ID:            "tg_mtproto_listener",
 				Service:       "tg_mtproto",
@@ -415,12 +415,13 @@ func (s *WizardService) verifyTelegram(ctx context.Context, checks *[]Verificati
 				TargetAddress: directTarget,
 			})
 		} else {
+			effectiveSNI := tgwebproxy.EffectiveTlsDomain(cfg.TlsDomain)
 			*checks = append(*checks, VerificationCheck{
 				ID:            "tg_mtproto_listener",
 				Service:       "tg_mtproto",
 				Title:         "Telegram: MTProto (прямое подключение)",
 				Status:        CheckStatusOK,
-				Message:       fmt.Sprintf("Локальный порт MTProto (%d) принимает TCP-подключения; домен Fake-TLS SNI задан (%s). Внешняя доступность порта из интернета проверяется клиентом.", directPort, cfg.TlsDomain),
+				Message:       fmt.Sprintf("Локальный порт MTProto (%d) принимает TCP-подключения; домен Fake-TLS SNI задан (%s). Внешняя доступность порта из интернета проверяется клиентом.", directPort, effectiveSNI),
 				TargetAddress: directTarget,
 			})
 		}

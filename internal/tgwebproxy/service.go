@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -510,10 +511,16 @@ func generateTxID(r io.Reader) (string, error) {
 	return fmt.Sprintf("tx_%d_%s", time.Now().Unix(), hex.EncodeToString(b)), nil
 }
 
+// GetInternalConfig — копия конфига: мастер правит полученное на месте
+// (Endpoints[0] и т.д.), и общий срез портил живой конфиг даже при отказе плана.
 func (s *Service) GetInternalConfig() Config {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.config
+	cfg := s.config
+	cfg.Endpoints = slices.Clone(cfg.Endpoints)
+	cfg.Users = slices.Clone(cfg.Users)
+	cfg.Upstreams = cloneUpstreams(cfg.Upstreams)
+	return cfg
 }
 
 func (s *Service) GetConfig() PublicConfig {
@@ -2029,8 +2036,14 @@ func buildStatusWebProxyLinks(cfg Config) []WebProxyStatusLink {
 }
 
 func buildSingleUserLinks(cfg Config, activeSecret string) (string, string, string, string, string, string, []WebProxyLink) {
-	hexDomain := hex.EncodeToString([]byte(cfg.TlsDomain))
-	mtproxySecret := "ee" + activeSecret + hexDomain
+	// Домен в ee-секрете — тот же, с которым работает движок: при пустом
+	// tls_domain он берёт EffectiveTlsDomain, и пустой домен в ссылке давал
+	// ключ, который сервер не принимает.
+	var mtproxySecret string
+	if cfg.Scenario != ScenarioCDNHTTP {
+		hexDomain := hex.EncodeToString([]byte(EffectiveTlsDomain(cfg.TlsDomain)))
+		mtproxySecret = "ee" + activeSecret + hexDomain
+	}
 
 	var webProxies []WebProxyLink
 	var tgURL, tmeURL, bridgeURL string
@@ -2052,10 +2065,11 @@ func buildSingleUserLinks(cfg Config, activeSecret string) (string, string, stri
 			})
 		}
 
-		if cfg.PublicHostname != "" {
-			tgURL = fmt.Sprintf("tg://webproxy?server=%s&secret=%s", cfg.PublicHostname, activeSecret)
-			tmeURL = fmt.Sprintf("https://t.me/webproxy?server=%s&secret=%s", cfg.PublicHostname, activeSecret)
-			bridgeURL = DeriveBridgeURL(cfg.PublicHostname, activeSecret)
+		// PublicHostname бывает списком через запятую: в ссылку — первый домен.
+		if firstHost := strings.TrimSpace(strings.Split(cfg.PublicHostname, ",")[0]); firstHost != "" {
+			tgURL = fmt.Sprintf("tg://webproxy?server=%s&secret=%s", firstHost, activeSecret)
+			tmeURL = fmt.Sprintf("https://t.me/webproxy?server=%s&secret=%s", firstHost, activeSecret)
+			bridgeURL = DeriveBridgeURL(firstHost, activeSecret)
 		} else if len(webProxies) > 0 {
 			tgURL = webProxies[0].TgURL
 			tmeURL = webProxies[0].TmeURL
@@ -2077,8 +2091,22 @@ func BuildTgLinks(cfg Config, secret string) (RevealData, error) {
 	activeSecret := cfg.Secret
 	if secret != "" {
 		activeSecret = secret
-	} else if len(cfg.Users) > 0 && cfg.Users[0].Secret != "" {
-		activeSecret = cfg.Users[0].Secret
+	} else if len(cfg.Users) > 0 {
+		// Первый ВКЛЮЧЁННЫЙ пользователь: выключенный первым давал ссылку,
+		// которую сервер не принимает.
+		picked := ""
+		for _, u := range cfg.Users {
+			if u.Enabled && u.Secret != "" {
+				picked = u.Secret
+				break
+			}
+		}
+		if picked == "" {
+			picked = cfg.Users[0].Secret
+		}
+		if picked != "" {
+			activeSecret = picked
+		}
 	}
 
 	mtproxySecret, mtproxyURL, mtproxyTmeURL, tgURL, tmeURL, bridgeURL, webProxies := buildSingleUserLinks(cfg, activeSecret)
@@ -2104,7 +2132,7 @@ func BuildTgLinks(cfg Config, secret string) (RevealData, error) {
 	return RevealData{
 		Secret:        activeSecret,
 		LegacySecret:  cfg.LegacySecret,
-		DirectHost:    cfg.DirectHost,
+		DirectHost:    revealDirectHost(cfg),
 		DirectPort:    cfg.DirectPort,
 		TlsDomain:     cfg.TlsDomain,
 		TgURL:         tgURL,
@@ -2220,10 +2248,26 @@ func (s *Service) RevealSecret() (RevealData, error) {
 // user; an unknown ID must not fall back to another user's (or the global)
 // secret. With no users configured and an empty ID it returns a zero user and
 // no error: there is nothing to disclose.
+// revealDirectHost — адрес прямого MTProto для показа; в cdn_http прямого
+// подключения нет, и адрес не показываем.
+func revealDirectHost(cfg Config) string {
+	if cfg.Scenario == ScenarioCDNHTTP {
+		return ""
+	}
+	return cfg.DirectHost
+}
+
 func resolveRevealTarget(cfg Config, userID string) (TelegramUser, error) {
 	users := cfg.GetUsers()
 	if len(users) == 0 && userID == "" {
 		return TelegramUser{}, nil
+	}
+	if userID == "" {
+		for _, u := range users {
+			if u.Enabled && u.Secret != "" {
+				return u, nil
+			}
+		}
 	}
 	for _, u := range users {
 		if userID == "" || u.ID == userID {
@@ -2279,7 +2323,7 @@ func (s *Service) RevealUserSecretLimited(userID string, allow func(id, revision
 		// No users configured (e.g. the last one was deleted): nothing to
 		// disclose, but the UI still gets connection metadata.
 		return RevealData{
-			DirectHost: cfg.DirectHost,
+			DirectHost: revealDirectHost(cfg),
 			DirectPort: cfg.DirectPort,
 			TlsDomain:  cfg.TlsDomain,
 			Users:      []UserRevealData{},
