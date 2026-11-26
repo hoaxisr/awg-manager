@@ -131,16 +131,37 @@ export function isDnsAddressFilterRuleSet(
   if (!rs) return false;
 
   const url = rs.url ?? '';
-  if (/[?&]kind=geoip\b/i.test(url) || /\/geoip(?:[-_/]|\.srs|\b)/i.test(url)) return true;
-  if (rs.path && /geoip/i.test(rs.path)) return true;
+  if (/[?&]kind=geoip\b/i.test(url)) return true;
+  if (/[?&]kind=geosite\b/i.test(url)) return false;
+
+  let pathname = url.split(/[?#]/, 1)[0];
+  try {
+    pathname = new URL(url, 'http://local').pathname;
+  } catch {
+    /* keep stripped URL when malformed */
+  }
+  const urlLeaf = pathname.split('/').filter(Boolean).pop() ?? '';
+  if (/^geoip(?:[-_.]|$)/i.test(urlLeaf)) return true;
+
+  if (rs.path) {
+    const pathLeaf = rs.path.split(/[\\/]/).filter(Boolean).pop() ?? '';
+    if (/^geoip(?:[-_.]|$)/i.test(pathLeaf)) return true;
+  }
 
   if (rs.type === 'inline' && Array.isArray(rs.rules)) {
-    return rs.rules.some((rule) => {
+    const hasDomainMatcher = rs.rules.some((rule) => {
+      if (!rule || typeof rule !== 'object') return false;
+      return ['domain', 'domain_suffix', 'domain_keyword', 'domain_regex'].some(
+        (k) => Array.isArray(rule[k]) && rule[k].length > 0,
+      );
+    });
+    const hasIpMatcher = rs.rules.some((rule) => {
       if (!rule || typeof rule !== 'object') return false;
       const ip = rule['ip_cidr'];
       if (Array.isArray(ip) && ip.length > 0) return true;
       return rule['ip_is_private'] === true;
     });
+    return hasIpMatcher && !hasDomainMatcher;
   }
   return false;
 }

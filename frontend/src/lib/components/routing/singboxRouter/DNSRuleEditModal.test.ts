@@ -123,6 +123,30 @@ describe('DNSRuleEditModal', () => {
 		expect(screen.getAllByRole('option').map((el) => el.textContent?.trim())).toEqual(['geosite-google']);
 	});
 
+	it('предлагает пользовательский remote .srs и смешанный inline-набор, а с match_response открывает и geoip/IP', async () => {
+		const availableRuleSets: SingboxRouterRuleSet[] = [
+			{ tag: 'cat-ru', type: 'remote', url: 'https://raw.githubusercontent.com/example/geoip-geosite/main/cat-ru.srs' },
+			{ tag: 'geoip-ru', type: 'remote', url: 'https://example.com/geoip-ru.srs' },
+			{ tag: 'mixed-set', type: 'inline', rules: [{ domain_suffix: ['example.com'], ip_cidr: ['10.0.0.0/8'] }] },
+			{ tag: 'custom-ips', type: 'inline', rules: [{ ip_cidr: ['10.0.0.0/8'] }] },
+		];
+		render(DNSRuleEditModal, { props: { ...baseProps, availableRuleSets, rules: [evalRD], onSave: vi.fn() } });
+
+		await fireEvent.click(screen.getByRole('button', { name: '+' }));
+		expect(screen.getAllByRole('option').map((el) => el.textContent?.trim())).toEqual(['cat-ru', 'mixed-set']);
+
+		await fireEvent.click(screen.getByRole('button', { name: '+' }));
+		await openDropdown('выкл');
+		await pickOption(/^rd$/);
+		await fireEvent.click(screen.getByRole('button', { name: '+' }));
+		expect(screen.getAllByRole('option').map((el) => el.textContent?.trim())).toEqual([
+			'cat-ru',
+			'geoip-ru',
+			'mixed-set',
+			'custom-ips',
+		]);
+	});
+
 	it('есть evaluate-правило выше → подсказки нет', () => {
 		render(DNSRuleEditModal, {
 			props: { ...baseProps, rules: [evalRD], onSave: vi.fn() },

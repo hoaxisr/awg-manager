@@ -227,6 +227,36 @@ describe('isDnsAddressFilterRuleSet', () => {
         { tag: 'geosite-google', type: 'remote', url: 'https://x/geosite-google.srs' },
       ]),
     ).toBe(false);
+    expect(
+      isDnsAddressFilterRuleSet('cat-ru', [
+        { tag: 'cat-ru', type: 'remote', url: 'https://raw.githubusercontent.com/owner/geoip-geosite/main/cat-ru.srs' },
+      ]),
+    ).toBe(false);
+    expect(
+      isDnsAddressFilterRuleSet('category-ru', [
+        { tag: 'category-ru', type: 'remote', url: 'https://example.com/geoip/category-ru.srs' },
+      ]),
+    ).toBe(false);
+    expect(
+      isDnsAddressFilterRuleSet('category-ru', [
+        { tag: 'category-ru', type: 'remote', url: 'http://x/dat-srs?kind=geosite&tag=category-ru' },
+      ]),
+    ).toBe(false);
+    expect(
+      isDnsAddressFilterRuleSet('cat-ru-local', [
+        { tag: 'cat-ru-local', type: 'local', path: '/opt/etc/sing-box/geoip-sets/cat-ru.srs' },
+      ]),
+    ).toBe(false);
+    expect(
+      isDnsAddressFilterRuleSet('local-geoip', [
+        { tag: 'local-geoip', type: 'local', path: '/opt/etc/sing-box/rulesets/geoip-ru.srs' },
+      ]),
+    ).toBe(true);
+    expect(
+      isDnsAddressFilterRuleSet('mixed-set', [
+        { tag: 'mixed-set', type: 'inline', rules: [{ domain_suffix: ['example.com'], ip_cidr: ['10.0.0.0/8'] }] },
+      ]),
+    ).toBe(false);
   });
 });
 

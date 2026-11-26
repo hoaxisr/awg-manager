@@ -69,13 +69,6 @@
 
 	// svelte-ignore state_referenced_locally
 	let ruleSetTags = $state<string[]>(rule?.rule_set ?? []);
-	const ruleSetOptions = $derived<ChipOption[]>(
-		availableRuleSets.filter((rs) => !isDnsAddressFilterRuleSet(rs.tag, availableRuleSets)).map((rs) => ({
-			value: rs.tag,
-			label: rs.tag,
-			usedCount: ruleSetUsage?.get(rs.tag) ?? 0,
-		})),
-	);
 	// svelte-ignore state_referenced_locally
 	let domainSuffixStr = $state((rule?.domain_suffix ?? []).join('\n'));
 	// svelte-ignore state_referenced_locally
@@ -219,6 +212,15 @@
 	const noEvaluateAbove = $derived(matchResponseOptions.length === 1);
 	// Секция «По DNS-ответу» доступна только в режиме matchers.
 	const responseOn = $derived(!catchAll && matchResponse !== '');
+	const ruleSetOptions = $derived<ChipOption[]>(
+		availableRuleSets
+			.filter((rs) => responseOn || !isDnsAddressFilterRuleSet(rs.tag, availableRuleSets))
+			.map((rs) => ({
+				value: rs.tag,
+				label: rs.tag,
+				usedCount: ruleSetUsage?.get(rs.tag) ?? 0,
+			})),
+	);
 	const speculativeOn = $derived(speculative && (action === 'route' || action === 'evaluate'));
 	const raceOn = $derived(race && responseOn && action !== 'evaluate');
 
