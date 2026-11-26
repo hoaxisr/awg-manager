@@ -49,8 +49,6 @@ type KeenDNSStatus struct {
 	Address          string `json:"address,omitempty"`
 	DirectAccessible bool   `json:"directAccessible"`
 	Mode             string `json:"mode"` // "direct", "cloud", or "disabled"
-	Auto             bool   `json:"auto"`
-	AcmeV2           bool   `json:"acmeV2"`
 }
 
 // KeenDNSAccessDirect — единственное значение Access, при котором по имени
@@ -105,7 +103,8 @@ func (s *KeenDNSStore) Get(ctx context.Context) (*KeenDNSInfo, error) {
 	return s.KeyedStore.Get(ctx, "status")
 }
 
-// GetStatus reads uncached KeenDNS status from `/show/ndns` (and `/show/rc/ndns` when available),
+// GetStatus reads uncached KeenDNS status from `/show/ndns` (`/show/rc/ndns` прошивка не знает:
+// 404 и E в журнале NDMS на каждый вызов),
 // preserving HTTP 404/403 errors so callers can distinguish unsupported firmware from unconfigured KeenDNS.
 func (s *KeenDNSStore) GetStatus(ctx context.Context) (*KeenDNSStatus, error) {
 	if s == nil || s.getter == nil {
@@ -126,27 +125,8 @@ func (s *KeenDNSStore) GetStatus(ctx context.Context) (*KeenDNSStatus, error) {
 		_ = json.Unmarshal(raw, &rt)
 	}
 
-	var rc struct {
-		Booked string `json:"booked"`
-		Domain string `json:"domain"`
-		Policy string `json:"policy"`
-		Auto   bool   `json:"auto"`
-		Proxy  struct {
-			AcmeV2 bool `json:"acme-v2"`
-		} `json:"proxy"`
-	}
-	if rcRaw, rcErr := s.getter.GetRaw(ctx, "/show/rc/ndns"); rcErr == nil && len(rcRaw) > 0 {
-		_ = json.Unmarshal(rcRaw, &rc)
-	}
-
 	name := strings.TrimSpace(rt.Booked)
-	if name == "" {
-		name = strings.TrimSpace(rc.Booked)
-	}
 	zone := strings.TrimSpace(rt.Domain)
-	if zone == "" {
-		zone = strings.TrimSpace(rc.Domain)
-	}
 	if name == "" || zone == "" {
 		return &KeenDNSStatus{
 			Enabled: false,
@@ -158,8 +138,6 @@ func (s *KeenDNSStore) GetStatus(ctx context.Context) (*KeenDNSStatus, error) {
 	direct := access == KeenDNSAccessDirect
 	if rt.DirectAccessible != nil {
 		direct = *rt.DirectAccessible
-	} else if access == "" && strings.EqualFold(strings.TrimSpace(rc.Policy), "direct") {
-		direct = true
 	}
 
 	mode := "cloud"
@@ -175,8 +153,6 @@ func (s *KeenDNSStore) GetStatus(ctx context.Context) (*KeenDNSStatus, error) {
 		Address:          strings.TrimSpace(rt.Address),
 		DirectAccessible: direct,
 		Mode:             mode,
-		Auto:             rc.Auto,
-		AcmeV2:           rc.Proxy.AcmeV2,
 	}, nil
 }
 

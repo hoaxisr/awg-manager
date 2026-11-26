@@ -262,3 +262,20 @@ func TestKeenDNSStore_GetCloudTargets(t *testing.T) {
 		}
 	})
 }
+
+// Как #376, но для GetStatus (#1239 вернул запрос /show/rc/ndns): прошивка такого
+// пути не знает — 404 и E «not found: "ndns"» в журнале NDMS на каждый вызов.
+func TestKeenDNSGetStatus_OnlyQueriesShowNdns(t *testing.T) {
+	g := NewFakeGetter()
+	g.SetRaw("/show/ndns", []byte(`{"booked":"impod","domain":"netcraze.pro","access":"direct"}`))
+	st, err := NewKeenDNSStore(g, NopLogger()).GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if st.FQDN != "impod.netcraze.pro" || st.Mode != "direct" {
+		t.Fatalf("status=%+v", st)
+	}
+	if n := g.Calls("/show/rc/ndns"); n != 0 {
+		t.Errorf("/show/rc/ndns вызван %d раз, ожидалось 0", n)
+	}
+}

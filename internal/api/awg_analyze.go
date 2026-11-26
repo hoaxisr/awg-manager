@@ -203,7 +203,7 @@ func validHPKey(key string) bool {
 // kmodVersion — версия модуля ядра (loaded или on-disk), "" если неизвестна.
 func analyzeAwgConf(conf string, stored *storage.AWGTunnel, kmodVersion string) (AwgAnalyzeData, error) {
 	pskInText := confHasKey(conf, "[peer]", "PresharedKey")
-	t, err := config.ParseUnchecked(mergeStoredKeys(conf, stored))
+	t, err := config.Parse(mergeStoredKeys(conf, stored))
 	if err != nil {
 		return AwgAnalyzeData{}, err
 	}

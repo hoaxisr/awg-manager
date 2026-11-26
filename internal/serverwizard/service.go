@@ -726,17 +726,18 @@ func (s *WizardService) executeApplyJob(ctx context.Context, jobID string, rec *
 			return
 		}
 		creds = &RevealCredentials{
-			Kind:         "tgwebproxy",
-			DirectLink:   reveal.MtproxyURL,
-			WebLink:      reveal.TgURL,
-			TgSecret:     tgSecret,
-			DirectHost:   rec.Desired.DirectHost,
-			DirectPort:   rec.Desired.DirectPort,
-			PublicHost:   rec.Desired.PublicHostname,
-			TgEgress:     describeTgEgress(rec.Desired.UpstreamDevice),
-			OriginHost:   rec.Desired.OriginHost,
-			OriginScheme: rec.Desired.OriginScheme,
-			OriginPort:   rec.Desired.OriginPort,
+			Kind:          "tgwebproxy",
+			DirectLink:    reveal.MtproxyURL,
+			MtproxySecret: directSecret(reveal),
+			WebLink:       reveal.TgURL,
+			TgSecret:      tgSecret,
+			DirectHost:    rec.Desired.DirectHost,
+			DirectPort:    rec.Desired.DirectPort,
+			PublicHost:    rec.Desired.PublicHostname,
+			TgEgress:      describeTgEgress(rec.Desired.UpstreamDevice),
+			OriginHost:    rec.Desired.OriginHost,
+			OriginScheme:  rec.Desired.OriginScheme,
+			OriginPort:    rec.Desired.OriginPort,
 		}
 
 		tgPreset, tgIsCDN := telegramIngressPlacement(rec.Desired, tgCfg)
@@ -946,25 +947,26 @@ func (s *WizardService) executeApplyJob(ctx context.Context, jobID string, rec *
 		}
 
 		creds = &RevealCredentials{
-			Kind:         "both",
-			VlessURL:     shareLinks.VlessURL,
-			HappJSON:     shareLinks.HappJSON,
-			SingboxJSON:  shareLinks.SingboxJSON,
-			MihomoYAML:   shareLinks.MihomoYAML,
-			UUID:         clientUUID,
-			Remark:       clientRemark,
-			DirectLink:   reveal.MtproxyURL,
-			WebLink:      reveal.TgURL,
-			TgSecret:     tgSecret,
-			DirectHost:   rec.Desired.DirectHost,
-			DirectPort:   rec.Desired.DirectPort,
-			PublicHost:   rec.Desired.PublicHostname,
-			TgPublicHost: tgPublicHost,
-			XrayEgress:   describeXrayEgress(rec.Desired.OutboundMode, rec.Desired.OutboundInterface),
-			TgEgress:     describeTgEgress(rec.Desired.TgUpstreamDevice),
-			OriginHost:   rec.Desired.OriginHost,
-			OriginScheme: rec.Desired.OriginScheme,
-			OriginPort:   rec.Desired.OriginPort,
+			Kind:          "both",
+			VlessURL:      shareLinks.VlessURL,
+			HappJSON:      shareLinks.HappJSON,
+			SingboxJSON:   shareLinks.SingboxJSON,
+			MihomoYAML:    shareLinks.MihomoYAML,
+			UUID:          clientUUID,
+			Remark:        clientRemark,
+			DirectLink:    reveal.MtproxyURL,
+			MtproxySecret: directSecret(reveal),
+			WebLink:       reveal.TgURL,
+			TgSecret:      tgSecret,
+			DirectHost:    rec.Desired.DirectHost,
+			DirectPort:    rec.Desired.DirectPort,
+			PublicHost:    rec.Desired.PublicHostname,
+			TgPublicHost:  tgPublicHost,
+			XrayEgress:    describeXrayEgress(rec.Desired.OutboundMode, rec.Desired.OutboundInterface),
+			TgEgress:      describeTgEgress(rec.Desired.TgUpstreamDevice),
+			OriginHost:    rec.Desired.OriginHost,
+			OriginScheme:  rec.Desired.OriginScheme,
+			OriginPort:    rec.Desired.OriginPort,
 		}
 
 		tgPreset, tgIsCDN := telegramIngressPlacement(rec.Desired, tgCfg)
@@ -1311,6 +1313,14 @@ func (s *WizardService) CancelJob(ctx context.Context, jobID, sessionID string) 
 // Reveal exposes transient credentials for a completed job.
 func (s *WizardService) Reveal(ctx context.Context, jobID, sessionID string) (*RevealCredentials, error) {
 	return s.jobRunner.RevealSecrets(jobID, sessionID)
+}
+
+// directSecret — секрет Fake-TLS для ручного ввода, только при прямом MTProxy.
+func directSecret(r tgwebproxy.RevealData) string {
+	if r.MtproxyURL == "" {
+		return ""
+	}
+	return r.MtproxySecret
 }
 
 func (s *WizardService) resolveOrGenerateTgSecret(preserve bool) (string, error) {

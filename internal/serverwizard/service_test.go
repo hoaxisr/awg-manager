@@ -630,7 +630,6 @@ func TestWizardService_KeenDNSCertStatusHonestVerification(t *testing.T) {
 			State:      "supported",
 			BaseFQDN:   "example.keenetic.pro",
 			SSLEnabled: true,
-			AcmeV2:     true,
 			Publications: []serveringress.KeenDNSPublicationView{
 				{
 					Label:                 "connect",

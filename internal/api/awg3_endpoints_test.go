@@ -195,20 +195,20 @@ func TestHandleImport_Conf(t *testing.T) {
 	}
 }
 
-// .conf с портала Amnezia Premium не принимается и в sing-box: у этого
-// импорта свой парсер, мимо config.Parse.
-func TestHandleImport_ConfAmneziaPremiumRejected(t *testing.T) {
+// .conf с портала Amnezia Premium принимается и в sing-box (решение владельца
+// 26.11.2026): ключ подписки в заголовке — комментарий.
+func TestHandleImport_ConfAmneziaPremiumAccepted(t *testing.T) {
 	h, store, _, _ := newAwg3TestHandler(t)
 	conf := "# VPN Key: vpn://AAAA\n[Interface]\nPrivateKey = K==\nAddress = 10.10.0.2/32\n[Peer]\nPublicKey = P==\nEndpoint = vpn.example.com:51820\nAllowedIPs = 0.0.0.0/0"
 	body, _ := json.Marshal(map[string]any{"tag": "awg-conf", "config": conf})
 	req := httptest.NewRequest(http.MethodPost, "/api/awg3-endpoints", strings.NewReader(string(body)))
 	rec := httptest.NewRecorder()
 	h.handleImport(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("код %d, want 400; тело: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d, want 200; тело: %s", rec.Code, rec.Body.String())
 	}
-	if recs, _ := store.List(); len(recs) != 0 {
-		t.Fatalf("запись заведена: %+v", recs)
+	if recs, _ := store.List(); len(recs) != 1 {
+		t.Fatalf("записей %d, want 1", len(recs))
 	}
 }
 

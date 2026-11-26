@@ -869,10 +869,6 @@ func (l *Local) ReplaceTunnelConfig(ctx context.Context, id, cfg, newName string
 	if err := l.rejectLocked(id); err != nil {
 		return nil, err
 	}
-	// До Stop: отказ в ReplaceConfig оставил бы работающий туннель выключенным.
-	if err := config.RejectAmneziaPremium(cfg); err != nil {
-		return nil, err
-	}
 	// Имя — тот же предел, что проверит ReplaceConfig, но до Stop (как HTTP-
 	// ручка) и, как там, только при смене имени.
 	if st := l.stored(id); st != nil && newName != "" && newName != st.Name {

@@ -26,24 +26,7 @@ var (
 	ErrMissingAddress    = errors.New("missing Address in [Interface]")
 	ErrMissingPublicKey  = errors.New("missing PublicKey in [Peer]")
 	ErrMissingEndpoint   = errors.New("missing Endpoint in [Peer]")
-	// Текст владельца показывается пользователю дословно, поэтому с
-	// заглавной буквы вопреки ST1005 (Go Code Review Comments).
-	ErrAmneziaPremium = errors.New("Ключи и конфигурации подписки Amnezia Premium не поддерживаются - используйте способы настройки предложенные сервисом")
 )
-
-// RejectAmneziaPremium отвергает конфигурацию, выданную подпиской Amnezia
-// Premium. Признак — ссылка vpn:// в тексте: портал пишет в заголовок .conf
-// ключ подписки («# VPN Key: vpn://…»), а в обычном .conf WireGuard/AWG её не
-// бывает; ключ, вставленный вместо .conf, ловится тем же признаком.
-//
-// Читает сырой текст: правило одно для config.Parse и для импорта sing-box
-// AWG endpoint из .conf, у которого свой парсер.
-func RejectAmneziaPremium(content string) error {
-	if strings.Contains(strings.ToLower(content), "vpn://") {
-		return ErrAmneziaPremium
-	}
-	return nil
-}
 
 // DefaultAllowedIPs returns the default AllowedIPs for full tunnel routing.
 func DefaultAllowedIPs() []string {
@@ -197,19 +180,8 @@ func GenerateForExport(tunnel *storage.AWGTunnel) string {
 	return b.String()
 }
 
-// Parse parses WireGuard .conf content into an AWGTunnel. Конфигурацию
-// подписки Amnezia Premium отвергает (RejectAmneziaPremium).
+// Parse parses WireGuard .conf content into an AWGTunnel.
 func Parse(content string) (*storage.AWGTunnel, error) {
-	if err := RejectAmneziaPremium(content); err != nil {
-		return nil, err
-	}
-	return ParseUnchecked(content)
-}
-
-// ParseUnchecked — Parse без проверки происхождения. Только для чтения
-// конфигурации, которая уже лежит в записи туннеля (анализатор): туннели,
-// заведённые до снятия Amnezia Premium, не трогаем.
-func ParseUnchecked(content string) (*storage.AWGTunnel, error) {
 	tunnel := &storage.AWGTunnel{
 		Type: "awg",
 		Peer: storage.AWGPeer{

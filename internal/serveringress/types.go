@@ -103,7 +103,6 @@ type KeenDNSDiscovery struct {
 	Zone          string                   `json:"zone,omitempty"`
 	AccessMode    string                   `json:"access_mode,omitempty"` // "direct", "cloud", "disabled"
 	DirectAccess  bool                     `json:"direct_accessible"`
-	AcmeV2        bool                     `json:"acme_v2"`
 	SSLEnabled    bool                     `json:"ssl_enabled"`
 	WANAddress    string                   `json:"wan_address,omitempty"`
 	WANPrivate    bool                     `json:"wan_private,omitempty"`

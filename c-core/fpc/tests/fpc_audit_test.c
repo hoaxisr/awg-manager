@@ -46,6 +46,21 @@ static void *mock_http_peer_thread(void *arg) {
         req_buf[rtot] = '\0';
         if (strstr(req_buf, "\r\n\r\n") != NULL) break;
     }
+    /* Тело запроса клиент пишет отдельно от заголовков: закрыть сокет, не дочитав
+     * его, — ECONNRESET/EPIPE у клиента вместо ответа (флак CI под TSan). */
+    const char *hend = strstr(req_buf, "\r\n\r\n");
+    const char *cl = strcasestr(req_buf, "\r\nContent-Length:");
+    if (hend != NULL && cl != NULL && cl < hend) {
+        size_t want = (size_t)strtoul(cl + 17, NULL, 10);
+        size_t have = rtot - (size_t)(hend + 4 - req_buf);
+        char sink[1024];
+        while (have < want) {
+            size_t chunk = want - have < sizeof(sink) ? want - have : sizeof(sink);
+            ssize_t n = recv(m->fd, sink, chunk, 0);
+            if (n <= 0) break;
+            have += (size_t)n;
+        }
+    }
     if (m->drip_slow) {
         for (size_t i = 0; i < m->raw_len; i++) {
             if (send(m->fd, m->raw_resp + i, 1, MSG_NOSIGNAL) <= 0) break;

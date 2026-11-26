@@ -530,6 +530,34 @@ func TestBuildTgLinks_DirectFakeTLSOmitsWebLinks(t *testing.T) {
 	}
 }
 
+// Только веб-прокси: прямой MTProxy не настроен, и его ссылки быть не должно,
+// даже если хост прямого подключения остался в настройках.
+func TestBuildTgLinks_CDNHTTPOmitsMtproxyLink(t *testing.T) {
+	rev, err := BuildTgLinks(Config{
+		Enabled:        true,
+		Scenario:       ScenarioCDNHTTP,
+		DirectHost:     "203.0.113.10",
+		DirectPort:     8443,
+		TlsDomain:      "www.google.com",
+		PublicHostname: "connect.example.com",
+		Secret:         "00112233445566778899aabbccddeeff",
+	}, "")
+	if err != nil {
+		t.Fatalf("BuildTgLinks: %v", err)
+	}
+	if rev.MtproxyURL != "" || rev.MtproxyTmeURL != "" {
+		t.Fatalf("cdn_http: прямой MTProxy %q / %q", rev.MtproxyURL, rev.MtproxyTmeURL)
+	}
+	if rev.TgURL == "" {
+		t.Fatal("cdn_http: нет ссылки веб-прокси")
+	}
+	for _, u := range rev.Users {
+		if u.MtproxyURL != "" {
+			t.Fatalf("cdn_http: прямой MTProxy у пользователя %s: %q", u.ID, u.MtproxyURL)
+		}
+	}
+}
+
 func TestValidateDirectPort_AndHardenedWANFirewall(t *testing.T) {
 	for _, bad := range []int{0, -10, 22, 53, 80, 443, 1023, 1099, 2398, 3553, 8084, 8085, 8086, 9007, 9008, 9009, 51820, 65536} {
 		if err := ValidateDirectPort(bad); err == nil {

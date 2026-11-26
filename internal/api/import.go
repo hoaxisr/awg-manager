@@ -13,7 +13,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/signature"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/config"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
 )
 
@@ -109,13 +108,6 @@ func (h *ImportHandler) ImportConf(w http.ResponseWriter, r *http.Request) {
 	obf, obfWarnings, err := h.resolveObfuscatorImport(r.Context(), &req)
 	if err != nil {
 		response.Error(w, err.Error(), obfImportErrCode(err))
-		return
-	}
-
-	// Отказ здесь, а не только в config.Parse: оттуда текст приходит с
-	// префиксом «parse conf:», а пользователю показывается ровно он.
-	if err := config.RejectAmneziaPremium(req.Content); err != nil {
-		response.Error(w, err.Error(), "AMNEZIA_PREMIUM_UNSUPPORTED")
 		return
 	}
 

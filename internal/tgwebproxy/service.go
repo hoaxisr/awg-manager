@@ -2064,7 +2064,7 @@ func buildSingleUserLinks(cfg Config, activeSecret string) (string, string, stri
 	}
 
 	var mtproxyURL, mtproxyTmeURL string
-	if cfg.DirectHost != "" && cfg.DirectPort > 0 {
+	if cfg.Scenario != ScenarioCDNHTTP && cfg.DirectHost != "" && cfg.DirectPort > 0 {
 		mtproxyURL = fmt.Sprintf("tg://proxy?server=%s&port=%d&secret=%s", cfg.DirectHost, cfg.DirectPort, mtproxySecret)
 		mtproxyTmeURL = fmt.Sprintf("https://t.me/proxy?server=%s&port=%d&secret=%s", cfg.DirectHost, cfg.DirectPort, mtproxySecret)
 	}
