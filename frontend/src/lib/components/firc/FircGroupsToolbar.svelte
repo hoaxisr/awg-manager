@@ -12,12 +12,14 @@
 		LayoutGrid,
 		Copy,
 		Edit3,
+		AlertTriangle,
 	} from 'lucide-svelte';
 
 	type GroupView = 'grid' | 'list';
 
 	interface Props {
 		groupsCount: number;
+		duplicateGroupsCount?: number;
 		netfilterDirty: boolean;
 		searchQuery: string;
 		groupView: GroupView;
@@ -37,6 +39,7 @@
 
 	let {
 		groupsCount,
+		duplicateGroupsCount = 0,
 		netfilterDirty,
 		searchQuery = $bindable(),
 		groupView,
@@ -62,6 +65,15 @@
 	<div class="toolbar-left">
 		<span class="groups-count">
 			{m.firc_groups_count_label()} <strong>{groupsCount}</strong>
+			{#if duplicateGroupsCount > 0}
+				<span
+					class="toolbar-dup-badge"
+					title={m.firc_dup_toolbar_tip({ count: duplicateGroupsCount })}
+				>
+					<AlertTriangle size={12} />
+					<span>{m.firc_dup_toolbar_badge({ count: duplicateGroupsCount })}</span>
+				</span>
+			{/if}
 			{#if netfilterDirty}
 				<Badge variant="warning" size="sm">{m.firc_groups_netfilter_dirty()}</Badge>
 			{/if}
@@ -173,6 +185,19 @@
 		align-items: center;
 		gap: 8px;
 		white-space: nowrap;
+	}
+
+	.toolbar-dup-badge {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		padding: 1.5px 7px;
+		border-radius: var(--radius-sm);
+		font-size: 11px;
+		font-weight: 600;
+		color: var(--color-warning);
+		background: var(--color-warning-tint);
+		border: 1px solid var(--color-warning-border);
 	}
 
 	.search-box {

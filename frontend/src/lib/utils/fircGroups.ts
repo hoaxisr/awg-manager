@@ -75,6 +75,8 @@ export interface GroupListPageState {
 	total: number;
 	matched: number;
 	loading: boolean;
+	/** Нормализованный URL списка, для которого загружена страница. */
+	loadedUrl: string;
 	rules: FircListRule[];
 	edits: Record<string, { type?: string; enable?: boolean }>;
 }
@@ -91,7 +93,17 @@ export function randomHexId(): string {
 		.join('');
 }
 
+export function uniqueHexId(usedIds: Set<string>): string {
+	let id = randomHexId();
+	while (usedIds.has(id)) {
+		id = randomHexId();
+	}
+	usedIds.add(id);
+	return id;
+}
+
 export function normalizeGroup(g: FircGroup): FircGroup {
+	const seenRuleIds = new Set<string>();
 	return {
 		id: g.id || randomHexId(),
 		name: g.name ?? '',
@@ -101,17 +113,21 @@ export function normalizeGroup(g: FircGroup): FircGroup {
 			allow: [...(g.devices?.allow ?? [])],
 			deny: [...(g.devices?.deny ?? [])],
 		},
-		rules: (g.rules ?? []).map((r) => ({
-			id: r.id || randomHexId(),
-			type: r.type || 'namespace',
-			rule: r.rule ?? '',
-			enable: r.enable ?? true,
-			...(r.proto ? { proto: r.proto } : {}),
-			...(r.ports ? { ports: r.ports } : {}),
-			...(r.comment ? { comment: r.comment } : {}),
-			...(r.autolist ? { autolist: r.autolist } : {}),
-			...(r.autolistByDomain ? { autolistByDomain: r.autolistByDomain } : {}),
-		})),
+		rules: (g.rules ?? []).map((r) => {
+			const id = r.id && !seenRuleIds.has(r.id) ? r.id : uniqueHexId(seenRuleIds);
+			seenRuleIds.add(id);
+			return {
+				id,
+				type: r.type || 'namespace',
+				rule: r.rule ?? '',
+				enable: r.enable ?? true,
+				...(r.proto ? { proto: r.proto } : {}),
+				...(r.ports ? { ports: r.ports } : {}),
+				...(r.comment ? { comment: r.comment } : {}),
+				...(r.autolist ? { autolist: r.autolist } : {}),
+				...(r.autolistByDomain ? { autolistByDomain: r.autolistByDomain } : {}),
+			};
+		}),
 		list: g.list
 			? {
 					url: g.list.url ?? '',
@@ -868,14 +884,26 @@ export function filterGroups(groups: FircGroup[], query: string) {
 }
 
 /** Группы из файла экспорта: `{ groups: [...] }` или голый массив. */
-export function parseImportedGroups(text: string): FircGroup[] {
+export function parseImportedGroups(
+	text: string,
+	existingGroupIds?: ReadonlySet<string>,
+): FircGroup[] {
 	const raw = JSON.parse(text);
 	const imported: FircGroup[] = Array.isArray(raw?.groups)
 		? raw.groups
 		: Array.isArray(raw)
 			? raw
 			: [];
-	return imported.map((g) => normalizeGroup({ ...g, id: randomHexId(), proxyGroupId: undefined }));
+	const usedGroupIds = new Set<string>(existingGroupIds);
+	return imported.map((g) => {
+		const usedRuleIds = new Set<string>();
+		return normalizeGroup({
+			...g,
+			id: uniqueHexId(usedGroupIds),
+			proxyGroupId: undefined,
+			rules: (g.rules ?? []).map((r) => ({ ...r, id: uniqueHexId(usedRuleIds) })),
+		});
+	});
 }
 
 /** Правила из текста по одному на строку; `#` — комментарий. */

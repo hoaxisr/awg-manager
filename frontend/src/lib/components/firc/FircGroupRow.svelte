@@ -15,6 +15,7 @@
 		Link2,
 		X,
 		Copy,
+		AlertTriangle,
 	} from 'lucide-svelte';
 	import ServiceTile from '$lib/components/sb-router/ServiceTile.svelte';
 	import {
@@ -28,7 +29,9 @@
 		type FircGroupsRuntime,
 		type FircProbeOptions,
 	} from '$lib/utils/fircGroups';
+	import type { FircGroupDuplicateConflict, FircListUrlOverlap } from '$lib/utils/fircOverlap';
 	import type { FircGroup } from '$lib/types/firc';
+	import FircGroupDuplicateMenu from './FircGroupDuplicateMenu.svelte';
 	import FircGroupOutbound from './FircGroupOutbound.svelte';
 
 	interface Props {
@@ -46,12 +49,23 @@
 		syncing: boolean;
 		pickerOpen: boolean;
 		showOthers: boolean;
+		dupConflicts?: FircGroupDuplicateConflict[];
+		listUrlOverlap?: FircListUrlOverlap;
+		shadowedOwnCount?: number;
+		dupMenuOpen?: boolean;
 		ontoggleSelected: () => void;
 		onmove: (delta: -1 | 1) => void;
 		ontoggleExpand: () => void;
 		ontogglePicker: () => void;
 		onclosePicker: () => void;
 		ontoggleOthers: () => void;
+		ontoggleDupMenu?: () => void;
+		oncloseDupMenu?: () => void;
+		onjumpToRule?: (groupId: string, ruleKey: string, rawRuleId: string, isListRule: boolean) => void;
+		onjumpToGroup?: (groupId: string) => void;
+		onremoveShadowed?: () => void;
+		onlistUrlInput?: () => void;
+		onclearList?: () => void;
 		onprobe: (ids: string[], opts?: FircProbeOptions) => void;
 		onopenProxyGroups: () => void;
 		onsync: () => void;
@@ -78,12 +92,23 @@
 		syncing,
 		pickerOpen,
 		showOthers,
+		dupConflicts = [],
+		listUrlOverlap,
+		shadowedOwnCount = 0,
+		dupMenuOpen = false,
 		ontoggleSelected,
 		onmove,
 		ontoggleExpand,
 		ontogglePicker,
 		onclosePicker,
 		ontoggleOthers,
+		ontoggleDupMenu,
+		oncloseDupMenu,
+		onjumpToRule,
+		onjumpToGroup,
+		onremoveShadowed,
+		onlistUrlInput,
+		onclearList,
 		onprobe,
 		onopenProxyGroups,
 		onsync,
@@ -147,6 +172,20 @@
 				/>
 			</div>
 
+			{#if dupConflicts.length > 0 || listUrlOverlap}
+				<FircGroupDuplicateMenu
+					conflicts={dupConflicts}
+					{listUrlOverlap}
+					{shadowedOwnCount}
+					open={dupMenuOpen}
+					onToggle={() => ontoggleDupMenu?.()}
+					onClose={() => oncloseDupMenu?.()}
+					onJumpToRule={(gid, rk, rid, isList) => onjumpToRule?.(gid, rk, rid, isList)}
+					onJumpToGroup={(gid) => onjumpToGroup?.(gid)}
+					onRemoveShadowed={() => onremoveShadowed?.()}
+				/>
+			{/if}
+
 			<div class="group-badges-row">
 				{#if group.list?.url}
 					<span class="meta-chip chip-list">{m.firc_groups_chip_list()}</span>
@@ -171,13 +210,36 @@
 						class="list-url-inline font-mono"
 						placeholder="https://..."
 						bind:value={group.list.url}
+						oninput={(e) => {
+							if (group.list) {
+								group.list.url = (e.currentTarget as HTMLInputElement).value;
+							}
+							onlistUrlInput?.();
+						}}
 						title={m.firc_groups_list_url_tip()}
 					/>
+					{#if listUrlOverlap}
+						{@const urlWarnTip =
+							listUrlOverlap.kind === 'shadowed'
+								? m.firc_dup_row_url_shadowed_tip({ group: listUrlOverlap.groupName })
+								: m.firc_dup_row_url_split_tip({ group: listUrlOverlap.groupName })}
+						<button
+							type="button"
+							class="list-dup-warn"
+							class:is-split={listUrlOverlap.kind === 'split'}
+							data-overlap={listUrlOverlap.kind}
+							title={urlWarnTip}
+							aria-label={urlWarnTip}
+							onclick={() => onjumpToGroup?.(listUrlOverlap.groupId)}
+						>
+							<AlertTriangle size={12} />
+						</button>
+					{/if}
 					<button
 						type="button"
 						class="list-clear-btn"
 						title={m.firc_groups_list_clear_tip()}
-						onclick={() => (group.list = null)}
+						onclick={() => (onclearList ? onclearList() : (group.list = null))}
 					>
 						<X size={12} />
 					</button>
@@ -529,6 +591,30 @@
 		opacity: 1;
 		color: var(--color-danger);
 		background: var(--bg-tertiary);
+	}
+
+	.list-dup-warn {
+		appearance: none;
+		border: 1px solid var(--color-warning-border);
+		background: var(--color-warning-tint);
+		color: var(--color-warning);
+		border-radius: 4px;
+		padding: 2px 4px;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		cursor: pointer;
+		flex-shrink: 0;
+	}
+
+	.list-dup-warn:hover {
+		filter: brightness(1.12);
+	}
+
+	.list-dup-warn.is-split {
+		color: var(--text-secondary);
+		background: var(--bg-tertiary);
+		border-color: var(--border-hover, var(--border));
 	}
 
 	.list-hdr-meta-row {
