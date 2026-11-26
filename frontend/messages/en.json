@@ -8475,6 +8475,7 @@
 	"tg_user_delete_confirm_body": "User “{name}” and their secret key will be permanently deleted.",
 	"tg_user_delete_confirm_last_note": "This is the last user: all clients will lose proxy access until a new user is added.",
 	"tg_user_delete_confirm_action": "Delete",
+	"tg_user_renamed": "User renamed to “{name}”",
 	"tg_users_empty": "No users configured. Click “Add user” to grant access.",
 	"tg_upstreams_title": "Outbound channels (Upstreams)",
 	"tg_upstreams_hint": "With multiple enabled channels, traffic is distributed by weight; if one fails, connections fail over to a healthy channel.",

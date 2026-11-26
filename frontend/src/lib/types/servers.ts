@@ -326,6 +326,7 @@ export interface WebProxyEndpoint {
 	carrier_mode?: string;
 	is_cdn: boolean;
 	enabled: boolean;
+	external_backend?: boolean;
 }
 
 /** Secret-free endpoint descriptor returned by GET /servers/tgwebproxy/status. */

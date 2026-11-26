@@ -731,7 +731,7 @@ func (s *WizardService) executeApplyJob(ctx context.Context, jobID string, rec *
 			MtproxySecret: directSecret(reveal),
 			WebLink:       reveal.TgURL,
 			TgSecret:      tgSecret,
-			DirectHost:    rec.Desired.DirectHost,
+			DirectHost:    reveal.DirectHost,
 			DirectPort:    rec.Desired.DirectPort,
 			PublicHost:    rec.Desired.PublicHostname,
 			TgEgress:      describeTgEgress(rec.Desired.UpstreamDevice),
@@ -755,6 +755,7 @@ func (s *WizardService) executeApplyJob(ctx context.Context, jobID string, rec *
 			PublicHostname: rec.Desired.PublicHostname,
 			CarrierMode:    rec.Desired.CarrierMode,
 			UpstreamDevice: rec.Desired.UpstreamDevice,
+			SetUpstream:    true,
 			Secret:         tgSecret,
 		}
 		if rec.Desired.DisableOtherService && s.xray != nil {
@@ -958,7 +959,7 @@ func (s *WizardService) executeApplyJob(ctx context.Context, jobID string, rec *
 			MtproxySecret: directSecret(reveal),
 			WebLink:       reveal.TgURL,
 			TgSecret:      tgSecret,
-			DirectHost:    rec.Desired.DirectHost,
+			DirectHost:    reveal.DirectHost,
 			DirectPort:    rec.Desired.DirectPort,
 			PublicHost:    rec.Desired.PublicHostname,
 			TgPublicHost:  tgPublicHost,
@@ -985,6 +986,7 @@ func (s *WizardService) executeApplyJob(ctx context.Context, jobID string, rec *
 			PublicHostname: tgPublicHost,
 			CarrierMode:    rec.Desired.CarrierMode,
 			UpstreamDevice: rec.Desired.TgUpstreamDevice,
+			SetUpstream:    true,
 			Secret:         tgSecret,
 		}
 

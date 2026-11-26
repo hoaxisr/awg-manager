@@ -17,6 +17,7 @@ import {
 } from './connectionLabels';
 
 export const KNOWN_TLS_PRESETS = [
+	'ya.ru',
 	'www.google.com',
 	'www.microsoft.com',
 	'www.apple.com',
@@ -71,6 +72,36 @@ export interface ExternalAccessWizardDraft {
 	tgUpstreamDevice: string;
 	legacyXrayEgress: boolean;
 	legacyTgEgress: boolean;
+	savedVlessDomain?: string;
+	savedTgDomain?: string;
+	savedXrayUpstreamDevice?: string;
+	savedLegacyXrayEgress?: boolean;
+	savedConnectionWay?: 'direct' | 'external_https';
+	savedOriginType?: 'public_address' | 'cloud_address';
+	savedOriginHost?: string;
+	savedOriginScheme?: 'http' | 'https';
+	savedOriginPort?: number;
+	savedPublicPort?: number;
+	savedKeenDNSMode?: 'manual' | 'existing' | 'create';
+	savedKeenDNSLabel?: string;
+	persistedConnectionWay?: 'direct' | 'external_https';
+	persistedOriginType?: 'public_address' | 'cloud_address';
+	persistedOriginHost?: string;
+	persistedOriginScheme?: 'http' | 'https';
+	persistedOriginPort?: number;
+	persistedPublicPort?: number;
+	persistedVlessDomain?: string;
+	persistedTgDomain?: string;
+	schemeCustomized?: boolean;
+	realityOnlyDisabled?: boolean;
+	hasWebDraft?: boolean;
+	savedConnectionSchemeSummary?: UiText;
+	savedXraySchemeSummary?: UiText;
+	savedTgSchemeSummary?: UiText;
+	savedConnectionSchemeWarning?: UiText;
+	savedRealitySchemeSummary?: UiText;
+	vlessHasSavedWebScheme?: boolean;
+	tgHasSavedWebScheme?: boolean;
 }
 
 export interface DomainRouteView {
@@ -208,6 +239,19 @@ export function draftNeedsWebIngress(
 	return !isTgDirectOnlyDraft(draft);
 }
 
+export function draftHasSavedWebScheme(
+	draft: Pick<
+		ExternalAccessWizardDraft,
+		'selectedKind' | 'tgScenario' | 'vlessHasSavedWebScheme' | 'tgHasSavedWebScheme'
+	>
+): boolean {
+	if (draft.selectedKind === 'xray') return Boolean(draft.vlessHasSavedWebScheme);
+	if (draft.selectedKind === 'tgwebproxy') {
+		return draft.tgScenario !== 'direct_fake_tls' && Boolean(draft.tgHasSavedWebScheme);
+	}
+	return Boolean(draft.vlessHasSavedWebScheme || draft.tgHasSavedWebScheme);
+}
+
 export function pickDefaultMtprotoDirectHost(opts: {
 	directDomain?: string | null;
 	whiteIP?: string | null;
@@ -286,20 +330,20 @@ export function resolveEffectiveMtprotoDirectHost(
 		| 'connectionWay'
 	>
 ): string {
+	if (draft.selectedKind === 'xray' || draft.tgScenario === 'cdn_http') {
+		return '';
+	}
 	if (isTgDirectOnlyDraft(draft)) {
 		return draft.directHost.trim();
 	}
-	if (draft.selectedKind !== 'xray' && draft.tgScenario !== 'cdn_http') {
-		if (draft.directHost.trim()) return draft.directHost.trim();
-		if (draft.originType === 'cloud_address' && draft.keendnsMode !== 'manual') {
-			return '';
-		}
-		if (draft.originHost.trim()) return draft.originHost.trim();
-		// Домен за внешним сервисом ведёт на его узлы, а не на роутер.
-		if (draft.connectionWay === 'external_https') return '';
-		return (draft.publicDomain.split(',')[0] || '').trim();
+	if (draft.directHost.trim()) return draft.directHost.trim();
+	if (draft.originType === 'cloud_address' && draft.keendnsMode !== 'manual') {
+		return '';
 	}
-	return (draft.directHost || draft.originHost).trim();
+	if (draft.originHost.trim()) return draft.originHost.trim();
+	// Домен за внешним сервисом ведёт на его узлы, а не на роутер.
+	if (draft.connectionWay === 'external_https') return '';
+	return (draft.publicDomain.split(',')[0] || '').trim();
 }
 
 export function formatDomainList(raw?: string | null): string {
@@ -539,7 +583,8 @@ export function buildExternalAccessSummary(input: ExternalAccessInput): External
 	const routes = Array.from(routeMap.values());
 	const activeRoutesCount = routes.filter((r) => r.enabled).length;
 
-	const directHost = (tCfg?.direct_host || tSt?.direct_host || '').trim();
+	const directHostRaw = (tCfg?.direct_host || tSt?.direct_host || '').trim();
+	const directHost = tgScenario === 'cdn_http' ? '' : directHostRaw;
 	const directPort = tCfg?.direct_port || tSt?.direct_port || 8443;
 	const webListenPort = tCfg?.listen_port || tSt?.port || 8085;
 
@@ -659,15 +704,18 @@ export function createInitialWizardDraft(
 			if (!tgDomains.includes(d)) tgDomains.push(d);
 		}
 	}
-	const directHostRaw = (tCfg?.direct_host || tSt?.direct_host || '').trim();
+	const directHostRaw =
+		tgScenarioRaw === 'cdn_http' ? '' : (tCfg?.direct_host || tSt?.direct_host || '').trim();
 	const tgConfigured = Boolean(
 		tCfg?.enabled || tSt?.running || directHostRaw !== '' || tgDomains.length > 0
 	);
 
-	const isEditMode = vlessConfigured || tgConfigured;
+	const anyConfigured = vlessConfigured || tgConfigured;
 
 	let selectedKind: WizardKind = 'both';
-	if (isEditMode) {
+	if (preferredKind === 'xray' || preferredKind === 'tgwebproxy') {
+		selectedKind = preferredKind;
+	} else if (anyConfigured) {
 		if (vlessConfigured && tgConfigured) selectedKind = 'both';
 		else if (vlessConfigured) selectedKind = 'xray';
 		else if (tgConfigured) selectedKind = 'tgwebproxy';
@@ -675,7 +723,7 @@ export function createInitialWizardDraft(
 		selectedKind = preferredKind;
 	}
 
-	if (!isEditMode) {
+	if (!anyConfigured) {
 		return {
 			isEditMode: false,
 			vlessInitiallyEnabled: false,
@@ -723,8 +771,24 @@ export function createInitialWizardDraft(
 			tgUpstreamDevice: 'direct',
 			legacyXrayEgress: false,
 			legacyTgEgress: false,
+			savedVlessDomain: '',
+			savedTgDomain: '',
+			savedXrayUpstreamDevice: 'direct',
+			savedLegacyXrayEgress: false,
+			schemeCustomized: false,
+			realityOnlyDisabled: false,
+			hasWebDraft: false,
+			vlessHasSavedWebScheme: false,
+			tgHasSavedWebScheme: false,
 		};
 	}
+
+	const targetConfigured =
+		selectedKind === 'xray'
+			? vlessConfigured
+			: selectedKind === 'tgwebproxy'
+				? tgConfigured
+				: anyConfigured;
 
 	const tgScenario = tCfg?.scenario || 'dual';
 	const tgCarrierMode =
@@ -732,6 +796,8 @@ export function createInitialWizardDraft(
 
 	const vlessDomainStr = formatDomainList(xCfg?.public_domain);
 	const vlessRealityOnly = Boolean(vlessConfigured && !vlessDomainStr && input.realityEnabled);
+	const vlessHasSavedWebScheme = Boolean(vlessConfigured && !vlessRealityOnly);
+	const tgHasSavedWebScheme = Boolean(tgConfigured && tgScenario !== 'direct_fake_tls');
 	const tgDomainStr =
 		tgScenario === 'direct_fake_tls'
 			? ''
@@ -739,13 +805,22 @@ export function createInitialWizardDraft(
 				? tgDomains.join(', ')
 				: formatDomainList(tCfg?.public_hostname || tSt?.public_host);
 
-	const publicDomain = vlessDomainStr || tgDomainStr;
-	const useSeparateTgDomain = Boolean(
+	let publicDomain = vlessDomainStr || tgDomainStr;
+	let useSeparateTgDomain = Boolean(
 		vlessDomainStr &&
 			tgDomainStr &&
 			vlessDomainStr.toLowerCase() !== tgDomainStr.toLowerCase()
 	);
-	const tgPublicDomain = useSeparateTgDomain ? tgDomainStr : '';
+	let tgPublicDomain = useSeparateTgDomain ? tgDomainStr : '';
+	if (selectedKind === 'tgwebproxy') {
+		publicDomain = tgConfigured ? tgDomainStr : '';
+		useSeparateTgDomain = false;
+		tgPublicDomain = '';
+	} else if (selectedKind === 'xray') {
+		publicDomain = vlessConfigured ? vlessDomainStr : '';
+		useSeparateTgDomain = false;
+		tgPublicDomain = '';
+	}
 
 	const path = xCfg?.path || dCfg?.xray_path_prefix || '/xhttp-bridge';
 	const publicPort = xCfg?.public_port || 443;
@@ -758,28 +833,46 @@ export function createInitialWizardDraft(
 	const isDirectVless = Boolean(
 		xCfg && xCfg.public_port && xCfg.public_port !== 443 && xCfg.public_port === xCfg.listen_port
 	);
-	const connectionWay: 'direct' | 'external_https' =
+	const onlyTgDirectConfigured =
+		!vlessConfigured && tgConfigured && tgScenario === 'direct_fake_tls';
+	const onlyTgDirectInitially =
+		(selectedKind === 'tgwebproxy' || !vlessConfigured) &&
+		tgConfigured &&
+		tgScenario === 'direct_fake_tls';
+	const savedOriginHost = formatDomainList(xCfg?.origin_host);
+	const configuredConnectionWay: 'direct' | 'external_https' =
 		xCfg?.connection_way === 'direct' || xCfg?.connection_way === 'external_https'
 			? xCfg.connection_way
-			: isDirectVless || (!vlessConfigured && tgScenario === 'direct_fake_tls')
+			: isDirectVless || onlyTgDirectConfigured
 				? 'direct'
 				: 'external_https';
-
-	const savedOriginHost = formatDomainList(xCfg?.origin_host);
-	const originConfigured = Boolean(savedOriginHost);
-	const originHost = savedOriginHost;
-	const originScheme: 'http' | 'https' = xCfg?.origin_scheme === 'https' ? 'https' : 'http';
-	const originPort =
-		xCfg?.origin_port && xCfg.origin_port > 0 ? xCfg.origin_port : dispatcherPort;
-	const originType: 'public_address' | 'cloud_address' =
+	const configuredOriginType: 'public_address' | 'cloud_address' =
 		xCfg?.origin_type === 'public_address' || xCfg?.origin_type === 'cloud_address'
 			? xCfg.origin_type
-			: (!vlessConfigured && tgScenario === 'direct_fake_tls') ||
-				  (originHost && /^\d+\.\d+\.\d+\.\d+$/.test(originHost))
+			: onlyTgDirectConfigured ||
+				  (savedOriginHost && /^\d+\.\d+\.\d+\.\d+$/.test(savedOriginHost))
 				? 'public_address'
 				: 'cloud_address';
 
-	const rawTls = (tCfg?.tls_domain || tSt?.tls_domain || '').trim() || 'www.google.com';
+	const connectionWay: 'direct' | 'external_https' = !targetConfigured
+		? 'external_https'
+		: onlyTgDirectInitially
+			? 'direct'
+			: configuredConnectionWay;
+
+	const originHost = targetConfigured && !onlyTgDirectInitially ? savedOriginHost : '';
+	const originConfigured = Boolean(originHost);
+	const originScheme: 'http' | 'https' = xCfg?.origin_scheme === 'https' ? 'https' : 'http';
+	const originPort =
+		xCfg?.origin_port && xCfg.origin_port > 0 ? xCfg.origin_port : dispatcherPort;
+	const originType: 'public_address' | 'cloud_address' = !targetConfigured
+		? 'cloud_address'
+		: onlyTgDirectInitially
+			? 'public_address'
+			: configuredOriginType;
+
+	const savedTls = (tCfg?.tls_domain || tSt?.tls_domain || '').trim();
+	const rawTls = savedTls || (tgConfigured ? 'ya.ru' : 'www.google.com');
 	const isKnownTls = (KNOWN_TLS_PRESETS as readonly string[]).includes(rawTls);
 	const tlsPreset = isKnownTls ? rawTls : '__custom__';
 	const customTlsDomain = isKnownTls ? '' : rawTls;
@@ -815,6 +908,9 @@ export function createInitialWizardDraft(
 		legacyXrayEgress = true;
 	}
 
+	const savedXrayUpstreamDevice = upstreamDevice;
+	const savedLegacyXrayEgress = legacyXrayEgress;
+
 	const rawTgOut = (tCfg?.upstream_device || '').trim();
 	let tgUpstreamDevice = 'direct';
 	let legacyTgEgress = false;
@@ -833,59 +929,132 @@ export function createInitialWizardDraft(
 
 	// Части схемы — отложенными вызовами: черновик живёт в $state мастера,
 	// и готовая строка застыла бы на языке момента открытия.
-	const schemeParts: (() => string)[] = [];
-	if (selectedKind === 'tgwebproxy' && tgScenario === 'direct_fake_tls') {
-		schemeParts.push(() => m.servers_ext_wiz_s2_tg_direct_title());
+	const buildWebSchemeSummary = (
+		wayForSummary: 'direct' | 'external_https',
+		domainForSummary: string,
+		originForSummary: string,
+		includeMtprotoAddr: boolean
+	): UiText => {
+		const parts: (() => string)[] = [];
+		if (wayForSummary === 'direct') {
+			parts.push(() => m.servers_ext_model_scheme_router_domain());
+		} else {
+			parts.push(() => m.servers_ext_model_scheme_own_domain());
+		}
+		if (domainForSummary) {
+			parts.push(() => m.servers_ext_model_scheme_phone_addr({ addr: domainForSummary }));
+		}
+		if (originForSummary) {
+			const origin = `${originScheme}://${originForSummary}:${originPort}`;
+			parts.push(() => m.servers_ext_model_scheme_router_addr({ addr: origin }));
+		} else if (includeMtprotoAddr && directHost) {
+			const direct = `${directHost}:${directPort}`;
+			parts.push(() => m.servers_ext_model_scheme_mtproto_addr({ addr: direct }));
+		}
+		return () => parts.map((t) => t()).join(' · ');
+	};
+
+	const buildTgDirectSchemeSummary = (): UiText => {
+		const parts: (() => string)[] = [() => m.servers_ext_wiz_s2_tg_direct_title()];
 		if (directHost) {
 			const direct = `${directHost}:${directPort}`;
-			schemeParts.push(() => m.servers_ext_model_scheme_mtproto_addr({ addr: direct }));
+			parts.push(() => m.servers_ext_model_scheme_mtproto_addr({ addr: direct }));
 		}
-	} else if (selectedKind === 'xray' && vlessRealityOnly) {
-		schemeParts.push(() => m.servers_ext_wiz_s2_reality_title());
-		const rHost = (input.realityPublicHost || '').trim();
-		if (rHost) {
-			const rAddr = `${rHost}:${input.realityPort || 2053}`;
-			schemeParts.push(() => m.servers_ext_model_scheme_phone_addr({ addr: rAddr }));
-		}
-	} else {
-		if (connectionWay === 'direct') {
-			schemeParts.push(() => m.servers_ext_model_scheme_router_domain());
-		} else {
-			schemeParts.push(() => m.servers_ext_model_scheme_own_domain());
-		}
-		if (publicDomain) {
-			schemeParts.push(() => m.servers_ext_model_scheme_phone_addr({ addr: publicDomain }));
-		}
-		if (originHost) {
-			const origin = `${originScheme}://${originHost}:${originPort}`;
-			schemeParts.push(() => m.servers_ext_model_scheme_router_addr({ addr: origin }));
-		} else if (directHost) {
-			const direct = `${directHost}:${directPort}`;
-			schemeParts.push(() => m.servers_ext_model_scheme_mtproto_addr({ addr: direct }));
-		}
-	}
+		return () => parts.map((t) => t()).join(' · ');
+	};
 
-	const schemeWarnings: (() => string)[] = [];
-	if (vlessConfigured && !vlessDomainStr && !vlessRealityOnly) {
-		schemeWarnings.push(() => m.servers_ext_model_warn_no_vless_domain());
-	}
-	if (connectionWay === 'external_https' && !originHost && vlessConfigured && !vlessRealityOnly) {
-		schemeWarnings.push(() => m.servers_ext_model_warn_no_origin());
-	}
-	if (rawTransport && !isSupportedTransport) {
-		schemeWarnings.push(() => m.servers_ext_model_warn_legacy_transport({ transport: rawTransport }));
-	}
+	const savedRealitySchemeSummary: UiText | undefined = vlessRealityOnly
+		? () => {
+				const parts: (() => string)[] = [() => m.servers_ext_wiz_s2_reality_title()];
+				const rHost = (input.realityPublicHost || '').trim();
+				if (rHost) {
+					const rAddr = `${rHost}:${input.realityPort || 2053}`;
+					parts.push(() => m.servers_ext_model_scheme_phone_addr({ addr: rAddr }));
+				}
+				return parts.map((t) => t()).join(' · ');
+			}
+		: undefined;
+
+	const buildSchemeWarnings = (
+		kindForWarn: WizardKind,
+		wayForWarn: 'direct' | 'external_https',
+		originForWarn: string
+	): UiText => {
+		if (kindForWarn === 'tgwebproxy') {
+			return '';
+		}
+		const warns: (() => string)[] = [];
+		if (vlessConfigured && !vlessDomainStr && !vlessRealityOnly) {
+			warns.push(() => m.servers_ext_model_warn_no_vless_domain());
+		}
+		if (wayForWarn === 'external_https' && !originForWarn && vlessConfigured && !vlessRealityOnly) {
+			warns.push(() => m.servers_ext_model_warn_no_origin());
+		}
+		if (rawTransport && !isSupportedTransport) {
+			warns.push(() => m.servers_ext_model_warn_legacy_transport({ transport: rawTransport }));
+		}
+		return warns.length ? () => warns.map((t) => t()).join('. ') : '';
+	};
+
+	const configuredDomainForSummary = vlessDomainStr || tgDomainStr;
+	const savedConnectionSchemeSummary: UiText = buildWebSchemeSummary(
+		configuredConnectionWay,
+		configuredDomainForSummary,
+		savedOriginHost,
+		tgScenario !== 'cdn_http'
+	);
+	const savedXraySchemeSummary: UiText | undefined = vlessHasSavedWebScheme
+		? buildWebSchemeSummary(configuredConnectionWay, vlessDomainStr, savedOriginHost, false)
+		: undefined;
+	const savedTgSchemeSummary: UiText | undefined = tgHasSavedWebScheme
+		? buildWebSchemeSummary(
+				configuredConnectionWay,
+				tgDomainStr,
+				savedOriginHost,
+				tgScenario !== 'cdn_http'
+			)
+		: undefined;
+	const savedConnectionSchemeWarning: UiText = buildSchemeWarnings(
+		'both',
+		configuredConnectionWay,
+		savedOriginHost
+	);
+	const hasCompatibleInitialScheme =
+		selectedKind === 'tgwebproxy'
+			? tgScenario === 'direct_fake_tls'
+				? tgConfigured
+				: tgHasSavedWebScheme
+			: selectedKind === 'xray'
+				? vlessConfigured
+				: vlessHasSavedWebScheme || tgHasSavedWebScheme;
+
+	const initialSchemeSummary: UiText =
+		!targetConfigured || !hasCompatibleInitialScheme
+			? ''
+			: selectedKind === 'tgwebproxy' && tgScenario === 'direct_fake_tls'
+				? buildTgDirectSchemeSummary()
+				: selectedKind === 'xray' && vlessRealityOnly
+					? savedRealitySchemeSummary ?? ''
+					: selectedKind === 'xray'
+						? savedXraySchemeSummary ?? savedConnectionSchemeSummary
+						: selectedKind === 'tgwebproxy'
+							? savedTgSchemeSummary ?? savedConnectionSchemeSummary
+							: savedConnectionSchemeSummary;
+	const initialSchemeWarning: UiText =
+		targetConfigured && hasCompatibleInitialScheme
+			? buildSchemeWarnings(selectedKind, connectionWay, originHost)
+			: '';
 
 	return {
-		isEditMode: true,
+		isEditMode: targetConfigured,
 		vlessInitiallyEnabled: vlessConfigured,
 		tgInitiallyEnabled: tgConfigured,
 		disableOtherService: false,
 		existingClientCount: xClients.length,
-		keepExistingConnectionScheme: true,
+		keepExistingConnectionScheme: targetConfigured && hasCompatibleInitialScheme,
 		confirmDirectBehindNAT: false,
-		connectionSchemeSummary: () => schemeParts.map((t) => t()).join(' · '),
-		connectionSchemeWarning: schemeWarnings.length ? () => schemeWarnings.map((t) => t()).join('. ') : '',
+		connectionSchemeSummary: initialSchemeSummary,
+		connectionSchemeWarning: initialSchemeWarning,
 		keendnsMode: 'manual',
 		keendnsLabel: 'connect',
 		selectedKind,
@@ -900,7 +1069,7 @@ export function createInitialWizardDraft(
 		deviceType: 'phone',
 		clientRemark,
 		existingClientUuid,
-		preserveExistingCredentials: true,
+		preserveExistingCredentials: targetConfigured,
 		selectedMode,
 		preserveTransport,
 		rawTransport,
@@ -923,7 +1092,469 @@ export function createInitialWizardDraft(
 		tgUpstreamDevice,
 		legacyXrayEgress,
 		legacyTgEgress,
+		savedVlessDomain: vlessDomainStr,
+		savedTgDomain: tgDomainStr,
+		savedXrayUpstreamDevice,
+		savedLegacyXrayEgress,
+		savedConnectionWay: configuredConnectionWay,
+		savedOriginType: configuredOriginType,
+		savedOriginHost,
+		savedOriginScheme: originScheme,
+		savedOriginPort: originPort,
+		savedPublicPort: publicPort,
+		savedKeenDNSMode: 'manual',
+		savedKeenDNSLabel: 'connect',
+		persistedConnectionWay: configuredConnectionWay,
+		persistedOriginType: configuredOriginType,
+		persistedOriginHost: savedOriginHost,
+		persistedOriginScheme: originScheme,
+		persistedOriginPort: originPort,
+		persistedPublicPort: publicPort,
+		persistedVlessDomain: vlessDomainStr,
+		persistedTgDomain: tgDomainStr,
+		schemeCustomized: false,
+		realityOnlyDisabled: false,
+		hasWebDraft: false,
+		savedConnectionSchemeSummary,
+		savedXraySchemeSummary,
+		savedTgSchemeSummary,
+		savedConnectionSchemeWarning,
+		savedRealitySchemeSummary,
+		vlessHasSavedWebScheme,
+		tgHasSavedWebScheme,
 	};
+}
+
+function applySavedWebSchemeSummaryForKind(
+	draft: ExternalAccessWizardDraft,
+	kind: WizardKind
+): void {
+	if (kind === 'xray') {
+		draft.connectionSchemeSummary =
+			draft.savedXraySchemeSummary ?? draft.savedConnectionSchemeSummary ?? '';
+		draft.connectionSchemeWarning = draft.savedConnectionSchemeWarning ?? '';
+	} else if (kind === 'tgwebproxy') {
+		draft.connectionSchemeSummary =
+			draft.savedTgSchemeSummary ?? draft.savedConnectionSchemeSummary ?? '';
+		draft.connectionSchemeWarning = '';
+	} else {
+		draft.connectionSchemeSummary = draft.savedConnectionSchemeSummary ?? '';
+		draft.connectionSchemeWarning = draft.savedConnectionSchemeWarning ?? '';
+	}
+}
+
+export function restoreSavedConnectionScheme(draft: ExternalAccessWizardDraft): void {
+	draft.schemeCustomized = false;
+	draft.realityOnlyDisabled = false;
+	draft.hasWebDraft = false;
+	draft.confirmDirectBehindNAT = false;
+	draft.keendnsMode = 'manual';
+	draft.savedKeenDNSMode = 'manual';
+
+	const way = draft.persistedConnectionWay ?? 'external_https';
+	const oType = draft.persistedOriginType ?? 'cloud_address';
+	const oHost = draft.persistedOriginHost ?? '';
+	const oScheme = draft.persistedOriginScheme ?? 'http';
+	const oPort = draft.persistedOriginPort ?? draft.dispatcherPort;
+	const pubPort = draft.persistedPublicPort ?? 443;
+	const vDom = (draft.persistedVlessDomain ?? '').trim();
+	const tDom = (draft.persistedTgDomain ?? '').trim();
+
+	draft.connectionWay = way;
+	draft.originType = oType;
+	draft.originHost = oHost;
+	draft.originConfigured = Boolean(oHost);
+	draft.originScheme = oScheme;
+	draft.originPort = oPort;
+	draft.publicPort = pubPort;
+
+	draft.savedConnectionWay = way;
+	draft.savedOriginType = oType;
+	draft.savedOriginHost = oHost;
+	draft.savedOriginScheme = oScheme;
+	draft.savedOriginPort = oPort;
+	draft.savedPublicPort = pubPort;
+	draft.savedVlessDomain = vDom;
+	draft.savedTgDomain = tDom;
+
+	if (draft.selectedKind === 'tgwebproxy') {
+		draft.publicDomain = tDom || (!draft.vlessInitiallyEnabled ? vDom : '');
+		draft.useSeparateTgDomain = false;
+		draft.tgPublicDomain = '';
+	} else if (draft.selectedKind === 'xray') {
+		draft.publicDomain = vDom || (!draft.tgInitiallyEnabled ? tDom : '');
+		draft.useSeparateTgDomain = false;
+		draft.tgPublicDomain = '';
+	} else {
+		draft.publicDomain = vDom || tDom;
+		draft.useSeparateTgDomain = Boolean(
+			vDom && tDom && vDom.toLowerCase() !== tDom.toLowerCase()
+		);
+		draft.tgPublicDomain = draft.useSeparateTgDomain ? tDom : '';
+	}
+
+	if (
+		draft.selectedKind === 'xray' &&
+		draft.vlessInitiallyEnabled &&
+		!draft.vlessHasSavedWebScheme &&
+		draft.savedRealitySchemeSummary
+	) {
+		draft.originHost = '';
+		draft.originConfigured = false;
+		draft.connectionSchemeSummary = draft.savedRealitySchemeSummary;
+		draft.connectionSchemeWarning = '';
+	} else {
+		applySavedWebSchemeSummaryForKind(draft, draft.selectedKind);
+	}
+	draft.keepExistingConnectionScheme = true;
+}
+
+export function reconcileDraftForTgScenario(
+	draft: ExternalAccessWizardDraft,
+	nextScenario: string
+): void {
+	const prevScenario = draft.tgScenario;
+	if (prevScenario === nextScenario) return;
+
+	const anySavedWebScheme = Boolean(draft.vlessHasSavedWebScheme || draft.tgHasSavedWebScheme);
+	const prevWasTgDirectOnly = isTgDirectOnlyDraft(draft);
+	if (
+		draft.selectedKind === 'tgwebproxy' &&
+		prevScenario !== 'direct_fake_tls' &&
+		nextScenario === 'direct_fake_tls'
+	) {
+		if ((draft.schemeCustomized && draft.tgHasSavedWebScheme) || !anySavedWebScheme) {
+			draft.savedConnectionWay = draft.connectionWay;
+			draft.savedOriginType = draft.originType;
+			draft.savedOriginHost = draft.originHost;
+			draft.savedOriginScheme = draft.originScheme;
+			draft.savedOriginPort = draft.originPort;
+			draft.savedPublicPort = draft.publicPort;
+			draft.savedKeenDNSMode = draft.keendnsMode;
+			draft.savedKeenDNSLabel = draft.keendnsLabel;
+			draft.savedTgDomain = draft.publicDomain;
+			if (!anySavedWebScheme) {
+				draft.hasWebDraft = true;
+			}
+		} else if (draft.keendnsMode === 'manual') {
+			draft.savedTgDomain = draft.publicDomain;
+		}
+	}
+
+	draft.tgScenario = nextScenario;
+	const nextIsTgDirectOnly = isTgDirectOnlyDraft(draft);
+
+	if (nextIsTgDirectOnly) {
+		draft.keendnsMode = 'manual';
+		if (draft.tgInitiallyEnabled) {
+			draft.connectionWay = 'direct';
+			draft.originType = 'public_address';
+			draft.originHost = '';
+			draft.originConfigured = false;
+			const dHost = draft.directHost.trim();
+			const dPort = draft.directPort || 8443;
+			draft.connectionSchemeSummary = () =>
+				dHost
+					? `${m.servers_ext_wiz_s2_tg_direct_title()} · ${m.servers_ext_model_scheme_mtproto_addr({ addr: `${dHost}:${dPort}` })}`
+					: m.servers_ext_wiz_s2_tg_direct_title();
+			draft.connectionSchemeWarning = '';
+			draft.keepExistingConnectionScheme = !draft.schemeCustomized;
+		} else {
+			draft.keepExistingConnectionScheme = false;
+		}
+		return;
+	}
+
+	if (prevWasTgDirectOnly && draft.selectedKind === 'tgwebproxy') {
+		const tDom = (draft.savedTgDomain ?? '').trim();
+		draft.publicDomain =
+			tDom || (!draft.vlessInitiallyEnabled ? (draft.savedVlessDomain ?? '').trim() : '');
+		if (
+			(draft.schemeCustomized && draft.tgHasSavedWebScheme) ||
+			(!anySavedWebScheme && draft.hasWebDraft)
+		) {
+			if (draft.savedConnectionWay) {
+				draft.connectionWay = draft.savedConnectionWay;
+			}
+			if (draft.savedOriginType) {
+				draft.originType = draft.savedOriginType;
+			}
+			if (draft.savedOriginHost !== undefined) {
+				draft.originHost = draft.savedOriginHost;
+				draft.originConfigured = Boolean(draft.savedOriginHost);
+			}
+			if (draft.savedOriginScheme) {
+				draft.originScheme = draft.savedOriginScheme;
+			}
+			if (draft.savedOriginPort) {
+				draft.originPort = draft.savedOriginPort;
+			}
+			if (draft.savedPublicPort) {
+				draft.publicPort = draft.savedPublicPort;
+			}
+			draft.keendnsMode = draft.savedKeenDNSMode ?? 'manual';
+			if (draft.savedKeenDNSLabel) {
+				draft.keendnsLabel = draft.savedKeenDNSLabel;
+			}
+			if (draft.tgHasSavedWebScheme) {
+				applySavedWebSchemeSummaryForKind(draft, 'tgwebproxy');
+			} else {
+				draft.connectionSchemeSummary = '';
+				draft.connectionSchemeWarning = '';
+			}
+			draft.keepExistingConnectionScheme = false;
+		} else if (draft.tgHasSavedWebScheme) {
+			draft.connectionWay = draft.persistedConnectionWay ?? 'external_https';
+			draft.originType = draft.persistedOriginType ?? 'cloud_address';
+			draft.originHost = draft.persistedOriginHost ?? '';
+			draft.originConfigured = Boolean(draft.originHost);
+			draft.originScheme = draft.persistedOriginScheme ?? 'http';
+			draft.originPort = draft.persistedOriginPort ?? draft.dispatcherPort;
+			draft.publicPort = draft.persistedPublicPort ?? 443;
+			applySavedWebSchemeSummaryForKind(draft, 'tgwebproxy');
+			draft.keendnsMode = 'manual';
+			draft.keepExistingConnectionScheme = true;
+		} else {
+			draft.connectionWay = 'external_https';
+			draft.originType = 'cloud_address';
+			draft.originHost = '';
+			draft.originConfigured = false;
+			draft.connectionSchemeSummary = '';
+			draft.connectionSchemeWarning = '';
+			draft.keendnsMode = 'manual';
+			draft.keepExistingConnectionScheme = false;
+		}
+	}
+}
+
+export function reconcileDraftForServiceKind(
+	draft: ExternalAccessWizardDraft,
+	nextKind: WizardKind
+): void {
+	const prevKind = draft.selectedKind;
+	if (prevKind === nextKind) return;
+
+	const anySavedWebScheme = Boolean(draft.vlessHasSavedWebScheme || draft.tgHasSavedWebScheme);
+	const prevWasTgDirectOnly = isTgDirectOnlyDraft(draft);
+	const prevWasRealityOnly =
+		prevKind === 'xray' &&
+		draft.vlessInitiallyEnabled &&
+		!draft.vlessHasSavedWebScheme &&
+		!draft.realityOnlyDisabled;
+	const prevHasSavedWebScheme =
+		prevKind === 'xray'
+			? Boolean(draft.vlessHasSavedWebScheme)
+			: prevKind === 'tgwebproxy'
+				? Boolean(draft.tgHasSavedWebScheme) && !prevWasTgDirectOnly
+				: Boolean(draft.vlessHasSavedWebScheme || draft.tgHasSavedWebScheme);
+	const prevUsesCustomizedWeb = Boolean(
+		draft.schemeCustomized &&
+			!prevWasTgDirectOnly &&
+			!prevWasRealityOnly &&
+			(prevHasSavedWebScheme ||
+				((prevKind === 'xray' || prevKind === 'both') && draft.realityOnlyDisabled))
+	);
+	const prevUsesUnpersistedWeb = !anySavedWebScheme && !prevWasTgDirectOnly && !prevWasRealityOnly;
+
+	if (prevUsesCustomizedWeb || prevUsesUnpersistedWeb) {
+		draft.savedConnectionWay = draft.connectionWay;
+		draft.savedOriginType = draft.originType;
+		draft.savedOriginHost = draft.originHost;
+		draft.savedOriginScheme = draft.originScheme;
+		draft.savedOriginPort = draft.originPort;
+		draft.savedPublicPort = draft.publicPort;
+		draft.savedKeenDNSMode = draft.keendnsMode;
+		draft.savedKeenDNSLabel = draft.keendnsLabel;
+		if (prevUsesUnpersistedWeb) {
+			draft.hasWebDraft = true;
+		}
+	}
+
+	const prevSavedVlessDomain = (draft.savedVlessDomain ?? '').trim();
+	const prevSavedTgDomain = (draft.savedTgDomain ?? '').trim();
+	const canSavePrevDomain = Boolean(
+		prevUsesCustomizedWeb || prevUsesUnpersistedWeb || draft.keendnsMode === 'manual'
+	);
+
+	if (prevKind === 'xray') {
+		if (!prevWasRealityOnly && canSavePrevDomain) {
+			draft.savedVlessDomain = draft.publicDomain;
+		}
+		draft.savedXrayUpstreamDevice = draft.upstreamDevice;
+		draft.savedLegacyXrayEgress = draft.legacyXrayEgress;
+	} else if (prevKind === 'tgwebproxy') {
+		if (draft.tgScenario !== 'direct_fake_tls' && canSavePrevDomain) {
+			draft.savedTgDomain = draft.publicDomain;
+		}
+		draft.tgUpstreamDevice = draft.upstreamDevice || draft.tgUpstreamDevice || 'direct';
+	} else {
+		const pubTrim = draft.publicDomain.trim();
+		if (
+			canSavePrevDomain &&
+			(draft.vlessHasSavedWebScheme ||
+				draft.realityOnlyDisabled ||
+				!draft.tgHasSavedWebScheme ||
+				pubTrim.toLowerCase() !== prevSavedTgDomain.toLowerCase())
+		) {
+			draft.savedVlessDomain = draft.publicDomain;
+		}
+		if (draft.tgScenario !== 'direct_fake_tls') {
+			if (draft.useSeparateTgDomain && canSavePrevDomain) {
+				draft.savedTgDomain = draft.tgPublicDomain;
+			} else if (
+				canSavePrevDomain &&
+				(draft.tgHasSavedWebScheme ||
+					!draft.vlessHasSavedWebScheme ||
+					pubTrim.toLowerCase() !== prevSavedVlessDomain.toLowerCase())
+			) {
+				draft.savedTgDomain = draft.publicDomain;
+			}
+		}
+		draft.savedXrayUpstreamDevice = draft.upstreamDevice;
+		draft.savedLegacyXrayEgress = draft.legacyXrayEgress;
+	}
+
+	draft.selectedKind = nextKind;
+	const nextIsTgDirectOnly = isTgDirectOnlyDraft(draft);
+	const nextHasSavedWebScheme =
+		nextKind === 'xray'
+			? Boolean(draft.vlessHasSavedWebScheme)
+			: nextKind === 'tgwebproxy'
+				? Boolean(draft.tgHasSavedWebScheme) && !nextIsTgDirectOnly
+				: Boolean(draft.vlessHasSavedWebScheme || draft.tgHasSavedWebScheme);
+	const nextIsRealityOnly =
+		nextKind === 'xray' &&
+		draft.vlessInitiallyEnabled &&
+		Boolean(draft.savedRealitySchemeSummary) &&
+		!draft.realityOnlyDisabled;
+	const nextUsesCustomizedWeb = Boolean(
+		draft.schemeCustomized &&
+			!nextIsTgDirectOnly &&
+			(nextHasSavedWebScheme ||
+				((nextKind === 'xray' || nextKind === 'both') && draft.realityOnlyDisabled))
+	);
+	const nextUsesUnpersistedWeb = Boolean(
+		!anySavedWebScheme && draft.hasWebDraft && !nextIsTgDirectOnly && !nextIsRealityOnly
+	);
+
+	const targetConfigured =
+		nextKind === 'xray'
+			? draft.vlessInitiallyEnabled
+			: nextKind === 'tgwebproxy'
+				? draft.tgInitiallyEnabled
+				: draft.vlessInitiallyEnabled || draft.tgInitiallyEnabled;
+
+	draft.isEditMode = targetConfigured;
+	draft.preserveExistingCredentials = targetConfigured;
+
+	if (nextIsTgDirectOnly && targetConfigured) {
+		draft.connectionWay = 'direct';
+		draft.originType = 'public_address';
+		draft.originHost = '';
+		draft.originConfigured = false;
+		const dHost = draft.directHost.trim();
+		const dPort = draft.directPort || 8443;
+		draft.connectionSchemeSummary = () =>
+			dHost
+				? `${m.servers_ext_wiz_s2_tg_direct_title()} · ${m.servers_ext_model_scheme_mtproto_addr({ addr: `${dHost}:${dPort}` })}`
+				: m.servers_ext_wiz_s2_tg_direct_title();
+		draft.connectionSchemeWarning = '';
+		draft.keendnsMode = 'manual';
+		draft.keepExistingConnectionScheme = !draft.schemeCustomized;
+	} else if (nextUsesCustomizedWeb || nextUsesUnpersistedWeb) {
+		if (draft.savedConnectionWay) {
+			draft.connectionWay = draft.savedConnectionWay;
+		}
+		if (draft.savedOriginType) {
+			draft.originType = draft.savedOriginType;
+		}
+		if (draft.savedOriginHost !== undefined) {
+			draft.originHost = draft.savedOriginHost;
+			draft.originConfigured = Boolean(draft.savedOriginHost);
+		}
+		if (draft.savedOriginScheme) {
+			draft.originScheme = draft.savedOriginScheme;
+		}
+		if (draft.savedOriginPort) {
+			draft.originPort = draft.savedOriginPort;
+		}
+		if (draft.savedPublicPort) {
+			draft.publicPort = draft.savedPublicPort;
+		}
+		draft.keendnsMode = draft.savedKeenDNSMode ?? draft.keendnsMode ?? 'manual';
+		if (draft.savedKeenDNSLabel) {
+			draft.keendnsLabel = draft.savedKeenDNSLabel;
+		}
+		if (nextHasSavedWebScheme) {
+			applySavedWebSchemeSummaryForKind(draft, nextKind);
+		} else {
+			draft.connectionSchemeSummary = '';
+			draft.connectionSchemeWarning = '';
+		}
+		draft.keepExistingConnectionScheme = false;
+	} else if (nextHasSavedWebScheme) {
+		if (!prevHasSavedWebScheme) {
+			draft.connectionWay = draft.persistedConnectionWay ?? 'external_https';
+			draft.originType = draft.persistedOriginType ?? 'cloud_address';
+			draft.originHost = draft.persistedOriginHost ?? '';
+			draft.originConfigured = Boolean(draft.originHost);
+			draft.originScheme = draft.persistedOriginScheme ?? 'http';
+			draft.originPort = draft.persistedOriginPort ?? draft.dispatcherPort;
+			draft.publicPort = draft.persistedPublicPort ?? 443;
+			draft.keendnsMode = 'manual';
+			draft.keepExistingConnectionScheme = true;
+		}
+		applySavedWebSchemeSummaryForKind(draft, nextKind);
+	} else {
+		if (
+			nextKind === 'xray' &&
+			draft.vlessInitiallyEnabled &&
+			draft.savedRealitySchemeSummary &&
+			!draft.realityOnlyDisabled
+		) {
+			draft.originHost = '';
+			draft.originConfigured = false;
+			draft.connectionSchemeSummary = draft.savedRealitySchemeSummary;
+			draft.connectionSchemeWarning = '';
+			draft.keepExistingConnectionScheme = !draft.schemeCustomized;
+		} else {
+			draft.connectionWay = 'external_https';
+			draft.originType = 'cloud_address';
+			draft.originHost = '';
+			draft.originConfigured = false;
+			draft.connectionSchemeSummary = '';
+			draft.connectionSchemeWarning = '';
+			draft.keendnsMode = 'manual';
+			draft.keepExistingConnectionScheme = false;
+		}
+	}
+
+	const vDom = (draft.savedVlessDomain ?? '').trim();
+	const tDom = (draft.savedTgDomain ?? '').trim();
+
+	if (nextKind === 'tgwebproxy') {
+		draft.publicDomain = tDom || (!draft.vlessInitiallyEnabled ? vDom : '');
+		draft.useSeparateTgDomain = false;
+		draft.tgPublicDomain = '';
+		draft.upstreamDevice = draft.tgUpstreamDevice || 'direct';
+		if (draft.tgScenario === 'direct_fake_tls') {
+			draft.keendnsMode = 'manual';
+		}
+	} else if (nextKind === 'xray') {
+		draft.publicDomain = vDom || (!draft.tgInitiallyEnabled ? tDom : '');
+		draft.useSeparateTgDomain = false;
+		draft.tgPublicDomain = '';
+		draft.upstreamDevice = draft.savedXrayUpstreamDevice || 'direct';
+		draft.legacyXrayEgress = Boolean(draft.savedLegacyXrayEgress);
+	} else {
+		draft.publicDomain = vDom || tDom;
+		draft.useSeparateTgDomain = Boolean(
+			vDom && tDom && vDom.toLowerCase() !== tDom.toLowerCase()
+		);
+		draft.tgPublicDomain = draft.useSeparateTgDomain ? tDom : '';
+		draft.upstreamDevice = draft.savedXrayUpstreamDevice || 'direct';
+		draft.legacyXrayEgress = Boolean(draft.savedLegacyXrayEgress);
+	}
 }
 
 export function isDraftEgressValid(
@@ -1129,7 +1760,10 @@ export function buildPlanRequestFromDraft(
 		tg_listen_port: draft.tgListenPort,
 		direct_host: effectiveDirectHost,
 		direct_port: draft.directPort,
-		tls_domain: effectiveTlsDomain,
+		tls_domain:
+			draft.selectedKind === 'xray' || draft.tgScenario === 'cdn_http'
+				? ''
+				: effectiveTlsDomain,
 		upstream_device:
 			draft.selectedKind === 'tgwebproxy'
 				? draft.tgUpstreamDevice || draft.upstreamDevice

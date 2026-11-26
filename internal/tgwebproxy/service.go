@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -513,7 +514,19 @@ func generateTxID(r io.Reader) (string, error) {
 func (s *Service) GetInternalConfig() Config {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.config
+	cfg := s.config
+	if cfg.Endpoints != nil {
+		eps := make([]WebProxyEndpoint, len(cfg.Endpoints))
+		copy(eps, cfg.Endpoints)
+		cfg.Endpoints = eps
+	}
+	if cfg.Users != nil {
+		users := make([]TelegramUser, len(cfg.Users))
+		copy(users, cfg.Users)
+		cfg.Users = users
+	}
+	cfg.Upstreams = cloneUpstreams(cfg.Upstreams)
+	return cfg
 }
 
 func (s *Service) GetConfig() PublicConfig {
@@ -981,12 +994,52 @@ func (s *Service) updateConfig(cfg Config, setDirectHost bool) error {
 		newCfg.NetworkPreset = strings.TrimSpace(strings.ToLower(cfg.NetworkPreset))
 	}
 
+	if cfg.Scenario != "" {
+		newCfg.Scenario = cfg.Scenario
+	}
+	if cfg.DirectPort != 0 {
+		newCfg.DirectPort = cfg.DirectPort
+	}
+	if cfg.ListenPort > 0 {
+		newCfg.ListenPort = cfg.ListenPort
+	}
+	if cfg.AdminPort > 0 {
+		newCfg.AdminPort = cfg.AdminPort
+	}
+
 	if cfg.Endpoints != nil {
-		newCfg.Endpoints = cfg.Endpoints
+		newCfg.Endpoints = slices.Clone(cfg.Endpoints)
+		seenEndpointIDs := make(map[string]bool, len(newCfg.Endpoints))
+		usedEndpointPorts := seedReservedEndpointPorts(newCfg)
 		for i := range newCfg.Endpoints {
 			if newCfg.Endpoints[i].ID == "" {
-				newCfg.Endpoints[i].ID = fmt.Sprintf("ep-%d", i+1)
+				continue
 			}
+			if !IsValidEndpointID(newCfg.Endpoints[i].ID) {
+				return fmt.Errorf("%w: недопустимый идентификатор домена %q", ErrInvalidConfig, newCfg.Endpoints[i].ID)
+			}
+			if seenEndpointIDs[newCfg.Endpoints[i].ID] {
+				return fmt.Errorf("%w: дублирующийся идентификатор домена %q", ErrInvalidConfig, newCfg.Endpoints[i].ID)
+			}
+			seenEndpointIDs[newCfg.Endpoints[i].ID] = true
+			if newCfg.Endpoints[i].ExternalBackend && newCfg.Endpoints[i].ListenPort > 0 {
+				usedEndpointPorts[newCfg.Endpoints[i].ListenPort] = true
+			}
+		}
+		for i := range newCfg.Endpoints {
+			if newCfg.Endpoints[i].ID == "" {
+				seq := i + 1
+				for seenEndpointIDs[fmt.Sprintf("ep-%d", seq)] {
+					seq++
+				}
+				newCfg.Endpoints[i].ID = fmt.Sprintf("ep-%d", seq)
+				seenEndpointIDs[newCfg.Endpoints[i].ID] = true
+				if newCfg.Endpoints[i].ExternalBackend && newCfg.Endpoints[i].ListenPort > 0 {
+					usedEndpointPorts[newCfg.Endpoints[i].ListenPort] = true
+				}
+			}
+		}
+		for i := range newCfg.Endpoints {
 			hostLower := strings.ToLower(newCfg.Endpoints[i].Hostname)
 			idLower := strings.ToLower(newCfg.Endpoints[i].ID)
 			if !newCfg.Endpoints[i].IsCDN {
@@ -1016,26 +1069,77 @@ func (s *Service) updateConfig(cfg Config, setDirectHost bool) error {
 					newCfg.Endpoints[i].CarrierMode = spec.CarrierMode
 				}
 			}
-			if newCfg.Endpoints[i].ListenPort <= 0 || (!newCfg.Endpoints[i].ExternalBackend && i > 0 && newCfg.Endpoints[i].ListenPort >= 8080 && newCfg.Endpoints[i].ListenPort < 9000) {
-				if i == 0 {
+			if newCfg.Endpoints[i].ExternalBackend {
+				if newCfg.Endpoints[i].ListenPort <= 0 {
 					newCfg.Endpoints[i].ListenPort = 8084
-				} else {
-					newCfg.Endpoints[i].ListenPort = 18084 + (i-1)*3
 				}
+				usedEndpointPorts[newCfg.Endpoints[i].ListenPort] = true
+				continue
 			}
-			if !newCfg.Endpoints[i].ExternalBackend && (newCfg.Endpoints[i].AdminPort <= 0 || (i > 0 && newCfg.Endpoints[i].AdminPort >= 8080 && newCfg.Endpoints[i].AdminPort < 9000)) {
-				if i == 0 {
+			if i == 0 {
+				if newCfg.Endpoints[i].ListenPort <= 0 || (newCfg.Endpoints[i].ListenPort >= 18084 && newCfg.Endpoints[i].ListenPort < 19000) {
+					newCfg.Endpoints[i].ListenPort = 8084
+				}
+				if newCfg.Endpoints[i].AdminPort <= 0 || (newCfg.Endpoints[i].AdminPort >= 18084 && newCfg.Endpoints[i].AdminPort < 19000) {
 					newCfg.Endpoints[i].AdminPort = 8086
-				} else {
-					newCfg.Endpoints[i].AdminPort = 18086 + (i-1)*3
 				}
+				usedEndpointPorts[newCfg.Endpoints[i].ListenPort] = true
+				usedEndpointPorts[newCfg.Endpoints[i].AdminPort] = true
+				continue
 			}
+			needPortReassign := newCfg.Endpoints[i].ListenPort <= 0 ||
+				(newCfg.Endpoints[i].ListenPort >= 8080 && newCfg.Endpoints[i].ListenPort < 9000) ||
+				usedEndpointPorts[newCfg.Endpoints[i].ListenPort] ||
+				newCfg.Endpoints[i].AdminPort <= 0 ||
+				(newCfg.Endpoints[i].AdminPort >= 8080 && newCfg.Endpoints[i].AdminPort < 9000) ||
+				usedEndpointPorts[newCfg.Endpoints[i].AdminPort] ||
+				newCfg.Endpoints[i].ListenPort == newCfg.Endpoints[i].AdminPort
+			if needPortReassign {
+				slot := i - 1
+				for usedEndpointPorts[18084+slot*3] || usedEndpointPorts[18086+slot*3] {
+					slot++
+				}
+				newCfg.Endpoints[i].ListenPort = 18084 + slot*3
+				newCfg.Endpoints[i].AdminPort = 18086 + slot*3
+			}
+			usedEndpointPorts[newCfg.Endpoints[i].ListenPort] = true
+			usedEndpointPorts[newCfg.Endpoints[i].AdminPort] = true
 		}
 		if len(newCfg.Endpoints) > 0 && newCfg.Endpoints[0].Hostname != "" {
 			newCfg.PublicHostname = newCfg.Endpoints[0].Hostname
 		}
 		if len(newCfg.Endpoints) > 0 && newCfg.Endpoints[0].Preset != "" && cfg.NetworkPreset == "" {
 			newCfg.NetworkPreset = newCfg.Endpoints[0].Preset
+		}
+	} else if len(newCfg.Endpoints) > 1 {
+		newCfg.Endpoints = slices.Clone(newCfg.Endpoints)
+		usedEndpointPorts := seedReservedEndpointPorts(newCfg)
+		for i := range newCfg.Endpoints {
+			if newCfg.Endpoints[i].ExternalBackend {
+				if newCfg.Endpoints[i].ListenPort > 0 {
+					usedEndpointPorts[newCfg.Endpoints[i].ListenPort] = true
+				}
+				continue
+			}
+			if i == 0 {
+				if newCfg.Endpoints[i].ListenPort > 0 {
+					usedEndpointPorts[newCfg.Endpoints[i].ListenPort] = true
+				}
+				if newCfg.Endpoints[i].AdminPort > 0 {
+					usedEndpointPorts[newCfg.Endpoints[i].AdminPort] = true
+				}
+				continue
+			}
+			if usedEndpointPorts[newCfg.Endpoints[i].ListenPort] || usedEndpointPorts[newCfg.Endpoints[i].AdminPort] {
+				slot := i - 1
+				for usedEndpointPorts[18084+slot*3] || usedEndpointPorts[18086+slot*3] {
+					slot++
+				}
+				newCfg.Endpoints[i].ListenPort = 18084 + slot*3
+				newCfg.Endpoints[i].AdminPort = 18086 + slot*3
+			}
+			usedEndpointPorts[newCfg.Endpoints[i].ListenPort] = true
+			usedEndpointPorts[newCfg.Endpoints[i].AdminPort] = true
 		}
 	}
 
@@ -1198,9 +1302,15 @@ func (s *Service) CreateUserWithSecret(remark string, rawSecret string) error {
 
 	newCfg := s.config
 	users := newCfg.GetUsers()
-	trimmed := strings.TrimSpace(remark)
-	if trimmed == "" {
+	var trimmed string
+	if strings.TrimSpace(remark) == "" {
 		trimmed = fmt.Sprintf("Пользователь %d", len(users)+1)
+	} else {
+		var err error
+		trimmed, err = SanitizeUserRemark(remark)
+		if err != nil {
+			return err
+		}
 	}
 
 	var sec string
@@ -1269,11 +1379,16 @@ func (s *Service) UpdateUserWithOptions(id string, opts UpdateUserOptions) error
 		}
 	}
 	if targetIdx < 0 {
-		return fmt.Errorf("пользователь %s не найден", id)
+		return fmt.Errorf("%w: пользователь %s не найден", ErrUserNotFound, id)
 	}
 
-	if trimmed := strings.TrimSpace(opts.Remark); trimmed != "" {
-		users[targetIdx].Remark = trimmed
+	hasOtherMutation := opts.Enabled != nil || opts.RegenerateSecret || strings.TrimSpace(opts.Secret) != ""
+	if opts.Remark != "" || !hasOtherMutation {
+		cleanRemark, err := SanitizeUserRemark(opts.Remark)
+		if err != nil {
+			return err
+		}
+		users[targetIdx].Remark = cleanRemark
 	}
 	if opts.Enabled != nil {
 		users[targetIdx].Enabled = *opts.Enabled
@@ -1337,7 +1452,7 @@ func (s *Service) DeleteUser(id string) error {
 		remaining = append(remaining, u)
 	}
 	if len(remaining) == len(users) {
-		return fmt.Errorf("пользователь %s не найден", id)
+		return fmt.Errorf("%w: пользователь %s не найден", ErrUserNotFound, id)
 	}
 	if len(remaining) == 0 {
 		newCfg.Users = []TelegramUser{}
@@ -2000,6 +2115,7 @@ func linkableEndpoints(cfg Config) []WebProxyEndpoint {
 		if !ep.Enabled && len(endpoints) > 1 {
 			continue
 		}
+		ep.Hostname = strings.TrimSpace(strings.Split(ep.Hostname, ",")[0])
 		if ep.Hostname == "" {
 			continue
 		}
@@ -2029,12 +2145,9 @@ func buildStatusWebProxyLinks(cfg Config) []WebProxyStatusLink {
 }
 
 func buildSingleUserLinks(cfg Config, activeSecret string) (string, string, string, string, string, string, []WebProxyLink) {
-	hexDomain := hex.EncodeToString([]byte(cfg.TlsDomain))
-	mtproxySecret := "ee" + activeSecret + hexDomain
-
 	var webProxies []WebProxyLink
 	var tgURL, tmeURL, bridgeURL string
-	if cfg.Scenario != ScenarioDirectFakeTLS {
+	if cfg.Scenario != ScenarioDirectFakeTLS && activeSecret != "" {
 		for _, ep := range linkableEndpoints(cfg) {
 			epTgURL := fmt.Sprintf("tg://webproxy?server=%s&secret=%s", ep.Hostname, activeSecret)
 			epTmeURL := fmt.Sprintf("https://t.me/webproxy?server=%s&secret=%s", ep.Hostname, activeSecret)
@@ -2052,21 +2165,27 @@ func buildSingleUserLinks(cfg Config, activeSecret string) (string, string, stri
 			})
 		}
 
-		if cfg.PublicHostname != "" {
-			tgURL = fmt.Sprintf("tg://webproxy?server=%s&secret=%s", cfg.PublicHostname, activeSecret)
-			tmeURL = fmt.Sprintf("https://t.me/webproxy?server=%s&secret=%s", cfg.PublicHostname, activeSecret)
-			bridgeURL = DeriveBridgeURL(cfg.PublicHostname, activeSecret)
-		} else if len(webProxies) > 0 {
+		firstHost := strings.TrimSpace(strings.Split(cfg.PublicHostname, ",")[0])
+		if len(webProxies) > 0 {
 			tgURL = webProxies[0].TgURL
 			tmeURL = webProxies[0].TmeURL
 			bridgeURL = webProxies[0].BridgeURL
+		} else if firstHost != "" {
+			tgURL = fmt.Sprintf("tg://webproxy?server=%s&secret=%s", firstHost, activeSecret)
+			tmeURL = fmt.Sprintf("https://t.me/webproxy?server=%s&secret=%s", firstHost, activeSecret)
+			bridgeURL = DeriveBridgeURL(firstHost, activeSecret)
 		}
 	}
 
-	var mtproxyURL, mtproxyTmeURL string
-	if cfg.Scenario != ScenarioCDNHTTP && cfg.DirectHost != "" && cfg.DirectPort > 0 {
-		mtproxyURL = fmt.Sprintf("tg://proxy?server=%s&port=%d&secret=%s", cfg.DirectHost, cfg.DirectPort, mtproxySecret)
-		mtproxyTmeURL = fmt.Sprintf("https://t.me/proxy?server=%s&port=%d&secret=%s", cfg.DirectHost, cfg.DirectPort, mtproxySecret)
+	var mtproxySecret, mtproxyURL, mtproxyTmeURL string
+	if cfg.Scenario != ScenarioCDNHTTP && activeSecret != "" {
+		hexDomain := hex.EncodeToString([]byte(EffectiveTlsDomain(cfg.TlsDomain)))
+		mtproxySecret = "ee" + activeSecret + hexDomain
+		directHost := strings.TrimSpace(cfg.DirectHost)
+		if directHost != "" && cfg.DirectPort > 0 {
+			mtproxyURL = fmt.Sprintf("tg://proxy?server=%s&port=%d&secret=%s", directHost, cfg.DirectPort, mtproxySecret)
+			mtproxyTmeURL = fmt.Sprintf("https://t.me/proxy?server=%s&port=%d&secret=%s", directHost, cfg.DirectPort, mtproxySecret)
+		}
 	}
 
 	return mtproxySecret, mtproxyURL, mtproxyTmeURL, tgURL, tmeURL, bridgeURL, webProxies
@@ -2077,8 +2196,20 @@ func BuildTgLinks(cfg Config, secret string) (RevealData, error) {
 	activeSecret := cfg.Secret
 	if secret != "" {
 		activeSecret = secret
-	} else if len(cfg.Users) > 0 && cfg.Users[0].Secret != "" {
-		activeSecret = cfg.Users[0].Secret
+	} else if len(cfg.Users) > 0 {
+		picked := ""
+		for _, u := range cfg.Users {
+			if u.Enabled && u.Secret != "" {
+				picked = u.Secret
+				break
+			}
+		}
+		if picked == "" && cfg.Users[0].Secret != "" {
+			picked = cfg.Users[0].Secret
+		}
+		if picked != "" {
+			activeSecret = picked
+		}
 	}
 
 	mtproxySecret, mtproxyURL, mtproxyTmeURL, tgURL, tmeURL, bridgeURL, webProxies := buildSingleUserLinks(cfg, activeSecret)
@@ -2101,10 +2232,15 @@ func BuildTgLinks(cfg Config, secret string) (RevealData, error) {
 		})
 	}
 
+	directHost := strings.TrimSpace(cfg.DirectHost)
+	if cfg.Scenario == ScenarioCDNHTTP {
+		directHost = ""
+	}
+
 	return RevealData{
 		Secret:        activeSecret,
 		LegacySecret:  cfg.LegacySecret,
-		DirectHost:    cfg.DirectHost,
+		DirectHost:    directHost,
 		DirectPort:    cfg.DirectPort,
 		TlsDomain:     cfg.TlsDomain,
 		TgURL:         tgURL,
@@ -2225,6 +2361,13 @@ func resolveRevealTarget(cfg Config, userID string) (TelegramUser, error) {
 	if len(users) == 0 && userID == "" {
 		return TelegramUser{}, nil
 	}
+	if userID == "" {
+		for _, u := range users {
+			if u.Enabled && u.Secret != "" {
+				return u, nil
+			}
+		}
+	}
 	for _, u := range users {
 		if userID == "" || u.ID == userID {
 			if u.Secret == "" {
@@ -2278,8 +2421,12 @@ func (s *Service) RevealUserSecretLimited(userID string, allow func(id, revision
 	if target.ID == "" {
 		// No users configured (e.g. the last one was deleted): nothing to
 		// disclose, but the UI still gets connection metadata.
+		directHost := strings.TrimSpace(cfg.DirectHost)
+		if cfg.Scenario == ScenarioCDNHTTP {
+			directHost = ""
+		}
 		return RevealData{
-			DirectHost: cfg.DirectHost,
+			DirectHost: directHost,
 			DirectPort: cfg.DirectPort,
 			TlsDomain:  cfg.TlsDomain,
 			Users:      []UserRevealData{},
@@ -2307,7 +2454,7 @@ func (s *Service) RevealUserSecretLimited(userID string, allow func(id, revision
 }
 
 func DefaultEgressValidator(device string) error {
-	if device == "" {
+	if device == "" || device == "direct" {
 		return nil
 	}
 	iface, err := net.InterfaceByName(device)

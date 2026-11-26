@@ -662,4 +662,82 @@ describe('TelegramWebProxyCard', () => {
 		render(TelegramWebProxyCard, {});
 		await screen.findByText(m.servers_tg_direct_wan_error({ error: 'xtables lock' }));
 	});
+
+	it('allows renaming the default "Основной" user inline and hides MTProto tab in cdn_http scenario', async () => {
+		let currentRemark = 'Основной';
+		const sec = '00112233445566778899aabbccddeeff';
+		vi.mocked(api.getTgWebProxyConfig).mockImplementation(async () =>
+			baseConfig({
+				enabled: true,
+				scenario: 'cdn_http',
+				public_hostname: 'connect.example.netcraze.club',
+				direct_host: '',
+				users: [{ id: 'default', remark: currentRemark, enabled: true }],
+			}),
+		);
+		vi.mocked(api.getTgWebProxyStatus).mockImplementation(async () =>
+			baseStatus({
+				running: true,
+				webproxy_online: true,
+				users: [{ id: 'default', remark: currentRemark, enabled: true }],
+			}),
+		);
+		vi.mocked(api.tgWebProxyAction).mockImplementation(async (action, payload) => {
+			if (action === 'update_user' && typeof payload?.remark === 'string') {
+				currentRemark = payload.remark;
+			}
+			return baseStatus({
+				running: true,
+				webproxy_online: true,
+				users: [{ id: 'default', remark: currentRemark, enabled: true }],
+			});
+		});
+		vi.mocked(api.revealTgWebProxySecret).mockResolvedValue({
+			user_id: 'default',
+			user_remark: 'Мой iPhone',
+			secret: sec,
+			direct_host: '',
+			direct_port: 8443,
+			tls_domain: '',
+			tg_url: `tg://webproxy?server=connect.example.netcraze.club&secret=${sec}`,
+			tme_url: `https://t.me/webproxy?server=connect.example.netcraze.club&secret=${sec}`,
+			bridge_url: 'https://connect.example.netcraze.club/?bridge=abc',
+			mtproxy_secret: '',
+			mtproxy_url: '',
+			mtproxy_tme_url: '',
+			web_proxies: [
+				{
+					id: 'ep-primary',
+					hostname: 'connect.example.netcraze.club',
+					is_cdn: true,
+					tg_url: `tg://webproxy?server=connect.example.netcraze.club&secret=${sec}`,
+					tme_url: `https://t.me/webproxy?server=connect.example.netcraze.club&secret=${sec}`,
+					bridge_url: 'https://connect.example.netcraze.club/?bridge=abc',
+				},
+			],
+		});
+
+		render(TelegramWebProxyCard, {});
+
+		await screen.findByText('Основной');
+		const renameBtn = await screen.findByRole('button', { name: m.servers_tg_user_rename() });
+		await fireEvent.click(renameBtn);
+
+		const renameInput = await screen.findByRole('textbox', { name: m.servers_tg_user_rename() });
+		await fireEvent.input(renameInput, { target: { value: '  Мой iPhone  ' } });
+		await fireEvent.keyDown(renameInput, { key: 'Enter' });
+
+		await waitFor(() => {
+			expect(api.tgWebProxyAction).toHaveBeenCalledWith('update_user', {
+				user_id: 'default',
+				remark: 'Мой iPhone',
+			});
+		});
+		await screen.findByText('Мой iPhone');
+
+		// Open QR / Link modal in cdn_http -> MTProto tab must NOT be rendered
+		await fireEvent.click(screen.getByRole('button', { name: m.servers_tg_user_qr_link() }));
+		await screen.findByText(m.servers_tg_reveal_title());
+		expect(screen.queryByRole('button', { name: /MTProto/i })).toBeNull();
+	});
 });

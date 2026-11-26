@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -106,6 +107,39 @@ func (s *Service) PrepareCandidate(txID string, candidate Config) (string, error
 			IsCDN:    isCDN,
 		}, candidate)
 	}
+	if candidate.Endpoints != nil {
+		candidate.Endpoints = slices.Clone(candidate.Endpoints)
+	}
+	seenEndpointIDs := make(map[string]bool, len(candidate.Endpoints))
+	usedEndpointPorts := seedReservedEndpointPorts(candidate)
+	for i := range candidate.Endpoints {
+		if candidate.Endpoints[i].ID == "" {
+			continue
+		}
+		if !IsValidEndpointID(candidate.Endpoints[i].ID) {
+			return "", fmt.Errorf("%w: недопустимый идентификатор домена %q", ErrInvalidConfig, candidate.Endpoints[i].ID)
+		}
+		if seenEndpointIDs[candidate.Endpoints[i].ID] {
+			return "", fmt.Errorf("%w: дублирующийся идентификатор домена %q", ErrInvalidConfig, candidate.Endpoints[i].ID)
+		}
+		seenEndpointIDs[candidate.Endpoints[i].ID] = true
+		if candidate.Endpoints[i].ExternalBackend && candidate.Endpoints[i].ListenPort > 0 {
+			usedEndpointPorts[candidate.Endpoints[i].ListenPort] = true
+		}
+	}
+	for i := range candidate.Endpoints {
+		if candidate.Endpoints[i].ID == "" {
+			seq := i + 1
+			for seenEndpointIDs[fmt.Sprintf("ep-%d", seq)] {
+				seq++
+			}
+			candidate.Endpoints[i].ID = fmt.Sprintf("ep-%d", seq)
+			seenEndpointIDs[candidate.Endpoints[i].ID] = true
+			if candidate.Endpoints[i].ExternalBackend && candidate.Endpoints[i].ListenPort > 0 {
+				usedEndpointPorts[candidate.Endpoints[i].ListenPort] = true
+			}
+		}
+	}
 	for i := range candidate.Endpoints {
 		if candidate.Endpoints[i].Preset == "" {
 			candidate.Endpoints[i].Preset = InferEndpointPreset(candidate.Endpoints[i], candidate)
@@ -117,20 +151,41 @@ func (s *Service) PrepareCandidate(txID string, candidate Config) (string, error
 				candidate.Endpoints[i].CarrierMode = spec.CarrierMode
 			}
 		}
-		if candidate.Endpoints[i].ListenPort <= 0 || (i > 0 && candidate.Endpoints[i].ListenPort >= 8080 && candidate.Endpoints[i].ListenPort < 9000) {
-			if i == 0 {
+		if candidate.Endpoints[i].ExternalBackend {
+			if candidate.Endpoints[i].ListenPort <= 0 {
 				candidate.Endpoints[i].ListenPort = 8084
-			} else {
-				candidate.Endpoints[i].ListenPort = 18084 + (i-1)*3
 			}
+			usedEndpointPorts[candidate.Endpoints[i].ListenPort] = true
+			continue
 		}
-		if candidate.Endpoints[i].AdminPort <= 0 || (i > 0 && candidate.Endpoints[i].AdminPort >= 8080 && candidate.Endpoints[i].AdminPort < 9000) {
-			if i == 0 {
+		if i == 0 {
+			if candidate.Endpoints[i].ListenPort <= 0 || (candidate.Endpoints[i].ListenPort >= 18084 && candidate.Endpoints[i].ListenPort < 19000) {
+				candidate.Endpoints[i].ListenPort = 8084
+			}
+			if candidate.Endpoints[i].AdminPort <= 0 || (candidate.Endpoints[i].AdminPort >= 18084 && candidate.Endpoints[i].AdminPort < 19000) {
 				candidate.Endpoints[i].AdminPort = 8086
-			} else {
-				candidate.Endpoints[i].AdminPort = 18086 + (i-1)*3
 			}
+			usedEndpointPorts[candidate.Endpoints[i].ListenPort] = true
+			usedEndpointPorts[candidate.Endpoints[i].AdminPort] = true
+			continue
 		}
+		needPortReassign := candidate.Endpoints[i].ListenPort <= 0 ||
+			(candidate.Endpoints[i].ListenPort >= 8080 && candidate.Endpoints[i].ListenPort < 9000) ||
+			usedEndpointPorts[candidate.Endpoints[i].ListenPort] ||
+			candidate.Endpoints[i].AdminPort <= 0 ||
+			(candidate.Endpoints[i].AdminPort >= 8080 && candidate.Endpoints[i].AdminPort < 9000) ||
+			usedEndpointPorts[candidate.Endpoints[i].AdminPort] ||
+			candidate.Endpoints[i].ListenPort == candidate.Endpoints[i].AdminPort
+		if needPortReassign {
+			slot := i - 1
+			for usedEndpointPorts[18084+slot*3] || usedEndpointPorts[18086+slot*3] {
+				slot++
+			}
+			candidate.Endpoints[i].ListenPort = 18084 + slot*3
+			candidate.Endpoints[i].AdminPort = 18086 + slot*3
+		}
+		usedEndpointPorts[candidate.Endpoints[i].ListenPort] = true
+		usedEndpointPorts[candidate.Endpoints[i].AdminPort] = true
 	}
 
 	var validator EgressValidator
@@ -355,7 +410,7 @@ func (s *Service) CommitPrepared(txID string) error {
 			"profiles.json": true,
 		}
 		for i, ep := range endpoints {
-			if i == 0 {
+			if i == 0 || ep.ExternalBackend {
 				continue
 			}
 			epCfgName := fmt.Sprintf("config_%s.json", ep.ID)

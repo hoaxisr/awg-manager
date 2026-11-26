@@ -1704,7 +1704,9 @@ func (c *Coordinator) ExecuteIngressTransaction(ctx context.Context, params Ingr
 			if params.Telegram.Scenario != "" {
 				cfg.Scenario = params.Telegram.Scenario
 			}
-			if params.Telegram.DirectHost != "" {
+			if params.Telegram.Scenario == tgwebproxy.ScenarioCDNHTTP {
+				cfg.DirectHost = ""
+			} else if params.Telegram.DirectHost != "" {
 				cfg.DirectHost = params.Telegram.DirectHost
 			}
 			if params.Telegram.DirectPort > 0 {
@@ -1730,33 +1732,77 @@ func (c *Coordinator) ExecuteIngressTransaction(ctx context.Context, params Ingr
 			if params.Telegram.CarrierMode != "" {
 				cfg.CarrierMode = params.Telegram.CarrierMode
 			}
+			presetOverride := ""
 			if params.Telegram.NetworkPreset != "" {
 				cfg.NetworkPreset = params.Telegram.NetworkPreset
+				presetOverride = params.Telegram.NetworkPreset
 			} else if params.Telegram.IsCDN != nil && cfg.PublicHostname != "" {
-				cfg.NetworkPreset = tgwebproxy.InferEndpointPreset(tgwebproxy.WebProxyEndpoint{
+				inferred := tgwebproxy.InferEndpointPreset(tgwebproxy.WebProxyEndpoint{
 					Hostname: cfg.PublicHostname,
 					IsCDN:    *params.Telegram.IsCDN,
 				}, cfg)
+				cfg.NetworkPreset = inferred
+				presetOverride = inferred
 			}
-			if len(cfg.Endpoints) > 0 {
-				if cfg.PublicHostname != "" {
-					cfg.Endpoints[0].Hostname = cfg.PublicHostname
-				}
+			if (params.Telegram.PublicHostname != "" || strings.Contains(cfg.PublicHostname, ",")) && cfg.PublicHostname != "" {
+				cfg.Endpoints = tgwebproxy.SyncEndpointsWithHostnames(
+					cfg.Endpoints,
+					cfg.PublicHostname,
+					cfg,
+					params.Telegram.CarrierMode,
+					presetOverride,
+					params.Telegram.IsCDN,
+				)
+			} else if len(cfg.Endpoints) > 0 && params.Telegram.Scenario != "direct_fake_tls" {
 				if params.Telegram.CarrierMode != "" {
 					cfg.Endpoints[0].CarrierMode = params.Telegram.CarrierMode
 				}
-				if cfg.NetworkPreset != "" {
-					cfg.Endpoints[0].Preset = cfg.NetworkPreset
+				if presetOverride != "" {
+					cfg.Endpoints[0].Preset = presetOverride
 				}
 				if params.Telegram.IsCDN != nil {
 					cfg.Endpoints[0].IsCDN = *params.Telegram.IsCDN
 				}
 			}
-			if params.Telegram.UpstreamDevice != "" {
-				cfg.UpstreamDevice = params.Telegram.UpstreamDevice
+			if params.Telegram.UpstreamDevice != "" || params.Telegram.SetUpstream {
+				nextDev := strings.TrimSpace(params.Telegram.UpstreamDevice)
+				if nextDev == "direct" {
+					nextDev = ""
+				}
+				if len(cfg.Upstreams) > 0 && nextDev != cfg.UpstreamDevice {
+					cfg.Upstreams = nil
+				}
+				cfg.UpstreamDevice = nextDev
 			}
 			if params.Telegram.Secret != "" {
+				oldSecret := cfg.Secret
 				cfg.Secret = params.Telegram.Secret
+				if len(cfg.Users) > 0 {
+					matchedIdx := -1
+					for i := range cfg.Users {
+						if strings.EqualFold(strings.TrimSpace(cfg.Users[i].Secret), strings.TrimSpace(params.Telegram.Secret)) {
+							matchedIdx = i
+							break
+						}
+					}
+					if matchedIdx >= 0 {
+						if params.Telegram.Enabled {
+							cfg.Users[matchedIdx].Enabled = true
+						}
+					} else {
+						targetIdx := 0
+						for i := range cfg.Users {
+							if cfg.Users[i].ID == "default" || (oldSecret != "" && strings.EqualFold(strings.TrimSpace(cfg.Users[i].Secret), strings.TrimSpace(oldSecret))) {
+								targetIdx = i
+								break
+							}
+						}
+						cfg.Users[targetIdx].Secret = params.Telegram.Secret
+						if params.Telegram.Enabled {
+							cfg.Users[targetIdx].Enabled = true
+						}
+					}
+				}
 			}
 			candTg = &cfg
 

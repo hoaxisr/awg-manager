@@ -6,6 +6,7 @@
 	import { notifications } from '$lib/stores/notifications';
 	import { renderCrispQrDataUrl } from '$lib/utils/qrSvg';
 	import { Copy, ExternalLink, Check } from 'lucide-svelte';
+	import { EXTERNAL_ACCESS_LABELS } from '../external-access/connectionLabels';
 	import RevealGate from './RevealGate.svelte';
 	import QrZoomModal from './QrZoomModal.svelte';
 	import CodeExportBlock from './CodeExportBlock.svelte';
@@ -23,28 +24,50 @@
 	let effectiveViewKind = $derived<'xray' | 'tgwebproxy'>(
 		kind === 'both' ? activeServiceTab : kind
 	);
+	let activeTgMethod = $state<'mtproxy' | 'webproxy'>('mtproxy');
+	let hasDirectTg = $derived(Boolean(creds?.direct_link));
+	let hasWebTg = $derived(Boolean(creds?.web_link));
+	let effectiveTgMethod = $derived<'mtproxy' | 'webproxy'>(
+		hasDirectTg && hasWebTg ? activeTgMethod : hasDirectTg ? 'mtproxy' : 'webproxy'
+	);
+	let activeTgLink = $derived(
+		effectiveTgMethod === 'mtproxy' ? creds?.direct_link || '' : creds?.web_link || ''
+	);
 	let activeFormat = $state<'vless' | 'happ' | 'singbox' | 'mihomo'>('vless');
 	let qrDataUrl = $state('');
 	let qrZoomOpen = $state(false);
 	let copiedKey = $state<string | null>(null);
+	let qrSeq = 0;
 
 	$effect(() => {
-		if (creds) {
-			const target =
-				effectiveViewKind === 'tgwebproxy'
-					? creds.direct_link || creds.web_link || ''
-					: creds.vless_url || creds.direct_link || creds.web_link || '';
-			if (target) {
-				void generateQR(target);
-			}
+		if (!creds) {
+			qrSeq++;
+			qrDataUrl = '';
+			return;
+		}
+		const target =
+			effectiveViewKind === 'tgwebproxy'
+				? activeTgLink
+				: creds.vless_url || '';
+		if (target) {
+			void generateQR(target);
+		} else {
+			qrSeq++;
+			qrDataUrl = '';
 		}
 	});
 
 	async function generateQR(text: string) {
+		const seq = ++qrSeq;
 		try {
-			qrDataUrl = await renderCrispQrDataUrl(text);
+			const url = await renderCrispQrDataUrl(text);
+			if (seq === qrSeq) {
+				qrDataUrl = url;
+			}
 		} catch {
-			qrDataUrl = '';
+			if (seq === qrSeq) {
+				qrDataUrl = '';
+			}
 		}
 	}
 
@@ -85,6 +108,26 @@
 		{/if}
 		<!-- Result content for Telegram Web Proxy -->
 		{#if effectiveViewKind === 'tgwebproxy'}
+			{#if hasDirectTg && hasWebTg}
+				<div class="format-tabs">
+					<button
+						type="button"
+						class="tab-btn"
+						class:active={effectiveTgMethod === 'mtproxy'}
+						onclick={() => (activeTgMethod = 'mtproxy')}
+					>
+						{EXTERNAL_ACCESS_LABELS.telegramMtproto}
+					</button>
+					<button
+						type="button"
+						class="tab-btn"
+						class:active={effectiveTgMethod === 'webproxy'}
+						onclick={() => (activeTgMethod = 'webproxy')}
+					>
+						{EXTERNAL_ACCESS_LABELS.telegramWeb}
+					</button>
+				</div>
+			{/if}
 			<div class="result-grid">
 				<!-- Left: QR Code & Direct Actions -->
 				<div class="qr-panel">
@@ -100,9 +143,9 @@
 						<span class="qr-hint">{m.servers_wizard_result_qr_hint_tg()}</span>
 					{/if}
 
-					{#if creds.direct_link}
+					{#if activeTgLink}
 						<Button
-							href={creds.direct_link}
+							href={activeTgLink}
 							target="_blank"
 							rel="noopener noreferrer"
 							variant="primary"
@@ -117,7 +160,7 @@
 
 				<!-- Right: Links & Secret Details -->
 				<div class="details-panel">
-					{#if creds.direct_link}
+					{#if effectiveTgMethod === 'mtproxy' && creds.direct_link}
 						<div class="form-group">
 							<span class="field-label">{m.servers_wizard_result_mtproxy_link()}</span>
 							<div class="copy-input-row">
@@ -137,7 +180,7 @@
 						</div>
 					{/if}
 
-					{#if creds.web_link}
+					{#if effectiveTgMethod === 'webproxy' && creds.web_link}
 						<div class="form-group">
 							<span class="field-label">{m.servers_wizard_result_web_link()}</span>
 							<div class="copy-input-row">
@@ -157,7 +200,7 @@
 						</div>
 					{/if}
 
-					{#if creds.direct_link && creds.mtproxy_secret}
+					{#if effectiveTgMethod === 'mtproxy' && creds.direct_link && creds.mtproxy_secret}
 						<div class="params-box">
 							<div class="params-header">{m.servers_wizard_result_manual_params()}</div>
 							<div class="params-grid">

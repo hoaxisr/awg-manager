@@ -6,16 +6,52 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 var (
 	ErrInvalidSecret   = errors.New("invalid MTProto secret")
 	ErrDuplicateSecret = errors.New("duplicate MTProto secret")
 	ErrInvalidUpstream = errors.New("invalid upstream configuration")
+	ErrInvalidConfig   = errors.New("invalid telegram proxy configuration")
 )
+
+const MaxUserRemarkRunes = 64
+
+// SanitizeUserRemark trims whitespace and rejects empty, control-character, or overly long user remarks.
+func SanitizeUserRemark(raw string) (string, error) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return "", fmt.Errorf("%w: имя пользователя не может быть пустым", ErrInvalidConfig)
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) {
+			return "", fmt.Errorf("%w: имя пользователя содержит недопустимые управляющие символы", ErrInvalidConfig)
+		}
+	}
+	if utf8.RuneCountInString(s) > MaxUserRemarkRunes {
+		return "", fmt.Errorf("%w: имя пользователя не должно превышать %d символов", ErrInvalidConfig, MaxUserRemarkRunes)
+	}
+	return s, nil
+}
+
+// IsValidEndpointID validates that an endpoint ID is safe for per-endpoint config/profile filenames.
+func IsValidEndpointID(id string) bool {
+	if len(id) == 0 || len(id) > 64 {
+		return false
+	}
+	for _, c := range id {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_') {
+			return false
+		}
+	}
+	return true
+}
 
 const (
 	CurrentSchemaVersion = 2
@@ -593,36 +629,203 @@ type WebProxyStatusLink struct {
 	IsCDN       bool   `json:"is_cdn"`
 }
 
+func splitTrimmedHosts(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	seen := make(map[string]bool, len(parts))
+	for _, p := range parts {
+		h := strings.TrimSpace(p)
+		if h == "" {
+			continue
+		}
+		key := strings.ToLower(h)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, h)
+	}
+	return out
+}
+
+// SyncEndpointsWithHostnames reconciles Endpoints with single or comma-separated public hostnames
+// so no WebProxyEndpoint ever receives a comma-joined hostname.
+func SyncEndpointsWithHostnames(
+	existing []WebProxyEndpoint,
+	publicHostname string,
+	cfg Config,
+	carrierOverride string,
+	presetOverride string,
+	isCDNOverride *bool,
+) []WebProxyEndpoint {
+	hosts := splitTrimmedHosts(publicHostname)
+	if len(hosts) == 0 {
+		return slices.Clone(existing)
+	}
+	if len(existing) == 0 && len(hosts) == 1 {
+		return nil
+	}
+
+	inNewHosts := make(map[string]bool, len(hosts))
+	for _, h := range hosts {
+		inNewHosts[strings.ToLower(h)] = true
+	}
+	byHost := make(map[string]WebProxyEndpoint, len(existing))
+	for _, ep := range existing {
+		h := strings.ToLower(strings.TrimSpace(strings.Split(ep.Hostname, ",")[0]))
+		if h != "" {
+			byHost[h] = ep
+		}
+	}
+	existing0Host := ""
+	if len(existing) > 0 {
+		existing0Host = strings.ToLower(strings.TrimSpace(strings.Split(existing[0].Hostname, ",")[0]))
+	}
+	adminPort := cfg.AdminPort
+	if adminPort <= 0 {
+		adminPort = 8086
+	}
+	out := make([]WebProxyEndpoint, 0, len(hosts))
+	usedIDs := make(map[string]bool, len(hosts))
+	usedPorts := seedReservedEndpointPorts(cfg)
+	for i, host := range hosts {
+		var ep WebProxyEndpoint
+		if prev, ok := byHost[strings.ToLower(host)]; ok {
+			ep = prev
+		} else if i == 0 && len(existing) > 0 && (existing0Host == "" || !inNewHosts[existing0Host]) {
+			ep = existing[0]
+			ep.Enabled = true
+		} else {
+			ep = WebProxyEndpoint{
+				Enabled: true,
+			}
+		}
+		if len(hosts) == 1 {
+			ep.Enabled = true
+		}
+		ep.Hostname = host
+		if ep.ID != "" && IsValidEndpointID(ep.ID) && !usedIDs[ep.ID] {
+			usedIDs[ep.ID] = true
+		} else {
+			ep.ID = ""
+		}
+		if i == 0 {
+			if !ep.ExternalBackend {
+				ep.ListenPort = 8084
+				ep.AdminPort = adminPort
+				usedPorts[ep.ListenPort] = true
+				usedPorts[ep.AdminPort] = true
+			} else if ep.ListenPort > 0 {
+				usedPorts[ep.ListenPort] = true
+			}
+			if ep.Description == "" {
+				ep.Description = "Основной веб-прокси"
+			}
+		} else {
+			if !ep.ExternalBackend {
+				slot := i - 1
+				for usedPorts[18084+slot*3] || usedPorts[18086+slot*3] {
+					slot++
+				}
+				ep.ListenPort = 18084 + slot*3
+				ep.AdminPort = 18086 + slot*3
+				usedPorts[ep.ListenPort] = true
+				usedPorts[ep.AdminPort] = true
+			} else if ep.ListenPort > 0 {
+				usedPorts[ep.ListenPort] = true
+			}
+			if ep.Description == "" {
+				ep.Description = fmt.Sprintf("Веб-прокси #%d", i+1)
+			}
+		}
+		if carrierOverride != "" {
+			ep.CarrierMode = carrierOverride
+		} else if ep.CarrierMode == "" {
+			ep.CarrierMode = cfg.CarrierMode
+		}
+		if isCDNOverride != nil {
+			ep.IsCDN = *isCDNOverride
+		}
+		if presetOverride != "" {
+			ep.Preset = presetOverride
+		} else if ep.Preset == "" {
+			ep.Preset = InferEndpointPreset(ep, cfg)
+		}
+		out = append(out, ep)
+	}
+	anyEnabled := false
+	for i := range out {
+		if out[i].ID == "" {
+			if i == 0 && !usedIDs["ep-primary"] {
+				out[i].ID = "ep-primary"
+			} else {
+				seq := i + 1
+				for usedIDs[fmt.Sprintf("ep-%d", seq)] {
+					seq++
+				}
+				out[i].ID = fmt.Sprintf("ep-%d", seq)
+			}
+			usedIDs[out[i].ID] = true
+		}
+		if out[i].Enabled {
+			anyEnabled = true
+		}
+	}
+	if len(out) > 0 && !anyEnabled {
+		out[0].Enabled = true
+	}
+	return out
+}
+
 func (c Config) GetEndpoints() []WebProxyEndpoint {
 	if len(c.Endpoints) > 0 {
-		return c.Endpoints
+		return slices.Clone(c.Endpoints)
 	}
-	if c.PublicHostname != "" {
-		listenPort := 8084
+	hosts := splitTrimmedHosts(c.PublicHostname)
+	if len(hosts) > 0 {
 		adminPort := c.AdminPort
 		if adminPort <= 0 {
 			adminPort = 8086
 		}
-		hostLower := strings.ToLower(c.PublicHostname)
-		isCDNHint := strings.Contains(hostLower, "edge") || strings.Contains(hostLower, "cdn") ||
-			strings.Contains(hostLower, "selcdn")
-		isExplicitDirect := strings.EqualFold(c.NetworkPreset, PresetKeenDNS) ||
-			strings.EqualFold(c.NetworkPreset, PresetStaticIP) ||
-			(c.NetworkPreset == "" && strings.EqualFold(c.CarrierMode, "websocket") && !isCDNHint)
-		isCDN := isCDNHint || (!isExplicitDirect && (c.Scenario == ScenarioCDNHTTP || c.Scenario == ScenarioDual))
-		return []WebProxyEndpoint{
-			{
-				ID:          "ep-primary",
-				Hostname:    c.PublicHostname,
+		out := make([]WebProxyEndpoint, 0, len(hosts))
+		usedPorts := seedReservedEndpointPorts(c)
+		for i, host := range hosts {
+			hostLower := strings.ToLower(host)
+			isCDNHint := strings.Contains(hostLower, "edge") || strings.Contains(hostLower, "cdn") ||
+				strings.Contains(hostLower, "selcdn")
+			isExplicitDirect := strings.EqualFold(c.NetworkPreset, PresetKeenDNS) ||
+				strings.EqualFold(c.NetworkPreset, PresetStaticIP) ||
+				(c.NetworkPreset == "" && strings.EqualFold(c.CarrierMode, "websocket") && !isCDNHint)
+			isCDN := isCDNHint || (!isExplicitDirect && (c.Scenario == ScenarioCDNHTTP || c.Scenario == ScenarioDual))
+			id := "ep-primary"
+			listenPort := 8084
+			epAdminPort := adminPort
+			desc := "Основной веб-прокси"
+			if i > 0 {
+				id = fmt.Sprintf("ep-%d", i+1)
+				slot := i - 1
+				for usedPorts[18084+slot*3] || usedPorts[18086+slot*3] {
+					slot++
+				}
+				listenPort = 18084 + slot*3
+				epAdminPort = 18086 + slot*3
+				desc = fmt.Sprintf("Веб-прокси #%d", i+1)
+			}
+			usedPorts[listenPort] = true
+			usedPorts[epAdminPort] = true
+			out = append(out, WebProxyEndpoint{
+				ID:          id,
+				Hostname:    host,
 				ListenPort:  listenPort,
-				AdminPort:   adminPort,
-				Description: "Основной веб-прокси",
+				AdminPort:   epAdminPort,
+				Description: desc,
 				Preset:      c.NetworkPreset,
 				CarrierMode: c.CarrierMode,
 				IsCDN:       isCDN,
 				Enabled:     true,
-			},
+			})
 		}
+		return out
 	}
 	return nil
 }

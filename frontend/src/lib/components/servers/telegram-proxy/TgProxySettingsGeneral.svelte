@@ -69,6 +69,18 @@
 	function removeEndpoint(idx: number) {
 		if (editConfig.endpoints && editConfig.endpoints.length > 1) {
 			editConfig.endpoints.splice(idx, 1);
+			const ep0 = editConfig.endpoints[0];
+			if (ep0 && !ep0.external_backend) {
+				if (ep0.listen_port >= 18084 && ep0.listen_port < 19000) {
+					ep0.listen_port = 8084;
+				}
+				if (ep0.admin_port >= 18084 && ep0.admin_port < 19000) {
+					ep0.admin_port = 8086;
+				}
+			}
+			if (ep0?.hostname) {
+				editConfig.public_hostname = ep0.hostname;
+			}
 		}
 	}
 </script>
@@ -121,7 +133,7 @@
 	<div class="form-row">
 		<label class="form-field">
 			<span class="field-label">{m.servers_tg_tls_domain_label()}</span>
-			<input type="text" bind:value={editConfig.tls_domain} class="text-input" placeholder="www.google.com" />
+			<input type="text" bind:value={editConfig.tls_domain} class="text-input" placeholder="ya.ru" />
 		</label>
 		<label class="form-field">
 			<span class="field-label">{m.servers_tg_direct_port_label()}</span>

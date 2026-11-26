@@ -92,6 +92,8 @@ func (r WizardPlanRequest) forTelegram() WizardPlanRequest {
 		tr.OriginHost = ""
 		tr.OriginScheme = ""
 		tr.OriginPort = 0
+	} else if strings.TrimSpace(tr.Scenario) == "cdn_http" {
+		tr.DirectHost = ""
 	}
 	if r.TgListenPort > 0 {
 		tr.ListenPort = r.TgListenPort
@@ -238,7 +240,9 @@ func BuildDesiredConfig(ctx context.Context, egressResolver egress.Resolver, req
 		}
 
 		desired.DirectHost = strings.TrimSpace(req.DirectHost)
-		if scenario == "direct_fake_tls" || scenario == "dual" {
+		if scenario == "cdn_http" {
+			desired.DirectHost = ""
+		} else if scenario == "direct_fake_tls" || scenario == "dual" {
 			if desired.DirectHost == "" {
 				return desired, errors.New("direct host is required for direct or dual scenario")
 			}

@@ -95,6 +95,7 @@
 	);
 
 	const TLS_SNI_PRESETS = [
+		{ domain: 'ya.ru', label: 'Yandex (ya.ru)' },
 		{ domain: 'www.google.com', label: 'Google (www.google.com)' },
 		{ domain: 'www.microsoft.com', label: 'Microsoft (www.microsoft.com)' },
 		{ domain: 'www.apple.com', label: 'Apple (www.apple.com)' },

@@ -107,6 +107,14 @@
 			} else if (!selectedWebProxyId && revealData?.web_proxies && revealData.web_proxies.length > 0) {
 				selectedWebProxyId = revealData.web_proxies[0].id;
 			}
+			const active = getActiveUserReveal();
+			const hasMt = expectsMt && Boolean(active?.mtproxy_url || revealData?.direct_host || !expectsWeb);
+			const hasWeb = expectsWeb || Boolean((active?.web_proxies || revealData?.web_proxies)?.length);
+			if (shareTab === 'mtproxy' && !hasMt && hasWeb) {
+				shareTab = 'webproxy';
+			} else if (shareTab === 'webproxy' && !hasWeb && hasMt) {
+				shareTab = 'mtproxy';
+			}
 			await updateRevealQR();
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : m.servers_tg_reveal_error());
@@ -264,6 +272,8 @@
 		</div>
 	{:else if revealData}
 		{@const activeUser = getActiveUserReveal()}
+		{@const showMtTab = expectsMt && Boolean(activeUser?.mtproxy_url || revealData.direct_host || !expectsWeb)}
+		{@const showWebTab = expectsWeb || Boolean((activeUser?.web_proxies || revealData.web_proxies)?.length)}
 		<div class="reveal-content">
 			{#if users.length > 0}
 				<div class="reveal-user-selector">
@@ -282,7 +292,7 @@
 			{/if}
 
 			<div class="reveal-tabs">
-				{#if expectsMt || activeUser?.mtproxy_url}
+				{#if showMtTab}
 					<button
 						type="button"
 						class="reveal-tab"
@@ -293,7 +303,7 @@
 						{EXTERNAL_ACCESS_LABELS.telegramMtproto}
 					</button>
 				{/if}
-				{#if expectsWeb || (activeUser?.web_proxies && activeUser.web_proxies.length > 0)}
+				{#if showWebTab}
 					<button
 						type="button"
 						class="reveal-tab"

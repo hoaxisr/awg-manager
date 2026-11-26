@@ -2,7 +2,7 @@
 	// Список пользователей прокси Telegram: включение, имя, ссылка/QR, удаление.
 	import { m } from '$lib/i18n';
 	import type { TelegramUser } from '$lib/types';
-	import { Button, IconButton, Input, Toggle } from '$lib/components/ui';
+	import { Button, IconButton, Toggle } from '$lib/components/ui';
 	import { Check, Pencil, Plus, QrCode, Trash2, X } from 'lucide-svelte';
 
 	interface Props {
@@ -12,25 +12,55 @@
 		onadd: () => void;
 		ontoggle: (user: TelegramUser) => void;
 		/** Новое имя — уже обрезанное, непустое и отличное от прежнего. */
-		onrename: (user: TelegramUser, remark: string) => void;
+		onrename: (user: TelegramUser, remark: string) => Promise<boolean | void> | boolean | void;
 		onreveal: (user: TelegramUser) => void;
 		ondelete: (user: TelegramUser) => void;
 	}
 
 	let { users, busyId, onadd, ontoggle, onrename, onreveal, ondelete }: Props = $props();
 
-	let editingId = $state('');
-	let draftName = $state('');
+	let editingUserId = $state<string>('');
+	let editingRemark = $state<string>('');
+	let renameSubmitting = $state(false);
+	let anyBusy = $derived(Boolean(busyId) || renameSubmitting);
+
+	$effect(() => {
+		if (editingUserId && !users.some((u) => u.id === editingUserId)) {
+			editingUserId = '';
+			editingRemark = '';
+		}
+	});
 
 	function startRename(user: TelegramUser) {
-		editingId = user.id;
-		draftName = user.remark;
+		if (anyBusy) return;
+		editingUserId = user.id;
+		editingRemark = user.remark;
 	}
 
-	function commitRename(user: TelegramUser) {
-		const next = draftName.trim();
-		editingId = '';
-		if (next && next !== user.remark) onrename(user, next);
+	function cancelRename() {
+		if (renameSubmitting) return;
+		editingUserId = '';
+		editingRemark = '';
+	}
+
+	async function submitRename(user: TelegramUser) {
+		if (anyBusy) return;
+		const cleaned = editingRemark.trim();
+		if (!cleaned) return;
+		if (cleaned === user.remark) {
+			cancelRename();
+			return;
+		}
+		renameSubmitting = true;
+		try {
+			const res = await onrename(user, cleaned);
+			if (res !== false && editingUserId === user.id) {
+				editingUserId = '';
+				editingRemark = '';
+			}
+		} finally {
+			renameSubmitting = false;
+		}
 	}
 </script>
 
@@ -53,35 +83,55 @@
 					<div class="tg-user-left">
 						<Toggle
 							checked={user.enabled}
-							disabled={busyId === user.id}
+							disabled={anyBusy}
 							onchange={() => ontoggle(user)}
 						/>
-						{#if editingId === user.id}
-							<Input value={draftName} ariaLabel={m.servers_tg_user_rename()} oninput={(v) => (draftName = v)} />
-							<IconButton
-								size="sm"
-								title={m.common_save()}
-								ariaLabel={m.common_save()}
-								disabled={!draftName.trim()}
-								onclick={() => commitRename(user)}
-							>
-								<Check size={14} />
-							</IconButton>
-							<IconButton
-								size="sm"
-								title={m.common_cancel()}
-								ariaLabel={m.common_cancel()}
-								onclick={() => (editingId = '')}
-							>
-								<X size={14} />
-							</IconButton>
+						{#if editingUserId === user.id}
+							<div class="tg-user-rename-inline">
+								<input
+									type="text"
+									maxlength={64}
+									class="tg-user-rename-input"
+									bind:value={editingRemark}
+									aria-label={m.servers_tg_user_rename()}
+									placeholder={m.servers_tg_user_rename()}
+									disabled={anyBusy}
+									onkeydown={(e) => {
+										if (e.key === 'Enter') {
+											e.preventDefault();
+											void submitRename(user);
+										} else if (e.key === 'Escape') {
+											e.preventDefault();
+											cancelRename();
+										}
+									}}
+								/>
+								<IconButton
+									size="sm"
+									title={m.common_save()}
+									ariaLabel={m.common_save()}
+									disabled={anyBusy || !editingRemark.trim()}
+									onclick={() => void submitRename(user)}
+								>
+									<Check size={14} />
+								</IconButton>
+								<IconButton
+									size="sm"
+									title={m.common_cancel()}
+									ariaLabel={m.common_cancel()}
+									disabled={anyBusy}
+									onclick={cancelRename}
+								>
+									<X size={14} />
+								</IconButton>
+							</div>
 						{:else}
 							<span class="tg-user-name" class:muted-name={!user.enabled}>{user.remark}</span>
 							<IconButton
 								size="sm"
 								title={m.servers_tg_user_rename()}
 								ariaLabel={m.servers_tg_user_rename()}
-								disabled={busyId === user.id}
+								disabled={anyBusy}
 								onclick={() => startRename(user)}
 							>
 								<Pencil size={13} />
@@ -101,8 +151,14 @@
 							size="md"
 							title={m.tg_user_delete_btn()}
 							ariaLabel={m.tg_user_delete_btn()}
-							disabled={busyId === user.id}
-							onclick={() => ondelete(user)}
+							disabled={anyBusy}
+							onclick={() => {
+								if (editingUserId === user.id) {
+									editingUserId = '';
+									editingRemark = '';
+								}
+								ondelete(user);
+							}}
 						>
 							<Trash2 size={14} />
 						</IconButton>
@@ -207,6 +263,23 @@
 
 	.tg-user-name.muted-name {
 		color: var(--color-text-muted);
+	}
+
+	.tg-user-rename-inline {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+	}
+
+	.tg-user-rename-input {
+		font-size: 13px;
+		padding: 4px 8px;
+		border-radius: var(--radius-sm);
+		border: 1px solid var(--color-accent-border, var(--color-border));
+		background: var(--color-bg-primary);
+		color: var(--color-text-primary);
+		min-width: 140px;
+		max-width: 220px;
 	}
 
 	.tg-user-actions {

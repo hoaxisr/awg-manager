@@ -20,6 +20,7 @@
 		createInitialWizardDraft,
 		buildPlanRequestFromDraft,
 		doesStep2RequireNATConfirm,
+		draftHasSavedWebScheme,
 		isCloudKeenDNSHost,
 		isDraftEgressValid,
 		isGrayIPNetwork,
@@ -27,7 +28,10 @@
 		isValidMtprotoDirectPort,
 		pickDefaultKeenDNSActionMode,
 		pickDefaultMtprotoDirectHost,
+		reconcileDraftForServiceKind,
+		reconcileDraftForTgScenario,
 		resolveEffectiveMtprotoDirectHost,
+		restoreSavedConnectionScheme,
 		shouldKeepExistingSchemeAfterStep1Change,
 		validateKeenDNSLabelClient,
 		type ExternalAccessInput,
@@ -103,12 +107,14 @@
 	let stopJobPoll: (() => void) | null = null;
 	let initialEditWasTgDirectOnly = $state(false);
 	let initialEditWasRealityOnly = $state(false);
+	let tgHasSavedWebScheme = $state(false);
 
 	// Direct VLESS + REALITY entry (white-IP preset)
 	type WizardRealityMode = 'off' | 'also' | 'only';
 	let realityState = $state<XrayRealityState | null>(null);
 	let realityMode = $state<WizardRealityMode>('off');
 	let realityInitiallyEnabled = $state(false);
+	let savedXrayRealityMode: WizardRealityMode = 'off';
 	let realityPort = $state(2053);
 	let realityTransport = $state<XrayRealityTransport>('tcp');
 	let realityDest = $state('www.microsoft.com:443');
@@ -178,8 +184,11 @@
 	);
 	let canReturnToSavedScheme = $derived(
 		draft.isEditMode &&
-			!(initialEditWasTgDirectOnly && !isTgDirectOnly) &&
-			!(initialEditWasRealityOnly && !isRealityOnly)
+			!isSavedSchemeIncompatible(
+				draft.selectedKind,
+				draft.tgScenario,
+				draft.selectedKind === 'xray' && initialEditWasRealityOnly
+			)
 	);
 	let step2NeedsNATConfirm = $derived(
 		doesStep2RequireNATConfirm({
@@ -347,6 +356,7 @@
 	async function initWizard(preferredKind?: WizardKind) {
 		const seq = ++initSeq;
 		userTouchedTgScenario = false;
+		savedXrayRealityMode = 'off';
 		stepIndex = 0;
 		applyPhase = 'review';
 		showAdvancedAddresses = false;
@@ -384,7 +394,15 @@
 				initial.existingClientCount === 0 && !initial.isEditMode
 					? { ...initial, clientRemark: m.servers_ext_wiz_my_phone() }
 					: initial;
-			initialEditWasTgDirectOnly = draft.isEditMode && isTgDirectOnlyDraft(draft);
+			const persistedTgScenario = input.tgConfig?.scenario || 'dual';
+			initialEditWasTgDirectOnly = Boolean(
+				!draft.vlessInitiallyEnabled &&
+					draft.tgInitiallyEnabled &&
+					persistedTgScenario === 'direct_fake_tls'
+			);
+			tgHasSavedWebScheme = Boolean(
+				draft.tgInitiallyEnabled && persistedTgScenario !== 'direct_fake_tls'
+			);
 			realityState = rSt;
 			const rEnabled = Boolean(rSt?.settings?.enabled);
 			realityInitiallyEnabled = rEnabled;
@@ -404,14 +422,29 @@
 			}
 			const hasCdnDomain = Boolean((input.xrayConfig?.public_domain || '').trim());
 			initialEditWasRealityOnly = Boolean(
-				draft.isEditMode && draft.selectedKind === 'xray' && rEnabled && !hasCdnDomain
+				draft.vlessInitiallyEnabled && vlessRStOnly(input, rEnabled)
 			);
-			if (draft.selectedKind === 'xray' && rEnabled && !hasCdnDomain) {
-				realityMode = 'only';
-			} else if ((draft.selectedKind === 'xray' || draft.selectedKind === 'both') && rEnabled) {
+			savedXrayRealityMode = rEnabled
+				? hasCdnDomain
+					? 'also'
+					: 'only'
+				: 'off';
+			if (draft.selectedKind === 'tgwebproxy') {
+				realityMode = 'off';
+			} else if (draft.selectedKind === 'both' && savedXrayRealityMode === 'only') {
 				realityMode = 'also';
 			} else {
-				realityMode = 'off';
+				realityMode = savedXrayRealityMode;
+			}
+			if (
+				draft.keepExistingConnectionScheme &&
+				isSavedSchemeIncompatible(
+					draft.selectedKind,
+					draft.tgScenario,
+					draft.selectedKind === 'xray' && realityMode === 'only'
+				)
+			) {
+				draft.keepExistingConnectionScheme = false;
 			}
 			const loadedCaps = await loadCapabilities(draft.selectedKind, seq);
 			if (seq !== initSeq || !open) return;
@@ -566,25 +599,79 @@
 		}
 	}
 
+	function vlessRStOnly(input: ExternalAccessInput, rEnabled: boolean): boolean {
+		const hasCdn = Boolean((input.xrayConfig?.public_domain || '').trim());
+		return Boolean(rEnabled && !hasCdn);
+	}
+
+	function isSavedSchemeIncompatible(
+		kind: WizardKind,
+		tgScenario: string,
+		nextIsRealityOnly: boolean
+	): boolean {
+		if (
+			initialEditWasTgDirectOnly &&
+			!(kind === 'tgwebproxy' && tgScenario === 'direct_fake_tls')
+		) {
+			return true;
+		}
+		if (kind === 'tgwebproxy' && tgScenario !== 'direct_fake_tls' && !tgHasSavedWebScheme) {
+			return true;
+		}
+		if (
+			initialEditWasRealityOnly &&
+			!nextIsRealityOnly &&
+			(kind === 'xray' || !tgHasSavedWebScheme)
+		) {
+			return true;
+		}
+		if (!initialEditWasRealityOnly && nextIsRealityOnly) {
+			return true;
+		}
+		return false;
+	}
+
 	function selectServiceKind(kind: WizardKind) {
 		if (initializing) return;
-		draft.selectedKind = kind;
+		const prevKind = draft.selectedKind;
+		const wasIncompatible = isSavedSchemeIncompatible(
+			prevKind,
+			draft.tgScenario,
+			prevKind === 'xray' && realityMode === 'only'
+		);
+		if (prevKind === 'xray') {
+			savedXrayRealityMode = realityMode;
+		} else if (prevKind === 'both') {
+			if (realityMode === 'off') {
+				savedXrayRealityMode = 'off';
+			} else if (savedXrayRealityMode !== 'only') {
+				savedXrayRealityMode = realityMode;
+			}
+		}
+		reconcileDraftForServiceKind(draft, kind);
 		draft.disableOtherService = false;
 		draft.confirmDirectBehindNAT = false;
+		if (isTgDirectOnlyDraft(draft)) {
+			draft.keendnsMode = 'manual';
+		}
 		if (kind === 'tgwebproxy') {
 			realityMode = 'off';
-			if (draft.tgScenario === 'direct_fake_tls') {
-				draft.keendnsMode = 'manual';
-				draft.connectionWay = 'direct';
-				draft.originType = 'public_address';
-			}
-		} else if (kind === 'both' && realityMode === 'only') {
-			realityMode = 'also';
+		} else if (kind === 'both') {
+			realityMode = savedXrayRealityMode === 'only' ? 'also' : savedXrayRealityMode;
+		} else {
+			realityMode = savedXrayRealityMode;
 		}
-		draft.keepExistingConnectionScheme = shouldKeepExistingSchemeAfterStep1Change(
-			initialEditWasTgDirectOnly,
-			draft
-		);
+		const nextIsRealityOnly = kind === 'xray' && realityMode === 'only';
+		const nowIncompatible = isSavedSchemeIncompatible(kind, draft.tgScenario, nextIsRealityOnly);
+		if (nowIncompatible || draft.schemeCustomized) {
+			draft.keepExistingConnectionScheme = false;
+		} else if (wasIncompatible && draft.isEditMode) {
+			draft.keepExistingConnectionScheme = true;
+		} else {
+			draft.keepExistingConnectionScheme =
+				draft.isEditMode &&
+				shouldKeepExistingSchemeAfterStep1Change(initialEditWasTgDirectOnly, draft);
+		}
 		if (
 			(kind === 'tgwebproxy' || kind === 'both') &&
 			(draft.tgScenario === 'dual' || draft.tgScenario === 'direct_fake_tls')
@@ -596,18 +683,47 @@
 
 	function selectTgScenario(scenario: string) {
 		if (initializing) return;
-		userTouchedTgScenario = true;
-		draft.tgScenario = scenario;
-		draft.confirmDirectBehindNAT = false;
-		if (draft.selectedKind === 'tgwebproxy' && scenario === 'direct_fake_tls') {
-			draft.keendnsMode = 'manual';
-			draft.connectionWay = 'direct';
-			draft.originType = 'public_address';
-		}
-		draft.keepExistingConnectionScheme = shouldKeepExistingSchemeAfterStep1Change(
-			initialEditWasTgDirectOnly,
-			draft
+		const wasIncompatible = isSavedSchemeIncompatible(
+			draft.selectedKind,
+			draft.tgScenario,
+			isRealityOnly
 		);
+		userTouchedTgScenario = true;
+		reconcileDraftForTgScenario(draft, scenario);
+		draft.confirmDirectBehindNAT = false;
+		if (
+			draft.selectedKind === 'tgwebproxy' &&
+			scenario !== 'direct_fake_tls' &&
+			!tgHasSavedWebScheme &&
+			!draft.schemeCustomized &&
+			!draft.hasWebDraft &&
+			grayIPDetected
+		) {
+			draft.originType = 'cloud_address';
+			if (keendnsAvailable) {
+				draft.connectionWay = 'direct';
+				setKeenDNSActionMode(
+					pickDefaultKeenDNSActionMode({
+						keendnsAvailable,
+						hasCompatiblePublications: compatibleKeenDNSPublications.length > 0,
+					})
+				);
+			}
+		}
+		const nowIncompatible = isSavedSchemeIncompatible(
+			draft.selectedKind,
+			scenario,
+			isRealityOnly
+		);
+		if (nowIncompatible || draft.schemeCustomized) {
+			draft.keepExistingConnectionScheme = false;
+		} else if (wasIncompatible && draft.isEditMode) {
+			draft.keepExistingConnectionScheme = true;
+		} else {
+			draft.keepExistingConnectionScheme =
+				draft.isEditMode &&
+				shouldKeepExistingSchemeAfterStep1Change(initialEditWasTgDirectOnly, draft);
+		}
 		if (scenario === 'dual' || scenario === 'direct_fake_tls') {
 			prefillMtprotoDirectHostIfEmpty();
 		}
@@ -615,8 +731,11 @@
 
 	function switchToWebBridgeFromCGNAT() {
 		userTouchedTgScenario = true;
-		draft.tgScenario = 'cdn_http';
+		reconcileDraftForTgScenario(draft, 'cdn_http');
 		draft.keepExistingConnectionScheme = false;
+		if (draftHasSavedWebScheme(draft)) {
+			draft.schemeCustomized = true;
+		}
 		draft.confirmDirectBehindNAT = false;
 		draft.originType = 'cloud_address';
 		draft.connectionWay = 'direct';
@@ -625,19 +744,25 @@
 			pickDefaultKeenDNSActionMode({
 				keendnsAvailable,
 				hasCompatiblePublications: compatibleKeenDNSPublications.length > 0,
-			})
+			}),
+			false
 		);
 	}
 
 	function switchToWebBridgeOnly() {
 		userTouchedTgScenario = true;
-		draft.tgScenario = 'cdn_http';
+		reconcileDraftForTgScenario(draft, 'cdn_http');
 		draft.confirmDirectBehindNAT = false;
 		draft.directHost = '';
 	}
 
 	function switchToVlessDomain() {
+		savedXrayRealityMode = 'off';
 		realityMode = 'off';
+		draft.realityOnlyDisabled = true;
+		if (draft.vlessInitiallyEnabled) {
+			draft.schemeCustomized = true;
+		}
 		draft.confirmDirectBehindNAT = false;
 		draft.keepExistingConnectionScheme = false;
 		if (keendnsAvailable) {
@@ -647,14 +772,38 @@
 				pickDefaultKeenDNSActionMode({
 					keendnsAvailable,
 					hasCompatiblePublications: compatibleKeenDNSPublications.length > 0,
-				})
+				}),
+				false
 			);
 		} else {
 			draft.connectionWay = 'external_https';
 		}
 	}
 
-	function setKeenDNSActionMode(mode: 'manual' | 'existing' | 'create') {
+	function handleRestoreSavedScheme() {
+		restoreSavedConnectionScheme(draft);
+		savedXrayRealityMode = realityInitiallyEnabled
+			? draft.vlessHasSavedWebScheme
+				? 'also'
+				: 'only'
+			: 'off';
+		if (draft.selectedKind === 'tgwebproxy') {
+			realityMode = 'off';
+		} else if (draft.selectedKind === 'both') {
+			realityMode = savedXrayRealityMode === 'only' ? 'also' : savedXrayRealityMode;
+		} else {
+			realityMode = savedXrayRealityMode;
+		}
+	}
+
+	function setKeenDNSActionMode(
+		mode: 'manual' | 'existing' | 'create',
+		markCustomized = true
+	) {
+		if (!initializing && markCustomized && mode !== 'manual' && draftHasSavedWebScheme(draft)) {
+			draft.schemeCustomized = true;
+			draft.keepExistingConnectionScheme = false;
+		}
 		draft.keendnsMode = mode;
 		if (mode === 'existing' && compatibleKeenDNSPublications.length > 0) {
 			const first = compatibleKeenDNSPublications[0];
@@ -1150,6 +1299,7 @@
 					{showRouterFacts}
 					{keendnsInfo}
 					{canReturnToSavedScheme}
+					onrestoresavedscheme={handleRestoreSavedScheme}
 					oncheckreality={() => void checkRealityNetwork()}
 					oncheckfacts={() => void checkRouterFacts()}
 					onswitchtowebbridge={switchToWebBridgeFromCGNAT}

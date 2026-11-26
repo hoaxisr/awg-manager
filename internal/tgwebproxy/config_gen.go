@@ -1,15 +1,62 @@
 package tgwebproxy
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 )
+
+var (
+	disabledUsersDummyOnce sync.Once
+	disabledUsersDummyVal  string
+	disabledUsersDummyErr  error
+)
+
+func disabledUsersDummySecret() (string, error) {
+	disabledUsersDummyOnce.Do(func() {
+		b := make([]byte, 16)
+		if _, err := rand.Read(b); err != nil {
+			disabledUsersDummyErr = fmt.Errorf("generate dummy profile secret: %w", err)
+			return
+		}
+		disabledUsersDummyVal = hex.EncodeToString(b)
+	})
+	return disabledUsersDummyVal, disabledUsersDummyErr
+}
+
+func seedReservedEndpointPorts(cfg Config) map[int]bool {
+	listenPort := cfg.ListenPort
+	if listenPort <= 0 {
+		listenPort = DefaultListenPort
+	}
+	adminPort := cfg.AdminPort
+	if adminPort <= 0 {
+		adminPort = DefaultAdminPort
+	}
+	directPort := cfg.DirectPort
+	if directPort <= 0 {
+		directPort = DefaultDirectPort
+	}
+	used := map[int]bool{
+		8084:           true,
+		8086:           true,
+		listenPort:     true,
+		adminPort:      true,
+		DefaultRawPort: true,
+	}
+	if cfg.Scenario != ScenarioCDNHTTP {
+		used[directPort] = true
+	}
+	return used
+}
 
 // GenerateEndpointProfilesJSON produces the JSON profiles for a specific tproxy-server endpoint.
 func GenerateEndpointProfilesJSON(ep WebProxyEndpoint, cfg Config) ([]byte, error) {
@@ -39,9 +86,13 @@ func GenerateEndpointProfilesJSON(ep WebProxyEndpoint, cfg Config) ([]byte, erro
 			})
 		}
 		if len(profiles) == 0 {
+			dummySec, err := disabledUsersDummySecret()
+			if err != nil {
+				return nil, err
+			}
 			profiles = append(profiles, map[string]interface{}{
 				"name":         "default",
-				"secret":       "00000000000000000000000000000000",
+				"secret":       dummySec,
 				"backend":      backend,
 				"carrier_mode": mode,
 			})
@@ -49,7 +100,11 @@ func GenerateEndpointProfilesJSON(ep WebProxyEndpoint, cfg Config) ([]byte, erro
 	} else {
 		sec := strings.TrimSpace(cfg.Secret)
 		if sec == "" {
-			sec = "00000000000000000000000000000000"
+			var err error
+			sec, err = disabledUsersDummySecret()
+			if err != nil {
+				return nil, err
+			}
 		}
 		profiles = []map[string]interface{}{
 			{
@@ -122,7 +177,7 @@ func GenerateEndpointTproxyConfigJSON(ep WebProxyEndpoint, profilesPath, tokenKe
 	if adminPort <= 0 {
 		adminPort = 8086
 	}
-	publicHost := strings.ToLower(strings.TrimSpace(ep.Hostname))
+	publicHost := strings.ToLower(strings.TrimSpace(strings.Split(ep.Hostname, ",")[0]))
 	if publicHost == "" {
 		publicHost = "direct-only.invalid"
 	}
@@ -256,7 +311,7 @@ func ValidatePortsAndUpstreams(cfg Config) error {
 			return nil
 		}
 		if prev, exists := used[port]; exists {
-			return fmt.Errorf("port conflict on :%d between %s and %s", port, prev, owner)
+			return fmt.Errorf("%w: port conflict on :%d between %s and %s", ErrInvalidConfig, port, prev, owner)
 		}
 		used[port] = owner
 		return nil
@@ -285,7 +340,7 @@ func ValidatePortsAndUpstreams(cfg Config) error {
 				epListen = 8084
 			}
 			if ep.ExternalBackend && epListen == muxPort {
-				return fmt.Errorf("endpoint %q external backend port :%d self-references Mux listener", ep.Hostname, muxPort)
+				return fmt.Errorf("%w: endpoint %q external backend port :%d self-references Mux listener", ErrInvalidConfig, ep.Hostname, muxPort)
 			}
 			if !ep.ExternalBackend {
 				if err := reserve(epListen, fmt.Sprintf("tproxy endpoint %d listen", i+1)); err != nil {
@@ -306,23 +361,23 @@ func ValidatePortsAndUpstreams(cfg Config) error {
 			if upstream != "" && !strings.EqualFold(upstream, "none") {
 				upPort, err := parseLoopbackHTTPPort(upstream)
 				if err != nil {
-					return fmt.Errorf("invalid cover upstream %q: %w", upstream, err)
+					return fmt.Errorf("%w: invalid cover upstream %q: %v", ErrInvalidConfig, upstream, err)
 				}
 				if upPort == muxPort || (!ep.ExternalBackend && upPort == epListen) {
-					return fmt.Errorf("cover upstream %q creates a loopback proxy loop with Telegram Web Proxy (:%d)", upstream, upPort)
+					return fmt.Errorf("%w: cover upstream %q creates a loopback proxy loop with Telegram Web Proxy (:%d)", ErrInvalidConfig, upstream, upPort)
 				}
 				if owner, taken := used[upPort]; taken {
-					return fmt.Errorf("cover upstream %q conflicts with %s on port :%d", upstream, owner, upPort)
+					return fmt.Errorf("%w: cover upstream %q conflicts with %s on port :%d", ErrInvalidConfig, upstream, owner, upPort)
 				}
 			}
 		}
 		if cover := strings.TrimSpace(cfg.CoverUpstream); cover != "" && !strings.EqualFold(cover, "none") {
 			upPort, err := parseLoopbackHTTPPort(cover)
 			if err != nil {
-				return fmt.Errorf("invalid cover upstream %q: %w", cover, err)
+				return fmt.Errorf("%w: invalid cover upstream %q: %v", ErrInvalidConfig, cover, err)
 			}
 			if owner, taken := used[upPort]; taken {
-				return fmt.Errorf("cover upstream %q conflicts with %s on port :%d", cover, owner, upPort)
+				return fmt.Errorf("%w: cover upstream %q conflicts with %s on port :%d", ErrInvalidConfig, cover, owner, upPort)
 			}
 		}
 	}

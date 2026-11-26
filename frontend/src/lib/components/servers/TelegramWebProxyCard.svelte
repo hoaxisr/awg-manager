@@ -56,16 +56,6 @@
 	let lastCheckReport = $state<VerificationReport | null>(null);
 	let lastCheckError = $state<UiText>('');
 
-	let isConfigured = $derived(
-		Boolean(
-			config?.enabled ||
-				status?.running ||
-				(config?.direct_host && config.direct_host.trim() !== '') ||
-				(config?.public_hostname && config.public_hostname.trim() !== '') ||
-				(config?.endpoints && config.endpoints.some((e) => e.hostname && e.hostname.trim() !== ''))
-		)
-	);
-
 	let expectsMt = $derived.by(() => {
 		const scenario = config?.scenario || 'dual';
 		return scenario === 'dual' || scenario === 'direct_fake_tls';
@@ -75,6 +65,18 @@
 		const scenario = config?.scenario || 'dual';
 		return scenario === 'dual' || scenario === 'cdn_http';
 	});
+
+	let isConfigured = $derived(
+		Boolean(
+			config?.enabled ||
+				status?.running ||
+				(expectsMt && config?.direct_host && config.direct_host.trim() !== '') ||
+				(expectsWeb &&
+					((config?.public_hostname && config.public_hostname.trim() !== '') ||
+						(config?.endpoints &&
+							config.endpoints.some((e) => e.hostname && e.hostname.trim() !== ''))))
+		)
+	);
 
 	let overallStatusState = $derived(overallState(config, status, expectsMt, expectsWeb));
 	let partialStatusReason = $derived(partialReason(overallStatusState, config, status, expectsMt, expectsWeb));
@@ -209,20 +211,6 @@
 		void loadEgressOptions(config?.upstream_device);
 	}
 
-	async function handleRenameUser(user: TelegramUser, remark: string) {
-		userActionLoadingId = user.id;
-		try {
-			status = await api.tgWebProxyAction('update_user', { user_id: user.id, remark });
-			invalidateRevealCache();
-			await loadData();
-			onRefreshParent?.();
-		} catch (e) {
-			notifications.error(e instanceof Error ? e.message : m.servers_tg_user_rename_error());
-		} finally {
-			userActionLoadingId = '';
-		}
-	}
-
 	async function handleToggleUser(user: TelegramUser) {
 		userActionLoadingId = user.id;
 		try {
@@ -241,6 +229,28 @@
 			onRefreshParent?.();
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : m.servers_tg_user_toggle_error());
+		} finally {
+			userActionLoadingId = '';
+		}
+	}
+
+	async function handleRenameUser(user: TelegramUser, nextRemark: string): Promise<boolean> {
+		const cleaned = nextRemark.trim();
+		if (!cleaned) return false;
+		userActionLoadingId = user.id;
+		try {
+			status = await api.tgWebProxyAction('update_user', {
+				user_id: user.id,
+				remark: cleaned,
+			});
+			invalidateRevealCache();
+			notifications.success(m.tg_user_renamed({ name: cleaned }));
+			await loadData();
+			onRefreshParent?.();
+			return true;
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : m.servers_tg_user_rename_error());
+			return false;
 		} finally {
 			userActionLoadingId = '';
 		}
@@ -336,6 +346,7 @@
 	}
 
 	async function refreshAfterWizard() {
+		invalidateRevealCache();
 		await loadData();
 		onRefreshParent?.();
 	}

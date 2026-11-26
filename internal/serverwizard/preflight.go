@@ -380,7 +380,7 @@ func (pe *PreflightEngine) checkTelegram(ctx context.Context, req WizardPlanRequ
 		}
 	}
 
-	if req.DirectHost != "" {
+	if scenario != "cdn_http" && strings.TrimSpace(req.DirectHost) != "" {
 		if err := ValidateDirectHost(req.DirectHost); err != nil {
 			*checks = append(*checks, PreflightCheck{
 				ID:          "direct_host_format",

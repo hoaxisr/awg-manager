@@ -24,7 +24,10 @@ import {
 	isValidMtprotoDirectPort,
 	pickDefaultKeenDNSActionMode,
 	pickDefaultMtprotoDirectHost,
+	reconcileDraftForServiceKind,
+	reconcileDraftForTgScenario,
 	resolveEffectiveMtprotoDirectHost,
+	restoreSavedConnectionScheme,
 	shouldKeepExistingSchemeAfterStep1Change,
 	buildPlanRequestFromDraft,
 	validateKeenDNSLabelClient,
@@ -1115,5 +1118,315 @@ describe('externalAccessModel', () => {
 				isTgDirectOnly: true,
 			})
 		).toBe(true);
+	});
+
+	it('never fabricates direct_host for cdn_http or xray, defaults empty saved tls_domain to ya.ru, and reconciles service kind switches cleanly', () => {
+		// 1. cdn_http & xray never send direct_host even when originHost or directHost sit in draft
+		const cdnDraft = createInitialWizardDraft({});
+		cdnDraft.selectedKind = 'tgwebproxy';
+		cdnDraft.tgScenario = 'cdn_http';
+		cdnDraft.publicDomain = 'tg.example.com';
+		cdnDraft.originHost = '203.0.113.10';
+		cdnDraft.directHost = '203.0.113.10';
+		expect(resolveEffectiveMtprotoDirectHost(cdnDraft)).toBe('');
+		const cdnReq = buildPlanRequestFromDraft(cdnDraft);
+		expect(cdnReq.direct_host).toBe('');
+		expect(cdnReq.tls_domain).toBe('');
+
+		const xrayDraft = { ...cdnDraft, selectedKind: 'xray' as const, tgScenario: 'dual' };
+		expect(resolveEffectiveMtprotoDirectHost(xrayDraft)).toBe('');
+		expect(buildPlanRequestFromDraft(xrayDraft).direct_host).toBe('');
+
+		// 2. Empty tls_domain on configured Telegram defaults to ya.ru (matching MtgEngine runtime)
+		const emptyTlsDraft = createInitialWizardDraft({
+			tgConfig: {
+				enabled: true,
+				scenario: 'direct_fake_tls',
+				listen_port: 8085,
+				admin_port: 8086,
+				public_hostname: '',
+				direct_host: '203.0.113.10',
+				direct_port: 8443,
+				tls_domain: '',
+				carrier_mode: 'websocket',
+				upstream_device: 'direct',
+				secret: '00112233445566778899aabbccddeeff',
+				backend: '127.0.0.1:2398',
+			},
+		});
+		expect(emptyTlsDraft.tlsPreset).toBe('ya.ru');
+		expect(buildPlanRequestFromDraft(emptyTlsDraft).tls_domain).toBe('ya.ru');
+
+		// 3. Opening Telegram setup when only VLESS is configured respects preferredKind and preserves VLESS on switch to both
+		const vlessOnlyInput = {
+			xrayConfig: {
+				enabled: true,
+				listen_address: '127.0.0.1',
+				listen_port: 9008,
+				public_domain: 'vless.example.com',
+				public_port: 443,
+				path: '/xhttp-bridge',
+				transport: 'xhttp',
+				mode: 'packet-up',
+				uplink_method: 'GET',
+				dispatcher_port: 9009,
+				outbound_mode: 'interface',
+				outbound_interface: 'nwg1',
+				outbound_socks_port: 0,
+				xmux_max_connections: 0,
+				clients: [{ id: 'uuid-vless-1', remark: 'Laptop', enabled: true }],
+			} as XrayConfig,
+			tgConfig: null,
+		};
+		const tgPreferredDraft = createInitialWizardDraft(vlessOnlyInput, 'tgwebproxy');
+		expect(tgPreferredDraft.selectedKind).toBe('tgwebproxy');
+		expect(tgPreferredDraft.isEditMode).toBe(false);
+		expect(tgPreferredDraft.vlessInitiallyEnabled).toBe(true);
+		expect(tgPreferredDraft.publicDomain).toBe('');
+		expect(tgPreferredDraft.upstreamDevice).toBe('direct');
+
+		tgPreferredDraft.publicDomain = 'tg.example.com';
+		reconcileDraftForServiceKind(tgPreferredDraft, 'both');
+		expect(tgPreferredDraft.selectedKind).toBe('both');
+		expect(tgPreferredDraft.isEditMode).toBe(true);
+		expect(tgPreferredDraft.preserveExistingCredentials).toBe(true);
+		expect(tgPreferredDraft.publicDomain).toBe('vless.example.com');
+		expect(tgPreferredDraft.useSeparateTgDomain).toBe(true);
+		expect(tgPreferredDraft.tgPublicDomain).toBe('tg.example.com');
+		expect(tgPreferredDraft.upstreamDevice).toBe('nwg1');
+		expect(buildPlanRequestFromDraft(tgPreferredDraft).existing_client_uuid).toBe('uuid-vless-1');
+
+		// 4. Auto-prefilled CGNAT KeenDNS create mode on unconfigured tgwebproxy does NOT clobber VLESS scheme/domain on switch to both/xray
+		const vlessWithOriginInput = {
+			xrayConfig: {
+				...vlessOnlyInput.xrayConfig,
+				connection_way: 'external_https' as const,
+				origin_type: 'public_address' as const,
+				origin_host: '198.51.100.25',
+			},
+			tgConfig: null,
+		};
+		const cgnatTgDraft = createInitialWizardDraft(vlessWithOriginInput, 'tgwebproxy');
+		expect(cgnatTgDraft.originHost).toBe('');
+		// Simulate CGNAT initWizard auto-setting KeenDNS create mode on unconfigured tgwebproxy
+		cgnatTgDraft.connectionWay = 'direct';
+		cgnatTgDraft.originType = 'cloud_address';
+		cgnatTgDraft.keendnsMode = 'create';
+		cgnatTgDraft.publicDomain = 'connect.router.keenetic.pro';
+
+		reconcileDraftForServiceKind(cgnatTgDraft, 'both');
+		expect(cgnatTgDraft.keendnsMode).toBe('manual');
+		expect(cgnatTgDraft.connectionWay).toBe('external_https');
+		expect(cgnatTgDraft.originType).toBe('public_address');
+		expect(cgnatTgDraft.originHost).toBe('198.51.100.25');
+		expect(cgnatTgDraft.publicDomain).toBe('vless.example.com');
+		expect(cgnatTgDraft.useSeparateTgDomain).toBe(false);
+		expect(cgnatTgDraft.keepExistingConnectionScheme).toBe(true);
+		expect(uiText(cgnatTgDraft.connectionSchemeSummary)).toContain('vless.example.com');
+
+		// 5. xray -> both -> tgwebproxy when only VLESS is configured does NOT leak VLESS domain into unconfigured Telegram
+		const roundtripDraft = createInitialWizardDraft(vlessOnlyInput, 'xray');
+		reconcileDraftForServiceKind(roundtripDraft, 'both');
+		expect(roundtripDraft.publicDomain).toBe('vless.example.com');
+		reconcileDraftForServiceKind(roundtripDraft, 'tgwebproxy');
+		expect(roundtripDraft.publicDomain).toBe('');
+
+		// 6. Opening preferredKind='tgwebproxy' when TG is direct_fake_tls and VLESS has web scheme restores VLESS web scheme on switch to both/xray
+		const bothWithTgDirectInput = {
+			xrayConfig: vlessWithOriginInput.xrayConfig,
+			tgConfig: {
+				enabled: true,
+				scenario: 'direct_fake_tls',
+				listen_port: 8085,
+				admin_port: 8086,
+				public_hostname: '',
+				direct_host: '203.0.113.10',
+				direct_port: 8443,
+				tls_domain: 'ya.ru',
+				carrier_mode: 'websocket',
+				upstream_device: 'direct',
+				secret: '00112233445566778899aabbccddeeff',
+				backend: '127.0.0.1:2398',
+			} as TgWebProxyConfig,
+		};
+		const tgDirectPrefDraft = createInitialWizardDraft(bothWithTgDirectInput, 'tgwebproxy');
+		expect(tgDirectPrefDraft.connectionWay).toBe('direct');
+		expect(tgDirectPrefDraft.originHost).toBe('');
+		reconcileDraftForServiceKind(tgDirectPrefDraft, 'both');
+		expect(tgDirectPrefDraft.connectionWay).toBe('external_https');
+		expect(tgDirectPrefDraft.originType).toBe('public_address');
+		expect(tgDirectPrefDraft.originHost).toBe('198.51.100.25');
+		expect(tgDirectPrefDraft.publicDomain).toBe('vless.example.com');
+		expect(uiText(tgDirectPrefDraft.connectionSchemeSummary)).toContain('vless.example.com');
+
+		// 7. Switching tgwebproxy from direct_fake_tls to cdn_http clears bogus MTProto scheme card without clobbering VLESS web scheme
+		const tgScenarioSwitchDraft = createInitialWizardDraft(bothWithTgDirectInput, 'tgwebproxy');
+		reconcileDraftForTgScenario(tgScenarioSwitchDraft, 'cdn_http');
+		expect(tgScenarioSwitchDraft.tgScenario).toBe('cdn_http');
+		expect(tgScenarioSwitchDraft.keepExistingConnectionScheme).toBe(false);
+		expect(uiText(tgScenarioSwitchDraft.connectionSchemeSummary)).toBe('');
+		expect(tgScenarioSwitchDraft.connectionWay).toBe('external_https');
+		expect(tgScenarioSwitchDraft.originType).toBe('cloud_address');
+		expect(tgScenarioSwitchDraft.originHost).toBe('');
+
+		// Switching to 'both' afterwards still restores VLESS's saved web scheme intact
+		reconcileDraftForServiceKind(tgScenarioSwitchDraft, 'both');
+		expect(tgScenarioSwitchDraft.keepExistingConnectionScheme).toBe(true);
+		expect(tgScenarioSwitchDraft.connectionWay).toBe('external_https');
+		expect(tgScenarioSwitchDraft.originType).toBe('public_address');
+		expect(tgScenarioSwitchDraft.originHost).toBe('198.51.100.25');
+		expect(tgScenarioSwitchDraft.publicDomain).toBe('vless.example.com');
+		expect(uiText(tgScenarioSwitchDraft.connectionSchemeSummary)).toContain('vless.example.com');
+
+		// Switching back to 'tgwebproxy' (cdn_http) clears VLESS scheme, and switching back to direct_fake_tls restores MTProto summary
+		reconcileDraftForServiceKind(tgScenarioSwitchDraft, 'tgwebproxy');
+		expect(tgScenarioSwitchDraft.keepExistingConnectionScheme).toBe(false);
+		expect(tgScenarioSwitchDraft.originHost).toBe('');
+		expect(uiText(tgScenarioSwitchDraft.connectionSchemeSummary)).toBe('');
+
+		reconcileDraftForTgScenario(tgScenarioSwitchDraft, 'direct_fake_tls');
+		expect(tgScenarioSwitchDraft.keepExistingConnectionScheme).toBe(true);
+		expect(tgScenarioSwitchDraft.connectionWay).toBe('direct');
+		expect(uiText(tgScenarioSwitchDraft.connectionSchemeSummary)).toContain('203.0.113.10:8443');
+
+		// 8. Separate saved web domains for VLESS and Telegram update connectionSchemeSummary per kind without VLESS warnings on tgwebproxy
+		const dualWebSeparateDomainsDraft = createInitialWizardDraft({
+			xrayConfig: {
+				...vlessWithOriginInput.xrayConfig,
+				public_domain: 'vless-edge.example.com',
+				transport: 'ws',
+			},
+			tgConfig: {
+				enabled: true,
+				scenario: 'cdn_http',
+				listen_port: 8085,
+				admin_port: 8086,
+				public_hostname: 'tg-edge.example.com',
+				direct_host: '',
+				direct_port: 8443,
+				tls_domain: '',
+				carrier_mode: 'https-lanes',
+				upstream_device: 'direct',
+				secret: '00112233445566778899aabbccddeeff',
+				backend: '127.0.0.1:2398',
+			},
+		});
+		expect(uiText(dualWebSeparateDomainsDraft.connectionSchemeSummary)).toContain(
+			'vless-edge.example.com'
+		);
+		expect(uiText(dualWebSeparateDomainsDraft.connectionSchemeWarning)).not.toBe('');
+
+		reconcileDraftForServiceKind(dualWebSeparateDomainsDraft, 'tgwebproxy');
+		expect(uiText(dualWebSeparateDomainsDraft.connectionSchemeSummary)).toContain(
+			'tg-edge.example.com'
+		);
+		expect(uiText(dualWebSeparateDomainsDraft.connectionSchemeSummary)).not.toContain(
+			'vless-edge.example.com'
+		);
+		expect(uiText(dualWebSeparateDomainsDraft.connectionSchemeWarning)).toBe('');
+
+		reconcileDraftForServiceKind(dualWebSeparateDomainsDraft, 'xray');
+		expect(uiText(dualWebSeparateDomainsDraft.connectionSchemeSummary)).toContain(
+			'vless-edge.example.com'
+		);
+		expect(uiText(dualWebSeparateDomainsDraft.connectionSchemeWarning)).not.toBe('');
+
+		// 9. Customizing scheme ("Изменить схему" + KeenDNS create) survives Step 1 round-trips without resurrecting keepExistingConnectionScheme, and restoreSavedConnectionScheme restores immutable disk state
+		const customizedXrayDraft = createInitialWizardDraft(vlessWithOriginInput, 'xray');
+		customizedXrayDraft.keepExistingConnectionScheme = false;
+		customizedXrayDraft.schemeCustomized = true;
+		customizedXrayDraft.connectionWay = 'direct';
+		customizedXrayDraft.originType = 'cloud_address';
+		customizedXrayDraft.keendnsMode = 'create';
+		customizedXrayDraft.keendnsLabel = 'myvpn';
+		customizedXrayDraft.publicDomain = 'myvpn.router.keenetic.pro';
+		customizedXrayDraft.originHost = 'myvpn.router.keenetic.pro';
+
+		reconcileDraftForServiceKind(customizedXrayDraft, 'tgwebproxy');
+		expect(customizedXrayDraft.keepExistingConnectionScheme).toBe(false);
+		expect(customizedXrayDraft.publicDomain).toBe('');
+
+		reconcileDraftForServiceKind(customizedXrayDraft, 'xray');
+		expect(customizedXrayDraft.keepExistingConnectionScheme).toBe(false);
+		expect(customizedXrayDraft.connectionWay).toBe('direct');
+		expect(customizedXrayDraft.keendnsMode).toBe('create');
+		expect(customizedXrayDraft.keendnsLabel).toBe('myvpn');
+		expect(customizedXrayDraft.publicDomain).toBe('myvpn.router.keenetic.pro');
+		expect(buildPlanRequestFromDraft(customizedXrayDraft)).toMatchObject({
+			connection_way: 'direct',
+			public_domain: 'myvpn.router.keenetic.pro',
+			keendns_mode: 'create',
+			keendns_label: 'myvpn',
+		});
+
+		restoreSavedConnectionScheme(customizedXrayDraft);
+		expect(customizedXrayDraft.schemeCustomized).toBe(false);
+		expect(customizedXrayDraft.keepExistingConnectionScheme).toBe(true);
+		expect(customizedXrayDraft.keendnsMode).toBe('manual');
+		expect(customizedXrayDraft.connectionWay).toBe('external_https');
+		expect(customizedXrayDraft.originHost).toBe('198.51.100.25');
+		expect(customizedXrayDraft.publicDomain).toBe('vless.example.com');
+
+		// 10. Leaving Reality-only via switchToVlessDomain (realityOnlyDisabled + schemeCustomized) preserves domain draft across xray -> tgwebproxy -> xray
+		const realitySwitchDraft = createInitialWizardDraft(
+			{
+				xrayConfig: {
+					enabled: true,
+					clients: [{ id: 'c1', remark: 'Phone', enabled: true }],
+				} as unknown as XrayConfig,
+				realityEnabled: true,
+				realityPort: 2053,
+				realityPublicHost: '203.0.113.10',
+			},
+			'xray'
+		);
+		realitySwitchDraft.realityOnlyDisabled = true;
+		realitySwitchDraft.schemeCustomized = true;
+		realitySwitchDraft.keepExistingConnectionScheme = false;
+		realitySwitchDraft.connectionWay = 'direct';
+		realitySwitchDraft.originType = 'cloud_address';
+		realitySwitchDraft.keendnsMode = 'create';
+		realitySwitchDraft.keendnsLabel = 'vlesskd';
+		realitySwitchDraft.publicDomain = 'vlesskd.router.keenetic.pro';
+		realitySwitchDraft.originHost = 'vlesskd.router.keenetic.pro';
+
+		reconcileDraftForServiceKind(realitySwitchDraft, 'tgwebproxy');
+		reconcileDraftForServiceKind(realitySwitchDraft, 'xray');
+		expect(realitySwitchDraft.keepExistingConnectionScheme).toBe(false);
+		expect(realitySwitchDraft.keendnsMode).toBe('create');
+		expect(realitySwitchDraft.publicDomain).toBe('vlesskd.router.keenetic.pro');
+		expect(realitySwitchDraft.originHost).toBe('vlesskd.router.keenetic.pro');
+
+		// 11. Fresh router (no saved web scheme on disk) preserves Step 2/3 web draft fields across both -> xray -> tgwebproxy and cdn_http -> direct_fake_tls -> cdn_http
+		const freshCgnatDraft = createInitialWizardDraft({});
+		freshCgnatDraft.connectionWay = 'direct';
+		freshCgnatDraft.originType = 'cloud_address';
+		freshCgnatDraft.keendnsMode = 'create';
+		freshCgnatDraft.keendnsLabel = 'home';
+		freshCgnatDraft.publicDomain = 'home.router.keenetic.pro';
+		freshCgnatDraft.originHost = 'home.router.keenetic.pro';
+		freshCgnatDraft.tgScenario = 'cdn_http';
+
+		reconcileDraftForServiceKind(freshCgnatDraft, 'xray');
+		expect(freshCgnatDraft.connectionWay).toBe('direct');
+		expect(freshCgnatDraft.keendnsMode).toBe('create');
+		expect(freshCgnatDraft.keendnsLabel).toBe('home');
+		expect(freshCgnatDraft.publicDomain).toBe('home.router.keenetic.pro');
+		expect(freshCgnatDraft.originHost).toBe('home.router.keenetic.pro');
+
+		reconcileDraftForServiceKind(freshCgnatDraft, 'tgwebproxy');
+		expect(freshCgnatDraft.connectionWay).toBe('direct');
+		expect(freshCgnatDraft.keendnsMode).toBe('create');
+		expect(freshCgnatDraft.publicDomain).toBe('home.router.keenetic.pro');
+
+		reconcileDraftForTgScenario(freshCgnatDraft, 'direct_fake_tls');
+		expect(freshCgnatDraft.keendnsMode).toBe('manual');
+
+		reconcileDraftForTgScenario(freshCgnatDraft, 'cdn_http');
+		expect(freshCgnatDraft.connectionWay).toBe('direct');
+		expect(freshCgnatDraft.keendnsMode).toBe('create');
+		expect(freshCgnatDraft.keendnsLabel).toBe('home');
+		expect(freshCgnatDraft.publicDomain).toBe('home.router.keenetic.pro');
+		expect(freshCgnatDraft.originHost).toBe('home.router.keenetic.pro');
 	});
 });

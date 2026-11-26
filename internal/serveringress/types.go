@@ -131,6 +131,7 @@ type IngressTelegramCandidate struct {
 	PublicHostname string
 	CarrierMode    string
 	UpstreamDevice string
+	SetUpstream    bool
 	Secret         string `json:"-"` // MUST NOT be serialized into journals, plans, or logs
 }
 

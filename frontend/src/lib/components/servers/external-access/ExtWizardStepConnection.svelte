@@ -4,7 +4,11 @@
 	import { Button } from '$lib/components/ui';
 	import type { KeenDNSDiscovery } from '$lib/types/serverWizard';
 	import type { XrayRealityState } from '$lib/types/xray';
-	import type { ExternalAccessWizardDraft } from './externalAccessModel';
+	import {
+		draftHasSavedWebScheme,
+		restoreSavedConnectionScheme,
+		type ExternalAccessWizardDraft,
+	} from './externalAccessModel';
 	import { AlertTriangle, CheckCircle2, HelpCircle, RefreshCw, Zap } from 'lucide-svelte';
 
 	type WizardRealityMode = 'off' | 'also' | 'only';
@@ -25,6 +29,7 @@
 		showRouterFacts: boolean;
 		keendnsInfo: KeenDNSDiscovery | null;
 		canReturnToSavedScheme?: boolean;
+		onrestoresavedscheme?: () => void;
 		oncheckreality: () => void;
 		oncheckfacts: () => void;
 		onswitchtowebbridge: () => void;
@@ -48,6 +53,7 @@
 		showRouterFacts,
 		keendnsInfo,
 		canReturnToSavedScheme = true,
+		onrestoresavedscheme,
 		oncheckreality,
 		oncheckfacts,
 		onswitchtowebbridge,
@@ -173,7 +179,10 @@
 				<Button
 					variant="secondary"
 					size="sm"
-					onclick={() => (draft.keepExistingConnectionScheme = false)}
+					onclick={() => {
+						draft.keepExistingConnectionScheme = false;
+						draft.schemeCustomized = true;
+					}}
 				>
 					{m.servers_ext_wiz_s2_change_scheme()}
 				</Button>
@@ -198,7 +207,13 @@
 				<button
 					type="button"
 					class="link-btn"
-					onclick={() => (draft.keepExistingConnectionScheme = true)}
+					onclick={() => {
+						if (onrestoresavedscheme) {
+							onrestoresavedscheme();
+						} else {
+							restoreSavedConnectionScheme(draft);
+						}
+					}}
 				>
 					&larr; {m.servers_ext_wiz_s2_return_saved()}
 				</button>
@@ -215,7 +230,14 @@
 					onclick={() => {
 						if (realityMode === 'only') {
 							realityMode = 'off';
+							draft.realityOnlyDisabled = true;
+							if (draft.vlessInitiallyEnabled) {
+								draft.schemeCustomized = true;
+							}
 							draft.confirmDirectBehindNAT = false;
+						}
+						if (draftHasSavedWebScheme(draft)) {
+							draft.schemeCustomized = true;
 						}
 						draft.connectionWay = 'direct';
 					}}
@@ -233,7 +255,14 @@
 					onclick={() => {
 						if (realityMode === 'only') {
 							realityMode = 'off';
+							draft.realityOnlyDisabled = true;
+							if (draft.vlessInitiallyEnabled) {
+								draft.schemeCustomized = true;
+							}
 							draft.confirmDirectBehindNAT = false;
+						}
+						if (draftHasSavedWebScheme(draft)) {
+							draft.schemeCustomized = true;
 						}
 						draft.connectionWay = 'external_https';
 						draft.publicPort = 443;
@@ -252,6 +281,10 @@
 						class:selected={isRealityOnly}
 						onclick={() => {
 							realityMode = 'only';
+							draft.realityOnlyDisabled = false;
+							if (draft.vlessHasSavedWebScheme) {
+								draft.schemeCustomized = true;
+							}
 							draft.confirmDirectBehindNAT = false;
 						}}
 					>

@@ -230,11 +230,43 @@ export function cleanEndpointDescription(desc?: string): string {
 export function newEndpoint(editConfig: Partial<TgWebProxyConfig>, nextIdx: number): WebProxyEndpoint {
 	const isCDN = editConfig.scenario === 'cdn_http' || editConfig.scenario === 'dual';
 	const meta = getPresetMeta(inferEndpointPreset({ is_cdn: isCDN }, editConfig));
+	const existing = editConfig.endpoints || [];
+	const usedIds = new Set(existing.map((e) => e.id));
+	const usedPorts = new Set<number>([
+		8084,
+		8086,
+		2398,
+		editConfig.listen_port || 8085,
+		editConfig.admin_port || 8086,
+	]);
+	if (editConfig.scenario !== 'cdn_http') {
+		usedPorts.add(editConfig.direct_port || 8443);
+	}
+	for (const e of existing) {
+		if (e.listen_port > 0) usedPorts.add(e.listen_port);
+		if (e.admin_port > 0) usedPorts.add(e.admin_port);
+	}
+	let listenPort = 8084;
+	let adminPort = 8086;
+	if (nextIdx > 0) {
+		let slot = nextIdx - 1;
+		while (usedPorts.has(18084 + slot * 3) || usedPorts.has(18086 + slot * 3)) {
+			slot++;
+		}
+		listenPort = 18084 + slot * 3;
+		adminPort = 18086 + slot * 3;
+	}
+	const baseId = `ep-${Date.now().toString(36)}`;
+	let id = baseId;
+	let seq = 2;
+	while (usedIds.has(id)) {
+		id = `${baseId}-${seq++}`;
+	}
 	return {
-		id: `ep-${Date.now().toString(36)}`,
+		id,
 		hostname: '',
-		listen_port: nextIdx === 0 ? 8084 : 18084 + (nextIdx - 1) * 3,
-		admin_port: nextIdx === 0 ? 8086 : 18086 + (nextIdx - 1) * 3,
+		listen_port: listenPort,
+		admin_port: adminPort,
 		description: '',
 		preset: meta.id,
 		carrier_mode: meta.carrier_mode,
