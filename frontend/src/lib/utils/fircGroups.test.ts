@@ -298,7 +298,7 @@ describe('Proxy-интерфейсы t2s* в выборе выхода', () => {
 		{ id: 't2s1', name: 'Proxy1', role: 'tunnel' },
 		{ id: 't2s0', ndmsName: 'Proxy0', role: 'tunnel' },
 		{ id: 't2s2', name: 'SingboxOwned', role: 'tunnel', awgmSingboxProxy: true },
-		{ id: 't2s3', name: 'VOX [awg-manager:singbox:subscription:5090]', role: 'tunnel' },
+		{ id: 't2s3', name: 'VOX', role: 'tunnel', awgmSingboxProxy: true },
 		{ id: 'nwg0', name: 'Office VPN', role: 'tunnel' },
 		{ id: 'tunvless0', name: 'DE VLESS', role: 'tunnel' },
 		{ id: 'dns', role: 'other' },

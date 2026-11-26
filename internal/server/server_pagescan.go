@@ -284,14 +284,7 @@ func (s *Server) pageScanInterfaceLister(fircTunnels func(context.Context) []fir
 						}
 					}
 					if hasT2S && s.singboxOp != nil {
-						if ownedNames, oErr := s.singboxOp.ListOwnedProxies(probeCtx); oErr == nil {
-							ownedProxies = make(map[string]bool, len(ownedNames))
-							for _, n := range ownedNames {
-								if k := strings.ToLower(strings.TrimSpace(n)); k != "" {
-									ownedProxies[k] = true
-								}
-							}
-						}
+						ownedProxies = api.OwnedProxySet(s.singboxOp.ListOwnedProxies(probeCtx))
 					}
 					for _, opt := range filterPageScanFircInterfaces(ifaces, tunnelDesc, ownedProxies) {
 						add(opt.Name, opt.Label)
@@ -327,11 +320,8 @@ func filterPageScanFircInterfaces(ifaces []firc.SystemInterface, tunnelDesc map[
 		if id == "" {
 			continue
 		}
-		if strings.Contains(strings.ToLower(iface.Name), "[awg-manager:singbox:") ||
-			strings.Contains(strings.ToLower(iface.NDMSName), "[awg-manager:singbox:") {
-			continue
-		}
-		if strings.HasPrefix(strings.ToLower(id), "t2s") && ownedProxies[strings.ToLower(id)] {
+		// ownedProxies nil — владение не прочитано: t2s* прячем все (см. firc_handler).
+		if strings.HasPrefix(strings.ToLower(id), "t2s") && (ownedProxies == nil || ownedProxies[strings.ToLower(id)]) {
 			continue
 		}
 		_, isFircTunnel := tunnelDesc[id]

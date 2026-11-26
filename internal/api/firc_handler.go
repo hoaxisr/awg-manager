@@ -2044,16 +2044,11 @@ func (h *FircHandler) handleV1Proxy(w http.ResponseWriter, r *http.Request) {
 					break
 				}
 			}
+			// Владение не прочитано — прячем все t2s*, как до разбора: прокси
+			// sing-box в выборе выхода FIRC хуже, чем на время скрытый чужой.
 			var ownedProxies map[string]bool
 			if hasT2S && h.integrationHooks.ListOwnedProxies != nil {
-				if ownedNames, oErr := h.integrationHooks.ListOwnedProxies(r.Context()); oErr == nil {
-					ownedProxies = make(map[string]bool, len(ownedNames))
-					for _, n := range ownedNames {
-						if k := strings.ToLower(strings.TrimSpace(n)); k != "" {
-							ownedProxies[k] = true
-						}
-					}
-				}
+				ownedProxies = ownedProxySet(h.integrationHooks.ListOwnedProxies(r.Context()))
 			}
 			for _, item := range payload.Interfaces {
 				id, _ := item["id"].(string)
@@ -2065,11 +2060,7 @@ func (h *FircHandler) handleV1Proxy(w http.ResponseWriter, r *http.Request) {
 					item["role"] = "tunnel"
 				}
 				if strings.HasPrefix(strings.ToLower(idTrim), "t2s") {
-					nameStr, _ := item["name"].(string)
-					ndmsStr, _ := item["ndmsName"].(string)
-					if isOrphanedAwgmSingboxProxyLabel(nameStr) ||
-						isOrphanedAwgmSingboxProxyLabel(ndmsStr) ||
-						ownedProxies[strings.ToLower(idTrim)] {
+					if ownedProxies == nil || ownedProxies[strings.ToLower(idTrim)] {
 						item["awgmSingboxProxy"] = true
 					}
 				}
@@ -2105,9 +2096,23 @@ func (h *FircHandler) handleV1Proxy(w http.ResponseWriter, r *http.Request) {
 	proxy.ServeHTTP(w, r)
 }
 
-func isOrphanedAwgmSingboxProxyLabel(s string) bool {
-	return strings.Contains(strings.ToLower(s), "[awg-manager:singbox:")
+// ownedProxySet — имена ядра наших ProxyN в нижнем регистре; nil — владение
+// не прочитано.
+func ownedProxySet(names []string, err error) map[string]bool {
+	if err != nil {
+		return nil
+	}
+	out := make(map[string]bool, len(names))
+	for _, n := range names {
+		if k := strings.ToLower(strings.TrimSpace(n)); k != "" {
+			out[k] = true
+		}
+	}
+	return out
 }
+
+// OwnedProxySet — ownedProxySet для пакета server (PageScan).
+func OwnedProxySet(names []string, err error) map[string]bool { return ownedProxySet(names, err) }
 
 func writeOfflineJSON(w http.ResponseWriter, r *http.Request, payload any) {
 	data, err := json.Marshal(payload)

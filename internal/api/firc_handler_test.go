@@ -2172,7 +2172,7 @@ func TestFircV1SystemInterfaces_NormalizesTunnelRoleAndFlagsAwgmProxies(t *testi
 		"interfaces": [
 			{"id":"t2s0","name":"!Xray_Nuxt_t2s0","ndmsName":"Proxy0","role":"wan","up":true},
 			{"id":"t2s1","name":"NL-Singbox","ndmsName":"Proxy1","role":"tunnel","up":false},
-			{"id":"t2s2","name":"VOX [awg-manager:singbox:subscription:5090]","ndmsName":"Proxy2","role":"tunnel","up":true},
+			{"id":"t2s2","name":"VOX","ndmsName":"Proxy2","role":"tunnel","up":true},
 			{"id":"t2s4","name":"!Xray_RawTun","role":"tunnel","up":true},
 			{"id":"nwg0","name":"HomeWG","role":"wan","up":true},
 			{"id":"eth3","name":"Broadband","role":"wan","up":true}
@@ -2189,10 +2189,10 @@ func TestFircV1SystemInterfaces_NormalizesTunnelRoleAndFlagsAwgmProxies(t *testi
 		return nil
 	}
 
-	// Case 1: ListOwnedProxies positively identifies t2s1; t2s2 carries the singbox marker;
-	// t2s0 (!Xray_Nuxt_t2s0) and raw kernel TUN t2s4 (!Xray_RawTun) stay selectable with role=tunnel.
+	// Case 1: ListOwnedProxies identifies t2s1 and t2s2; t2s0 (!Xray_Nuxt_t2s0) and
+	// raw kernel TUN t2s4 (!Xray_RawTun) stay selectable with role=tunnel.
 	items := runReq(t, func(context.Context) ([]string, error) {
-		return []string{"t2s1"}, nil
+		return []string{"t2s1", "T2S2"}, nil
 	}, payload)
 	if it := findItem(items, "t2s0"); it["role"] != "tunnel" || it["awgmSingboxProxy"] == true {
 		t.Fatalf("t2s0 expected role=tunnel without awgmSingboxProxy, got %+v", it)
@@ -2213,18 +2213,18 @@ func TestFircV1SystemInterfaces_NormalizesTunnelRoleAndFlagsAwgmProxies(t *testi
 		t.Fatalf("eth3 expected role=wan, got %+v", it)
 	}
 
-	// Case 2: ListOwnedProxies unavailable/error -> orphaned [awg-manager:singbox: still flagged,
-	// while !Xray t2s0 and raw t2s4 stay unflagged without false positives.
+	// Case 2: ownership unread -> every t2s* is hidden, as before ownership was
+	// checked: a sing-box proxy in the FIRC exit picker is worse than a user one
+	// hidden for a while.
 	fallbackItems := runReq(t, func(context.Context) ([]string, error) {
 		return nil, errors.New("ndms unavailable")
 	}, payload)
-	if it := findItem(fallbackItems, "t2s0"); it["role"] != "tunnel" || it["awgmSingboxProxy"] == true {
-		t.Fatalf("fallback t2s0 expected role=tunnel without awgmSingboxProxy, got %+v", it)
+	for _, id := range []string{"t2s0", "t2s1", "t2s2", "t2s4"} {
+		if it := findItem(fallbackItems, id); it["awgmSingboxProxy"] != true {
+			t.Fatalf("fallback %s expected awgmSingboxProxy=true, got %+v", id, it)
+		}
 	}
-	if it := findItem(fallbackItems, "t2s4"); it["role"] != "tunnel" || it["awgmSingboxProxy"] == true {
-		t.Fatalf("fallback t2s4 expected role=tunnel without awgmSingboxProxy, got %+v", it)
-	}
-	if it := findItem(fallbackItems, "t2s2"); it["awgmSingboxProxy"] != true {
-		t.Fatalf("fallback t2s2 expected awgmSingboxProxy=true, got %+v", it)
+	if it := findItem(fallbackItems, "nwg0"); it["awgmSingboxProxy"] == true {
+		t.Fatalf("fallback nwg0 must not be flagged, got %+v", it)
 	}
 }

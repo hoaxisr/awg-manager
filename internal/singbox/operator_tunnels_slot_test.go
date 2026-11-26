@@ -158,7 +158,7 @@ func (f *fakeProxies) RemoveProxy(_ context.Context, index int, _ string) error 
 func (f *fakeProxies) OwnedProxies(context.Context, map[string]string, map[string]string) ([]ProxyMark, error) {
 	return nil, nil
 }
-func (f *fakeProxies) OwnedProxyKernelNames(context.Context, map[string]string, map[string][]string, map[string]ProxyMark) ([]string, error) {
+func (f *fakeProxies) OwnedProxyKernelNames(context.Context, map[string]bool, map[int][]string) ([]string, error) {
 	return nil, nil
 }
 func (f *fakeProxies) RemoveMarkedProxy(context.Context, ProxyMark) (MarkedOutcome, error) {
@@ -167,7 +167,7 @@ func (f *fakeProxies) RemoveMarkedProxy(context.Context, ProxyMark) (MarkedOutco
 func (f *fakeProxies) AdoptBareProxy(context.Context, string, int, string) (MarkedOutcome, error) {
 	return MarkedAdopted, nil
 }
-func (f *fakeProxies) ListNativeProxies(context.Context, map[string]bool, map[int]bool) ([]string, error) {
+func (f *fakeProxies) ListNativeProxies(context.Context, map[string]bool, map[int][]string) ([]string, error) {
 	return nil, nil
 }
 func (f *fakeProxies) SyncProxies(context.Context, []TunnelInfo) error { return nil }

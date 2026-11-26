@@ -69,16 +69,9 @@ export function isInternalServerFircInterface(
 	return false;
 }
 
-export function isAwgmSingboxProxyInterface(
-	opt: Pick<FircInterfaceOption, 'id' | 'name' | 'ndmsName' | 'awgmSingboxProxy'>,
-): boolean {
-	if (opt.awgmSingboxProxy) return true;
-	const name = (opt.name || '').toLowerCase();
-	const ndmsName = (opt.ndmsName || '').toLowerCase();
-	return (
-		name.includes('[awg-manager:singbox:') ||
-		ndmsName.includes('[awg-manager:singbox:')
-	);
+/** Прокси sing-box (t2s*), который панель создала сама: в выбор выхода FIRC не идёт. */
+export function isAwgmSingboxProxyInterface(opt: Pick<FircInterfaceOption, 'awgmSingboxProxy'>): boolean {
+	return opt.awgmSingboxProxy === true;
 }
 
 export function isSelectableFircFallbackInterface(opt: FircInterfaceOption): boolean {

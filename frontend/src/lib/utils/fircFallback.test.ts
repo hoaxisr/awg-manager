@@ -404,18 +404,12 @@ describe('fircFallback', () => {
 		expect(
 			isSelectableFircFallbackInterface({
 				id: 't2s2',
-				name: 'VOX [awg-manager:singbox:subscription:5090]',
+				name: 'VOX',
 				role: 'tunnel',
 			}),
-		).toBe(false);
-		expect(isAwgmSingboxProxyInterface({ id: 't2s0', ndmsName: 'Proxy0' })).toBe(false);
-		expect(isAwgmSingboxProxyInterface({ id: 't2s1', awgmSingboxProxy: true })).toBe(true);
-		expect(
-			isAwgmSingboxProxyInterface({
-				id: 't2s2',
-				name: 'VOX [awg-manager:singbox:subscription:5090]',
-			}),
 		).toBe(true);
+		expect(isAwgmSingboxProxyInterface({})).toBe(false);
+		expect(isAwgmSingboxProxyInterface({ awgmSingboxProxy: true })).toBe(true);
 		expect(
 			selectSelectableFircFallbackInterfaces([
 				{ id: 'eth3', name: 'Broadband', role: 'wan' },

@@ -473,15 +473,33 @@ func (o *Operator) clearBareMark(name string) {
 }
 
 // ListNativeProxies returns kernel names of KeenOS-native (non-ours) NDMS
-// Proxy interfaces — bind targets for router direct outbounds (#323). Assembles
-// the proxyIsOurs ownership sets and delegates.
+// Proxy interfaces — bind targets for router direct outbounds (#323).
 func (o *Operator) ListNativeProxies(ctx context.Context) ([]string, error) {
+	tunnelTags, subLabels, err := o.proxyOwnershipSets()
+	if err != nil {
+		return nil, err
+	}
+	return o.proxyMgr.ListNativeProxies(ctx, tunnelTags, subLabels)
+}
+
+// ListOwnedProxies — имена ядра наших ProxyN (e.g. "t2s1"), дополнение
+// ListNativeProxies по тому же правилу владения.
+func (o *Operator) ListOwnedProxies(ctx context.Context) ([]string, error) {
+	tunnelTags, subLabels, err := o.proxyOwnershipSets()
+	if err != nil {
+		return nil, err
+	}
+	return o.proxyMgr.OwnedProxyKernelNames(ctx, tunnelTags, subLabels)
+}
+
+// proxyOwnershipSets — теги туннелей и метки подписок по индексам для proxyIsOurs.
+func (o *Operator) proxyOwnershipSets() (map[string]bool, map[int][]string, error) {
 	if !o.proxyMgrReady() {
-		return nil, errors.New("proxy queries unavailable")
+		return nil, nil, errors.New("proxy queries unavailable")
 	}
 	cfg, err := o.loadConfig()
 	if err != nil && !os.IsNotExist(err) {
-		return nil, err
+		return nil, nil, err
 	}
 	tunnelTags := map[string]bool{}
 	if cfg != nil {
@@ -489,46 +507,11 @@ func (o *Operator) ListNativeProxies(ctx context.Context) ([]string, error) {
 			tunnelTags[t.Tag] = true
 		}
 	}
-	subProxyIdx := map[int]bool{}
+	subLabels := map[int][]string{}
 	for _, sp := range o.subscriptionProxies() {
-		subProxyIdx[sp.Index] = true
+		subLabels[sp.Index] = append(subLabels[sp.Index], sp.Label)
 	}
-	return o.proxyMgr.ListNativeProxies(ctx, tunnelTags, subProxyIdx)
-}
-
-// ListOwnedProxies returns kernel names (e.g. "t2s1") of NDMS Proxy interfaces
-// created and currently owned by awg-manager, verified by interface description
-// against live tunnels, subscriptions, and deferred proxy removal marks.
-func (o *Operator) ListOwnedProxies(ctx context.Context) ([]string, error) {
-	if !o.proxyMgrReady() {
-		return nil, errors.New("proxy queries unavailable")
-	}
-	cfg, err := o.loadConfig()
-	if err != nil && !os.IsNotExist(err) {
-		return nil, err
-	}
-	tunnelProxies := map[string]string{}
-	if cfg != nil {
-		for _, t := range cfg.Tunnels() {
-			if t.ProxyInterface != "" {
-				tunnelProxies[t.ProxyInterface] = t.Tag
-			}
-		}
-	}
-	subProxies := map[string][]string{}
-	for _, sp := range o.subscriptionProxies() {
-		name := proxyName(sp.Index)
-		subProxies[name] = append(subProxies[name], sp.Label)
-	}
-	o.deferredProxyMu.Lock()
-	deferred := make(map[string]ProxyMark, len(o.deferredProxies))
-	for name, d := range o.deferredProxies {
-		if d != nil {
-			deferred[name] = ProxyMark{Name: name, Desc: d.desc, Alt: d.alt}
-		}
-	}
-	o.deferredProxyMu.Unlock()
-	return o.proxyMgr.OwnedProxyKernelNames(ctx, tunnelProxies, subProxies, deferred)
+	return tunnelTags, subLabels, nil
 }
 
 func parseProxyIdx(name string) (int, error) {
