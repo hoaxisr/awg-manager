@@ -128,3 +128,63 @@ int pkt_parse(const uint8_t *p, size_t len, pkt_info *pi) {
     }
     return -1;
 }
+
+static void st32le(uint8_t *p, uint32_t v) {
+    p[0] = (uint8_t)(v & 0xff);
+    p[1] = (uint8_t)((v >> 8) & 0xff);
+    p[2] = (uint8_t)((v >> 16) & 0xff);
+    p[3] = (uint8_t)((v >> 24) & 0xff);
+}
+
+static void st64le(uint8_t *p, uint64_t v) {
+    for (int i = 0; i < 8; i++) p[i] = (uint8_t)((v >> (8 * i)) & 0xff);
+}
+
+static uint32_t ld32le(const uint8_t *p) {
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+void mtproto_build_req_pq(uint8_t out[42], uint64_t msg_id, const uint8_t nonce[16]) {
+    memset(out, 0, 42);
+    out[0] = 0xef;
+    out[1] = 10;
+    msg_id = (msg_id & ~3ULL) | 4ULL;
+    st64le(out + 10, msg_id);
+    st32le(out + 18, 20);
+    st32le(out + 22, 0xbe7e8ef1u);
+    memcpy(out + 26, nonce, 16);
+}
+
+int mtproto_check_res_pq_stream(const uint8_t *buf, size_t len, const uint8_t nonce[16]) {
+    if (len < 1) return 0;
+    size_t hdr_len = 1;
+    uint32_t words = buf[0];
+    if (words == 127) {
+        if (len < 4) return 0;
+        words = (uint32_t)buf[1] | ((uint32_t)buf[2] << 8) | ((uint32_t)buf[3] << 16);
+        hdr_len = 4;
+    } else if (words >= 128) {
+        return -1;
+    }
+    size_t blen = (size_t)words * 4u;
+    if (blen < 76 || blen > 4096) return -1;
+    if (len < hdr_len + blen) return 0;
+
+    const uint8_t *b = buf + hdr_len;
+    for (int i = 0; i < 8; i++) {
+        if (b[i] != 0) return -1;
+    }
+    if ((b[8] & 3u) != 1u) return -1;
+    if ((size_t)ld32le(b + 16) != blen - 20) return -1;
+    if (ld32le(b + 20) != 0x05162463u) return -1;
+    if (memcmp(b + 24, nonce, 16) != 0) return -1;
+
+    size_t pq_len = b[56];
+    if (pq_len < 1 || pq_len > 8) return -1;
+    size_t offset = 56u + ((1u + pq_len + 3u) & ~3u);
+    if (offset + 8u > blen) return -1;
+    if (ld32le(b + offset) != 0x1cb5c415u) return -1;
+    uint32_t count = ld32le(b + offset + 4);
+    if (count < 1 || count > 32 || offset + 8u + (size_t)count * 8u != blen) return -1;
+    return 1;
+}

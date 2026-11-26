@@ -19,6 +19,7 @@
 #include <signal.h>
 #include <ctype.h>
 #include <errno.h>
+#include <time.h>
 
 #ifdef __linux__
 #include <net/if.h>
@@ -525,6 +526,12 @@ typedef struct {
     uint8_t rbuf[RBUF_SIZE];
     uint8_t rmark[RBUF_SIZE / 8];
     uint32_t contig;
+    uint8_t tg_nonce[16];
+    uint8_t tg_req[42];
+    uint8_t tg_rbuf[512];
+    uint8_t tg_rmark[512 / 8];
+    uint32_t tg_contig;
+
     int dur_target, dur_sent, dur_got_cnt, dur_rtt_sum;
     uint32_t dur_got_mask;
     uint64_t dur_sent_at[16];
@@ -582,10 +589,20 @@ static uint16_t alloc_port(void) {
     return g_port_ctr;
 }
 
+static uint32_t tcp_ack(const cand *c, const tcpc *t) {
+    if (t == &c->trace) {
+        return t->irs + 1 + c->contig + (uint32_t)(t->fin_seen && c->contig >= t->fin_off);
+    }
+    if (t == &c->tg) {
+        return t->irs + 1 + c->tg_contig + (uint32_t)(t->fin_seen && c->tg_contig >= t->fin_off);
+    }
+    return 0;
+}
+
 static void tcp_send(cand *c, tcpc *t, uint32_t seq, uint8_t flags, uint16_t mss, const uint8_t *d, size_t dl) {
     uint8_t pkt[1500];
     size_t n = pkt_tcp(pkt, C.tunnel_ip, t->dst, ++c->ip_id, t->sport, t->dport, seq,
-                       t->irs + 1 + (t == &c->trace ? c->contig + (uint32_t)(t->fin_seen && c->contig >= t->fin_off) : 0),
+                       tcp_ack(c, t),
                        flags, mss, d, dl);
     send_inner(c, pkt, n);
 }
@@ -783,7 +800,17 @@ static void on_echo_reply(cand *c, uint16_t seq) {
     c->state = CS_PROBE;
     c->deadline = now + 2ULL * (uint64_t)C.timeout_ms;
     if (C.probe_trace) tcp_start(c, &c->trace, C.trace_ip, 80);
-    if (C.probe_tg) tcp_start(c, &c->tg, C.tg_ip, 443);
+    if (C.probe_tg) {
+        for (int i = 0; i < 16; i += 8) {
+            uint64_t r = prng_next();
+            memcpy(c->tg_nonce + i, &r, 8);
+        }
+        os_random(c->tg_nonce, sizeof(c->tg_nonce));
+        uint64_t sec = (uint64_t)time(NULL);
+        uint64_t sub = (now % 1000ULL) << 22;
+        mtproto_build_req_pq(c->tg_req, (sec << 32) | sub, c->tg_nonce);
+        tcp_start(c, &c->tg, C.tg_ip, 443);
+    }
 }
 
 /* Значение уходит в stdout внутри JSON-строки: берём только [A-Za-z0-9], иначе поле пропускаем. */
@@ -871,18 +898,52 @@ static void trace_input(cand *c, const pkt_info *pi) {
 
 static void tg_input(cand *c, const pkt_info *pi) {
     tcpc *t = &c->tg;
-    if (t->state != TCP_SYN_SENT) return;
+    if (t->state == TCP_DONE || t->state == TCP_IDLE) return;
     if (pi->flags & TCPF_RST) {
         t->state = TCP_DONE;
         c->tg_done = 1;
         return;
     }
-    if ((pi->flags & (TCPF_SYN | TCPF_ACK)) == (TCPF_SYN | TCPF_ACK) && pi->ack == t->iss + 1) {
-        t->irs = pi->seq;
+    if (t->state == TCP_SYN_SENT) {
+        if ((pi->flags & (TCPF_SYN | TCPF_ACK)) == (TCPF_SYN | TCPF_ACK) && pi->ack == t->iss + 1) {
+            t->irs = pi->seq;
+            t->state = TCP_EST;
+            t->snd_nxt = t->iss + 1 + (uint32_t)sizeof(c->tg_req);
+            tcp_send(c, t, t->iss + 1, TCPF_PSH | TCPF_ACK, 0, c->tg_req, sizeof(c->tg_req));
+            t->next_retx = now_ms() + (uint64_t)retx_interval();
+        }
+        return;
+    }
+    if (pi->flags & TCPF_SYN) {
+        tcp_send(c, t, t->iss + 1, TCPF_PSH | TCPF_ACK, 0, c->tg_req, sizeof(c->tg_req));
+        return;
+    }
+    if (pi->dlen == 0 && !(pi->flags & TCPF_FIN)) return;
+    uint32_t off = pi->seq - (t->irs + 1);
+    if (off < sizeof(c->tg_rbuf)) {
+        size_t take = pi->dlen;
+        if (off + take > sizeof(c->tg_rbuf)) take = sizeof(c->tg_rbuf) - off;
+        memcpy(c->tg_rbuf + off, pi->data, take);
+        for (size_t k = 0; k < take; k++) c->tg_rmark[(off + k) >> 3] |= (uint8_t)(1u << ((off + k) & 7));
+        while (c->tg_contig < sizeof(c->tg_rbuf) &&
+               (c->tg_rmark[c->tg_contig >> 3] & (1u << (c->tg_contig & 7)))) {
+            c->tg_contig++;
+        }
+    }
+    if ((pi->flags & TCPF_FIN) && off <= sizeof(c->tg_rbuf) && pi->dlen <= sizeof(c->tg_rbuf) - off) {
+        t->fin_seen = 1;
+        t->fin_off = off + (uint32_t)pi->dlen;
+    }
+    tcp_send(c, t, t->snd_nxt, TCPF_ACK, 0, NULL, 0);
+    int rc = mtproto_check_res_pq_stream(c->tg_rbuf, c->tg_contig, c->tg_nonce);
+    if (rc == 1) {
         c->tg_ok = 1;
         c->tg_done = 1;
-        tcp_send(c, t, t->iss + 1, TCPF_RST, 0, NULL, 0);
-        t->state = TCP_DONE;
+        tcp_reset(c, t);
+    } else if (rc < 0 || (t->fin_seen && c->tg_contig >= t->fin_off) || c->tg_contig >= sizeof(c->tg_rbuf)) {
+        c->tg_ok = 0;
+        c->tg_done = 1;
+        tcp_reset(c, t);
     }
 }
 
@@ -1057,9 +1118,12 @@ static void handle_timers(cand *c, uint64_t now) {
                 tcp_send(c, t, t->iss + 1, TCPF_PSH | TCPF_ACK, 0, (const uint8_t *)g_req, g_req_len);
             t->next_retx = now + (uint64_t)retx_interval();
         }
-        if (C.probe_tg && c->tg.state == TCP_SYN_SENT && now >= c->tg.next_retx) {
-            tcp_send(c, &c->tg, c->tg.iss, TCPF_SYN, 1200, NULL, 0);
-            c->tg.next_retx = now + (uint64_t)retx_interval();
+        if (C.probe_tg && now >= c->tg.next_retx) {
+            tcpc *t = &c->tg;
+            if (t->state == TCP_SYN_SENT) tcp_send(c, t, t->iss, TCPF_SYN, 1200, NULL, 0);
+            else if (t->state == TCP_EST && c->tg_contig == 0)
+                tcp_send(c, t, t->iss + 1, TCPF_PSH | TCPF_ACK, 0, c->tg_req, sizeof(c->tg_req));
+            t->next_retx = now + (uint64_t)retx_interval();
         }
         break;
     case CS_DURABILITY:

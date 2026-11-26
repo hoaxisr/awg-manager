@@ -38,4 +38,12 @@ typedef struct {
  * Returns 0 if parsed as ICMP or TCP, -1 otherwise. */
 int pkt_parse(const uint8_t *p, size_t len, pkt_info *pi);
 
+/* Builds a 42-byte MTProto abridged req_pq_multi packet for the given msg_id and 16-byte nonce. */
+void mtproto_build_req_pq(uint8_t out[42], uint64_t msg_id, const uint8_t nonce[16]);
+
+/* Validates a buffered MTProto abridged resPQ response stream.
+ * Returns 1 if a complete valid resPQ matching nonce was received,
+ * 0 if more bytes are needed, or -1 if the frame/payload is invalid. */
+int mtproto_check_res_pq_stream(const uint8_t *buf, size_t len, const uint8_t nonce[16]);
+
 #endif

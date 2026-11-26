@@ -252,6 +252,43 @@ int main(void) {
     rc = test_sampling_excluded();
     fprintf(stderr, "test %-38s %s (%d)\n", "candidates: sampling vs excludes", rc ? "FAIL" : "ok", rc);
     fails += rc != 0;
+    {   /* MTProto req_pq_multi / resPQ validation */
+        uint8_t nonce[16] = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16};
+        uint8_t req[42];
+        mtproto_build_req_pq(req, 0x1234567800000001ULL, nonce);
+        int mt_ok = req[0] == 0xef && req[1] == 10 && (req[10] & 3) == 0 &&
+                    req[22] == 0xf1 && req[23] == 0x8e && req[24] == 0x7e && req[25] == 0xbe &&
+                    memcmp(req + 26, nonce, 16) == 0;
+
+        /* Valid 84-byte resPQ (21 words) with 1 fingerprint */
+        uint8_t resp[85];
+        memset(resp, 0, sizeof(resp));
+        resp[0] = 21;
+        resp[1 + 8] = 1; /* msg_id % 4 == 1 */
+        resp[1 + 16] = 64; /* 84 - 20 */
+        resp[1 + 20] = 0x63; resp[1 + 21] = 0x24; resp[1 + 22] = 0x16; resp[1 + 23] = 0x05;
+        memcpy(resp + 1 + 24, nonce, 16);
+        resp[1 + 56] = 8; /* pq len = 8 -> offset = 56 + 12 = 68 */
+        resp[1 + 68] = 0x15; resp[1 + 69] = 0xc4; resp[1 + 70] = 0xb5; resp[1 + 71] = 0x1c;
+        resp[1 + 72] = 1; /* vector count = 1 -> total 68 + 8 + 8 = 84 */
+
+        mt_ok = mt_ok && mtproto_check_res_pq_stream(resp, 20, nonce) == 0;
+        mt_ok = mt_ok && mtproto_check_res_pq_stream(resp, sizeof(resp), nonce) == 1;
+
+        uint8_t bad_nonce[85];
+        memcpy(bad_nonce, resp, sizeof(resp));
+        bad_nonce[1 + 24] ^= 1;
+        mt_ok = mt_ok && mtproto_check_res_pq_stream(bad_nonce, sizeof(bad_nonce), nonce) == -1;
+
+        uint8_t http_err[300];
+        memset(http_err, 'A', sizeof(http_err));
+        memcpy(http_err, "HTTP/1.1 400 Bad Request\r\n", 26);
+        mt_ok = mt_ok && mtproto_check_res_pq_stream(http_err, sizeof(http_err), nonce) == -1;
+
+        fprintf(stderr, "test %-38s %s\n", "mtproto req_pq_multi / resPQ", mt_ok ? "ok" : "FAIL");
+        fails += !mt_ok;
+    }
+
     fprintf(stderr, "tests: %s\n", fails ? "FAILED" : "all passed");
     return fails ? 1 : 0;
 }
