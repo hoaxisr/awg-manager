@@ -38,6 +38,7 @@ type mtgActiveSpec struct {
 	Secret        string
 	LegacySecret  string
 	AllSecretsCSV string
+	HasUsers      bool
 	TlsDomain     string
 	UpstreamsKey  string
 	DirectPort    int
@@ -60,11 +61,13 @@ type MtgEngine struct {
 	hasCfg    bool
 	connected atomic.Int64
 
-	// rawConns — соединения raw-листенера. stopLocked закрывает их: иначе
-	// остановка, ротация или отзыв секрета не обрывали бы уже подключённых.
+	// rawConns — открытые клиентские соединения direct и raw листенеров.
+	// stopLocked закрывает их, чтобы остановка, ротация или отзыв секрета
+	// немедленно обрывали уже подключённых клиентов.
 	// Порядок локов: mu → rawMu.
 	rawMu    sync.Mutex
 	rawConns map[net.Conn]struct{}
+	acceptWg sync.WaitGroup
 }
 
 func NewMtgEngine() *MtgEngine {
@@ -108,16 +111,25 @@ func (o *mtgConnObserver) Shutdown() {
 	}
 }
 
+const DefaultEffectiveTlsDomain = "ya.ru"
+
+// EffectiveTlsDomain returns the normalized Fake-TLS SNI domain used by MtgEngine
+// and client-facing MTProto ee-secrets, falling back to DefaultEffectiveTlsDomain when empty.
+func EffectiveTlsDomain(tlsDomain string) string {
+	host := strings.TrimSpace(strings.ToLower(tlsDomain))
+	if host == "" {
+		return DefaultEffectiveTlsDomain
+	}
+	return host
+}
+
 func parseMtgSecret(hexKey string, tlsDomain string) (mtglib.Secret, error) {
 	cleanHex := strings.TrimSpace(strings.ToLower(hexKey))
 	keyBytes, err := hex.DecodeString(cleanHex)
 	if err != nil || len(keyBytes) != mtglib.SecretKeyLength {
 		return mtglib.Secret{}, fmt.Errorf("invalid 16-byte hex secret: %q", hexKey)
 	}
-	host := strings.TrimSpace(strings.ToLower(tlsDomain))
-	if host == "" {
-		host = "ya.ru"
-	}
+	host := EffectiveTlsDomain(tlsDomain)
 	var sec mtglib.Secret
 	copy(sec.Key[:], keyBytes)
 	sec.Host = host
@@ -136,14 +148,12 @@ func buildMtgSpec(cfg Config) mtgActiveSpec {
 	if rawAddr == "" {
 		rawAddr = DefaultBackend
 	}
-	tlsDomain := strings.TrimSpace(strings.ToLower(cfg.TlsDomain))
-	if tlsDomain == "" {
-		tlsDomain = "ya.ru"
-	}
+	tlsDomain := EffectiveTlsDomain(cfg.TlsDomain)
 	return mtgActiveSpec{
 		Secret:        strings.TrimSpace(strings.ToLower(cfg.Secret)),
 		LegacySecret:  strings.TrimSpace(strings.ToLower(cfg.LegacySecret)),
 		AllSecretsCSV: strings.Join(cfg.ActiveSecrets(), ","),
+		HasUsers:      len(cfg.Users) > 0,
 		TlsDomain:     tlsDomain,
 		UpstreamsKey:  upstreamPoolSignature(cfg.EnabledUpstreams()),
 		DirectPort:    directPort,
@@ -223,7 +233,7 @@ func (e *MtgEngine) startLocked(spec mtgActiveSpec, upstreams []UpstreamSpec) er
 			}
 		}
 	}
-	if len(secrets) == 0 && spec.Secret != "" {
+	if len(secrets) == 0 && !spec.HasUsers && spec.Secret != "" {
 		sec0, err := parseMtgSecret(spec.Secret, spec.TlsDomain)
 		if err != nil {
 			return err
@@ -308,12 +318,12 @@ func (e *MtgEngine) startLocked(spec mtgActiveSpec, upstreams []UpstreamSpec) er
 	e.active = spec
 
 	if directLis != nil {
-		go func(p *mtglib.Proxy, l net.Listener) {
-			_ = p.Serve(l)
-		}(proxy, directLis)
+		e.acceptWg.Add(1)
+		go e.serveDirectLoop(directLis, proxy)
 	}
 
 	if rawLis != nil {
+		e.acceptWg.Add(1)
 		go e.serveRawLoop(rawLis, proxy, ntw, secrets)
 	}
 
@@ -329,6 +339,17 @@ func (e *MtgEngine) stopLocked() {
 		_ = e.rawLis.Close()
 		e.rawLis = nil
 	}
+	// Дождаться завершения accept-циклов и входа уже принятых соединений в
+	// ServeConn (после streamWaitGroup.Add(1)), прежде чем вызывать Shutdown().
+	e.acceptWg.Wait()
+
+	e.rawMu.Lock()
+	for c := range e.rawConns {
+		_ = c.Close()
+	}
+	e.rawConns = nil
+	e.rawMu.Unlock()
+
 	if e.proxy != nil {
 		e.proxy.Shutdown()
 		e.proxy = nil
@@ -339,13 +360,53 @@ func (e *MtgEngine) stopLocked() {
 	}
 	e.secrets = nil
 	e.active = mtgActiveSpec{}
-	e.rawMu.Lock()
-	for c := range e.rawConns {
-		_ = c.Close()
-	}
-	e.rawConns = nil
-	e.rawMu.Unlock()
 	e.connected.Store(0)
+}
+
+type mtgAdmitNotifyConn struct {
+	essentials.Conn
+	once    sync.Once
+	entered chan struct{}
+}
+
+func (c *mtgAdmitNotifyConn) signalEntered() {
+	c.once.Do(func() {
+		close(c.entered)
+	})
+}
+
+func (c *mtgAdmitNotifyConn) SetDeadline(t time.Time) error {
+	err := c.Conn.SetDeadline(t)
+	c.signalEntered()
+	return err
+}
+
+func (c *mtgAdmitNotifyConn) Close() error {
+	c.signalEntered()
+	return c.Conn.Close()
+}
+
+func (e *MtgEngine) serveDirectLoop(lis net.Listener, proxy *mtglib.Proxy) {
+	defer e.acceptWg.Done()
+	for {
+		conn, err := lis.Accept()
+		if err != nil {
+			return
+		}
+		ec, ok := conn.(essentials.Conn)
+		if !ok {
+			ec = essentials.WrapNetConn(conn)
+		}
+		e.trackRaw(ec)
+		entered := make(chan struct{})
+		wrapped := &mtgAdmitNotifyConn{Conn: ec, entered: entered}
+		go func(c *mtgAdmitNotifyConn, raw essentials.Conn) {
+			defer e.untrackRaw(raw)
+			defer c.signalEntered()
+			proxy.ServeConn(c)
+		}(wrapped, ec)
+		<-entered
+	}
 }
 
 func (e *MtgEngine) trackRaw(c net.Conn) {
@@ -364,6 +425,7 @@ func (e *MtgEngine) untrackRaw(c net.Conn) {
 }
 
 func (e *MtgEngine) serveRawLoop(lis net.Listener, proxy *mtglib.Proxy, ntw mtglib.Network, secrets []mtglib.Secret) {
+	defer e.acceptWg.Done()
 	for {
 		conn, err := lis.Accept()
 		if err != nil {
