@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -595,7 +596,7 @@ type WebProxyStatusLink struct {
 
 func (c Config) GetEndpoints() []WebProxyEndpoint {
 	if len(c.Endpoints) > 0 {
-		return c.Endpoints
+		return slices.Clone(c.Endpoints)
 	}
 	if c.PublicHostname != "" {
 		listenPort := 8084

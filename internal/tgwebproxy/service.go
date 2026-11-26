@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -510,10 +511,16 @@ func generateTxID(r io.Reader) (string, error) {
 	return fmt.Sprintf("tx_%d_%s", time.Now().Unix(), hex.EncodeToString(b)), nil
 }
 
+// GetInternalConfig — копия конфига: мастер правит полученное на месте
+// (Endpoints[0] и т.д.), и общий срез портил живой конфиг даже при отказе плана.
 func (s *Service) GetInternalConfig() Config {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.config
+	cfg := s.config
+	cfg.Endpoints = slices.Clone(cfg.Endpoints)
+	cfg.Users = slices.Clone(cfg.Users)
+	cfg.Upstreams = cloneUpstreams(cfg.Upstreams)
+	return cfg
 }
 
 func (s *Service) GetConfig() PublicConfig {
