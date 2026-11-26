@@ -8541,6 +8541,7 @@
 	"firc_groups_pg_iface_required": "Add at least one interface to proxy group “{name}”",
 	"firc_groups_pg_duplicate_chain": "Proxy groups “{first}” and “{second}” use the same interface chain",
 	"firc_groups_pg_saved": "Fallback proxy groups saved",
+	"firc_groups_pg_not_found": "The selected Fallback proxy group no longer exists",
 	"firc_groups_pg_save_error": "Failed to save proxy groups: {error}",
 	"firc_groups_pg_hint_before": "Build a chain of 1–4 interfaces (VLESS / AmneziaWG tunnels and a backup",
 	"firc_groups_pg_hint_after": "). If the primary tunnel (#1) is down, traffic switches to the next interface in the list automatically.",

@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import type { FircGroup, FircGroupCheck, FircProxyGroup } from '$lib/types/firc';
+import type { CatalogPreset } from '$lib/types';
+import type { FircGroup, FircGroupCheck, FircInterfaceOption, FircProxyGroup } from '$lib/types/firc';
 import {
 	applyProxyGroupToGroup,
+	buildCatalogTunnelOptions,
 	buildGroupCheckFromProxyGroup,
+	buildProxyGroupSelectOptions,
+	emptyGroupForm,
 	groupLinksOf,
 	groupFormFrom,
 	groupFromForm,
+	groupsFromPresets,
 	inferDraftProxyGroupCheck,
 	managingProxyGroup,
 	matchingProxyGroup,
@@ -17,6 +22,8 @@ import {
 	savePayload,
 	serializeForDiff,
 	setPrimaryIface,
+	syncGroupsWithProxyGroupChanges,
+	syncRestoredDraftWithProxyGroups,
 	toggleBackupIface,
 	withGroupLinks,
 } from './fircGroups';
@@ -284,5 +291,332 @@ describe('proxy group check helpers', () => {
 		const grown = group('g2', { ...FULL, mode: 'none' }, 'eth3');
 		toggleBackupIface(grown, 'tunvless0');
 		expect(grown.check).toEqual(FULL);
+	});
+
+	it('creates and edits groups directly with a Fallback proxy group in groupForm', () => {
+		const managedPg = pg(FULL);
+		const checklessPg = { id: 'pg_free', name: 'Free', interfaces: ['tunvless0', 'tunvless1'] };
+		const singlePg = { id: 'pg_one', name: 'One', interfaces: ['tunvless0'] };
+		const pgs: FircProxyGroup[] = [managedPg, checklessPg, singlePg];
+
+		// Создание новой группы сразу на прокси-группу с проверкой.
+		const createdManaged = groupFromForm(
+			{ ...emptyGroupForm('pg:pg'), name: 'Streaming' },
+			undefined,
+			0,
+			pgs,
+		);
+		expect(createdManaged.interface).toEqual(CHAIN);
+		expect(createdManaged.proxyGroupId).toBe('pg');
+		expect(createdManaged.check).toEqual(FULL);
+
+		// Создание новой группы на прокси-группу без своей проверки использует форму.
+		const createdFree = groupFromForm(
+			{ ...emptyGroupForm('pg:pg_free'), name: 'Custom', checkMode: 'url', checkUrl: 'https://my.example/204' },
+			undefined,
+			1,
+			pgs,
+		);
+		expect(createdFree.interface).toEqual(['tunvless0', 'tunvless1']);
+		expect(createdFree.proxyGroupId).toBe('pg_free');
+		expect(createdFree.check).toEqual({ mode: 'url', url: 'https://my.example/204' });
+
+		// Прокси-группа с одним интерфейсом привязывается без check.
+		const createdSingle = groupFromForm(emptyGroupForm('pg:pg_one'), undefined, 2, pgs);
+		expect(createdSingle.interface).toBe('tunvless0');
+		expect(createdSingle.proxyGroupId).toBe('pg_one');
+		expect(createdSingle.check).toBeUndefined();
+
+		// groupFormFrom показывает `pg:<id>` для связанной группы и обычный интерфейс для несвязанной.
+		expect(groupFormFrom(createdManaged, pgs).iface).toBe('pg:pg');
+		expect(groupFormFrom(group('unlinked', FULL, CHAIN), pgs).iface).toBe('eth3');
+
+		// Редактирование: переключение одиночного правила на прокси-группу и обратно на другую.
+		const singleCur = group('g_single', undefined, 'tunvless2');
+		const switchedToPg = groupFromForm({ ...groupFormFrom(singleCur, pgs), iface: 'pg:pg' }, singleCur, 1, pgs);
+		expect(switchedToPg.interface).toEqual(CHAIN);
+		expect(switchedToPg.proxyGroupId).toBe('pg');
+		expect(switchedToPg.check).toEqual(FULL);
+
+		const switchedToOther = groupFromForm(
+			{ ...groupFormFrom(switchedToPg, pgs), iface: 'pg:pg_one' },
+			switchedToPg,
+			1,
+			pgs,
+		);
+		expect(switchedToOther.interface).toBe('tunvless0');
+		expect(switchedToOther.proxyGroupId).toBe('pg_one');
+		expect(switchedToOther.check).toEqual({ ...FULL, mode: 'none', url: '' });
+
+		// Явное переключение с Fallback-группы на одиночный интерфейс (в т.ч. на её же primary или другой) отвязывает правило.
+		const detachedPrimary = groupFromForm(
+			{ ...groupFormFrom(switchedToPg, pgs), iface: 'eth3' },
+			switchedToPg,
+			1,
+			pgs,
+		);
+		expect(detachedPrimary.interface).toBe('eth3');
+		expect(detachedPrimary.proxyGroupId).toBeUndefined();
+		expect(detachedPrimary.check?.mode).toBe('none');
+
+		const detachedOther = groupFromForm(
+			{ ...groupFormFrom(switchedToPg, pgs), iface: 'tunvless2' },
+			switchedToPg,
+			1,
+			pgs,
+		);
+		expect(detachedOther.interface).toBe('tunvless2');
+		expect(detachedOther.proxyGroupId).toBeUndefined();
+		expect(detachedOther.check?.mode).toBe('none');
+
+		// Устаревшее значение `pg:missing` не протекает в interface.
+		const staleEdit = groupFromForm({ ...groupFormFrom(singleCur, pgs), iface: 'pg:missing' }, singleCur, 1, pgs);
+		expect(staleEdit.interface).toBe('tunvless2');
+		expect(staleEdit.proxyGroupId).toBeUndefined();
+		expect(groupFromForm(emptyGroupForm('pg:missing'), undefined, 0, pgs).interface).toBe('block');
+	});
+
+	it('includes Fallback proxy groups in catalog options and groupsFromPresets', () => {
+		const ifaces: FircInterfaceOption[] = [
+			{ id: 'tunvless0', name: 'DE', role: 'tunnel' },
+			{ id: 'eth3', name: 'ISP', role: 'wan' },
+		];
+		const pgs: FircProxyGroup[] = [
+			pg(FULL),
+			{ id: 'pg_free', name: 'Free', interfaces: ['tunvless0', 'eth3'] },
+			{ id: 'pg_empty', name: 'Empty', interfaces: [] },
+		];
+
+		const pgOpts = buildProxyGroupSelectOptions(pgs, ifaces);
+		expect(pgOpts.map((o) => ({ value: o.value, isChecklessChain: o.isChecklessChain }))).toEqual([
+			{ value: 'pg:pg', isChecklessChain: false },
+			{ value: 'pg:pg_free', isChecklessChain: true },
+		]);
+
+		const catalogOpts = buildCatalogTunnelOptions(ifaces, pgs);
+		expect(catalogOpts.slice(0, 2).map((o) => o.value)).toEqual(['pg:pg', 'pg:pg_free']);
+
+		const preset: CatalogPreset = {
+			id: 'yt',
+			name: 'YouTube',
+			category: 'media',
+			engines: { singbox: { ruleSets: [{ tag: 'yt', url: 'https://example.test/yt.srs' }] } },
+		} as CatalogPreset;
+
+		const fromManaged = groupsFromPresets([preset], 'pg:pg', pgs);
+		expect(fromManaged).toHaveLength(1);
+		expect(fromManaged[0].interface).toEqual(CHAIN);
+		expect(fromManaged[0].proxyGroupId).toBe('pg');
+		expect(fromManaged[0].check).toEqual(FULL);
+
+		const fromFree = groupsFromPresets([preset], 'pg:pg_free', pgs);
+		expect(fromFree[0].interface).toEqual(['tunvless0', 'eth3']);
+		expect(fromFree[0].proxyGroupId).toBe('pg_free');
+		expect(fromFree[0].check).toEqual({ mode: 'url', url: '' });
+
+		// Устаревшее `pg:missing` не протекает в interface.
+		expect(groupsFromPresets([preset], 'pg:missing', pgs)).toEqual([]);
+	});
+
+	it('propagates proxy group chain edits into drafts without overwriting diverged or unlinked groups', () => {
+		const prevPg = pg(FULL);
+		const reorderedPg = pg({ ...FULL, url: 'https://new.example/204' }, ['tunvless0', 'eth3']);
+		const linked = { ...group('g1', FULL, CHAIN), proxyGroupId: 'pg' };
+		const unlinked = group('g2', FULL, CHAIN);
+		const diverged = { ...group('g3', FULL, ['eth3', 'tunvless9']), proxyGroupId: 'pg' };
+
+		const synced = syncGroupsWithProxyGroupChanges([linked, unlinked, diverged], [prevPg], [reorderedPg]);
+		expect(synced.changed).toBe(true);
+		expect(synced.groups[0].interface).toEqual(['tunvless0', 'eth3']);
+		expect(synced.groups[0].proxyGroupId).toBe('pg');
+		expect(synced.groups[0].check?.url).toBe('https://new.example/204');
+		expect(synced.groups[1].interface).toEqual(CHAIN);
+		expect(synced.groups[2].interface).toEqual(['eth3', 'tunvless9']);
+
+		// Сужение до одного интерфейса отключает проверку, но сохраняет связь.
+		const shrunk = syncGroupsWithProxyGroupChanges(
+			synced.groups,
+			[reorderedPg],
+			[pg({ mode: 'none' }, ['tunvless0'])],
+		);
+		expect(shrunk.groups[0].interface).toBe('tunvless0');
+		expect(shrunk.groups[0].proxyGroupId).toBe('pg');
+		expect(shrunk.groups[0].check?.mode).toBe('none');
+
+		// Удаление прокси-группы снимает связь, не трогая интерфейсы.
+		const deleted = syncGroupsWithProxyGroupChanges(shrunk.groups, [pg({ mode: 'none' }, ['tunvless0'])], []);
+		expect(deleted.groups[0].interface).toBe('tunvless0');
+		expect(deleted.groups[0].proxyGroupId).toBeUndefined();
+
+		// Восстановленный черновик: обновляется новая несохранённая группа, группа, уже обновлённая на сервере,
+		// и существующая несвязанная группа, которую пользователь привязал к прокси-группе в черновике;
+		// старая расходящаяся группа не перетирается.
+		const serverGroups = [
+			{ ...group('g1', reorderedPg.check, ['tunvless0', 'eth3']), proxyGroupId: 'pg' },
+			group('g2', undefined, 'eth3'),
+			{ ...group('g3', FULL, ['eth3', 'tunvless9']), proxyGroupId: 'pg' },
+		];
+		const draftNewlyLinked = { ...group('g2', FULL, CHAIN), proxyGroupId: 'pg' };
+		const draftNew = { ...group('g_new', FULL, CHAIN), proxyGroupId: 'pg' };
+		const restored = syncRestoredDraftWithProxyGroups(
+			[linked, draftNewlyLinked, diverged, draftNew],
+			serverGroups,
+			[reorderedPg],
+		);
+		expect(restored[0].interface).toEqual(['tunvless0', 'eth3']);
+		expect(restored[1].interface).toEqual(['tunvless0', 'eth3']);
+		expect(restored[1].check?.url).toBe('https://new.example/204');
+		expect(restored[2].interface).toEqual(['eth3', 'tunvless9']);
+		expect(restored[3].interface).toEqual(['tunvless0', 'eth3']);
+		expect(restored[3].proxyGroupId).toBe('pg');
+
+		// Спецгруппа KeenDNS (c100d001): при сужении PG до 1 интерфейса связь снимается, как на бэкенде.
+		const kdDraft = { ...group('c100d001', FULL, CHAIN), proxyGroupId: 'pg' };
+		const kdShrunk = syncGroupsWithProxyGroupChanges([kdDraft], [prevPg], [pg({ mode: 'none' }, ['eth3'])]);
+		expect(kdShrunk.groups[0].interface).toBe('eth3');
+		expect(kdShrunk.groups[0].proxyGroupId).toBeUndefined();
+
+		const kdRestored = syncRestoredDraftWithProxyGroups(
+			[kdDraft],
+			[group('c100d001', { mode: 'none' }, 'eth3')],
+			[pg({ mode: 'none' }, ['eth3'])],
+		);
+		expect(kdRestored[0].interface).toBe('eth3');
+		expect(kdRestored[0].proxyGroupId).toBeUndefined();
+
+		// Спецгруппа KeenDNS без proxyGroupId (cloudHealthCheck или рост 1 → 2):
+		// подхватывает актуальную цепочку, связь и проверку с сервера без фантомного diff.
+		const kdCloudDraft = group('c100d001', { mode: 'keendns', timeoutMs: 5000 }, CHAIN);
+		const kdCloudServer = group('c100d001', { mode: 'keendns', timeoutMs: 5000 }, ['tunvless0', 'eth3']);
+		const kdCloudRestored = syncRestoredDraftWithProxyGroups([kdCloudDraft], [kdCloudServer], [reorderedPg]);
+		expect(kdCloudRestored[0].interface).toEqual(['tunvless0', 'eth3']);
+		expect(kdCloudRestored[0].proxyGroupId).toBeUndefined();
+
+		const kdSingleDraft = group('c100d001', { mode: 'none' }, 'eth3');
+		const kdGrownServer = { ...group('c100d001', FULL, CHAIN), proxyGroupId: 'pg' };
+		const kdGrownRestored = syncRestoredDraftWithProxyGroups([kdSingleDraft], [kdGrownServer], [prevPg]);
+		expect(kdGrownRestored[0].interface).toEqual(CHAIN);
+		expect(kdGrownRestored[0].proxyGroupId).toBe('pg');
+		expect(kdGrownRestored[0].check).toEqual(FULL);
+
+		// Global (c100d002): при сужении PG до 1 интерфейса с check:{mode:'none'} связь сохраняется,
+		// как в backend specialGroupLinks, а при снятии ссылки на сервере унаследованный check очищается.
+		const globalDraft = { ...group('c100d002', FULL, CHAIN), proxyGroupId: 'pg' };
+		const globalShrunk = syncGroupsWithProxyGroupChanges(
+			[globalDraft],
+			[prevPg],
+			[pg({ mode: 'none' }, ['eth3'])],
+		);
+		expect(globalShrunk.groups[0].interface).toBe('eth3');
+		expect(globalShrunk.groups[0].proxyGroupId).toBe('pg');
+
+		const globalUnlinkedServer = group('c100d002', { mode: 'none' }, ['tunvless0', 'eth3']);
+		const globalRestored = syncRestoredDraftWithProxyGroups([globalDraft], [globalUnlinkedServer], [reorderedPg]);
+		expect(globalRestored[0].interface).toEqual(['tunvless0', 'eth3']);
+		expect(globalRestored[0].proxyGroupId).toBeUndefined();
+		expect(globalRestored[0].check).toEqual({ mode: 'none', url: '' });
+
+		// Смонтированный черновик: спецгруппы KeenDNS (cloudHealthCheck без proxyGroupId) и Global (на PG без check)
+		// тоже обновляют порядок туннелей при передаче nextExt.
+		const nextSpecialExt = {
+			proxyGroups: [reorderedPg],
+			globalTarget: 'pg:pg',
+			keenDnsCloud: { enabled: true, cloudHealthCheck: true, proxyGroupId: 'pg', interfaces: ['tunvless0', 'eth3'] },
+			serverRouting: { enabledServers: [] },
+			groupLinks: {},
+		};
+		const specialSynced = syncGroupsWithProxyGroupChanges(
+			[
+				group('c100d001', { mode: 'keendns', timeoutMs: 5000 }, CHAIN),
+				group('c100d002', { mode: 'none' }, CHAIN),
+			],
+			[prevPg],
+			[reorderedPg],
+			nextSpecialExt,
+		);
+		expect(specialSynced.changed).toBe(true);
+		expect(specialSynced.groups[0].interface).toEqual(['tunvless0', 'eth3']);
+		expect(specialSynced.groups[1].interface).toEqual(['tunvless0', 'eth3']);
+
+		// KeenDNS с cloudHealthCheck: рост PG 1 -> 2 интерфейса выставляет check:{mode:'keendns',timeoutMs:5000},
+		// а внешнее включение cloudHealthCheck на PG-связанной KeenDNS снимает proxyGroupId и включает keendns-проверку.
+		const kdGrown = syncGroupsWithProxyGroupChanges(
+			[group('c100d001', { mode: 'none' }, 'eth3')],
+			[pg({ mode: 'none' }, ['eth3'])],
+			[reorderedPg],
+			nextSpecialExt,
+		);
+		expect(kdGrown.changed).toBe(true);
+		expect(kdGrown.groups[0].interface).toEqual(['tunvless0', 'eth3']);
+		expect(kdGrown.groups[0].proxyGroupId).toBeUndefined();
+		expect(kdGrown.groups[0].check).toEqual({ mode: 'keendns', url: '', timeoutMs: 5000 });
+
+		const kdCloudToggled = syncGroupsWithProxyGroupChanges(
+			[{ ...group('c100d001', FULL, ['tunvless0', 'eth3']), proxyGroupId: 'pg' }],
+			[reorderedPg],
+			[reorderedPg],
+			nextSpecialExt,
+		);
+		expect(kdCloudToggled.changed).toBe(true);
+		expect(kdCloudToggled.groups[0].proxyGroupId).toBeUndefined();
+		expect(kdCloudToggled.groups[0].check).toEqual({ mode: 'keendns', url: '', timeoutMs: 5000 });
+
+		// Смена цели спецгрупп Global/KeenDNS на прокси-группу без check или одиночный интерфейс:
+		// устаревший proxyGroupId и унаследованный check сбрасываются, чтобы сохранение черновика их не воскрешало.
+		const checklessPg2: FircProxyGroup = { id: 'pg2', name: 'PG2', interfaces: ['eth3', 'tunvless9'] };
+		const switchedExt = {
+			proxyGroups: [reorderedPg, checklessPg2],
+			globalTarget: 'pg:pg2',
+			keenDnsCloud: { enabled: true, cloudHealthCheck: false, proxyGroupId: 'pg2', interfaces: [] },
+			serverRouting: { enabledServers: [] },
+			groupLinks: {},
+		};
+		const specialRetargeted = syncGroupsWithProxyGroupChanges(
+			[
+				{ ...group('c100d001', FULL, ['tunvless0', 'eth3']), proxyGroupId: 'pg' },
+				{ ...group('c100d002', FULL, ['tunvless0', 'eth3']), proxyGroupId: 'pg' },
+			],
+			[reorderedPg, checklessPg2],
+			[reorderedPg, checklessPg2],
+			switchedExt,
+		);
+		expect(specialRetargeted.changed).toBe(true);
+		expect(specialRetargeted.groups[0].interface).toEqual(['eth3', 'tunvless9']);
+		expect(specialRetargeted.groups[0].proxyGroupId).toBeUndefined();
+		expect(specialRetargeted.groups[0].check).toEqual({ mode: 'none', url: '' });
+		expect(specialRetargeted.groups[1].interface).toEqual(['eth3', 'tunvless9']);
+		expect(specialRetargeted.groups[1].proxyGroupId).toBeUndefined();
+		expect(specialRetargeted.groups[1].check).toEqual({ mode: 'none', url: '' });
+
+		// Global переключён на iface:<id>, а у KeenDNS выключен cloudHealthCheck на PG без check.
+		const globalIfaceAndCloudOffExt = {
+			proxyGroups: [reorderedPg, checklessPg2],
+			globalTarget: 'iface:tunvless2',
+			keenDnsCloud: { enabled: true, cloudHealthCheck: false, proxyGroupId: 'pg2', interfaces: [] },
+			serverRouting: { enabledServers: [] },
+			groupLinks: {},
+		};
+		const specialOff = syncGroupsWithProxyGroupChanges(
+			[
+				group('c100d001', { mode: 'keendns', url: '', timeoutMs: 5000 }, ['eth3', 'tunvless9']),
+				{ ...group('c100d002', FULL, ['tunvless0', 'eth3']), proxyGroupId: 'pg' },
+			],
+			[reorderedPg, checklessPg2],
+			[reorderedPg, checklessPg2],
+			globalIfaceAndCloudOffExt,
+		);
+		expect(specialOff.changed).toBe(true);
+		expect(specialOff.groups[0].check).toEqual({ mode: 'none', url: '' });
+		expect(specialOff.groups[1].interface).toBe('tunvless2');
+		expect(specialOff.groups[1].proxyGroupId).toBeUndefined();
+		expect(specialOff.groups[1].check).toEqual({ mode: 'none', url: '' });
+
+		// syncRestoredDraftWithProxyGroups также сбрасывает keendns-проверку при выключении cloudHealthCheck.
+		const kdCloudOffRestored = syncRestoredDraftWithProxyGroups(
+			[group('c100d001', { mode: 'keendns', url: '', timeoutMs: 5000 }, ['eth3', 'tunvless9'])],
+			[group('c100d001', { mode: 'none', url: '' }, ['eth3', 'tunvless9'])],
+			[checklessPg2],
+		);
+		expect(kdCloudOffRestored[0].check).toEqual({ mode: 'none', url: '' });
 	});
 });

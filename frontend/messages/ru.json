@@ -8935,6 +8935,7 @@
 	"firc_groups_pg_iface_required": "Добавьте хотя бы один интерфейс в прокси-группу «{name}»",
 	"firc_groups_pg_duplicate_chain": "Прокси-группы «{first}» и «{second}» используют одинаковую цепочку интерфейсов",
 	"firc_groups_pg_saved": "Прокси-группы Fallback сохранены",
+	"firc_groups_pg_not_found": "Выбранная прокси-группа Fallback больше не существует",
 	"firc_groups_pg_save_error": "Ошибка сохранения прокси-групп: {error}",
 	"firc_groups_pg_hint_before": "Соберите цепочку из 1–4 интерфейсов (туннели VLESS / AmneziaWG и резервный",
 	"firc_groups_pg_hint_after": "). Если основной туннель (#1) недоступен, трафик автоматически переключается на следующий интерфейс в списке.",

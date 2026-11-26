@@ -41,6 +41,12 @@ export const PAGE_SIZE = 50;
 export const MAX_GROUP_IFACES = 4;
 /** Зарезервированная группа облака Keenetic (KeenDNSGroupID в internal/firc). */
 const KEENDNS_GROUP_ID = 'c100d001';
+/** Зарезервированная группа глобальной маршрутизации (globalGroupID в internal/firc). */
+const GLOBAL_GROUP_ID = 'c100d002';
+
+function isSpecialGroupId(id: string): boolean {
+	return id === KEENDNS_GROUP_ID || id === GLOBAL_GROUP_ID;
+}
 
 export function intervalOptions(): { value: number; label: string }[] {
 	return [
@@ -440,7 +446,7 @@ export function ifaceDotTooltip(rt: FircGroupsRuntime, group: FircGroup, id: str
 }
 
 /** Прокси-группа, с которой группа связана; цепочка должна оставаться её цепочкой. */
-function linkedProxyGroup(
+export function linkedProxyGroup(
 	proxyGroups: FircProxyGroup[],
 	group: Pick<FircGroup, 'interface' | 'proxyGroupId'>,
 ): FircProxyGroup | undefined {
@@ -697,8 +703,289 @@ export function buildBulkInterfaces(
 	];
 }
 
-export function buildCatalogTunnelOptions(interfaces: FircInterfaceOption[]): DropdownOption[] {
+export const PROXY_GROUP_IFACE_PREFIX = 'pg:';
+
+export interface ProxyGroupSelectOption {
+	value: string;
+	label: string;
+	isChecklessChain: boolean;
+}
+
+/** Находит непустую прокси-группу по значению селектора `pg:<id>`. */
+export function proxyGroupFromIfaceValue(
+	proxyGroups: FircProxyGroup[],
+	raw: string,
+): FircProxyGroup | undefined {
+	if (!raw.startsWith(PROXY_GROUP_IFACE_PREFIX)) return undefined;
+	const pgId = raw.slice(PROXY_GROUP_IFACE_PREFIX.length);
+	if (!pgId) return undefined;
+	return proxyGroups.find((pg) => pg.id === pgId && (pg.interfaces?.length ?? 0) > 0);
+}
+
+/** Варианты Fallback-групп для селекторов целевого выхода (`pg:<id>`). */
+export function buildProxyGroupSelectOptions(
+	proxyGroups: FircProxyGroup[],
+	interfaces: FircInterfaceOption[],
+): ProxyGroupSelectOption[] {
+	const out: ProxyGroupSelectOption[] = [];
+	const seen = new Set<string>();
+	for (const pg of proxyGroups) {
+		if (!pg.id || seen.has(pg.id) || (pg.interfaces?.length ?? 0) === 0) continue;
+		seen.add(pg.id);
+		const chain = pg.interfaces.map((id) => shortIfaceTag(interfaces, id)).join(' → ');
+		out.push({
+			value: `${PROXY_GROUP_IFACE_PREFIX}${pg.id}`,
+			label: `${pg.name} (${chain})`,
+			isChecklessChain: pg.interfaces.length >= 2 && !buildGroupCheckFromProxyGroup(pg),
+		});
+	}
+	return out;
+}
+
+function syncSpecialGroupWithExt(
+	g: FircGroup,
+	nextProxyGroups: FircProxyGroup[],
+	nextExt: FircExtConfig,
+): FircGroup {
+	let targetPg: FircProxyGroup | undefined;
+	let targetIfaces: string[] = [];
+	let desiredPgId: string | undefined;
+
+	if (g.id === KEENDNS_GROUP_ID) {
+		const kd = nextExt.keenDnsCloud;
+		targetPg = kd.proxyGroupId
+			? nextProxyGroups.find((p) => p.id === kd.proxyGroupId && (p.interfaces?.length ?? 0) > 0)
+			: undefined;
+		targetIfaces = targetPg ? targetPg.interfaces : (kd.interfaces ?? []).filter(Boolean);
+		if (kd.enabled && !kd.cloudHealthCheck && targetPg && targetPg.interfaces.length >= 2 && targetPg.check) {
+			desiredPgId = targetPg.id;
+		}
+	} else if (g.id === GLOBAL_GROUP_ID) {
+		const rawTarget = nextExt.globalTarget ?? '';
+		if (rawTarget.startsWith(PROXY_GROUP_IFACE_PREFIX)) {
+			const pgId = rawTarget.slice(PROXY_GROUP_IFACE_PREFIX.length);
+			targetPg = pgId
+				? nextProxyGroups.find((p) => p.id === pgId && (p.interfaces?.length ?? 0) > 0)
+				: undefined;
+			if (targetPg) targetIfaces = targetPg.interfaces;
+		} else if (rawTarget.startsWith('iface:')) {
+			const iface = rawTarget.slice('iface:'.length);
+			if (iface && iface !== DNS_ONLY_IFACE) targetIfaces = [iface];
+		}
+		if (targetPg && targetPg.check) {
+			desiredPgId = targetPg.id;
+		}
+	}
+
+	let updated: FircGroup = g;
+	if (targetIfaces.length > 0 && !sameChain(targetIfaces, normalizeIfaceList(updated.interface))) {
+		updated = { ...updated, interface: denormalizeIfaceList(targetIfaces) };
+		fitGroupToOutbound(updated);
+	}
+	if (desiredPgId) {
+		if (updated.proxyGroupId !== desiredPgId) {
+			updated = updated === g ? { ...g, proxyGroupId: desiredPgId } : { ...updated, proxyGroupId: desiredPgId };
+		}
+	} else if (updated.proxyGroupId) {
+		const { proxyGroupId: _dropped, ...rest } = updated;
+		updated = rest;
+	}
+
+	const ifacesLen = normalizeIfaceList(updated.interface).length;
+	let desiredCheck: FircGroupCheck | undefined;
+	if (ifacesLen < 2) {
+		if (updated.check && updated.check.mode !== 'none') {
+			desiredCheck = { mode: 'none', url: '' };
+		}
+	} else if (g.id === KEENDNS_GROUP_ID && nextExt.keenDnsCloud.cloudHealthCheck) {
+		desiredCheck = { mode: 'keendns', url: '', timeoutMs: 5000 };
+	} else if (targetPg?.check) {
+		desiredCheck = buildGroupCheckFromProxyGroup(targetPg);
+	} else if (
+		(g.proxyGroupId || (g.id === KEENDNS_GROUP_ID && g.check?.mode === 'keendns')) &&
+		updated.check &&
+		updated.check.mode !== 'none'
+	) {
+		desiredCheck = { mode: 'none', url: '' };
+	}
+
+	if (desiredCheck && checkKey(desiredCheck) !== checkKey(updated.check)) {
+		updated = updated === g ? { ...g, check: desiredCheck } : { ...updated, check: desiredCheck };
+	}
+	return updated;
+}
+
+/**
+ * Переносит изменения цепочки/проверки прокси-групп в локальный черновик правил.
+ * Обновляются группы с явной связью `proxyGroupId` (и спецгруппы KeenDNS/Global по их
+ * актуальным настройкам в `nextExt`), чья цепочка совпадала с прежней цепочкой
+ * прокси-группы; удалённая прокси-группа снимает связь.
+ */
+export function syncGroupsWithProxyGroupChanges(
+	groups: FircGroup[],
+	prevProxyGroups: FircProxyGroup[],
+	nextProxyGroups: FircProxyGroup[],
+	nextExt?: FircExtConfig,
+): { groups: FircGroup[]; changed: boolean } {
+	let changed = false;
+	const next = groups.map((g) => {
+		const isSpecial = isSpecialGroupId(g.id);
+		if (isSpecial && nextExt) {
+			const updated = syncSpecialGroupWithExt(g, nextProxyGroups, nextExt);
+			if (updated !== g) changed = true;
+			return updated;
+		}
+		const pgId = g.proxyGroupId;
+		if (!pgId) return g;
+		const newPg = nextProxyGroups.find((p) => p.id === pgId);
+		if (!newPg) {
+			changed = true;
+			const { proxyGroupId: _dropped, ...rest } = g;
+			return rest;
+		}
+		const prevPg = prevProxyGroups.find((p) => p.id === pgId);
+		const curList = normalizeIfaceList(g.interface);
+		let updated: FircGroup = g;
+		if (
+			(newPg.interfaces?.length ?? 0) > 0 &&
+			prevPg &&
+			sameChain(prevPg.interfaces, curList) &&
+			!sameChain(newPg.interfaces, curList)
+		) {
+			updated = { ...g, interface: denormalizeIfaceList(newPg.interfaces) };
+			fitGroupToOutbound(updated);
+			if (newPg.interfaces.length < 2 && updated.check && updated.check.mode !== 'none') {
+				updated.check = { ...updated.check, mode: 'none', url: '' };
+			}
+			changed = true;
+		}
+		if (updated.proxyGroupId && sameChain(newPg.interfaces, normalizeIfaceList(updated.interface))) {
+			const desired = buildGroupCheckFromProxyGroup(newPg);
+			if (desired && checkKey(desired) !== checkKey(updated.check)) {
+				updated = updated === g ? { ...g, check: desired } : { ...updated, check: desired };
+				changed = true;
+			}
+		}
+		if (
+			updated.proxyGroupId &&
+			((updated.id === KEENDNS_GROUP_ID && (newPg.interfaces.length < 2 || !newPg.check)) ||
+				(updated.id === GLOBAL_GROUP_ID && !newPg.check))
+		) {
+			const { proxyGroupId: _dropped, ...rest } = updated;
+			updated = rest;
+			changed = true;
+		}
+		return updated;
+	});
+	return { groups: changed ? next : groups, changed };
+}
+
+/**
+ * Догружает серверные связи `proxyGroupId` в группы уже открытого черновика,
+ * если при первичном `loadAll()` чтение `extConfig` не удалось и `groupLinks`
+ * пришли позже через `refreshProxyGroups()`. Привязанные вручную или изменённые
+ * по цепочке группы не перезаписываются.
+ */
+export function hydrateDraftGroupLinks(
+	groups: FircGroup[],
+	hydratedBaseline: FircGroup[],
+): FircGroup[] {
+	const baseById = new Map(hydratedBaseline.map((g) => [g.id, g]));
+	return groups.map((g) => {
+		if (g.proxyGroupId !== undefined) return g;
+		const base = baseById.get(g.id);
+		if (
+			base?.proxyGroupId &&
+			sameChain(normalizeIfaceList(base.interface), normalizeIfaceList(g.interface))
+		) {
+			return { ...g, proxyGroupId: base.proxyGroupId };
+		}
+		return g;
+	});
+}
+
+/**
+ * Актуализирует восстановленный из sessionStorage черновик после правки прокси-групп
+ * на сервере (например, из вкладки настроек). Обновляются все привязанные к прокси-группе
+ * группы черновика, кроме тех, которые уже были привязаны к той же прокси-группе на сервере
+ * и разошлись с ней (legacy-расхождение).
+ */
+export function syncRestoredDraftWithProxyGroups(
+	draftGroups: FircGroup[],
+	serverGroups: FircGroup[],
+	proxyGroups: FircProxyGroup[],
+): FircGroup[] {
+	const serverById = new Map(serverGroups.map((g) => [g.id, g]));
+	return draftGroups.map((g) => {
+		const srv = serverById.get(g.id);
+		if (isSpecialGroupId(g.id) && srv) {
+			let updated: FircGroup = g;
+			if (!sameChain(normalizeIfaceList(srv.interface), normalizeIfaceList(g.interface))) {
+				updated = { ...updated, interface: srv.interface };
+				fitGroupToOutbound(updated);
+			}
+			if (updated.proxyGroupId !== srv.proxyGroupId) {
+				if (srv.proxyGroupId) {
+					updated = { ...updated, proxyGroupId: srv.proxyGroupId };
+				} else {
+					const { proxyGroupId: _dropped, ...rest } = updated;
+					updated = rest;
+				}
+			}
+			if (
+				(g.proxyGroupId ||
+					srv.proxyGroupId ||
+					srv.check?.mode === 'keendns' ||
+					(g.id === KEENDNS_GROUP_ID && g.check?.mode === 'keendns') ||
+					normalizeIfaceList(srv.interface).length < 2) &&
+				checkKey(srv.check) !== checkKey(updated.check)
+			) {
+				updated = srv.check
+					? { ...updated, check: normalizeGroupCheck(srv.check) }
+					: { ...updated, check: { mode: 'none', url: '' } };
+			}
+			return updated;
+		}
+		if (!g.proxyGroupId) return g;
+		const pg = proxyGroups.find((p) => p.id === g.proxyGroupId);
+		if (!pg) {
+			const { proxyGroupId: _dropped, ...rest } = g;
+			return rest;
+		}
+		if ((pg.interfaces?.length ?? 0) === 0) return g;
+		const serverDiverged =
+			srv?.proxyGroupId === pg.id && !sameChain(pg.interfaces, normalizeIfaceList(srv.interface));
+		const shouldSyncChain = !serverDiverged;
+		let updated: FircGroup = g;
+		if (shouldSyncChain && !sameChain(pg.interfaces, normalizeIfaceList(g.interface))) {
+			updated = { ...g, interface: denormalizeIfaceList(pg.interfaces) };
+			fitGroupToOutbound(updated);
+			if (pg.interfaces.length < 2 && updated.check && updated.check.mode !== 'none') {
+				updated.check = { ...updated.check, mode: 'none', url: '' };
+			}
+		}
+		if (sameChain(pg.interfaces, normalizeIfaceList(updated.interface))) {
+			const desired = buildGroupCheckFromProxyGroup(pg);
+			if (desired && checkKey(desired) !== checkKey(updated.check)) {
+				updated = updated === g ? { ...g, check: desired } : { ...updated, check: desired };
+			}
+		}
+		return updated;
+	});
+}
+
+export function buildCatalogTunnelOptions(
+	interfaces: FircInterfaceOption[],
+	proxyGroups: FircProxyGroup[] = [],
+): DropdownOption[] {
 	const opts: DropdownOption[] = [];
+	for (const pgOpt of buildProxyGroupSelectOptions(proxyGroups, interfaces)) {
+		opts.push({
+			value: pgOpt.value,
+			label: pgOpt.label,
+			group: m.firc_bulk_groups_proxy_groups_opt(),
+		});
+	}
 	const seen = new Set<string>();
 	for (const opt of interfaces) {
 		if (!opt.id || seen.has(opt.id) || opt.id.startsWith('t2s') || isInternalServerFircInterface(opt)) {
@@ -938,17 +1225,30 @@ export function existingCatalogRuleSetTags(groups: FircGroup[], catalog: Catalog
 }
 
 /** Новые группы из пресетов каталога; пресеты без URL пропускаются. */
-export function groupsFromPresets(presets: CatalogPreset[], iface: string): FircGroup[] {
+export function groupsFromPresets(
+	presets: CatalogPreset[],
+	iface: string,
+	proxyGroups: FircProxyGroup[] = [],
+): FircGroup[] {
 	const out: FircGroup[] = [];
+	const pickedPg = proxyGroupFromIfaceValue(proxyGroups, iface);
+	if (!pickedPg && iface.startsWith(PROXY_GROUP_IFACE_PREFIX)) return [];
+	const resolvedIface: string | string[] = pickedPg ? denormalizeIfaceList(pickedPg.interfaces) : iface;
+	const pgCheck =
+		pickedPg && pickedPg.interfaces.length >= 2
+			? (buildGroupCheckFromProxyGroup(pickedPg) ?? { mode: 'url' as const, url: '' })
+			: undefined;
 	for (const p of presets) {
 		const url = presetSrsUrl(p);
 		if (!url) continue;
-		const isBlk = iface === 'block' || iface === 'blackhole';
+		const isBlk = !pickedPg && (iface === 'block' || iface === 'blackhole');
 		out.push(
 			normalizeGroup({
 				id: randomHexId(),
 				name: p.name,
-				interface: iface,
+				interface: resolvedIface,
+				...(pickedPg ? { proxyGroupId: pickedPg.id } : {}),
+				...(pgCheck ? { check: pgCheck } : {}),
 				enable: true,
 				devices: { allow: [], deny: [] },
 				rules: [],
@@ -963,7 +1263,7 @@ export function groupsFromPresets(presets: CatalogPreset[], iface: string): Firc
 					tunnel: !isBlk,
 					server: '',
 				},
-				...(iface === 'block' ? { block: 'null' } : {}),
+				...(!pickedPg && iface === 'block' ? { block: 'null' } : {}),
 			}),
 		);
 	}
@@ -974,6 +1274,8 @@ export function groupsFromPresets(presets: CatalogPreset[], iface: string): Firc
 export interface GroupForm {
 	name: string;
 	iface: string;
+	/** true, если форма открыта на группе, привязанной к прокси-группе (`iface` стартовал с `pg:<id>`). */
+	openedFromProxyGroup?: boolean;
 	dnsMode: 'auto' | 'own' | 'off';
 	dnsServers: string[];
 	/** Только у группы «только DNS»: при отказе серверов отвечает общий апстрим. */
@@ -989,6 +1291,7 @@ export function emptyGroupForm(iface: string): GroupForm {
 	return {
 		name: '',
 		iface,
+		openedFromProxyGroup: false,
 		dnsMode: 'auto',
 		dnsServers: [''],
 		dnsFallback: true,
@@ -1000,12 +1303,15 @@ export function emptyGroupForm(iface: string): GroupForm {
 	};
 }
 
-export function groupFormFrom(g: FircGroup): GroupForm {
+export function groupFormFrom(g: FircGroup, proxyGroups: FircProxyGroup[] = []): GroupForm {
 	const servers = splitServers(g.resolve?.server);
 	const ifaceCount = normalizeIfaceList(g.interface).length;
+	const linkedPg = linkedProxyGroup(proxyGroups, g);
+	const hasLinkedPg = Boolean(linkedPg && linkedPg.interfaces.length > 0);
 	return {
 		name: g.name,
-		iface: primaryIface(g.interface),
+		iface: hasLinkedPg ? `${PROXY_GROUP_IFACE_PREFIX}${linkedPg!.id}` : primaryIface(g.interface),
+		openedFromProxyGroup: hasLinkedPg,
 		dnsMode: !(g.resolve?.tunnel ?? true) ? 'off' : servers.length > 0 ? 'own' : 'auto',
 		dnsServers: servers.length > 0 ? servers : [''],
 		dnsFallback: g.resolve?.fallback ?? true,
@@ -1040,15 +1346,32 @@ export function groupFromForm(
 				}
 			: null;
 
+	const pickedPg = proxyGroupFromIfaceValue(proxyGroups, form.iface);
+	const stalePgSelection = !pickedPg && form.iface.startsWith(PROXY_GROUP_IFACE_PREFIX);
+
 	if (cur) {
 		const curList = normalizeIfaceList(cur.interface);
-		let nextIface: string | string[] = form.iface;
-		if (!isSpecialIface(form.iface) && curList.length > 1 && !isSpecialIface(curList[0])) {
-			const rest = curList.filter((x) => x !== form.iface && !isSpecialIface(x));
-			nextIface = denormalizeIfaceList([form.iface, ...rest].slice(0, MAX_GROUP_IFACES));
+		let nextIface: string | string[];
+		let proxyGroupId: string | undefined;
+		if (pickedPg) {
+			nextIface = denormalizeIfaceList(pickedPg.interfaces);
+			proxyGroupId = pickedPg.id;
+		} else if (stalePgSelection) {
+			nextIface = cur.interface;
+			proxyGroupId = undefined;
+		} else if (form.openedFromProxyGroup) {
+			// Пользователь явно переключил правило с Fallback-группы на одиночный интерфейс.
+			nextIface = form.iface;
+			proxyGroupId = undefined;
+		} else {
+			nextIface = form.iface;
+			if (!isSpecialIface(form.iface) && curList.length > 1 && !isSpecialIface(curList[0])) {
+				const rest = curList.filter((x) => x !== form.iface && !isSpecialIface(x));
+				nextIface = denormalizeIfaceList([form.iface, ...rest].slice(0, MAX_GROUP_IFACES));
+			}
+			proxyGroupId = sameChain(curList, normalizeIfaceList(nextIface)) ? cur.proxyGroupId : undefined;
 		}
 		const hasChain = normalizeIfaceList(nextIface).length >= 2 && !isSpecialIface(primaryIface(nextIface));
-		const proxyGroupId = sameChain(curList, normalizeIfaceList(nextIface)) ? cur.proxyGroupId : undefined;
 		const managing = managingProxyGroup(proxyGroups, { interface: nextIface, proxyGroupId });
 		const nextCheck: FircGroupCheck | undefined = hasChain
 			? normalizeGroupCheck(
@@ -1069,16 +1392,40 @@ export function groupFromForm(
 		fitGroupToOutbound(next);
 		return next;
 	}
-	return normalizeGroup({
+	if (pickedPg) {
+		const nextIface = denormalizeIfaceList(pickedPg.interfaces);
+		const hasChain = pickedPg.interfaces.length >= 2;
+		const managing = managingProxyGroup(proxyGroups, { interface: nextIface, proxyGroupId: pickedPg.id });
+		const nextCheck: FircGroupCheck | undefined = hasChain
+			? normalizeGroupCheck(managing?.check ?? { mode: form.checkMode, url: form.checkUrl })
+			: undefined;
+		const created = normalizeGroup({
+			id: randomHexId(),
+			name: form.name.trim() || `group-${groupsCount + 1}`,
+			interface: nextIface,
+			proxyGroupId: pickedPg.id,
+			enable: true,
+			devices: { allow: [], deny: [] },
+			rules: [],
+			...(nextCheck ? { check: nextCheck } : {}),
+			list: listObj,
+			resolve,
+		});
+		fitGroupToOutbound(created);
+		return created;
+	}
+	const created = normalizeGroup({
 		id: randomHexId(),
 		name: form.name.trim() || `group-${groupsCount + 1}`,
-		interface: form.iface,
+		interface: stalePgSelection ? '' : form.iface,
 		enable: true,
 		devices: { allow: [], deny: [] },
 		rules: [],
 		list: listObj,
 		resolve,
 	});
+	fitGroupToOutbound(created);
+	return created;
 }
 
 export function emptyExtConfig(): FircExtConfig {
