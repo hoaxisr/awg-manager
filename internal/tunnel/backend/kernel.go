@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/netdev"
-	"github.com/hoaxisr/awg-manager/internal/sys/kmod"
 )
 
 const (
@@ -27,8 +26,13 @@ type KernelBackend struct {
 	ensureModule func(context.Context) error
 }
 
+// amneziawgSysfs — то же, что kmod.SysfsPath. Пакет kmod не импортируем: он
+// тянет ndms/query, а код под барьером gate не должен уметь читать список
+// интерфейсов (дедлок; TestHoldCallers_CannotReadList).
+const amneziawgSysfs = "/sys/module/amneziawg"
+
 // moduleLoaded — точка подмены для тестов.
-var moduleLoaded = func() bool { _, err := os.Stat(kmod.SysfsPath); return err == nil }
+var moduleLoaded = func() bool { _, err := os.Stat(amneziawgSysfs); return err == nil }
 
 // SetModuleEnsure — загрузка amneziawg.ko (kmod.Loader.EnsureModule). Без
 // неё старт при выгруженном модуле падал «Operation not supported» от ip, а
