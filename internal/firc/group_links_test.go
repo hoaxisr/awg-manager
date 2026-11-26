@@ -6,6 +6,7 @@ import (
 	"errors"
 	"maps"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -449,5 +450,303 @@ func TestGroupLinks_RunningFircd(t *testing.T) {
 	}
 	if got := op.LoadExtConfig().GroupLinks; got[globalGroupID] != "with" {
 		t.Fatalf("start reconcile must settle links, got %v", got)
+	}
+}
+
+func groupIfaceOf(t *testing.T, groups []Group, id string) []string {
+	t.Helper()
+	for _, g := range groups {
+		if g.ID == id {
+			return []string(g.Interface)
+		}
+	}
+	t.Fatalf("group %s not found in %+v", id, groups)
+	return nil
+}
+
+func TestProxyGroupChainEditPropagatesToLinkedGroups_Offline(t *testing.T) {
+	ctx := context.Background()
+	op := NewOperator(Options{ConfigDir: t.TempDir()})
+	own := GroupCheck{Mode: "url", URL: "https://own.example/204"}
+	ext := ExtConfig{ProxyGroups: []ProxyGroup{
+		{ID: "pgA", Name: "A", Interfaces: chainA, Check: &checkA},
+		{ID: "pgNoCheck", Name: "NoCheck", Interfaces: chainB},
+	}}
+	if err := op.SaveExtConfig(ext); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := op.StageGroupsOfflineWithLinks([]Group{
+		chainGroup("linked", chainA, nil),
+		chainGroup("unlinked", chainA, &own),
+		chainGroup("diverged", chainB, &own),
+		chainGroup("nocheck_linked", chainB, &own),
+	}, map[string]string{
+		"linked":         "pgA",
+		"diverged":       "pgA",
+		"nocheck_linked": "pgNoCheck",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Смена порядка и расширение цепочки в прокси-группе обновляют только связанные группы с прежней цепочкой.
+	reordered := []string{"tunvless0", "eth3", "tunvless2"}
+	reorderedB := []string{"tunvless1", "eth3"}
+	nextCheck := GroupCheck{Mode: "url", URL: "https://next.example/204"}
+	ext.ProxyGroups[0].Interfaces = reordered
+	ext.ProxyGroups[0].Check = &nextCheck
+	ext.ProxyGroups[1].Interfaces = reorderedB
+	if _, err := op.StageExtConfigOffline(ctx, ext); err != nil {
+		t.Fatal(err)
+	}
+
+	groups := savedGroups(t, op)
+	if got := groupIfaceOf(t, groups, "linked"); !slices.Equal(got, reordered) {
+		t.Fatalf("linked iface = %v, want %v", got, reordered)
+	}
+	if c := groupCheckOf(t, groups, "linked"); c != nextCheck {
+		t.Fatalf("linked check = %+v, want %+v", c, nextCheck)
+	}
+	if got := groupIfaceOf(t, groups, "unlinked"); !slices.Equal(got, chainA) {
+		t.Fatalf("unlinked iface = %v, want %v", got, chainA)
+	}
+	if got := groupIfaceOf(t, groups, "diverged"); !slices.Equal(got, chainB) || groupCheckOf(t, groups, "diverged") != own {
+		t.Fatalf("diverged must stay untouched, iface=%v check=%+v", got, groupCheckOf(t, groups, "diverged"))
+	}
+	if got := groupIfaceOf(t, groups, "nocheck_linked"); !slices.Equal(got, reorderedB) || groupCheckOf(t, groups, "nocheck_linked") != own {
+		t.Fatalf("nocheck_linked iface=%v check=%+v", got, groupCheckOf(t, groups, "nocheck_linked"))
+	}
+	if got := op.LoadExtConfig().GroupLinks; got["linked"] != "pgA" || got["nocheck_linked"] != "pgNoCheck" {
+		t.Fatalf("links must remain intact, got %v", got)
+	}
+
+	// Сужение цепочки до одного интерфейса отключает check, но сохраняет связь;
+	// последующее расширение снова подтягивает цепочку и проверку.
+	single := []string{"tunvless0"}
+	ext.ProxyGroups[0].Interfaces = single
+	ext.ProxyGroups[0].Check = &GroupCheck{Mode: "none"}
+	if _, err := op.StageExtConfigOffline(ctx, ext); err != nil {
+		t.Fatal(err)
+	}
+	groups = savedGroups(t, op)
+	if got := groupIfaceOf(t, groups, "linked"); !slices.Equal(got, single) {
+		t.Fatalf("shrunk linked iface = %v, want %v", got, single)
+	}
+	if c := groupCheckOf(t, groups, "linked"); c.Mode != "none" {
+		t.Fatalf("shrunk linked check = %+v, want mode none", c)
+	}
+	if got := op.LoadExtConfig().GroupLinks; got["linked"] != "pgA" {
+		t.Fatalf("shrunk linked lost link: %v", got)
+	}
+
+	grown := []string{"tunvless0", "tunvless2"}
+	ext.ProxyGroups[0].Interfaces = grown
+	ext.ProxyGroups[0].Check = &checkA
+	if _, err := op.StageExtConfigOffline(ctx, ext); err != nil {
+		t.Fatal(err)
+	}
+	groups = savedGroups(t, op)
+	if got := groupIfaceOf(t, groups, "linked"); !slices.Equal(got, grown) {
+		t.Fatalf("regrown linked iface = %v, want %v", got, grown)
+	}
+	if c := groupCheckOf(t, groups, "linked"); c != checkA {
+		t.Fatalf("regrown linked check = %+v, want %+v", c, checkA)
+	}
+}
+
+func TestProxyGroupChainEditPropagatesToLinkedGroups_RunningFircd(t *testing.T) {
+	resetKeenCloudTestHooks(t)
+	InvalidateOutputRoutingCache()
+	iptSt := newFakeIptablesState()
+	ipsetSt := newFakeIpsetState(iptSt)
+	SetExtIptablesRunner(iptSt.runner)
+	SetExtIpsetRunner(ipsetSt.runner)
+
+	ctx := context.Background()
+	op := NewOperator(Options{ConfigDir: t.TempDir()})
+	var (
+		mu   sync.Mutex
+		live []Group
+	)
+	srv := startMockRunningFircServer(t, op, &mu, &live, iptSt)
+	defer srv.Close()
+
+	ext := ExtConfig{ProxyGroups: []ProxyGroup{
+		{ID: "pg", Name: "PG", Interfaces: chainA, Check: &checkA},
+	}}
+	if _, err := op.ApplyExtConfig(ctx, ext); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := op.ApplyGroupsWithLinks(ctx, []Group{
+		chainGroup("g1", chainA, nil),
+		chainGroup("g2", chainA, nil),
+	}, map[string]string{"g1": "pg"}); err != nil {
+		t.Fatal(err)
+	}
+
+	reordered := []string{"tunvless0", "eth3"}
+	ext.ProxyGroups[0].Interfaces = reordered
+	answer, err := op.ApplyExtConfig(ctx, ext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer.GroupLinks["g1"] != "pg" || op.LoadExtConfig().GroupLinks["g1"] != "pg" {
+		t.Fatalf("link must stay after reorder: answer=%v disk=%v", answer.GroupLinks, op.LoadExtConfig().GroupLinks)
+	}
+
+	mu.Lock()
+	liveSnap := cloneGroups(live)
+	mu.Unlock()
+	if got := groupIfaceOf(t, liveSnap, "g1"); !slices.Equal(got, reordered) {
+		t.Fatalf("live g1 iface = %v, want %v", got, reordered)
+	}
+	if got := groupIfaceOf(t, liveSnap, "g2"); !slices.Equal(got, chainA) {
+		t.Fatalf("live unlinked g2 iface = %v, want %v", got, chainA)
+	}
+	if got := groupIfaceOf(t, savedGroups(t, op), "g1"); !slices.Equal(got, reordered) {
+		t.Fatalf("disk g1 iface = %v, want %v", got, reordered)
+	}
+
+	// Временный сбой сохранения откатывает ProxyGroups в ext, поэтому повторный ApplyExtConfig сходится.
+	reorderedAgain := []string{"eth3", "tunvless2"}
+	ext.ProxyGroups[0].Interfaces = reorderedAgain
+	op.groupsSaveFaultHook = func([]Group) error { return errors.New("transient disk error") }
+	if _, err := op.ApplyExtConfig(ctx, ext); err == nil {
+		t.Fatal("expected ApplyExtConfig to fail on groupsSaveFaultHook")
+	}
+	if got := op.LoadExtConfig().ProxyGroups[0].Interfaces; !slices.Equal(got, reordered) {
+		t.Fatalf("ProxyGroups must roll back on failed sync, got %v want %v", got, reordered)
+	}
+	op.groupsSaveFaultHook = nil
+	if _, err := op.ApplyExtConfig(ctx, ext); err != nil {
+		t.Fatalf("retry ApplyExtConfig: %v", err)
+	}
+	mu.Lock()
+	liveSnap = cloneGroups(live)
+	mu.Unlock()
+	if got := groupIfaceOf(t, liveSnap, "g1"); !slices.Equal(got, reorderedAgain) {
+		t.Fatalf("live g1 iface after retry = %v, want %v", got, reorderedAgain)
+	}
+	if got := op.LoadExtConfig().GroupLinks["g1"]; got != "pg" {
+		t.Fatalf("link lost after retry: %q", got)
+	}
+
+	// При ManuallyDisabled (остановленный пользователем FIRC) правка прокси-группы всё равно обновляет groups.yaml.
+	srv.Close()
+	if err := op.StopByUser(ctx); err != nil {
+		t.Fatalf("StopByUser: %v", err)
+	}
+	disabledOrder := []string{"tunvless2", "eth3"}
+	ext.ProxyGroups[0].Interfaces = disabledOrder
+	if _, err := op.ApplyExtConfig(ctx, ext); err != nil {
+		t.Fatalf("ApplyExtConfig while ManuallyDisabled: %v", err)
+	}
+	if got := groupIfaceOf(t, savedGroups(t, op), "g1"); !slices.Equal(got, disabledOrder) {
+		t.Fatalf("disk g1 iface while ManuallyDisabled = %v, want %v", got, disabledOrder)
+	}
+	if got := op.LoadExtConfig().GroupLinks["g1"]; got != "pg" {
+		t.Fatalf("link lost while ManuallyDisabled: %q", got)
+	}
+
+	// Под recovery_required ApplyExtConfig не записывает awgm-ext.json.
+	if err := op.SetRecoveryRequired("test lock"); err != nil {
+		t.Fatalf("SetRecoveryRequired: %v", err)
+	}
+	ext.ProxyGroups[0].Interfaces = []string{"eth3"}
+	if _, err := op.ApplyExtConfig(ctx, ext); !errors.Is(err, ErrRecoveryRequired) {
+		t.Fatalf("expected ErrRecoveryRequired, got %v", err)
+	}
+	if got := op.LoadExtConfig().ProxyGroups[0].Interfaces; !slices.Equal(got, disabledOrder) {
+		t.Fatalf("recovery_required must not mutate ext.json, got %v", got)
+	}
+}
+
+func TestProxyGroupChainEdit_RollsBackOnGroupsLoadErrorAndRespectsLegacyRecovery(t *testing.T) {
+	ctx := context.Background()
+	op := NewOperator(Options{ConfigDir: t.TempDir()})
+	ext := ExtConfig{ProxyGroups: []ProxyGroup{
+		{ID: "pg", Name: "PG", Interfaces: chainA, Check: &checkA},
+	}}
+	if err := op.SaveExtConfig(ext); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := op.StageGroupsOfflineWithLinks([]Group{chainGroup("g1", chainA, nil)}, map[string]string{"g1": "pg"}); err != nil {
+		t.Fatal(err)
+	}
+	validGroupsYAML, err := os.ReadFile(op.GroupsPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Битый groups.yaml имитирует ошибку чтения при StageExtConfigOffline: ProxyGroups откатывается,
+	// и повторная попытка после восстановления файла доносит новый порядок.
+	reordered := []string{"tunvless0", "eth3"}
+	ext.ProxyGroups[0].Interfaces = reordered
+	if err := os.WriteFile(op.GroupsPath(), []byte("groups: [:"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := op.StageExtConfigOffline(ctx, ext); err == nil {
+		t.Fatal("expected StageExtConfigOffline to fail on broken groups.yaml")
+	}
+	if got := op.LoadExtConfig().ProxyGroups[0].Interfaces; !slices.Equal(got, chainA) {
+		t.Fatalf("StageExtConfigOffline must roll back ProxyGroups on LoadGroupsFile error, got %v", got)
+	}
+
+	// То же под ManuallyDisabled() в ApplyExtConfig: ошибка не проглатывается, ProxyGroups откатывается.
+	if err := op.StopByUser(ctx); err != nil {
+		t.Fatalf("StopByUser: %v", err)
+	}
+	if _, err := op.ApplyExtConfig(ctx, ext); err == nil {
+		t.Fatal("expected ApplyExtConfig while ManuallyDisabled to propagate LoadGroupsFile error")
+	}
+	if got := op.LoadExtConfig().ProxyGroups[0].Interfaces; !slices.Equal(got, chainA) {
+		t.Fatalf("ApplyExtConfig(ManuallyDisabled) must roll back ProxyGroups, got %v", got)
+	}
+
+	// После восстановления groups.yaml повторная попытка доносит новый порядок и сохраняет связь.
+	if err := os.WriteFile(op.GroupsPath(), validGroupsYAML, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := op.ApplyExtConfig(ctx, ext); err != nil {
+		t.Fatalf("retry ApplyExtConfig: %v", err)
+	}
+	if got := groupIfaceOf(t, savedGroups(t, op), "g1"); !slices.Equal(got, reordered) {
+		t.Fatalf("g1 iface after retry = %v, want %v", got, reordered)
+	}
+
+	// На legacy ext.json (без groupLinks) под recovery_required migrateGroupLinks не должен писать диск.
+	opLegacy := NewOperator(Options{ConfigDir: t.TempDir()})
+	writeLegacyExt(t, opLegacy, ExtConfig{ProxyGroups: []ProxyGroup{{ID: "pg", Name: "PG", Interfaces: chainA, Check: &checkA}}})
+	if err := opLegacy.SaveGroupsFile([]Group{chainGroup("g1", chainA, &checkA)}); err != nil {
+		t.Fatal(err)
+	}
+	beforeRaw, err := os.ReadFile(opLegacy.extConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := opLegacy.SetRecoveryRequired("legacy lock"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := opLegacy.ApplyExtConfig(ctx, ext); !errors.Is(err, ErrRecoveryRequired) {
+		t.Fatalf("ApplyExtConfig legacy recovery err = %v", err)
+	}
+	if _, err := opLegacy.StageExtConfigOffline(ctx, ext); !errors.Is(err, ErrRecoveryRequired) {
+		t.Fatalf("StageExtConfigOffline legacy recovery err = %v", err)
+	}
+	afterRaw, err := os.ReadFile(opLegacy.extConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(afterRaw) != string(beforeRaw) {
+		t.Fatalf("recovery_required mutated legacy ext.json:\nbefore: %s\nafter: %s", beforeRaw, afterRaw)
+	}
+
+	// restoreProxyGroups не должен перезаписывать битый awgm-ext.json обнулённой структурой.
+	opCorrupt := NewOperator(Options{ConfigDir: t.TempDir()})
+	if err := os.WriteFile(opCorrupt.extConfigPath(), []byte("{broken"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	opCorrupt.restoreProxyGroups([]ProxyGroup{{ID: "pg", Name: "PG", Interfaces: chainA}})
+	if raw, _ := os.ReadFile(opCorrupt.extConfigPath()); string(raw) != "{broken" {
+		t.Fatalf("restoreProxyGroups overwrote corrupt ext.json: %s", raw)
 	}
 }

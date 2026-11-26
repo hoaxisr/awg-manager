@@ -22,6 +22,60 @@ func linkedProxyGroupCheck(ext ExtConfig, g Group) *GroupCheck {
 	return normalizeProxyGroupCheck(pg.Check, len(g.Interface))
 }
 
+// syncLinkedProxyGroupInterfaces переносит смену цепочки туннелей из изменённой
+// прокси-группы в явно связанные с ней правила (ext.GroupLinks). Обновляются только
+// группы, чья текущая цепочка совпадала с прежней цепочкой прокси-группы, чтобы не
+// перезаписать группы, отредактированные вручную или извне.
+func syncLinkedProxyGroupInterfaces(groups []Group, prevExt, ext ExtConfig) ([]Group, bool) {
+	if len(ext.GroupLinks) == 0 || len(prevExt.ProxyGroups) == 0 || len(ext.ProxyGroups) == 0 {
+		return groups, false
+	}
+	var out []Group
+	changed := false
+	for i, g := range groups {
+		if isSpecialGroup(g.ID) {
+			continue
+		}
+		pgID := ext.GroupLinks[g.ID]
+		if pgID == "" {
+			continue
+		}
+		prevPg, hasPrev := findProxyGroupByID(prevExt, pgID)
+		newPg, hasNew := findProxyGroupByID(ext, pgID)
+		if !hasPrev || !hasNew || len(newPg.Interfaces) == 0 {
+			continue
+		}
+		if slices.Equal(prevPg.Interfaces, newPg.Interfaces) || !slices.Equal(prevPg.Interfaces, g.Interface) {
+			continue
+		}
+		if !changed {
+			out = slices.Clone(groups)
+			changed = true
+		}
+		out[i].Interface = GroupInterface(slices.Clone(newPg.Interfaces))
+		if len(newPg.Interfaces) < 2 && out[i].Check != nil && normalizeGroupCheck(out[i].Check).Mode != "none" {
+			out[i].Check = &GroupCheck{Mode: "none"}
+		}
+	}
+	if !changed {
+		return groups, false
+	}
+	return out, true
+}
+
+// proxyGroupInterfacesChanged сообщает, изменилась ли цепочка интерфейсов хотя бы
+// у одной существующей прокси-группы между prev и next.
+func proxyGroupInterfacesChanged(prev, next []ProxyGroup) bool {
+	for _, p := range prev {
+		for _, n := range next {
+			if n.ID == p.ID && !slices.Equal(p.Interfaces, n.Interfaces) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // specialGroupLinks — прокси-группы, задающие проверку KeenDNS и Global.
 func specialGroupLinks(ext ExtConfig) map[string]string {
 	links := map[string]string{}
