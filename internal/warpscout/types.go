@@ -235,11 +235,14 @@ type SwapEvent struct {
 
 // TraceResult — разбор http://…/cdn-cgi/trace через интерфейс туннеля.
 type TraceResult struct {
-	Colo      string `json:"colo"`
-	Loc       string `json:"loc"`
-	Warp      string `json:"warp"`
-	IP        string `json:"ip"`
-	LatencyMs int    `json:"latencyMs"`
+	LatencyKind string `json:"latencyKind,omitempty"`
+	HTTPSMs     int    `json:"httpsMs,omitempty"`
+	TelegramOK  bool   `json:"telegramOK,omitempty"`
+	Colo        string `json:"colo"`
+	Loc         string `json:"loc"`
+	Warp        string `json:"warp"`
+	IP          string `json:"ip"`
+	LatencyMs   int    `json:"latencyMs"`
 }
 
 // CheckSample — одна точка живой серии проверок автопилота (кольцевой буфер в RAM).

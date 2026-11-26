@@ -55,6 +55,7 @@ func (r *fakeRunner) Run(ctx context.Context, p ScanParams, on func(EngineEvent)
 }
 
 type fakeTunnels struct {
+	verify        func(context.Context, string) (TraceResult, error)
 	mu            sync.Mutex
 	refs          map[string]*TunnelRef
 	swaps         []string
@@ -195,6 +196,38 @@ func (f *fakeTunnels) Rename(_ context.Context, m TargetMode, id, name string) e
 	return nil
 }
 
+func (f *fakeTunnels) SwapVerified(ctx context.Context, m TargetMode, id, ep string, opts SwapOptions, filters Filters) (*VerificationResult, error) {
+	old, err := f.Get(ctx, m, id)
+	if err != nil {
+		return nil, err
+	}
+	if err = f.SwapEndpoint(ctx, m, id, ep, opts); err != nil {
+		return nil, err
+	}
+	ref, err := f.Get(ctx, m, id)
+	if err == nil && !ref.Running {
+		err = errors.New("туннель выключен")
+	}
+	var tr TraceResult
+	if err == nil {
+		tr, err = f.verify(ctx, ref.Iface)
+	}
+	if err == nil {
+		if reason, _ := evaluate(tr, nil, filters); reason != "" {
+			err = errors.New(reason)
+		}
+	}
+	if err != nil {
+		f.mu.Lock()
+		if cur, ok := f.refs[key(m, id)]; ok {
+			cur.Endpoint = old.Endpoint
+		}
+		f.mu.Unlock()
+		return nil, err
+	}
+	return &VerificationResult{Trace: tr, Endpoint: ep}, nil
+}
+
 type fakeProber struct {
 	mu    sync.Mutex
 	queue []TraceResult
@@ -319,6 +352,7 @@ func newTestService(t *testing.T) (*Service, *fakeRunner, *fakeTunnels, *fakePro
 		key(TargetKernel, "awg0"): {Mode: TargetKernel, ID: "awg0", Name: "home", IsWarp: false, Running: true},
 	}}
 	pr := &fakeProber{def: TraceResult{Colo: "HEL", Loc: "FI", Warp: "on"}}
+	tun.verify = pr.Trace
 	s := New(Deps{Store: st, Runner: r, Tunnels: tun, Prober: pr,
 		HTTP: func(string) (*http.Client, error) { return api.srv.Client(), nil },
 		WAN:  func(context.Context) (string, bool) { return "eth3", true }})

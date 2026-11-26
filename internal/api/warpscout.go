@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/deviceproxy"
@@ -40,6 +41,9 @@ import (
 // интерфейсов (Wireguard2/AWGM, managedServers, встроенный VPN-сервер,
 // Phobos, связанные прокси-клиенты).
 type WarpTunnelOps struct {
+	swapMu   sync.Mutex
+	Runtime  func(context.Context, *warpscout.TunnelRef) (warpRuntime, error)
+	Verify   func(context.Context, string, bool) (*warpscout.VerificationResult, error)
 	Svc      TunnelService
 	Store    *storage.AWGTunnelStore
 	Settings *storage.SettingsStore

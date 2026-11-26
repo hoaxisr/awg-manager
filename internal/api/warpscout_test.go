@@ -637,8 +637,8 @@ func (c *countingKeyOps) Get(context.Context, warpscout.TargetMode, string) (*wa
 func (c *countingKeyOps) Create(context.Context, warpscout.TargetMode, string, string, warpscout.CreateOptions) (*warpscout.TunnelRef, error) {
 	return nil, errors.New("unsupported")
 }
-func (c *countingKeyOps) SwapEndpoint(context.Context, warpscout.TargetMode, string, string, warpscout.SwapOptions) error {
-	return errors.New("unsupported")
+func (c *countingKeyOps) SwapVerified(context.Context, warpscout.TargetMode, string, string, warpscout.SwapOptions, warpscout.Filters) (*warpscout.VerificationResult, error) {
+	panic("unexpected swap")
 }
 func (c *countingKeyOps) Rename(context.Context, warpscout.TargetMode, string, string) error {
 	return errors.New("unsupported")

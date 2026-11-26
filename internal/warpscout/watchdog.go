@@ -502,65 +502,22 @@ func (s *Service) swap(ctx context.Context, p Profile, ref *TunnelRef, reason st
 		s.finishSwap(ctx, p, ev, st, fmt.Errorf("параметры обфускации: %w", err), nil, false, false)
 		return
 	}
-	if err := s.d.Tunnels.SwapEndpoint(ctx, p.TargetMode, p.TargetID, best.Endpoint, swapOpts); err != nil {
-		s.finishSwap(ctx, p, ev, st, fmt.Errorf("подмена endpoint: %w", err), nil, false, false)
+	vr, err := s.d.Tunnels.SwapVerified(ctx, p.TargetMode, p.TargetID, best.Endpoint, swapOpts, p.Filters)
+	if err != nil {
+		s.finishSwap(ctx, p, ev, st, err, nil, false, false)
 		return
 	}
+	verified := &vr.Trace
+	ev.Colo, ev.Loc = verified.Colo, verified.Loc
 	curName := ref.Name
-	if best.Colo != "" {
-		curName = s.syncTunnelColoName(ctx, p.TargetMode, p.TargetID, curName, best.Colo)
-	}
-	// Контрольный trace после подмены.
-	select {
-	case <-ctx.Done():
-		return
-	case <-time.After(verifyAfterSwap):
-	}
-	var (
-		verifyErr error
-		verified  *TraceResult
-	)
-	cur, err := s.d.Tunnels.Get(ctx, p.TargetMode, p.TargetID)
-	switch {
-	case err != nil:
-		verifyErr = fmt.Errorf("после подмены не удалось проверить туннель: %w", err)
-	case cur == nil:
-		verifyErr = errors.New("после подмены туннель не найден")
-	case !cur.Running:
-		verifyErr = errors.New("после подмены туннель выключен")
-	default:
-		if cur.Name != "" {
-			curName = cur.Name
-		}
-		tr, terr := s.d.Prober.Trace(ctx, cur.Iface)
-		if terr != nil && verifyRetryDelay > 0 {
-			// Первый SYN через свежепереключённый туннель запускает рукопожатие WG —
-			// если стартовый пакет потерялся на WAN, даём вторую попытку.
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(verifyRetryDelay):
-			}
-			tr, terr = s.d.Prober.Trace(ctx, cur.Iface)
-		}
-		if terr == nil {
-			t := tr
-			verified = &t
-		}
-		if r, _ := evaluate(tr, terr, p.Filters); r != "" {
-			verifyErr = errors.New("после подмены: " + r)
-		} else {
-			ev.Colo, ev.Loc = tr.Colo, tr.Loc
-			if tr.Colo != "" {
-				curName = s.syncTunnelColoName(ctx, p.TargetMode, p.TargetID, curName, tr.Colo)
-			}
-		}
+	if verified.Colo != "" {
+		curName = s.syncTunnelColoName(ctx, p.TargetMode, p.TargetID, curName, verified.Colo)
 	}
 	if p.Name == ref.Name && curName != ref.Name {
 		p.Name = curName
 		ev.ProfileName = curName
 	}
-	s.finishSwap(ctx, p, ev, st, verifyErr, verified, false, true)
+	s.finishSwap(ctx, p, ev, st, nil, verified, false, true)
 }
 
 // pickSwapAccount — запись для скана автоподмены. Конфликт — только ключ

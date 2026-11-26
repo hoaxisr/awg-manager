@@ -77,7 +77,7 @@ type TunnelOps interface {
 	Create(ctx context.Context, mode TargetMode, name, conf string, opts CreateOptions) (*TunnelRef, error)
 	// SwapEndpoint меняет endpoint пира и (если задан SwapOptions.Protocol)
 	// синхронизирует обфускацию туннеля, перезапуская интерфейс при смене маскировки.
-	SwapEndpoint(ctx context.Context, mode TargetMode, id, endpoint string, opts SwapOptions) error
+	SwapVerified(ctx context.Context, mode TargetMode, id, endpoint string, opts SwapOptions, filters Filters) (*VerificationResult, error)
 	// Rename переименовывает туннель (карточку и описание интерфейса в NDMS).
 	Rename(ctx context.Context, mode TargetMode, id, name string) error
 }
@@ -2164,7 +2164,11 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplyResult, er
 		if err != nil {
 			return nil, err
 		}
-		if err := s.d.Tunnels.SwapEndpoint(ctx, req.Mode, req.TargetID, req.Endpoint, swapOpts); err != nil {
+		filters := Filters{}
+		if req.Filters != nil {
+			filters = *req.Filters
+		}
+		if _, err := s.d.Tunnels.SwapVerified(ctx, req.Mode, req.TargetID, req.Endpoint, swapOpts, filters); err != nil {
 			return nil, err
 		}
 		tunName := cur.Name
