@@ -409,9 +409,10 @@
         type="number"
         min="10"
         max="3600"
-        value={numVal('app.check.interval', 60)}
+        value={numVal('app.check.interval', 30)}
         oninput={(e) => setField('app.check.interval', Number((e.currentTarget as HTMLInputElement).value))}
       />
+      <span class="hint">{m.firc_check_interval_global_hint()}</span>
     </div>
     <div class="field">
       <label class="lbl" for="firc-chk-to">{m.firc_settings_chk_timeout()}</label>

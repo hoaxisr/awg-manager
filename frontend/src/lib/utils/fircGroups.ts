@@ -4,6 +4,7 @@ import { m, formatLocale } from '$lib/i18n';
 import type { DropdownOption } from '$lib/components/ui';
 import type { CatalogPreset } from '$lib/types';
 import { detectFircRuleType } from '$lib/utils/fircBulkRules';
+import { carryCheckExtras, storedIntervalSec } from '$lib/utils/fircGroupCheck';
 import {
 	friendlyIfaceLabel,
 	getEffectiveInterfaceProbe,
@@ -296,10 +297,13 @@ export function toggleBackupIface(group: FircGroup, id: string) {
 /** Проверка целиком, но без чужих для режима полей: адрес только у url, у keendns — таймаут 5 с. */
 export function normalizeGroupCheck(check: FircGroupCheck): FircGroupCheck {
 	const mode = check.mode || 'none';
+	const { intervalSec: rawInterval, ...rest } = check;
+	const intervalSec = storedIntervalSec(rawInterval);
 	return {
-		...check,
+		...rest,
 		mode,
 		url: mode === 'url' ? (check.url ?? '').trim() : '',
+		...(intervalSec !== undefined ? { intervalSec } : {}),
 		...(mode === 'keendns' ? { timeoutMs: check.timeoutMs || 5000 } : {}),
 	};
 }
@@ -1052,7 +1056,11 @@ export function groupFromForm(
 		const managing = managingProxyGroup(proxyGroups, { interface: nextIface, proxyGroupId });
 		const nextCheck: FircGroupCheck | undefined = hasChain
 			? normalizeGroupCheck(
-					managing?.check ?? { ...cur.check, mode: form.checkMode, url: form.checkUrl },
+					managing?.check ?? {
+						...carryCheckExtras(cur.check, form.checkMode),
+						mode: form.checkMode,
+						url: form.checkUrl,
+					},
 				)
 			: cur.check
 				? { ...cur.check, mode: 'none', url: '' }

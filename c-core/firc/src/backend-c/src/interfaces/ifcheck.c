@@ -118,6 +118,15 @@ static bool keep_going(void *ud, size_t bytes, size_t total) {
     return stop == NULL || !atomic_load(stop);
 }
 
+/* Connection: close only on plain HTTP; HTTP/2 over TLS forbids connection-specific headers. */
+static bool url_is_plain_http(const char *url) {
+    static const char k_http[] = "http://";
+    for (size_t i = 0; i + 1 < sizeof(k_http); i++) {
+        if (url[i] == '\0' || tolower((unsigned char)url[i]) != k_http[i]) { return false; }
+    }
+    return true;
+}
+
 bool firc_ifcheck_once_ex(const char *url, const char *addr, uint32_t mark, uint32_t timeout_ms,
                           bool accept_http_2xx_4xx, _Atomic bool *stop, long *status, char *error, size_t cap) {
     char host[256], pin[320], curl_err[CURL_ERROR_SIZE] = "";
@@ -127,8 +136,10 @@ bool firc_ifcheck_once_ex(const char *url, const char *addr, uint32_t mark, uint
         snprintf(error, cap, "not a check URL");
         return false;
     }
+    static const char *const k_probe_headers[] = {"Connection: close", NULL};
     firc_sub_fetch_opts_t o = {.mark = mark,
                                .timeout_ms = timeout_ms > 0 ? (long)timeout_ms : 0L,
+                               .headers = url_is_plain_http(url) ? k_probe_headers : NULL,
                                .no_redirects = true,
                                .progress = keep_going,
                                .progress_ud = stop,

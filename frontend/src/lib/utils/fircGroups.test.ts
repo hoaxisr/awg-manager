@@ -141,6 +141,19 @@ describe('proxy group check helpers', () => {
 		expect(moved.interface).toEqual(['tunvless1', 'tunvless0']);
 		expect(moved.proxyGroupId).toBeUndefined();
 		expect(moved.check).toEqual({ mode: 'url', url: 'https://custom.example/204' });
+
+		const kdCur: FircGroup = {
+			...manualCur,
+			check: { mode: 'keendns', timeoutMs: 5000, intervalSec: 45 },
+		};
+		const kdForm = groupFormFrom(kdCur);
+		kdForm.checkMode = 'url';
+		kdForm.checkUrl = 'https://probe.example/204';
+		expect(groupFromForm(kdForm, kdCur, 1, []).check).toEqual({
+			mode: 'url',
+			url: 'https://probe.example/204',
+			intervalSec: 45,
+		});
 	});
 
 	const CHAIN = ['eth3', 'tunvless0'];

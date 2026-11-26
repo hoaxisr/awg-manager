@@ -2494,3 +2494,128 @@ func TestKeenDNSCloudAgentResetOnSwitch(t *testing.T) {
 		t.Fatalf("re-enable baseline sample triggered reset: %d", resets)
 	}
 }
+
+func TestProxyGroupCheckIntervalSecPreservedAndPropagated(t *testing.T) {
+	ext := normalizeExtConfig(ExtConfig{
+		ProxyGroups: []ProxyGroup{
+			{
+				ID:         "pg1",
+				Name:       "Primary",
+				Interfaces: []string{"tunvless0", "eth3"},
+				Check: &GroupCheck{
+					Mode:             "url",
+					URL:              "https://example.com/204",
+					IntervalSec:      9999,
+					TimeoutMs:        70000,
+					FailThreshold:    25,
+					RecoverThreshold: 25,
+				},
+			},
+			{
+				ID:         "pg2",
+				Name:       "InheritGlobal",
+				Interfaces: []string{"tunvless1", "eth3"},
+				Check: &GroupCheck{
+					Mode:        "url",
+					URL:         "",
+					IntervalSec: 0,
+				},
+			},
+		},
+		GlobalTarget: "pg:pg1",
+		KeenDNSCloud: KeenDNSCloudConfig{
+			Enabled:          true,
+			ProxyGroupID:     "pg1",
+			CloudHealthCheck: true,
+		},
+		GroupLinks: map[string]string{
+			"abcd0001": "pg1",
+		},
+	})
+
+	if ext.ProxyGroups[0].Check == nil || ext.ProxyGroups[0].Check.IntervalSec != 3600 {
+		t.Fatalf("expected IntervalSec clamped to 3600, got %+v", ext.ProxyGroups[0].Check)
+	}
+	if ext.ProxyGroups[0].Check.TimeoutMs != 60000 || ext.ProxyGroups[0].Check.FailThreshold != 20 || ext.ProxyGroups[0].Check.RecoverThreshold != 20 {
+		t.Fatalf("expected TimeoutMs/thresholds clamped, got %+v", ext.ProxyGroups[0].Check)
+	}
+	if ext.ProxyGroups[1].Check == nil || ext.ProxyGroups[1].Check.IntervalSec != 0 {
+		t.Fatalf("expected zero IntervalSec preserved, got %+v", ext.ProxyGroups[1].Check)
+	}
+
+	ext.ProxyGroups[0].Check.IntervalSec = 120
+	groups := []Group{
+		{
+			ID:        "abcd0001",
+			Name:      "Rule",
+			Interface: GroupInterface{"tunvless0", "eth3"},
+			Enable:    true,
+			Check:     &GroupCheck{Mode: "url"},
+		},
+	}
+	synced, changed := syncGroupsWithExt(groups, ext)
+	if !changed {
+		t.Fatal("expected syncGroupsWithExt to mark groups changed")
+	}
+	byID := make(map[string]Group)
+	for _, g := range synced {
+		byID[g.ID] = g
+	}
+	if got := byID["abcd0001"].Check; got == nil || got.IntervalSec != 120 || got.URL != "https://example.com/204" {
+		t.Fatalf("unexpected synced rule group check: %+v", got)
+	}
+	if got := byID[globalGroupID].Check; got == nil || got.IntervalSec != 120 {
+		t.Fatalf("unexpected synced global group check: %+v", got)
+	}
+	if got := byID[KeenDNSGroupID].Check; got == nil || got.Mode != "keendns" || got.IntervalSec != 120 {
+		t.Fatalf("unexpected synced KeenDNS group check: %+v", got)
+	}
+
+	// A second pass over already synced groups must be a no-op (no reconcile churn).
+	if _, again := syncGroupsWithExt(synced, ext); again {
+		t.Fatal("expected second syncGroupsWithExt pass to report no change")
+	}
+}
+
+func TestGroupCheckBoundsClampedForEveryGroup(t *testing.T) {
+	low := normalizeProxyGroupCheck(&GroupCheck{Mode: "url", TimeoutMs: 50}, 2)
+	if low.TimeoutMs != 100 {
+		t.Fatalf("expected TimeoutMs 50 raised to 100, got %d", low.TimeoutMs)
+	}
+	unset := normalizeProxyGroupCheck(&GroupCheck{Mode: "url"}, 2)
+	if unset.IntervalSec != 0 || unset.TimeoutMs != 0 || unset.FailThreshold != 0 || unset.RecoverThreshold != 0 {
+		t.Fatalf("expected zero (unset) fields to stay zero, got %+v", unset)
+	}
+
+	// A multi-interface group with no matching proxy group still never reaches fircd out of range.
+	groups := []Group{{
+		ID:        "abcd0002",
+		Name:      "Manual",
+		Interface: GroupInterface{"tunvless7", "eth3"},
+		Enable:    true,
+		Check:     &GroupCheck{Mode: "url", IntervalSec: 7200, FailThreshold: 99},
+	}}
+	synced, changed := syncGroupsWithExt(groups, normalizeExtConfig(ExtConfig{}))
+	if !changed {
+		t.Fatal("expected out-of-range manual check to be clamped")
+	}
+	if got := synced[0].Check; got.IntervalSec != 3600 || got.FailThreshold != 20 {
+		t.Fatalf("unexpected clamped manual check: %+v", got)
+	}
+}
+
+func TestKeenDNSCheckFollowsProxyGroupWithoutCloudHealthCheck(t *testing.T) {
+	ext := normalizeExtConfig(ExtConfig{
+		ProxyGroups: []ProxyGroup{{
+			ID:         "pg1",
+			Name:       "Primary",
+			Interfaces: []string{"tunvless0", "eth3"},
+			Check:      &GroupCheck{Mode: "url", URL: "https://example.com/204", IntervalSec: 45, FailThreshold: 3},
+		}},
+		KeenDNSCloud: KeenDNSCloudConfig{Enabled: true, ProxyGroupID: "pg1"},
+	})
+	got := resolveKeenDNSCheck(ext, []string{"tunvless0", "eth3"}, nil)
+	if got.Mode != "url" || got.IntervalSec != 45 || got.FailThreshold != 3 || got.URL != "https://example.com/204" {
+		t.Fatalf("expected KeenDNS check to follow the proxy group, got %+v", got)
+	}
+}

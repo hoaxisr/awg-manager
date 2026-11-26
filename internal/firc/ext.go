@@ -791,6 +791,27 @@ func (op *Operator) ListAvailableServers(ctx context.Context) []InboundServerIte
 	return items
 }
 
+// clampGroupCheckBounds keeps every non-zero field inside the ranges fircd accepts
+// (models.h FIRC_GROUP_CHECK_*): one out-of-range value makes fircd reject the whole
+// PUT /api/v1/groups and refuse to load groups.yaml. Zero means "unset" everywhere.
+func clampGroupCheckBounds(c GroupCheck) GroupCheck {
+	if c.IntervalSec > 3600 {
+		c.IntervalSec = 3600
+	}
+	if c.TimeoutMs > 60000 {
+		c.TimeoutMs = 60000
+	} else if c.TimeoutMs > 0 && c.TimeoutMs < 100 {
+		c.TimeoutMs = 100
+	}
+	if c.FailThreshold > 20 {
+		c.FailThreshold = 20
+	}
+	if c.RecoverThreshold > 20 {
+		c.RecoverThreshold = 20
+	}
+	return c
+}
+
 func normalizeProxyGroupCheck(c *GroupCheck, ifaceCount int) *GroupCheck {
 	if c == nil {
 		return nil
@@ -798,7 +819,7 @@ func normalizeProxyGroupCheck(c *GroupCheck, ifaceCount int) *GroupCheck {
 	if ifaceCount < 2 {
 		return &GroupCheck{Mode: "none"}
 	}
-	out := normalizeGroupCheck(c)
+	out := clampGroupCheckBounds(normalizeGroupCheck(c))
 	switch out.Mode {
 	case "url":
 	case "keendns":
@@ -846,14 +867,20 @@ func resolveKeenDNSCheck(ext ExtConfig, kdIfaces []string, existingCheck *GroupC
 		return &GroupCheck{Mode: "none"}
 	}
 	if ext.KeenDNSCloud.CloudHealthCheck {
-		return &GroupCheck{Mode: "keendns", TimeoutMs: 5000}
+		// The cloud probe has its own fixed timeout and thresholds; only the cadence
+		// follows the linked proxy group, so the KeenDNS group stays in phase with it.
+		out := &GroupCheck{Mode: "keendns", TimeoutMs: 5000}
+		if pg, ok := findProxyGroupByID(ext, ext.KeenDNSCloud.ProxyGroupID); ok && pg.Check != nil && pg.Check.IntervalSec > 0 {
+			out.IntervalSec = clampGroupCheckBounds(*pg.Check).IntervalSec
+		}
+		return out
 	}
 	if pg, ok := findProxyGroupByID(ext, ext.KeenDNSCloud.ProxyGroupID); ok && pg.Check != nil {
 		return normalizeProxyGroupCheck(pg.Check, len(kdIfaces))
 	}
 	// Связь — прежнюю проверку задала прокси-группа: она уходит вместе с ней.
 	if ext.GroupLinks[KeenDNSGroupID] == "" && existingCheck != nil && strings.TrimSpace(existingCheck.Mode) == "url" {
-		preserved := *existingCheck
+		preserved := clampGroupCheckBounds(*existingCheck)
 		return &preserved
 	}
 	return &GroupCheck{Mode: "none"}
@@ -1101,9 +1128,16 @@ func syncGroupsWithExtWithWG(groups []Group, ext ExtConfig, wgServers []DynamicW
 			}
 		}
 
-		if desired := linkedProxyGroupCheck(ext, g); desired != nil && !groupCheckEqual(g.Check, desired) {
-			g.Check = desired
-			changed = true
+		if desired := linkedProxyGroupCheck(ext, g); desired != nil {
+			if !groupCheckEqual(g.Check, desired) {
+				g.Check = desired
+				changed = true
+			}
+		} else if g.Check != nil {
+			if clamped := clampGroupCheckBounds(*g.Check); clamped != *g.Check {
+				g.Check = &clamped
+				changed = true
+			}
 		}
 
 		filtered = append(filtered, g)
