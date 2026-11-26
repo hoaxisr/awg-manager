@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import DNSRuleEditModal from './DNSRuleEditModal.svelte';
+import { m } from '$lib/i18n';
 import type { SingboxRouterDNSRule, SingboxRouterDNSServer, SingboxRouterRuleSet } from '$lib/types';
 
 class ResizeObserverStub {
@@ -145,6 +146,17 @@ describe('DNSRuleEditModal', () => {
 			'mixed-set',
 			'custom-ips',
 		]);
+	});
+
+	it('IP-набор без проверки по DNS-ответу не сохраняется', async () => {
+		const onSave = vi.fn();
+		const availableRuleSets: SingboxRouterRuleSet[] = [{ tag: 'geoip-ru', type: 'remote', url: 'https://example.com/geoip-ru.srs' }];
+		render(DNSRuleEditModal, {
+			props: { ...baseProps, availableRuleSets, rules: [evalRD], onSave, rule: { rule_set: ['geoip-ru'], action: 'route', server: 'dns-direct' } },
+		});
+		await fireEvent.click(screen.getByRole('button', { name: m.common_save() }));
+		expect((await screen.findByText(/geoip-ru/, { selector: '.error' })).textContent).toContain('geoip-ru');
+		expect(onSave).not.toHaveBeenCalled();
 	});
 
 	it('есть evaluate-правило выше → подсказки нет', () => {

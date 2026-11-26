@@ -226,7 +226,8 @@
 
 	let busy = $state(false);
 	let error = $state('');
-	let errorKind = $state<'' | 'matcher' | 'server' | 'race'>('');
+	let errorKind = $state<'' | 'matcher' | 'server' | 'race' | 'ipset'>('');
+	let errorIpSets = $state<string[]>([]);
 	const errorText = $derived(
 		error ||
 			(errorKind === 'matcher'
@@ -235,7 +236,9 @@
 					? m.routing_singbox_dnsrule_err_server()
 					: errorKind === 'race'
 						? m.routing_singbox_dnsrule_err_race()
-						: ''),
+						: errorKind === 'ipset'
+							? m.routing_singbox_dnsrule_err_ipset({ sets: errorIpSets.join(', ') })
+							: ''),
 	);
 
 	// Snapshot initial state for isDirty detection
@@ -365,6 +368,16 @@
 			// otherwise at least one matcher is required.
 			if (!catchAll && !hasMatcher) {
 				errorKind = 'matcher';
+				busy = false;
+				return;
+			}
+			// IP-набор выбран при «По DNS-ответу», а потом ответ выключили: без
+			// match_response IP набора сверяется с адресом источника (F332), и правило
+			// молча не срабатывает никогда.
+			const ipSets = catchAll || responseOn ? [] : rule_set.filter((t) => isDnsAddressFilterRuleSet(t, availableRuleSets));
+			if (ipSets.length) {
+				errorKind = 'ipset';
+				errorIpSets = ipSets;
 				busy = false;
 				return;
 			}

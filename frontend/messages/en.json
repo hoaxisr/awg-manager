@@ -3295,6 +3295,7 @@
 	"routing_singbox_dnsrule_err_matcher": "At least one matcher is required",
 	"routing_singbox_dnsrule_err_server": "Select a DNS server",
 	"routing_singbox_dnsrule_err_race": "race and speculative are incompatible",
+	"routing_singbox_dnsrule_err_ipset": "IP sets ({sets}) work only with DNS-response matching: turn it on or remove the sets",
 	"routing_singbox_dnsrule_response_tag": "Response tag",
 	"routing_singbox_dnsrule_speculative": "Speculative query",
 	"routing_singbox_dnsrule_block_method": "Block method",
