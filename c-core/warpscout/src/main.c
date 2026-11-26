@@ -441,25 +441,28 @@ static int build_candidates(void) {
     for (size_t i = 0; i < C.n_pfx; i++) hosts += 1ULL << (32 - C.pfx[i].bits);
     uint64_t total = hosts * C.n_ports;
     if (total == 0) return 0;
-    if (total <= 262144) {
-        endpoint *all = (endpoint *)malloc((size_t)total * sizeof(endpoint));
-        if (!all) return -1;
-        size_t n = 0;
+    /* Reservoir sampling bounds memory even when nearly every host is excluded. */
+    uint64_t excluded_bound = (uint64_t)C.n_excl * C.n_ports * C.n_pfx;
+    if (total <= 262144 && (total <= cap * 8ULL || excluded_bound >= total / 2)) {
+        size_t eligible = 0;
         for (uint64_t i = 0; i < total && !g_stop; i++) {
             endpoint ep;
             index_to_ep(i, &ep);
-            if (!is_excluded(ep.ip, ep.port)) all[n++] = ep;
+            if (is_excluded(ep.ip, ep.port)) continue;
+            eligible++;
+            if (g_ncands < cap) g_cands[g_ncands++] = ep;
+            else {
+                size_t j = (size_t)prng_below(eligible);
+                if (j < cap) g_cands[j] = ep;
+            }
         }
-        size_t take = n < cap ? n : cap;
-        for (size_t i = 0; i < take; i++) { /* partial Fisher-Yates */
-            size_t j = i + (size_t)prng_below(n - i);
-            endpoint t = all[i]; all[i] = all[j]; all[j] = t;
-            g_cands[g_ncands++] = all[i];
+        for (size_t n = g_ncands; n > 1; n--) {
+            size_t j = (size_t)prng_below(n);
+            endpoint tmp = g_cands[n-1]; g_cands[n-1] = g_cands[j]; g_cands[j] = tmp;
         }
-        free(all);
         return 0;
     }
-    /* huge space: random sampling without replacement via a small hash set */
+    /* Sparse sample: only retain indices of accepted candidates. */
     size_t hsz = 1;
     while (hsz < cap * 2 + 16) hsz <<= 1;
     uint64_t *set = (uint64_t *)calloc(hsz, sizeof(uint64_t));
@@ -478,11 +481,12 @@ static int build_candidates(void) {
             h = (h + 1) & (hsz - 1);
         }
         if (dup) continue;
-        set[h] = key;
-        used++;
         endpoint ep;
         index_to_ep(idx, &ep);
-        if (!is_excluded(ep.ip, ep.port)) g_cands[g_ncands++] = ep;
+        if (is_excluded(ep.ip, ep.port)) continue;
+        set[h] = key;
+        used++;
+        g_cands[g_ncands++] = ep;
     }
     free(set);
     return 0;
