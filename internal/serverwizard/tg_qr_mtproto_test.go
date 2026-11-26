@@ -2,11 +2,11 @@ package serverwizard
 
 import (
 	"context"
-	"net"
 	"slices"
 	"testing"
 
 	"github.com/hoaxisr/awg-manager/internal/serveringress"
+	"github.com/hoaxisr/awg-manager/internal/testutil"
 	"github.com/hoaxisr/awg-manager/internal/tgwebproxy"
 )
 
@@ -66,12 +66,7 @@ func TestBuildDesiredConfig_CdnHttpClearsDirectHost(t *testing.T) {
 }
 
 func TestVerifyTelegram_EmptyTlsDomainUsesDefaultYaRu(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	defer ln.Close()
-	port := ln.Addr().(*net.TCPAddr).Port
+	port := testutil.FreePort(t)
 
 	tgSvc := tgwebproxy.New(t.TempDir(), nil)
 	defer tgSvc.Close()
@@ -91,9 +86,6 @@ func TestVerifyTelegram_EmptyTlsDomainUsesDefaultYaRu(t *testing.T) {
 		},
 	}
 
-	// Simulate running direct listener by probing via verifyTelegram directly when DirectOnline is true
-	// Note: Start() starts embedded MtgEngine on port; let's close our temp listener first so Start() binds cleanly!
-	_ = ln.Close()
 	if err := tgSvc.Start(); err != nil {
 		t.Fatalf("tgSvc.Start: %v", err)
 	}
@@ -139,12 +131,7 @@ func TestCoordinator_UpdatesMaterializedUsersOnSecretRotationAndReenable(t *test
 	coord := serveringress.New(baseDir+"/coord", nil, nil, tgSvc)
 
 	// 1. Re-enabling with preserved secret re-enables the matching materialized user and syncs multi-host endpoints
-	freePort1, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	listenPort := freePort1.Addr().(*net.TCPAddr).Port
-	_ = freePort1.Close()
+	listenPort := testutil.FreePort(t)
 
 	if err := coord.ExecuteIngressTransaction(context.Background(), serveringress.IngressTransactionParams{
 		TxID:       "tx-multi-host-sync",
@@ -240,12 +227,7 @@ func TestCoordinator_UpdatesMaterializedUsersOnSecretRotationAndReenable(t *test
 	}
 
 	// Now run with Enabled: true (using non-conflicting direct_fake_tls port so no dispatcher needed)
-	freeDirect, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	directPort := freeDirect.Addr().(*net.TCPAddr).Port
-	_ = freeDirect.Close()
+	directPort := testutil.FreePort(t)
 
 	if err := coord.ExecuteIngressTransaction(context.Background(), serveringress.IngressTransactionParams{
 		TxID:       "tx-reenable-active",
