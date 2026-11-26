@@ -1231,18 +1231,25 @@ func groupCheckEqual(a, b *GroupCheck) bool {
 // ApplyExtConfig saves the new ExtConfig, synchronizes FIRC groups (KeenDNS Cloud + server subnets),
 // and reconciles iptables hooks for server DNS redirection and OUTPUT chain routing.
 func (op *Operator) ApplyExtConfig(ctx context.Context, ext ExtConfig) (ExtConfig, error) {
+	// Обогащение рантайм-статусом (RCI, провайдер WG-серверов до 2 с) — вне
+	// mutationMu: иначе все мутации FIRC ждут его.
+	ext, err := op.applyExtConfigMutation(ctx, ext)
+	return op.enrichExtRuntimeStatus(ctx, ext), err
+}
+
+func (op *Operator) applyExtConfigMutation(ctx context.Context, ext ExtConfig) (ExtConfig, error) {
 	op.mutationMu.Lock()
 	defer op.mutationMu.Unlock()
 
 	if err := op.checkMutationAllowed(); err != nil {
-		return op.enrichExtRuntimeStatus(ctx, ext), err
+		return ext, err
 	}
 	op.migrateGroupLinks()
 	op.keepOmittedProxyGroupChecks(ext)
 	ext = normalizeExtConfig(ext)
 	prevExt, err := op.saveExtConfigReturningPrev(ext)
 	if err != nil {
-		return op.enrichExtRuntimeStatus(ctx, ext), err
+		return ext, err
 	}
 	ext.GroupLinks = prevExt.GroupLinks
 	if op.ManuallyDisabled() {
@@ -1251,7 +1258,7 @@ func (op *Operator) ApplyExtConfig(ctx context.Context, ext ExtConfig) (ExtConfi
 			if proxyGroupInterfacesChanged(prevExt.ProxyGroups, ext.ProxyGroups) {
 				op.restoreProxyGroups(prevExt.ProxyGroups)
 			}
-			return op.enrichExtRuntimeStatus(ctx, ext), loadErr
+			return ext, loadErr
 		}
 		groups, ifaceChanged := syncLinkedProxyGroupInterfaces(groups, prevExt, ext)
 		updated, changed := op.syncGroupsWithExt(ctx, groups, ext)
@@ -1260,36 +1267,43 @@ func (op *Operator) ApplyExtConfig(ctx context.Context, ext ExtConfig) (ExtConfi
 				if ifaceChanged {
 					op.restoreProxyGroups(prevExt.ProxyGroups)
 				}
-				return op.enrichExtRuntimeStatus(ctx, ext), saveErr
+				return ext, saveErr
 			}
 		}
 		if err := op.refreshGroupLinks(ext); err != nil {
-			return op.enrichExtRuntimeStatus(ctx, ext), err
+			return ext, err
 		}
-		return op.enrichExtRuntimeStatus(ctx, ext), nil
+		return ext, nil
 	}
 	if err := op.reconcileExtLocked(ctx, &prevExt); err != nil {
-		return op.enrichExtRuntimeStatus(ctx, ext), err
+		return ext, err
 	}
-	return op.enrichExtRuntimeStatus(ctx, ext), nil
+	return ext, nil
 }
 
 // StageExtConfigOffline validates, normalizes, and saves ExtConfig and any derived
 // disk groups (groups.yaml) under mutationMu without probing fircd IPC, invoking
 // iptables, or starting any runtime process. Used when FIRC is not selected.
 func (op *Operator) StageExtConfigOffline(ctx context.Context, ext ExtConfig) (ExtConfig, error) {
+	// Обогащение рантайм-статусом (RCI, провайдер WG-серверов до 2 с) — вне
+	// mutationMu: иначе все мутации FIRC ждут его.
+	ext, err := op.stageExtConfigOfflineMutation(ctx, ext)
+	return op.enrichExtRuntimeStatus(ctx, ext), err
+}
+
+func (op *Operator) stageExtConfigOfflineMutation(ctx context.Context, ext ExtConfig) (ExtConfig, error) {
 	op.mutationMu.Lock()
 	defer op.mutationMu.Unlock()
 
 	if err := op.checkMutationAllowed(); err != nil {
-		return op.enrichExtRuntimeStatus(ctx, ext), err
+		return ext, err
 	}
 	op.migrateGroupLinks()
 	op.keepOmittedProxyGroupChecks(ext)
 	ext = normalizeExtConfig(ext)
 	prevExt, err := op.saveExtConfigReturningPrev(ext)
 	if err != nil {
-		return op.enrichExtRuntimeStatus(ctx, ext), err
+		return ext, err
 	}
 	ext.GroupLinks = prevExt.GroupLinks
 	groups, err := op.LoadGroupsFile()
@@ -1297,7 +1311,7 @@ func (op *Operator) StageExtConfigOffline(ctx context.Context, ext ExtConfig) (E
 		if proxyGroupInterfacesChanged(prevExt.ProxyGroups, ext.ProxyGroups) {
 			op.restoreProxyGroups(prevExt.ProxyGroups)
 		}
-		return op.enrichExtRuntimeStatus(ctx, ext), err
+		return ext, err
 	}
 	groups, ifaceChanged := syncLinkedProxyGroupInterfaces(groups, prevExt, ext)
 	updated, changed := op.syncGroupsWithExt(ctx, groups, ext)
@@ -1306,13 +1320,13 @@ func (op *Operator) StageExtConfigOffline(ctx context.Context, ext ExtConfig) (E
 			if ifaceChanged {
 				op.restoreProxyGroups(prevExt.ProxyGroups)
 			}
-			return op.enrichExtRuntimeStatus(ctx, ext), err
+			return ext, err
 		}
 	}
 	if err := op.refreshGroupLinks(ext); err != nil {
-		return op.enrichExtRuntimeStatus(ctx, ext), err
+		return ext, err
 	}
-	return op.enrichExtRuntimeStatus(ctx, ext), nil
+	return ext, nil
 }
 
 // ReconcileExt synchronizes FIRC groups and netfilter chains with the current ExtConfig.
