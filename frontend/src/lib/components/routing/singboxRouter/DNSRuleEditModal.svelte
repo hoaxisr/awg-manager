@@ -69,13 +69,6 @@
 
 	// svelte-ignore state_referenced_locally
 	let ruleSetTags = $state<string[]>(rule?.rule_set ?? []);
-	const ruleSetOptions = $derived<ChipOption[]>(
-		availableRuleSets.filter((rs) => !isDnsAddressFilterRuleSet(rs.tag, availableRuleSets)).map((rs) => ({
-			value: rs.tag,
-			label: rs.tag,
-			usedCount: ruleSetUsage?.get(rs.tag) ?? 0,
-		})),
-	);
 	// svelte-ignore state_referenced_locally
 	let domainSuffixStr = $state((rule?.domain_suffix ?? []).join('\n'));
 	// svelte-ignore state_referenced_locally
@@ -219,12 +212,22 @@
 	const noEvaluateAbove = $derived(matchResponseOptions.length === 1);
 	// Секция «По DNS-ответу» доступна только в режиме matchers.
 	const responseOn = $derived(!catchAll && matchResponse !== '');
+	const ruleSetOptions = $derived<ChipOption[]>(
+		availableRuleSets
+			.filter((rs) => responseOn || !isDnsAddressFilterRuleSet(rs.tag, availableRuleSets))
+			.map((rs) => ({
+				value: rs.tag,
+				label: rs.tag,
+				usedCount: ruleSetUsage?.get(rs.tag) ?? 0,
+			})),
+	);
 	const speculativeOn = $derived(speculative && (action === 'route' || action === 'evaluate'));
 	const raceOn = $derived(race && responseOn && action !== 'evaluate');
 
 	let busy = $state(false);
 	let error = $state('');
-	let errorKind = $state<'' | 'matcher' | 'server' | 'race'>('');
+	let errorKind = $state<'' | 'matcher' | 'server' | 'race' | 'ipset'>('');
+	let errorIpSets = $state<string[]>([]);
 	const errorText = $derived(
 		error ||
 			(errorKind === 'matcher'
@@ -233,7 +236,9 @@
 					? m.routing_singbox_dnsrule_err_server()
 					: errorKind === 'race'
 						? m.routing_singbox_dnsrule_err_race()
-						: ''),
+						: errorKind === 'ipset'
+							? m.routing_singbox_dnsrule_err_ipset({ sets: errorIpSets.join(', ') })
+							: ''),
 	);
 
 	// Snapshot initial state for isDirty detection
@@ -363,6 +368,16 @@
 			// otherwise at least one matcher is required.
 			if (!catchAll && !hasMatcher) {
 				errorKind = 'matcher';
+				busy = false;
+				return;
+			}
+			// IP-набор выбран при «По DNS-ответу», а потом ответ выключили: без
+			// match_response IP набора сверяется с адресом источника (F332), и правило
+			// молча не срабатывает никогда.
+			const ipSets = catchAll || responseOn ? [] : rule_set.filter((t) => isDnsAddressFilterRuleSet(t, availableRuleSets));
+			if (ipSets.length) {
+				errorKind = 'ipset';
+				errorIpSets = ipSets;
 				busy = false;
 				return;
 			}

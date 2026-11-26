@@ -3389,6 +3389,7 @@
 	"routing_singbox_dnsrule_err_matcher": "Нужен хотя бы один matcher",
 	"routing_singbox_dnsrule_err_server": "Выберите DNS сервер",
 	"routing_singbox_dnsrule_err_race": "race и speculative несовместимы",
+	"routing_singbox_dnsrule_err_ipset": "Наборы IP ({sets}) работают только с проверкой по DNS-ответу: включите её или уберите наборы",
 	"routing_singbox_dnsrule_response_tag": "Тег ответа",
 	"routing_singbox_dnsrule_speculative": "Спекулятивный запрос",
 	"routing_singbox_dnsrule_block_method": "Метод блокировки",
