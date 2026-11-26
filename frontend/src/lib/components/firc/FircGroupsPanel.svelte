@@ -46,6 +46,7 @@
 		clearFircGroupsDraft,
 	} from '$lib/stores/fircDraft';
 	import { friendlyIfaceLabel } from '$lib/utils/fircFallback';
+	import { syncGroupChecksWithProxyGroups } from '$lib/utils/fircGroupCheck';
 	import { groupResolveError, isDnsOnlyGroup, isDohUrl, supportsDnsOnly } from '$lib/utils/fircResolve';
 	import {
 		MANAGED_SERVER_SUBNETS,
@@ -259,6 +260,12 @@
 			policies = policiesRes;
 			resolvers = resolversRes;
 			if (extRes) extConfig = normalizeExtConfig(extRes);
+			if (extRes && draftedAt !== null) {
+				const synced = syncGroupChecksWithProxyGroups(groups, extConfig.proxyGroups);
+				if (synced.changed) {
+					groups = synced.groups;
+				}
+			}
 
 			const nowSec = Math.floor(Date.now() / 1000);
 			const existingProbes = get(fircInterfaceProbeResults);

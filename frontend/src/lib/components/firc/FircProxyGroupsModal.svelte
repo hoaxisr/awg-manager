@@ -9,11 +9,16 @@
 		probeLatencyTone,
 	} from '$lib/utils/fircFallback';
 	import {
+		FIRC_PG_INTERVAL_MAX_SEC,
+		FIRC_PG_INTERVAL_MIN_SEC,
+		switchGroupCheckMode,
+		withPgIntervalSec,
+	} from '$lib/utils/fircGroupCheck';
+	import {
 		MAX_GROUP_IFACES,
 		formatIfaceOption,
 		getIfaceProbe,
 		ifaceLabel,
-		normalizeGroupCheck,
 		proxyGroupRuntime,
 		randomHexId,
 		resolveIfaceState,
@@ -84,13 +89,19 @@
 	function setDraftProxyGroupCheckMode(pgIndex: number, mode: FircGroupCheck['mode']) {
 		const pg = draft[pgIndex];
 		if (!pg) return;
-		pg.check = normalizeGroupCheck({ ...pg.check, mode });
+		pg.check = switchGroupCheckMode(pg.check, mode);
 	}
 
 	function setDraftProxyGroupCheckUrl(pgIndex: number, url: string) {
 		const pg = draft[pgIndex];
 		if (!pg?.check) return;
 		pg.check = { ...pg.check, url };
+	}
+
+	function setDraftProxyGroupCheckInterval(pgIndex: number, raw: string) {
+		const pg = draft[pgIndex];
+		if (!pg) return;
+		pg.check = withPgIntervalSec(pg.check, raw);
 	}
 
 	function moveIfaceInDraftProxyGroup(pgIndex: number, iIdx: number, delta: -1 | 1) {
@@ -297,7 +308,32 @@
 									/>
 								</div>
 							{/if}
+							{#if pgMode === 'url' || pgMode === 'keendns'}
+								<div class="field">
+									<label class="lbl" for={`firc-pg-check-int-${pg.id}`}>
+										{m.firc_pg_check_interval_label()}
+									</label>
+									<input
+										id={`firc-pg-check-int-${pg.id}`}
+										type="number"
+										min={FIRC_PG_INTERVAL_MIN_SEC}
+										max={FIRC_PG_INTERVAL_MAX_SEC}
+										step="1"
+										class="inp font-mono"
+										placeholder={m.firc_pg_check_interval_placeholder()}
+										value={pg.check?.intervalSec ? String(pg.check.intervalSec) : ''}
+										oninput={(e) =>
+											setDraftProxyGroupCheckInterval(pgIdx, (e.currentTarget as HTMLInputElement).value)}
+										onchange={(e) => {
+											e.currentTarget.value = pg.check?.intervalSec ? String(pg.check.intervalSec) : '';
+										}}
+									/>
+								</div>
+							{/if}
 						</div>
+						{#if pgMode === 'url' || pgMode === 'keendns'}
+							<p class="hint">{m.firc_pg_check_interval_hint()}</p>
+						{/if}
 						<p class="hint">
 							{#if pgMode === 'url'}
 								{m.firc_group_check_url_hint()}
