@@ -1015,12 +1015,6 @@ func (h *TunnelsHandler) ReplaceConf(w http.ResponseWriter, r *http.Request) {
 		response.BadRequest(w, "missing config content")
 		return
 	}
-	// До svc.Stop ниже: отказ в ReplaceConfig оставил бы работающий туннель
-	// выключенным.
-	if err := config.RejectAmneziaPremium(req.Content); err != nil {
-		response.Error(w, err.Error(), "AMNEZIA_PREMIUM_UNSUPPORTED")
-		return
-	}
 
 	// Check tunnel exists
 	stored, err := h.store.Get(id)

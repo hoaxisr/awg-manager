@@ -1,7 +1,6 @@
 package config
 
 import (
-	"errors"
 	"strings"
 	"testing"
 
@@ -1281,34 +1280,11 @@ func TestClassifyAWGVersion_AWG31Flags(t *testing.T) {
 	}
 }
 
-// Конфигурация Amnezia Premium отвергается по ключу подписки в заголовке.
-// Обычный .conf проходит — в том числе с адресом из подсети подписки:
-// признак только vpn://, адрес не проверяется (решение владельца 14.10.2026).
-func TestParse_RejectsAmneziaPremium(t *testing.T) {
-	const conf = "[Interface]\nPrivateKey = K==\nAddress = 10.0.0.2/32\n[Peer]\nPublicKey = P==\nEndpoint = 192.0.2.1:51820\n"
-	for name, in := range map[string]string{
-		"заголовок портала": "# Generated on: 2026-09-11\n# VPN Key: vpn://AAAA\n# Keenetic: interface Wireguard0\n" + conf,
-		"ключ вместо .conf": "VPN://AAAA",
-	} {
-		if _, err := Parse(in); !errors.Is(err, ErrAmneziaPremium) {
-			t.Errorf("%s: err = %v, want ErrAmneziaPremium", name, err)
-		}
-	}
-	for _, ok := range []string{
-		"# мой сервер\n" + conf,
-		strings.Replace(conf, "10.0.0.2/32", "100.102.228.17/32", 1),
-	} {
-		if _, err := Parse(ok); err != nil {
-			t.Fatalf("обычный .conf отвергнут: %v", err)
-		}
-	}
-}
-
-// ParseUnchecked читает конфигурацию уже заведённого туннеля: ключ подписки
-// в заголовке не повод отказать (туннели до снятия Amnezia Premium не трогаем).
-func TestParseUnchecked_AcceptsPremiumHeader(t *testing.T) {
-	conf := "# VPN Key: vpn://AAAA\n[Interface]\nPrivateKey = K==\nAddress = 10.0.0.2/32\n[Peer]\nPublicKey = P==\nEndpoint = 192.0.2.1:51820\n"
-	if _, err := ParseUnchecked(conf); err != nil {
-		t.Fatalf("ParseUnchecked: %v", err)
+// .conf подписки Amnezia Premium импортируется как обычный: ключ подписки в
+// заголовке — комментарий (решение владельца 26.11.2026, отменяет 14.10).
+func TestParse_AcceptsAmneziaPremiumHeader(t *testing.T) {
+	conf := "# Generated on: 2026-09-11\n# VPN Key: vpn://AAAA\n[Interface]\nPrivateKey = K==\nAddress = 10.0.0.2/32\n[Peer]\nPublicKey = P==\nEndpoint = 192.0.2.1:51820\n"
+	if _, err := Parse(conf); err != nil {
+		t.Fatalf("Parse: %v", err)
 	}
 }

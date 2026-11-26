@@ -30,7 +30,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	awgtesting "github.com/hoaxisr/awg-manager/internal/testing"
 	"github.com/hoaxisr/awg-manager/internal/tunnel"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/config"
 	"github.com/hoaxisr/awg-manager/internal/tunnel/service"
 )
 
@@ -920,19 +919,6 @@ func newLifecycle(t *testing.T, state tunnel.State) (*Local, *lifecycleTunnels, 
 	cfg := l.c
 	cfg.Tunnels = ft
 	return New(cfg), ft, l.c.TunnelStore
-}
-
-// Конфигурация подписки Amnezia Premium отвергается ДО Stop: иначе
-// работающий туннель остался бы выключенным.
-func TestLocal_ReplaceTunnelConfigAmneziaPremiumRefusedBeforeStop(t *testing.T) {
-	l, ft, _ := newLifecycle(t, tunnel.StateRunning)
-	_, err := l.ReplaceTunnelConfig(context.Background(), "tn-1", "# VPN Key: vpn://AAAA\n[Interface]\nAddress = 10.0.0.2/32\n", "")
-	if !errors.Is(err, config.ErrAmneziaPremium) {
-		t.Fatalf("err = %v, want ErrAmneziaPremium", err)
-	}
-	if len(ft.calls) != 0 {
-		t.Fatalf("туннель тронут: %v", ft.calls)
-	}
 }
 
 // TestLocal_ReplaceTunnelConfigStopsAndStarts зеркалит

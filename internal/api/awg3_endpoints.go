@@ -15,7 +15,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/response"
 	"github.com/hoaxisr/awg-manager/internal/singbox/awgoutbounds"
 	"github.com/hoaxisr/awg-manager/internal/singbox/router"
-	"github.com/hoaxisr/awg-manager/internal/tunnel/config"
 )
 
 const awg3BasePath = "/api/awg3-endpoints"
@@ -191,10 +190,6 @@ func (h *Awg3Handler) handleImport(w http.ResponseWriter, r *http.Request) {
 		var text string
 		if err := json.Unmarshal(cfg, &text); err != nil {
 			response.BadRequest(w, "невалидная .conf-строка: "+err.Error())
-			return
-		}
-		if err := config.RejectAmneziaPremium(text); err != nil {
-			response.BadRequest(w, err.Error())
 			return
 		}
 		converted, err := awg3endpoint.ParseConf(text)
