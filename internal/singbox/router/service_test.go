@@ -1993,9 +1993,10 @@ func TestDiscardStaging_RecompilesInlineSRSForActiveAfterStagedDelete(t *testing
 	if err != nil || !res.Ok() {
 		t.Fatalf("ApplyStaging: err=%v res=%s", err, res.Error())
 	}
-	activeRaw, err := os.ReadFile(filepath.Join(dir, "20-router.json"))
-	if err != nil {
-		t.Fatalf("read active router config: %v", err)
+	// Слот в тесте выключен: применённая копия лежит в disabled/ (F936).
+	activeRaw, err := svc.deps.Orch.LoadApplied(orchestrator.SlotRouter)
+	if err != nil || activeRaw == nil {
+		t.Fatalf("read applied router config: %v", err)
 	}
 	var activeCfg RouterConfig
 	if err := json.Unmarshal(activeRaw, &activeCfg); err != nil {

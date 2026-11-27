@@ -112,10 +112,10 @@ func (o *Orchestrator) renameForToggle(meta SlotMeta, enable bool) error {
 	if _, err := os.Stat(dst); err == nil {
 		// Both exist — drift. Prefer the ACTIVE side as truth (mirrors
 		// Bootstrap's both-locations policy). При enable активный файл —
-		// dst и он новее (штатный случай: ApplyDraft на припаркованный слот
-		// уже положил черновик в active/, а в disabled/ остался устаревший
-		// дубль) — сносим только его источник-дубль. При disable активный
-		// файл — src: убираем застоявшийся dst и переносим src как раньше.
+		// dst: сносим только источник-дубль (так лечится дрейф с версий, где
+		// ApplyDraft клал черновик припаркованного слота в active/, F936).
+		// При disable активный файл — src: убираем застоявшийся dst и
+		// переносим src как раньше.
 		if enable {
 			return os.Remove(src)
 		}

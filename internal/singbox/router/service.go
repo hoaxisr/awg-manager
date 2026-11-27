@@ -1182,11 +1182,10 @@ func (s *ServiceImpl) persistConfig(ctx context.Context, cfg *RouterConfig) erro
 		// draft and return. This guard's safety rests on the invariant that
 		// any genuinely structural change (new rule-set, tag rename, route/DNS/
 		// outbound edit) perturbs the materialized bytes and so is never
-		// byte-equal. A missing/unreadable active file (router disabled, first
-		// Enable, slot parked under disabled/) is NOT equal — fall through to
-		// staging so the change is applied normally.
-		activePath := filepath.Join(s.deps.Orch.ConfigDir(), "20-router.json")
-		if existing, rerr := os.ReadFile(activePath); rerr == nil && bytes.Equal(existing, data) {
+		// byte-equal. Сравнение — с применённой копией (active/ или disabled/
+		// у выключенного слота, куда его кладёт ApplyDraft, F936); её
+		// отсутствие (первое включение) не равно — правка уходит в черновик.
+		if existing, rerr := s.deps.Orch.LoadApplied(orchestrator.SlotRouter); rerr == nil && existing != nil && bytes.Equal(existing, data) {
 			if err := s.deps.Orch.DiscardDraft(orchestrator.SlotRouter); err != nil {
 				return err
 			}
