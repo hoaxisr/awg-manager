@@ -71,8 +71,9 @@
 				mode: t.mode,
 				targetId: t.id,
 				protocol: filters.protocol,
+                awg: hit.awg,
 				enableAutopilot,
-				filters: enableAutopilot ? { ...filters } : undefined,
+				filters: { ...filters },
 			});
 			notifications.success(m.warpscout_swapped_ok({ name: t.name, endpoint: hit.endpoint }));
 			onclose();

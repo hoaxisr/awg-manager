@@ -96,7 +96,11 @@
 		</div>
 	</div>
 
-	<div class="filters-bar">
+	{#if filters.protocol === 'awg'}
+ <label><input type="checkbox" bind:checked={filters.adaptive}/> ?????????? ??????????</label>
+ {#if filters.adaptive}<label>?????? ??????, ? <input type="number" min="6" max="120" placeholder="30" bind:value={filters.searchSeconds}/></label>{/if}
+ {/if}
+ <div class="filters-bar">
 		<Toggle
 			checked={filters.requireTelegram}
 			size="sm"

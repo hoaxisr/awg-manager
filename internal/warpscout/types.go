@@ -144,6 +144,8 @@ type ObfuscationSource struct {
 
 // Filters — требования к узлу. Общие у ручного скана и профилей.
 type Filters struct {
+	Adaptive         bool     `json:"adaptive,omitempty"`
+	SearchSeconds    int      `json:"searchSeconds,omitempty"`
 	Protocol         string   `json:"protocol"`
 	ExcludeColos     []string `json:"excludeColos"`
 	AllowedCountries []string `json:"allowedCountries"`
@@ -207,30 +209,34 @@ type RouteRef struct {
 
 // Hit — найденный рабочий эндпоинт.
 type Hit struct {
-	Endpoint    string `json:"endpoint"`
-	HandshakeMs int    `json:"handshakeMs"`
-	PingMs      int    `json:"pingMs"`
-	Colo        string `json:"colo"`
-	Loc         string `json:"loc"`
-	Warp        string `json:"warp"`
-	TgOK        bool   `json:"tgOk"`
+	AWG         *AWGParams `json:"awg,omitempty"`
+	Endpoint    string     `json:"endpoint"`
+	HandshakeMs int        `json:"handshakeMs"`
+	PingMs      int        `json:"pingMs"`
+	Colo        string     `json:"colo"`
+	Loc         string     `json:"loc"`
+	Warp        string     `json:"warp"`
+	TgOK        bool       `json:"tgOk"`
 }
 
 // SwapEvent — запись журнала автоподмен.
 type SwapEvent struct {
-	At          time.Time  `json:"at"`
-	ProfileID   string     `json:"profileId"`
-	ProfileName string     `json:"profileName"`
-	TargetMode  TargetMode `json:"targetMode"`
-	TargetID    string     `json:"targetId"`
-	Reason      string     `json:"reason"`
-	OldEndpoint string     `json:"oldEndpoint"`
-	NewEndpoint string     `json:"newEndpoint"`
-	Colo        string     `json:"colo"`
-	Loc         string     `json:"loc"`
-	PingMs      int        `json:"pingMs"`
-	OK          bool       `json:"ok"`
-	Error       string     `json:"error,omitempty"`
+	SearchMs      int        `json:"searchMs,omitempty"`
+	ScanInterface string     `json:"scanInterface,omitempty"`
+	AWG           *AWGParams `json:"awg,omitempty"`
+	At            time.Time  `json:"at"`
+	ProfileID     string     `json:"profileId"`
+	ProfileName   string     `json:"profileName"`
+	TargetMode    TargetMode `json:"targetMode"`
+	TargetID      string     `json:"targetId"`
+	Reason        string     `json:"reason"`
+	OldEndpoint   string     `json:"oldEndpoint"`
+	NewEndpoint   string     `json:"newEndpoint"`
+	Colo          string     `json:"colo"`
+	Loc           string     `json:"loc"`
+	PingMs        int        `json:"pingMs"`
+	OK            bool       `json:"ok"`
+	Error         string     `json:"error,omitempty"`
 }
 
 // TraceResult — разбор http://…/cdn-cgi/trace через интерфейс туннеля.

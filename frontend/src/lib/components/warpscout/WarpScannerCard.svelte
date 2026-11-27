@@ -364,7 +364,7 @@
 		{routes}
 		scanIface={scanInterface}
 		{obfuscationSources}
-		{globalAwg}
+		globalAwg={createHit.awg ?? globalAwg}
 		{autopilotLocked}
 		onclose={() => (createHit = null)}
 		ondone={applied}
@@ -376,7 +376,7 @@
 		hit={swapHit}
 		{targets}
 		{filters}
-		{globalAwg}
+		globalAwg={swapHit.awg ?? globalAwg}
 		{autoRename}
 		{autopilotLocked}
 		onclose={() => (swapHit = null)}

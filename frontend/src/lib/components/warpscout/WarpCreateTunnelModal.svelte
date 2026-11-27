@@ -168,7 +168,7 @@
 				protocol,
 				viaMode: viaRoute?.tunnelMode,
 				viaId: viaRoute?.tunnelId,
-				awg: protocol === 'awg' && selectedObf ? selectedObf.awg : undefined,
+				awg: protocol === 'awg' ? selectedObf?.awg ?? hit.awg : undefined,
 				enableAutopilot,
 				filters: enableAutopilot ? { ...filters, protocol } : undefined,
 				reuseAccount: reuseAccount || undefined,

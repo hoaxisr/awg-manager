@@ -466,19 +466,34 @@ func (s *Service) swap(ctx context.Context, p Profile, ref *TunnelRef, reason st
 	}
 	defer s.releaseScanKey()
 	awg := s.awgForUse()
+	if p.Filters.Adaptive && p.Filters.Protocol != ProtocolWG {
+		for _, previous := range s.d.Store.History() {
+			if previous.ProfileID == p.ID && previous.OK && previous.TargetID == p.TargetID && previous.TargetMode == p.TargetMode {
+				if previous.AWG != nil && previous.NewEndpoint == ref.Endpoint {
+					awg = *previous.AWG
+				}
+				break
+			}
+		}
+	}
 	params, err := s.buildParams(ctx, swapAcct, awg, p.Filters, swapScanMaxHits, 0, nil, exclude, scanOverride, outerRef)
 	if err != nil {
 		s.finishSwap(ctx, p, ev, st, err, nil, false, false)
 		return
 	}
+	ev.ScanInterface = params.Ifname
 	params.DeadlineMs = int(swapScanDeadline / time.Millisecond)
+	searchStarted := time.Now()
 	var hits []Hit
 	scanCtx, cancel := context.WithTimeout(ctx, swapScanDeadline+scanKillGrace)
-	runErr := s.d.Runner.Run(scanCtx, params, func(e EngineEvent) {
+	runErr := s.runCandidates(scanCtx, params, awg, p.Filters, outerRef != nil && outerRef.IsWarp, p.ID, func(e EngineEvent, used *AWGParams) {
 		if e.Type == "hit" {
-			hits = append(hits, e.Hit())
+			h := e.Hit()
+			h.AWG = used
+			hits = append(hits, h)
 		}
 	})
+	ev.SearchMs = int(time.Since(searchStarted).Milliseconds())
 	cancel()
 	if ctx.Err() != nil {
 		return
@@ -491,18 +506,31 @@ func (s *Service) swap(ctx context.Context, p Profile, ref *TunnelRef, reason st
 		return
 	}
 	sortHits(hits)
-	best := hits[0]
-	ev.NewEndpoint, ev.Colo, ev.Loc, ev.PingMs = best.Endpoint, best.Colo, best.Loc, best.PingMs
-	if err := validEndpoint(best.Endpoint); err != nil {
-		s.finishSwap(ctx, p, ev, st, fmt.Errorf("сканер вернул узел %q: %w", best.Endpoint, err), nil, false, false)
-		return
+	var vr *VerificationResult
+	for _, best := range hits {
+		if best.AWG != nil {
+			awg = *best.AWG
+			ev.AWG = best.AWG
+		}
+		ev.NewEndpoint, ev.Colo, ev.Loc, ev.PingMs = best.Endpoint, best.Colo, best.Loc, best.PingMs
+		if err = validEndpoint(best.Endpoint); err != nil {
+			break
+		}
+		var opts SwapOptions
+		opts, err = buildSwapOptions(p.Filters.Protocol, awg, ref.ViaIface != "" || (outerRef != nil && outerRef.IsWarp))
+		if err != nil {
+			break
+		}
+		vr, err = s.d.Tunnels.SwapVerified(ctx, p.TargetMode, p.TargetID, best.Endpoint, opts, p.Filters)
+		if err != nil && best.AWG != nil && ctx.Err() == nil && !errors.Is(err, ErrRollback) {
+			s.lastPoorIface = params.Ifname
+			s.lastPoorAWG = best.AWG
+			s.lastPoorUntil = s.d.Now().Add(10 * time.Minute)
+		}
+		if err == nil || best.AWG == nil || errors.Is(err, ErrRollback) || ctx.Err() != nil {
+			break
+		}
 	}
-	swapOpts, err := buildSwapOptions(p.Filters.Protocol, awg, ref.ViaIface != "" || (outerRef != nil && outerRef.IsWarp))
-	if err != nil {
-		s.finishSwap(ctx, p, ev, st, fmt.Errorf("параметры обфускации: %w", err), nil, false, false)
-		return
-	}
-	vr, err := s.d.Tunnels.SwapVerified(ctx, p.TargetMode, p.TargetID, best.Endpoint, swapOpts, p.Filters)
 	if err != nil {
 		s.finishSwap(ctx, p, ev, st, err, nil, false, false)
 		return

@@ -49,7 +49,9 @@ export interface WarpFilters {
 	protocol: WarpProtocol;
 	excludeColos: string[];
 	allowedCountries: string[];
-	maxRttMs: number;
+	adaptive?: boolean;
+ searchSeconds?: number;
+ maxRttMs: number;
 	requireTelegram: boolean;
 	maxCandidates?: number;
 	ports?: number[];
@@ -96,6 +98,7 @@ export interface WarpObfuscationSource {
 }
 
 export interface WarpHit {
+ awg?: WarpAWGParams;
 	endpoint: string;
 	handshakeMs: number;
 	pingMs: number;

@@ -268,7 +268,11 @@ var (
 
 // Service — сервис модуля.
 type Service struct {
-	d Deps
+	// Protected by engineMu.
+	lastPoorUntil time.Time
+	lastPoorIface string
+	lastPoorAWG   *AWGParams
+	d             Deps
 
 	engineMu sync.Mutex // один процесс сканера на роутер
 	// acctMu — одна операция над учётной записью за раз, включая её сетевую
@@ -1629,7 +1633,7 @@ func (s *Service) StartScan(req ScanRequest) error {
 		defer cancelRun()
 		lastPub := time.Time{}
 		if runErr == nil {
-			runErr = s.d.Runner.Run(ctx, params, func(ev EngineEvent) {
+			runErr = s.runCandidates(ctx, params, awg, req.Filters, outer != nil && outer.IsWarp, "", func(ev EngineEvent, used *AWGParams) {
 				s.mu.Lock()
 				switch ev.Type {
 				case "start":
@@ -1637,7 +1641,9 @@ func (s *Service) StartScan(req ScanRequest) error {
 				case "progress":
 					s.scan.Done, s.scan.Total = ev.Done, ev.Total
 				case "hit":
-					s.scan.Hits = append(s.scan.Hits, ev.Hit())
+					hit := ev.Hit()
+					hit.AWG = used
+					s.scan.Hits = append(s.scan.Hits, hit)
 					sortHits(s.scan.Hits)
 				case "done":
 					s.scan.Done = ev.Scanned
