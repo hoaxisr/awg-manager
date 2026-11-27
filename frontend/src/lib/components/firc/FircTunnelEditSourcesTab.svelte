@@ -173,7 +173,13 @@
 					</div>
 					<div class="source-side">
 						{#if src.kind === 'subscription'}
-							<select class="inp compact-select" bind:value={src.interval}>
+							<select
+								class="inp compact-select"
+								value={src.interval ?? 21600}
+								onchange={(e) => {
+									src.interval = Number((e.currentTarget as HTMLSelectElement).value);
+								}}
+							>
 								{#each SUB_INTERVALS as opt}
 									<option value={opt.value}>{opt.label()}</option>
 								{/each}

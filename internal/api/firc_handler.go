@@ -1124,7 +1124,7 @@ func (h *FircHandler) handleNormalizeSource(w http.ResponseWriter, r *http.Reque
 		Kind     string            `json:"kind"`
 		Name     string            `json:"name"`
 		Input    string            `json:"input"`
-		Interval int               `json:"interval"`
+		Interval *int              `json:"interval"`
 		Headers  map[string]string `json:"headers"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1138,8 +1138,8 @@ func (h *FircHandler) handleNormalizeSource(w http.ResponseWriter, r *http.Reque
 	}
 	for i := range sources {
 		if sources[i].Kind == "subscription" {
-			if req.Interval >= 600 {
-				sources[i].Interval = req.Interval
+			if req.Interval != nil {
+				sources[i].Interval = firc.NormalizeSubscriptionInterval(*req.Interval)
 			}
 			if len(req.Headers) > 0 {
 				sources[i].Headers = req.Headers

@@ -919,13 +919,7 @@ func migrateSingboxSubscriptions(singboxConfigDir string, tagToIface map[string]
 						if len(hdrs) == 0 {
 							hdrs = nil
 						}
-						intervalSec := sub.RefreshHours * 3600
-						if intervalSec > 0 && intervalSec < 600 {
-							intervalSec = 600
-						}
-						if intervalSec < 0 {
-							intervalSec = 21600
-						}
+						intervalSec := NormalizeSubscriptionInterval(sub.RefreshHours * 3600)
 						sources = append(sources, TunnelSource{
 							ID:       srcID,
 							Kind:     "subscription",

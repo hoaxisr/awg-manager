@@ -7,9 +7,9 @@ import { m } from '$lib/i18n';
 
 afterEach(cleanup);
 
-function draftWith(headers?: Record<string, string>): FircTunnel {
+function draftWith(headers?: Record<string, string>, interval?: number): FircTunnel {
 	return {
-		sources: [{ id: 's1', kind: 'subscription', name: 'sub', url: 'https://x/sub', headers }],
+		sources: [{ id: 's1', kind: 'subscription', name: 'sub', url: 'https://x/sub', interval, headers }],
 	} as unknown as FircTunnel;
 }
 
@@ -44,5 +44,33 @@ describe('FircTunnelEditSourcesTab: заголовки подписки', () => 
 		const area = screen.getByLabelText(m.firc_tunnel_edit_headers_label());
 		await fireEvent.input(area, { target: { value: 'X-HWID: abc' } });
 		expect(draft.sources[0].headers).toEqual({ 'X-HWID': 'abc' });
+	});
+});
+
+describe('FircTunnelEditSourcesTab: интервал обновления подписки', () => {
+	it('отображает и сохраняет режим «Вручную» (interval = 0)', async () => {
+		const draft = draftWith(undefined, 0);
+		renderTab(draft);
+		const select = screen.getByRole<HTMLSelectElement>('combobox');
+		expect(select.value).toBe('0');
+	});
+
+	it('переключение с 6 часов на «Вручную» записывает 0 в черновик', async () => {
+		const draft = draftWith(undefined, 21600);
+		renderTab(draft);
+		const select = screen.getByRole<HTMLSelectElement>('combobox');
+		expect(select.value).toBe('21600');
+		await fireEvent.change(select, { target: { value: '0' } });
+		expect(draft.sources[0].interval).toBe(0);
+	});
+
+	it('отсутствующий interval (undefined) отображает 6 часов и не мутирует черновик в 0 при монтировании', async () => {
+		const draft = draftWith(undefined, undefined);
+		renderTab(draft);
+		const select = screen.getByRole<HTMLSelectElement>('combobox');
+		expect(select.value).toBe('21600');
+		expect(draft.sources[0].interval).toBeUndefined();
+		await fireEvent.change(select, { target: { value: '0' } });
+		expect(draft.sources[0].interval).toBe(0);
 	});
 });
