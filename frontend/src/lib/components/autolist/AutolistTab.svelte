@@ -34,14 +34,12 @@
 		SingboxTunnel,
 		Subscription,
 	} from '$lib/types';
-	import { Button, IconButton, Modal, Toggle, Dropdown, Input, ChipMultiSelect, Tabs, Stat, StatStrip } from '$lib/components/ui';
-	import { PageHeader } from '$lib/components/layout';
+	import { Button, IconButton, Modal, Toggle, Dropdown, Input, ChipMultiSelect, Tabs, Stat, StatStrip, StatusDot } from '$lib/components/ui';
 	import {
 		RotateCw,
 		RefreshCw,
 		EyeOff,
 		Eye,
-		CircleCheck,
 		CircleAlert,
 		CircleX,
 		CircleDashed,
@@ -51,6 +49,8 @@
 		Trash2,
 		Power,
 		ArchiveRestore,
+		Search,
+		X,
 	} from 'lucide-svelte';
 
 	interface Props {
@@ -80,6 +80,31 @@
 		{ id: 'added', label: m.autolist_view_added(), badge: addedCandidates.length },
 		{ id: 'history', label: m.autolist_view_history(), badge: history.length },
 	]);
+
+	// ── Поиск по всем вкладкам ───────────────────────────────────────────
+	// Одно поле на все три вкладки: ищет по тому, что видно в строке —
+	// домен, IP и клиент.
+	let search = $state('');
+	let searchQuery = $derived(search.trim().toLowerCase());
+
+	function matches(...fields: (string | undefined)[]): boolean {
+		if (!searchQuery) return true;
+		return fields.some((f) => f?.toLowerCase().includes(searchQuery));
+	}
+
+	let visibleCandidates = $derived(
+		waitingCandidates.filter((c) =>
+			matches(c.target.domain, c.target.host, c.target.ip, c.clientIP, c.clientMAC),
+		),
+	);
+	let visibleAdded = $derived(
+		addedCandidates.filter((c) =>
+			matches(c.target.domain, c.target.host, c.target.ip, c.clientIP, c.clientMAC),
+		),
+	);
+	let visibleHistory = $derived(
+		history.filter((h) => matches(h.domain, h.host, h.ip, h.clientIP, h.clientMAC)),
+	);
 
 	// Развёрнутые карточки кандидатов — по id.
 	let busyIds = $state<Set<string>>(new Set());
@@ -1048,19 +1073,26 @@
 	</details>
 {/snippet}
 
-<PageHeader title={m.autolist_tab_title()} />
 <div class="flex flex-col gap-4">
-	<div class="flex items-center gap-4 flex-wrap">
-		<p class="autolist-intro text-sm opacity-70 max-w-3xl">{m.autolist_tab_desc()}</p>
+	<header class="autolist-header">
+		<div class="autolist-title-block">
+			<div class="autolist-title-row">
+				<h1 class="autolist-title">{m.autolist_tab_title()}</h1>
+				{#if running}
+					<span class="autolist-pill is-running">
+						<StatusDot variant="success" size="sm" />
+						{m.autolist_running()}
+						{#if status?.version}
+							<span class="autolist-pill-extra">· {m.autolist_version()} {status.version}</span>
+						{/if}
+					</span>
+				{/if}
+			</div>
+			<p class="autolist-subtitle">{m.autolist_tab_desc()}</p>
+		</div>
+
 		{#if running}
-			<div class="autolist-controls flex items-center gap-2 flex-wrap justify-end">
-				<span class="flex items-center gap-1.5 text-sm mr-2">
-					<CircleCheck size={16} class="text-success" aria-hidden="true" />
-					{m.autolist_running()}
-					{#if status?.version}
-						<span class="text-xs opacity-60">· {m.autolist_version()} {status.version}</span>
-					{/if}
-				</span>
+			<div class="autolist-tools">
 				<Button variant="primary" size="sm" onclick={() => void setSatelliteEnabled(false)} loading={lifecycleBusy}>
 					{#snippet iconBefore()}<Power size={14} strokeWidth={2} aria-hidden="true" />{/snippet}
 					{m.autolist_disable()}
@@ -1075,7 +1107,7 @@
 				</Button>
 			</div>
 		{/if}
-	</div>
+	</header>
 
 	{#if status?.installed && status.updateAvailable}
 		<div class="card p-4 flex items-center gap-3 flex-wrap">
@@ -1183,7 +1215,23 @@
 			{/if}
 		</div>
 
-		<Tabs tabs={viewTabs} active={view} onchange={(id) => (view = id as 'candidates' | 'added' | 'history')} />
+		<div class="autolist-views">
+			<Tabs tabs={viewTabs} active={view} onchange={(id) => (view = id as 'candidates' | 'added' | 'history')} />
+			<div class="autolist-search">
+				<Search size={15} aria-hidden="true" />
+				<input
+					type="text"
+					bind:value={search}
+					placeholder={m.autolist_search_placeholder()}
+					aria-label={m.autolist_search_placeholder()}
+				/>
+				{#if search}
+					<button class="autolist-search-clear" onclick={() => (search = '')} title={m.common_clear()}>
+						<X size={14} aria-hidden="true" />
+					</button>
+				{/if}
+			</div>
+		</div>
 
 		{#if view === 'candidates'}
 			{#if bulkFailures.length > 0}
@@ -1207,6 +1255,8 @@
 					</div>
 					<p class="text-sm opacity-70">{m.autolist_empty_hint()}</p>
 				</div>
+			{:else if visibleCandidates.length === 0}
+				<div class="card p-6 text-sm opacity-70">{m.autolist_search_not_found()}</div>
 			{:else}
 				<!-- панель массовых действий -->
 				<div class="flex items-center gap-2 flex-wrap">
@@ -1246,7 +1296,7 @@
 					</Button>
 				</div>
 				<div class="flex flex-col gap-2">
-					{#each waitingCandidates as c (c.id)}
+					{#each visibleCandidates as c (c.id)}
 						{@render candidateCard(c)}
 					{/each}
 				</div>
@@ -1260,9 +1310,11 @@
 					</div>
 					<p class="text-sm opacity-70">{m.autolist_empty_hint()}</p>
 				</div>
+			{:else if visibleAdded.length === 0}
+				<div class="card p-6 text-sm opacity-70">{m.autolist_search_not_found()}</div>
 			{:else}
 				<div class="flex flex-col gap-2">
-					{#each addedCandidates as c (c.id)}
+					{#each visibleAdded as c (c.id)}
 						{@render candidateCard(c)}
 					{/each}
 				</div>
@@ -1276,6 +1328,8 @@
 					</div>
 					<p class="text-sm opacity-70">{m.autolist_history_empty_hint()}</p>
 				</div>
+			{:else if visibleHistory.length === 0}
+				<div class="card p-6 text-sm opacity-70">{m.autolist_search_not_found()}</div>
 			{:else}
 				<div class="card overflow-x-auto">
 					<table class="w-full text-sm">
@@ -1292,7 +1346,7 @@
 							</tr>
 						</thead>
 						<tbody>
-							{#each history as h (`${h.at}:${h.action}:${h.domain ?? h.ip ?? ''}`)}
+							{#each visibleHistory as h (`${h.at}:${h.action}:${h.domain ?? h.ip ?? ''}`)}
 								<tr class="border-b border-base-200 last:border-0 align-top">
 									<td class="px-4 py-2.5 opacity-70 whitespace-nowrap">{formatAutolistTime(h.at)}</td>
 									<td class="px-4 py-2.5 font-mono">
@@ -1672,14 +1726,130 @@
 	.autolist-warning {
 		padding: 0.875rem 1rem;
 	}
-	.autolist-intro {
-		flex: 1 1 32rem;
-		min-width: min(100%, 24rem);
+	/* Шапка — как у AWGM Route: заголовок с пилюлем статуса, описание под ним,
+	   кнопки справа в той же линии. */
+	.autolist-header {
+		display: flex;
+		align-items: center;
+		gap: var(--sp-4, 1rem);
+		padding-bottom: var(--sp-3, 0.75rem);
+		border-bottom: 1px solid var(--border);
+		flex-wrap: wrap;
 	}
-	.autolist-controls {
-		margin-left: auto;
-		flex-shrink: 0;
+	.autolist-title-block {
+		/* Базовая ширина небольшая: длинное описание не вытесняет кнопки
+		   на следующую строку — они остаются в линии заголовка. */
+		flex: 1 1 18rem;
+		min-width: 0;
+	}	.autolist-title-row {
+		display: flex;
+		align-items: center;
+		gap: 0.625rem;
+		flex-wrap: wrap;
+	}
+	.autolist-title {
+		margin: 0;
+		font-size: var(--fs-h3, 1.125rem);
+		font-weight: 600;
+		color: var(--text-primary);
+		line-height: 1.25;
+	}
+	.autolist-pill {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+		padding: 0.15rem 0.55rem;
+		border-radius: 999px;
+		font-family: var(--font-mono);
+		font-size: 0.72rem;
+		background: var(--bg-secondary);
+		border: 1px solid var(--border);
+		color: var(--text-muted);
+	}
+	.autolist-pill.is-running {
+		color: var(--color-success, #9ece6a);
+		border-color: color-mix(in srgb, var(--color-success, #9ece6a) 35%, var(--border));
+		background: color-mix(in srgb, var(--color-success, #9ece6a) 10%, var(--bg-secondary));
+	}
+	.autolist-subtitle {
+		margin-top: 3px;
+		font-size: var(--fs-sm, 0.8125rem);
+		color: var(--text-muted);
+		/* Описание тянется до кнопок справа: текста помещается больше. */
+		max-width: none;
+	}
+	.autolist-tools {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		flex-wrap: wrap;
+		min-width: 0;
 		max-width: 100%;
+	}
+	/* Линия вкладок и поиск: поиск справа, на одной линии с вкладками. */
+	.autolist-views {
+		display: flex;
+		align-items: center;
+		gap: 1rem;
+	}
+	.autolist-views :global(.overflow-tabs) {
+		flex: 1 1 auto;
+		min-width: 0;
+		margin-bottom: 0;
+	}
+	.autolist-search {
+		display: flex;
+		align-items: center;
+		gap: 0.375rem;
+		flex-shrink: 0;
+		padding: 0 0.5rem;
+		height: 32px;
+		box-sizing: border-box;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		background: var(--bg-primary);
+		color: var(--text-muted);
+	}
+	.autolist-search:focus-within {
+		border-color: var(--accent);
+	}
+	.autolist-search input {
+		width: 16rem;
+		min-width: 0;
+		border: none;
+		background: none;
+		color: var(--text-primary);
+		font-size: 0.875rem;
+		outline: none;
+	}
+	.autolist-search input::placeholder {
+		color: var(--text-muted);
+	}
+	/* Узкий экран: поиск уходит под вкладки, кнопки — под заголовок. */
+	@media (max-width: 900px) {
+		.autolist-views {
+			flex-wrap: wrap;
+		}
+		.autolist-search {
+			flex: 1 1 100%;
+		}
+		.autolist-search input {
+			width: auto;
+			flex: 1;
+		}
+	}
+	.autolist-search-clear {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border: none;
+		background: none;
+		color: var(--text-muted);
+		cursor: pointer;
+		padding: 0;
+	}
+	.autolist-search-clear:hover {
+		color: var(--text-secondary);
 	}
 	.autolist-details summary {
 		cursor: pointer;
