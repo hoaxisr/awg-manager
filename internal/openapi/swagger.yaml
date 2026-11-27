@@ -4870,6 +4870,92 @@ definitions:
         example: true
         type: boolean
     type: object
+  api.SingboxRouterDesyncAdaptiveDTO:
+    properties:
+      max_attempts:
+        example: 3
+        type: integer
+      max_concurrent:
+        type: integer
+      max_entries:
+        example: 1024
+        type: integer
+      timeout:
+        example: 10s
+        type: string
+      ttl:
+        example: 24h
+        type: string
+    type: object
+  api.SingboxRouterDesyncProbeRequest:
+    properties:
+      outbound:
+        $ref: '#/definitions/api.SingboxRouterOutboundDTO'
+      protocol:
+        enum:
+        - tls
+        - http
+        example: tls
+        type: string
+      target:
+        example: example.org:443
+        type: string
+    type: object
+  api.SingboxRouterDesyncProbeResponse:
+    properties:
+      data:
+        $ref: '#/definitions/api.SingboxRouterDesyncProbeResult'
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SingboxRouterDesyncProbeResult:
+    properties:
+      bytes:
+        type: integer
+      duration_ms:
+        type: number
+      error:
+        type: string
+      latency_ms:
+        type: number
+      protocol:
+        type: string
+      status:
+        type: integer
+      success:
+        type: boolean
+      target:
+        type: string
+      throughput_bps:
+        type: number
+      tls_version:
+        type: integer
+    type: object
+  api.SingboxRouterDesyncScanResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/api.SingboxRouterDesyncScanRow'
+        type: array
+      success:
+        example: true
+        type: boolean
+    type: object
+  api.SingboxRouterDesyncScanRow:
+    properties:
+      label:
+        example: split
+        type: string
+      mode:
+        example: none
+        type: string
+      preset:
+        example: split
+        type: string
+      result:
+        $ref: '#/definitions/api.SingboxRouterDesyncProbeResult'
+    type: object
   api.SingboxRouterInspectDNSData:
     properties:
       classification:
@@ -5137,14 +5223,35 @@ definitions:
     type: object
   api.SingboxRouterOutboundDTO:
     properties:
+      adaptive:
+        $ref: '#/definitions/api.SingboxRouterDesyncAdaptiveDTO'
+      auto_tune:
+        type: boolean
+      autottl:
+        type: boolean
       bind_interface:
         example: awg-vpn0
         type: string
       default:
         example: awg-vpn0
         type: string
+      fake_host:
+        type: string
+      fake_sni:
+        example: example.org
+        type: string
+      fake_sni_pool:
+        items:
+          type: string
+        type: array
+      fooling:
+        example: badseq
+        type: string
       interval:
         example: 3m
+        type: string
+      mode:
+        example: split
         type: string
       outbounds:
         example:
@@ -5152,11 +5259,19 @@ definitions:
         items:
           type: string
         type: array
+      preset:
+        example: auto
+        type: string
+      repeats:
+        type: integer
       source:
         enum:
         - router
         - subscription
         example: router
+        type: string
+      split_pos:
+        example: midsld
         type: string
       strategy:
         example: prefer_ipv4
@@ -5164,12 +5279,24 @@ definitions:
       tag:
         example: my-selector
         type: string
+      tlsrec_first:
+        type: boolean
       tolerance:
         example: 50
+        type: integer
+      ttl:
+        example: 3
         type: integer
       type:
         example: selector
         type: string
+      udp_mode:
+        example: auto
+        type: string
+      udp_repeats:
+        type: integer
+      udp_ttl:
+        type: integer
       url:
         example: https://www.gstatic.com/generate_204
         type: string
@@ -17744,6 +17871,75 @@ paths:
       security:
       - CookieAuth: []
       summary: Geoip bypass-set status
+      tags:
+      - singbox-router
+  /singbox/router/desync/probe:
+    post:
+      consumes:
+      - application/json
+      description: Runs `awgm-box desync probe` once with the given desync outbound
+        fields (TLS handshake or HTTP GET to target, DNS over HTTPS 1.1.1.1). Network
+        failure is success=false with error; invalid strategy is 400.
+      parameters:
+      - description: Strategy + target
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SingboxRouterDesyncProbeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SingboxRouterDesyncProbeResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Probe a desync strategy
+      tags:
+      - singbox-router
+  /singbox/router/desync/scan:
+    post:
+      consumes:
+      - application/json
+      description: Runs `awgm-box desync probe` for each candidate (no desync, split,
+        tlsrec, disorder, fake, fake_split, oob) one after another. Only target and
+        protocol (and bind_interface of outbound) are used. A candidate the platform
+        rejects comes back with success=false and the reason.
+      parameters:
+      - description: Target (outbound fields other than bind_interface are ignored)
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.SingboxRouterDesyncProbeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.SingboxRouterDesyncScanResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+        "405":
+          description: Method Not Allowed
+          schema:
+            $ref: '#/definitions/api.APIErrorEnvelope'
+      security:
+      - CookieAuth: []
+      summary: Scan desync modes against a target
       tags:
       - singbox-router
   /singbox/router/dns/chain-preset:

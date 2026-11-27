@@ -1133,6 +1133,8 @@ func (s *Server) registerSingboxRoutes(mux *http.ServeMux, h *routeHandlers) {
 		mux.HandleFunc("/api/singbox/router/geosites/list", h.guarded(geositesHandler.List))
 		mux.HandleFunc("/api/singbox/router/outbounds/list", h.guarded(rh.ListOutbounds))
 		mux.HandleFunc("/api/singbox/router/outbounds/add", h.guarded(rh.AddOutbound))
+		mux.HandleFunc("/api/singbox/router/desync/probe", h.guarded(rh.DesyncProbe))
+		mux.HandleFunc("/api/singbox/router/desync/scan", h.guarded(rh.DesyncScan))
 		mux.HandleFunc("/api/singbox/router/outbounds/update", h.guarded(rh.UpdateOutbound))
 		mux.HandleFunc("/api/singbox/router/outbounds/delete", h.guarded(rh.DeleteOutbound))
 		mux.HandleFunc("/api/singbox/router/presets/list", h.guarded(rh.ListPresets))

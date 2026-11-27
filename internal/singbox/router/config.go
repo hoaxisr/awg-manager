@@ -710,9 +710,15 @@ func validateCompositeOutbound(o Outbound) error {
 // composite validator.
 func validateOutbound(o Outbound) error {
 	var err error
-	if strings.EqualFold(o.Type, "direct") {
+	switch {
+	case o.Type == "desync":
+		err = validateDesyncOutbound(o)
+	case !reflect.ValueOf(o.DesyncFields).IsZero():
+		// Чужое поле sing-box отвергает на старте всего процесса.
+		err = fmt.Errorf("outbound %q: desync fields are only valid for type desync", o.Tag)
+	case strings.EqualFold(o.Type, "direct"):
 		err = validateInterfaceOutbound(o)
-	} else {
+	default:
 		err = validateCompositeOutbound(o)
 	}
 	if err != nil {
@@ -733,6 +739,19 @@ func validateInterfaceOutbound(o Outbound) error {
 	}
 	if len(o.Outbounds) > 0 || o.URL != "" || o.Interval != "" || o.Tolerance != 0 || o.Default != "" || o.Strategy != "" {
 		return fmt.Errorf("outbound %q: direct outbound must not set composite fields (members/url/interval/tolerance/default/strategy)", o.Tag)
+	}
+	return nil
+}
+
+// validateDesyncOutbound проверяет только форму записи. Значения (режимы,
+// диапазоны, совместимость) проверяет sing-box check при сохранении: дублировать
+// его валидатор значит разойтись с ним при следующем релизе форка.
+func validateDesyncOutbound(o Outbound) error {
+	if strings.TrimSpace(o.Tag) == "" {
+		return fmt.Errorf("outbound tag is required")
+	}
+	if len(o.Outbounds) > 0 || o.URL != "" || o.Interval != "" || o.Tolerance != 0 || o.Default != "" || o.InterruptExistConnections || o.IdleTimeout != "" || o.Server != "" {
+		return fmt.Errorf("outbound %q: desync outbound must not set group fields (members/url/interval/tolerance/default/idle_timeout/server)", o.Tag)
 	}
 	return nil
 }
