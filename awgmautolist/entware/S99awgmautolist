@@ -6,16 +6,27 @@ PROG=/opt/bin/awgmautolist
 PIDFILE=/opt/var/run/awgmautolist.pid
 CONF_DIR="${AWGM_AUTOLIST_DIR:-/opt/etc/awgmautolist}"
 
-# Settings directory first; the pre-2.21 flat paths stay readable so an
-# upgraded box keeps working before its first satellite start migrates them.
+# One-time migration of the pre-directory shell files into the working
+# directory, BEFORE anything sources them: a fresh key/enabled always wins
+# and is never overwritten or read from the old path, the move keeps
+# permissions (same filesystem), and a failed move leaves the source in
+# place and is logged. After this block only the directory files are read.
+[ -d "$CONF_DIR" ] || mkdir -p "$CONF_DIR" || echo "awgmautolist: cannot create $CONF_DIR" >&2
+if [ ! -f "$CONF_DIR/enabled" ] && [ -f /opt/etc/awgmautolist.enabled ]; then
+    mv /opt/etc/awgmautolist.enabled "$CONF_DIR/enabled" || echo "awgmautolist: legacy enabled migration failed" >&2
+fi
+if [ ! -f "$CONF_DIR/key" ] && [ -f /opt/etc/awgmautolist.key ]; then
+    mv /opt/etc/awgmautolist.key "$CONF_DIR/key" || echo "awgmautolist: legacy key migration failed" >&2
+fi
+if [ ! -f "$CONF_DIR/awgmautolist.conf" ] && [ -f /opt/etc/awgmautolist.conf ]; then
+    mv /opt/etc/awgmautolist.conf "$CONF_DIR/awgmautolist.conf" || echo "awgmautolist: legacy conf migration failed" >&2
+fi
+
+# Settings; the working directory is the only supported location for the
+# satellite's shell-sourced files after the migration above.
 [ -f "$CONF_DIR/awgmautolist.conf" ] && . "$CONF_DIR/awgmautolist.conf"
-[ -f /opt/etc/awgmautolist.conf ] && . /opt/etc/awgmautolist.conf
 [ -f "$CONF_DIR/enabled" ] && . "$CONF_DIR/enabled"
-# Legacy intent file: only while the new one is absent — its move into the
-# directory is done by the panel's Go code, not here.
-[ -f "$CONF_DIR/enabled" ] || { [ -f /opt/etc/awgmautolist.enabled ] && . /opt/etc/awgmautolist.enabled; }
 [ -f "$CONF_DIR/key" ] && . "$CONF_DIR/key"
-[ -f /opt/etc/awgmautolist.key ] && . /opt/etc/awgmautolist.key
 
 ROUTER_URL="${AWGM_ROUTER_URL:-http://127.0.0.1:2222}"
 # The panel's settings.json wins over the built-in default when the env is

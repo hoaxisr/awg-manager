@@ -11,6 +11,7 @@ import type {
 	AWGTagInfo,
 	AutolistCandidate,
 	AutolistConfig,
+	AutolistHistoryEntry,
 	AutolistStatus,
 	RouterInterface,
 	SingboxTunnel,
@@ -62,9 +63,27 @@ const runningStatus: AutolistStatus = {
 	queuedChecks: 2,
 	addsUsedHour: 3,
 	addsLimit: 50,
-	candidates: [candidate()],
-	history: [],
 };
+
+const emptyPage = { items: [], total: 0, hasMore: false };
+
+/** Мок /list: active-страница — ожидающие кандидаты, added-страница — добавленные. */
+function mockCandidateList(cands: AutolistCandidate[], added: AutolistCandidate[] = []) {
+	vi.spyOn(api, 'listAutolist').mockImplementation(async (kind, opts) =>
+		kind === 'history'
+			? emptyPage
+			: opts?.state === 'added'
+				? { items: added, total: added.length, hasMore: false }
+				: { items: cands, total: cands.length, hasMore: false },
+	);
+}
+
+/** Мок /list для вкладки истории. */
+function mockHistoryList(entries: AutolistHistoryEntry[]) {
+	vi.spyOn(api, 'listAutolist').mockImplementation(async (kind) =>
+		kind === 'history' ? { items: entries, total: entries.length, hasMore: false } : emptyPage,
+	);
+}
 
 const fullConfig: AutolistConfig = {
 	autoAdd: false,
@@ -76,7 +95,6 @@ const fullConfig: AutolistConfig = {
 	excludeDomains: [],
 	excludeRuleSets: [],
 	udpEnabled: false,
-	verbose: false,
 	addsPerHour: 50,
 };
 
@@ -132,6 +150,9 @@ beforeEach(() => {
 	vi.spyOn(notifications, 'error').mockImplementation(() => '');
 	vi.spyOn(notifications, 'warning').mockImplementation(() => '');
 	vi.spyOn(notifications, 'info').mockImplementation(() => '');
+	// /status больше не несёт списки: по умолчанию вкладки получают пустую
+	// первую страницу; сценарии с записями переопределяют мок.
+	vi.spyOn(api, 'listAutolist').mockResolvedValue(emptyPage);
 });
 
 afterEach(() => {
@@ -208,6 +229,7 @@ describe('AutolistTab — lifecycle', () => {
 describe('AutolistTab — main screen', () => {
 	it('shows capture state, target, DNS, WAN verdict and the hourly budget', async () => {
 		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(runningStatus);
+		mockCandidateList([candidate()]);
 
 		render(AutolistTab);
 		await screen.findByText('example.com');
@@ -244,6 +266,7 @@ describe('AutolistTab — main screen', () => {
 
 	it('marks the capture as paused when the WAN monitor holds it', async () => {
 		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue({ ...runningStatus, captureActive: false, capturePaused: true });
+		mockCandidateList([candidate()]);
 
 		render(AutolistTab);
 		await screen.findByText('example.com');
@@ -299,6 +322,7 @@ describe('AutolistTab — DNS stat description', () => {
 describe('AutolistTab — candidate actions', () => {
 	it('adds a waiting candidate and refreshes the status', async () => {
 		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(runningStatus);
+		mockCandidateList([candidate()]);
 		const add = vi.spyOn(api, 'addAutolistCandidate').mockResolvedValue();
 
 		render(AutolistTab);
@@ -310,6 +334,7 @@ describe('AutolistTab — candidate actions', () => {
 
 	it('shows the forget action with the CircleX icon and the dismiss action with EyeOff', async () => {
 		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(runningStatus);
+		mockCandidateList([candidate()]);
 
 		render(AutolistTab);
 		await screen.findByText('example.com');
@@ -324,6 +349,7 @@ describe('AutolistTab — candidate actions', () => {
 
 	it('orders the evidence into three columns: Reason/WAN, Direct/Tunnel, First seen/Last seen', async () => {
 		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(runningStatus);
+		mockCandidateList([candidate()]);
 
 		render(AutolistTab);
 		await screen.findByText('example.com');
@@ -348,6 +374,7 @@ describe('AutolistTab — candidate actions', () => {
 
 	it('keeps the satellite version in the header instead of the meta line', async () => {
 		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue({ ...runningStatus, version: '0.9.0' });
+		mockCandidateList([candidate()]);
 
 		render(AutolistTab);
 		await screen.findByText('example.com');
@@ -366,10 +393,9 @@ describe('AutolistTab — candidate actions', () => {
 	});
 
 	it('offers explicit remove for an added candidate instead of add', async () => {
-		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue({
-			...runningStatus,
-			candidates: [candidate({ id: 'domain|added.example|tcp|443', target: { domain: 'added.example', network: 'tcp', port: 443 }, state: 'added' })],
-		});
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(runningStatus);
+		const added = candidate({ id: 'domain|added.example|tcp|443', target: { domain: 'added.example', network: 'tcp', port: 443 }, state: 'added' });
+		mockCandidateList([], [added]);
 		const remove = vi.spyOn(api, 'removeAutolistCandidate').mockResolvedValue();
 
 		render(AutolistTab);
@@ -384,13 +410,11 @@ describe('AutolistTab — candidate actions', () => {
 	});
 
 	it('splits candidates into Candidates, Added and History tabs', async () => {
-		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue({
-			...runningStatus,
-			candidates: [
-				candidate(),
-				candidate({ id: 'domain|added.example|tcp|443', target: { domain: 'added.example', network: 'tcp', port: 443 }, state: 'added' }),
-			],
-		});
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(runningStatus);
+		mockCandidateList(
+			[candidate()],
+			[candidate({ id: 'domain|added.example|tcp|443', target: { domain: 'added.example', network: 'tcp', port: 443 }, state: 'added' })],
+		);
 
 		render(AutolistTab);
 		await screen.findByText('example.com');
@@ -408,6 +432,7 @@ describe('AutolistTab — candidate actions', () => {
 
 	it('keeps technical probe details collapsed until expanded', async () => {
 		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(runningStatus);
+		mockCandidateList([candidate()]);
 
 		render(AutolistTab);
 		await screen.findByText('example.com');
@@ -424,10 +449,9 @@ describe('AutolistTab — candidate actions', () => {
 });
 
 describe('AutolistTab — recheck modal', () => {
-	const recheckStatus = (cands: AutolistCandidate[]): AutolistStatus => ({ ...runningStatus, candidates: cands });
-
 	it('renders the check-again button on candidate cards', async () => {
 		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(runningStatus);
+		mockCandidateList([candidate()]);
 
 		render(AutolistTab);
 		await screen.findByText('example.com');
@@ -437,7 +461,8 @@ describe('AutolistTab — recheck modal', () => {
 	});
 
 	it('opens the modal on click, runs the recheck and shows the refreshed evidence', async () => {
-		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(recheckStatus([candidate()]));
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(runningStatus);
+		mockCandidateList([candidate()]);
 		const recheck = vi.spyOn(api, 'recheckAutolistCandidate').mockResolvedValue(
 			candidate({ direct: { verdict: 'blocked', durationMs: 12_345, detail: 'timed out again' } }),
 		);
@@ -454,7 +479,8 @@ describe('AutolistTab — recheck modal', () => {
 	});
 
 	it('does not open the recheck modal while the card action is busy', async () => {
-		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(recheckStatus([candidate()]));
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(runningStatus);
+		mockCandidateList([candidate()]);
 		let releaseAdd!: () => void;
 		const gate = new Promise<void>((resolve) => (releaseAdd = resolve));
 		vi.spyOn(api, 'addAutolistCandidate').mockReturnValue(gate);
@@ -473,7 +499,8 @@ describe('AutolistTab — recheck modal', () => {
 	});
 
 	it('closes the modal after a successful recheck-modal action and refreshes the status', async () => {
-		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(recheckStatus([candidate()]));
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(runningStatus);
+		mockCandidateList([candidate()]);
 		const recheck = vi.spyOn(api, 'recheckAutolistCandidate').mockResolvedValue(candidate());
 		const add = vi.spyOn(api, 'addAutolistCandidate').mockResolvedValue();
 
@@ -495,7 +522,8 @@ describe('AutolistTab — recheck modal', () => {
 	});
 
 	it('keeps the modal open after a failed recheck-modal action', async () => {
-		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(recheckStatus([candidate()]));
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(runningStatus);
+		mockCandidateList([candidate()]);
 		vi.spyOn(api, 'recheckAutolistCandidate').mockResolvedValue(candidate());
 		vi.spyOn(api, 'addAutolistCandidate').mockRejectedValue(new Error('ruleset is locked'));
 
@@ -512,7 +540,8 @@ describe('AutolistTab — recheck modal', () => {
 	});
 
 	it('dismisses a candidate from the modal footer and closes', async () => {
-		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(recheckStatus([candidate()]));
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(runningStatus);
+		mockCandidateList([candidate()]);
 		vi.spyOn(api, 'recheckAutolistCandidate').mockResolvedValue(candidate());
 		const dismiss = vi.spyOn(api, 'dismissAutolistCandidate').mockResolvedValue();
 
@@ -530,7 +559,8 @@ describe('AutolistTab — recheck modal', () => {
 
 	it('shows remove instead of add for an added candidate in the modal footer', async () => {
 		const added = candidate({ id: 'domain|added.example|tcp|443', target: { domain: 'added.example', network: 'tcp', port: 443 }, state: 'added' });
-		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(recheckStatus([added]));
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(runningStatus);
+		mockCandidateList([], [added]);
 		const recheck = vi.spyOn(api, 'recheckAutolistCandidate').mockResolvedValue(added);
 		const remove = vi.spyOn(api, 'removeAutolistCandidate').mockResolvedValue();
 
@@ -549,10 +579,6 @@ describe('AutolistTab — recheck modal', () => {
 });
 
 describe('AutolistTab — bulk actions', () => {
-	function bulkStatus(cands: AutolistCandidate[]): AutolistStatus {
-		return { ...runningStatus, candidates: cands };
-	}
-
 	const ipCandidate = (): AutolistCandidate =>
 		candidate({
 			id: 'ip|198.51.100.7',
@@ -566,9 +592,8 @@ describe('AutolistTab — bulk actions', () => {
 	}
 
 	it('selects all candidates, shows the selected count and batch-adds by candidate ID', async () => {
-		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(
-			bulkStatus([candidate(), candidate({ id: 'domain|second.example|tcp|443', target: { domain: 'second.example', network: 'tcp', port: 443 } })]),
-		);
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(runningStatus);
+		mockCandidateList([candidate(), candidate({ id: 'domain|second.example|tcp|443', target: { domain: 'second.example', network: 'tcp', port: 443 } })]);
 		const batchAdd = vi.spyOn(api, 'addAutolistCandidates').mockResolvedValue({ ok: [], failed: [] });
 
 		const rendered = render(AutolistTab);
@@ -587,7 +612,8 @@ describe('AutolistTab — bulk actions', () => {
 	});
 
 	it('hides selected candidates in one batch call with per-candidate IDs', async () => {
-		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(bulkStatus([candidate(), ipCandidate()]));
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(runningStatus);
+		mockCandidateList([candidate(), ipCandidate()]);
 		const batchHide = vi.spyOn(api, 'dismissAutolistCandidates').mockResolvedValue({ ok: [], failed: [] });
 
 		const rendered = render(AutolistTab);
@@ -601,7 +627,8 @@ describe('AutolistTab — bulk actions', () => {
 	});
 
 	it('surfaces per-ID batch failures as an error list, not a success toast', async () => {
-		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(bulkStatus([candidate(), ipCandidate()]));
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(runningStatus);
+		mockCandidateList([candidate(), ipCandidate()]);
 		vi.spyOn(api, 'addAutolistCandidates').mockResolvedValue({
 			ok: ['domain|example.com|tcp|443'],
 			failed: [{ id: 'ip|198.51.100.7', error: 'apply failed after content update' }],
@@ -617,7 +644,8 @@ describe('AutolistTab — bulk actions', () => {
 	});
 
 	it('blocks Disable forever with a clear error when an IP-only candidate is selected', async () => {
-		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(bulkStatus([candidate(), ipCandidate()]));
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(runningStatus);
+		mockCandidateList([candidate(), ipCandidate()]);
 		const getConfig = vi.spyOn(api, 'getAutolistConfig');
 		const setConfig = vi.spyOn(api, 'setAutolistConfig').mockResolvedValue();
 
@@ -635,9 +663,8 @@ describe('AutolistTab — bulk actions', () => {
 	});
 
 	it('Disable forever merges domains into the live config, then batch-forgets the cards', async () => {
-		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(
-			bulkStatus([candidate(), candidate({ id: 'domain|second.example|tcp|443', target: { domain: 'second.example', network: 'tcp', port: 443 } })]),
-		);
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(runningStatus);
+		mockCandidateList([candidate(), candidate({ id: 'domain|second.example|tcp|443', target: { domain: 'second.example', network: 'tcp', port: 443 } })]);
 		vi.spyOn(api, 'getAutolistConfig').mockResolvedValue({ ...fullConfig, excludeDomains: ['keep.example'] });
 		const setConfig = vi.spyOn(api, 'setAutolistConfig').mockResolvedValue();
 		vi.spyOn(api, 'forgetAutolistCandidates')
@@ -661,33 +688,31 @@ describe('AutolistTab — bulk actions', () => {
 
 describe('AutolistTab — history', () => {
 	it('renders add and remove records with source and result', async () => {
-		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue({
-			...runningStatus,
-			history: [
-				{
-					at: new Date().toISOString(),
-					domain: 'example.com',
-					network: 'tcp',
-					port: 443,
-					action: 'added',
-					source: 'auto',
-					interface: 'nwg0',
-					outbound: 'nwg',
-					reason: 'tcp-rst',
-					result: 'ok',
-				},
-				{
-					at: new Date().toISOString(),
-					domain: 'old.example.org',
-					action: 'removed',
-					source: 'user',
-					result: 'error: readback failed',
-				},
-			],
-		});
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(runningStatus);
+		mockHistoryList([
+			{
+				at: new Date().toISOString(),
+				domain: 'example.com',
+				network: 'tcp',
+				port: 443,
+				action: 'added',
+				source: 'auto',
+				interface: 'nwg0',
+				outbound: 'nwg',
+				reason: 'tcp-rst',
+				result: 'ok',
+			},
+			{
+				at: new Date().toISOString(),
+				domain: 'old.example.org',
+				action: 'removed',
+				source: 'user',
+				result: 'error: readback failed',
+			},
+		]);
 
 		render(AutolistTab);
-		await screen.findByText('example.com');
+		await screen.findByRole('button', { name: new RegExp(regexEscape(m.autolist_view_history())) });
 		await fireEvent.click(screen.getByRole('button', { name: new RegExp(regexEscape(m.autolist_view_history())) }));
 
 		expect(screen.getByText(m.autolist_history_added())).toBeTruthy();
@@ -697,22 +722,22 @@ describe('AutolistTab — history', () => {
 	});
 
 	it('restores a dismissed entry by its exact candidate ID, not by removed history', async () => {
-		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue({
-			...runningStatus,
-			history: [
-				{
-					at: new Date().toISOString(), domain: 'example.com', network: 'tcp', port: 443,
-					action: 'dismissed', source: 'user', result: 'ok',
-				},
-				{
-					at: new Date().toISOString(), domain: 'removed.example', action: 'removed', source: 'user', result: 'ok',
-				},
-			],
-		});
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(runningStatus);
+		mockHistoryList([
+			{
+				at: new Date().toISOString(), domain: 'example.com', network: 'tcp', port: 443,
+				action: 'dismissed', source: 'user', result: 'ok',
+			},
+			{
+				at: new Date().toISOString(), domain: 'removed.example', action: 'removed', source: 'user', result: 'ok',
+			},
+		]);
 		const restore = vi.spyOn(api, 'restoreAutolistCandidate').mockResolvedValue();
 		render(AutolistTab);
-		await screen.findByText('example.com');
+		await screen.findByRole('button', { name: new RegExp(regexEscape(m.autolist_view_history())) });
 		await fireEvent.click(screen.getByRole('button', { name: new RegExp(regexEscape(m.autolist_view_history())) }));
+		// Строка журнала: «example.com TCP/443».
+		await screen.findByText('example.com TCP/443');
 		const buttons = screen.getAllByRole('button', { name: m.autolist_action_restore() });
 		expect(buttons).toHaveLength(1);
 		await fireEvent.click(buttons[0]);
@@ -795,7 +820,7 @@ describe('AutolistTab — settings', () => {
 		expect((save.mock.calls[0][0]).tunnelProbe).toBe(true);
 	});
 
-	it('saves exactly the eleven 0.9.0 settings and closes the modal on success', async () => {
+	it('saves exactly the ten 0.9.3 settings — without the removed verbose flag — and closes the modal on success', async () => {
 		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(runningStatus);
 		vi.spyOn(api, 'getAutolistConfig').mockResolvedValue(fullConfig);
 		emptyResources();
@@ -818,7 +843,6 @@ describe('AutolistTab — settings', () => {
 			'targetInterface',
 			'tunnelProbe',
 			'udpEnabled',
-			'verbose',
 			'wanCheckUrl',
 			'wanMonitorEnabled',
 		]);
@@ -1243,5 +1267,127 @@ describe('AutolistTab — tunnel interface options from the tunnel catalog', () 
 		// Первый источник (AWG) выигрывает; его пустой label заполнен тегом
 		// дубликата-standalone. WAN-дубликат tun-vless не создаёт второй опции.
 		expect(labels).toEqual(['awg-dup (opkgtun0)', 'vless-de (tun-vless)', 'Home ISP (ppp0)', 'nwg0']);
+	});
+});
+
+describe('AutolistTab — setup required', () => {
+	it('shows the setup card with the wizard launch instead of the usual stopped content', async () => {
+		const setupStatus: AutolistStatus = { ...runningStatus, running: false, enabled: true, setupRequired: true };
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(setupStatus);
+		vi.spyOn(api, 'getAutolistConfig').mockResolvedValue({ ...fullConfig, targetInterface: '' });
+		emptyResources();
+
+		render(AutolistTab);
+		await screen.findByText(m.autolist_setup_title());
+		// Обычный stopped-контент не показан.
+		expect(screen.queryByText(m.autolist_not_running())).toBeNull();
+		expect(screen.queryByRole('button', { name: m.autolist_settings() })).toBeNull();
+
+		await fireEvent.click(screen.getByRole('button', { name: m.autolist_setup_start() }));
+		// Wizard открылся и запросил конфиг.
+		await vi.waitFor(() => expect(api.getAutolistConfig).toHaveBeenCalled());
+		await screen.findByText(m.autolist_wizard_title());
+	});
+});
+
+describe('AutolistTab — paged lists', () => {
+	it('loads the first page, shows the total in the tab badge and appends the next page without duplicates', async () => {
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(runningStatus);
+		const first = candidate();
+		const second = candidate({ id: 'domain|second.example|tcp|443', target: { domain: 'second.example', network: 'tcp', port: 443 } });
+		vi.spyOn(api, 'listAutolist')
+			.mockResolvedValueOnce({ items: [first], total: 2, nextCursor: 'cur-2', hasMore: true })
+			// «Окно» сместилось между страницами: первая запись повторяется.
+			.mockResolvedValue({ items: [first, second], total: 2, hasMore: false });
+
+		render(AutolistTab);
+		await screen.findByText('example.com');
+		expect(screen.getByRole('button', { name: new RegExp(regexEscape(m.autolist_view_candidates())) }).textContent).toContain('2');
+
+		await fireEvent.click(screen.getByRole('button', { name: m.autolist_show_more() }));
+		await screen.findByText('second.example');
+		// Дубль первой записи не добавлен.
+		expect(screen.getAllByText('example.com')).toHaveLength(1);
+		expect(vi.mocked(api.listAutolist).mock.calls.at(-1)?.[1]).toEqual(expect.objectContaining({ cursor: 'cur-2', limit: 128 }));
+	});
+
+	it('resets to the first page when the search query changes (backend q)', async () => {
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(runningStatus);
+		vi.spyOn(api, 'listAutolist').mockResolvedValue({ items: [candidate()], total: 1, hasMore: false });
+
+		render(AutolistTab);
+		await screen.findByText('example.com');
+		await fireEvent.input(screen.getByLabelText(m.autolist_search_placeholder()), { target: { value: 'bank' } });
+
+		await vi.waitFor(() =>
+			expect(vi.mocked(api.listAutolist).mock.calls.at(-1)?.[1]).toEqual(expect.objectContaining({ q: 'bank', cursor: '' })),
+		);
+	});
+
+	it('offers a retry when the list request fails', async () => {
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(runningStatus);
+		vi.spyOn(api, 'listAutolist').mockRejectedValue(new Error('satellite is not answering'));
+
+		render(AutolistTab);
+		await screen.findByText(m.autolist_list_loading_error());
+
+		vi.mocked(api.listAutolist).mockResolvedValue({ items: [candidate()], total: 1, hasMore: false });
+		await fireEvent.click(screen.getByRole('button', { name: m.common_retry() }));
+		await screen.findByText('example.com');
+	});
+
+	it('marks a failed candidate with a red border and keeps lastError inside check details only', async () => {
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(runningStatus);
+		mockCandidateList([candidate({ lastError: 'AWGM вернул HTTP 500: locked' })]);
+
+		render(AutolistTab);
+		await screen.findByText('example.com');
+		const card = screen.getByText('example.com').closest('.card') as HTMLElement;
+		expect(card.className).toContain('autolist-card-error');
+
+		// Текст ошибки — только внутри раскрываемого блока «Подробности проверки».
+		await fireEvent.click(screen.getByText(m.autolist_details()));
+		const err = screen.getByText(/AWGM вернул HTTP 500: locked/);
+		expect(err.closest('details')).toBeTruthy();
+	});
+});
+
+describe('AutolistTab — settings gating', () => {
+	it('blocks saving until an explicit tunnel is chosen', async () => {
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(runningStatus);
+		vi.spyOn(api, 'getAutolistConfig').mockResolvedValue({ ...fullConfig, targetInterface: '' });
+		emptyResources();
+		const save = vi.spyOn(api, 'setAutolistConfig').mockResolvedValue();
+
+		render(AutolistTab);
+		await fireEvent.click(await screen.findByRole('button', { name: m.autolist_settings() }));
+		const saveButton = await screen.findByRole('button', { name: m.common_save() });
+		expect(saveButton.hasAttribute('disabled')).toBe(true);
+		expect(screen.getByText(m.autolist_cfg_target_required())).toBeTruthy();
+		await fireEvent.click(saveButton);
+		expect(save).not.toHaveBeenCalled();
+	});
+
+	it('requires the risk acknowledgement before enabling auto-add from settings', async () => {
+		vi.spyOn(api, 'getAutolistStatus').mockResolvedValue(runningStatus);
+		vi.spyOn(api, 'getAutolistConfig').mockResolvedValue(fullConfig);
+		emptyResources();
+		const save = vi.spyOn(api, 'setAutolistConfig').mockResolvedValue();
+
+		render(AutolistTab);
+		await fireEvent.click(await screen.findByRole('button', { name: m.autolist_settings() }));
+		const autoToggle = await screen.findByRole('checkbox', { name: m.autolist_cfg_auto() });
+		await fireEvent.click(autoToggle);
+
+		const confirmButton = screen.getByRole('button', { name: m.autolist_auto_confirm_yes() });
+		expect(confirmButton.hasAttribute('disabled')).toBe(true);
+		// Тот же список рисков, что и в мастере.
+		expect(screen.getByText(m.autolist_risks_title())).toBeTruthy();
+		await fireEvent.click(screen.getByRole('checkbox', { name: m.autolist_risks_ack() }));
+		expect(confirmButton.hasAttribute('disabled')).toBe(false);
+
+		await fireEvent.click(confirmButton);
+		await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+		expect((save.mock.calls[0][0]).autoAdd).toBe(true);
 	});
 });

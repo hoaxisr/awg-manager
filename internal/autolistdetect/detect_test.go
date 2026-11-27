@@ -41,11 +41,11 @@ func TestGetStatusAbsentSatelliteIsEmpty(t *testing.T) {
 	if st.LastError != "" {
 		t.Fatalf("absence is not an error: %q", st.LastError)
 	}
-	if st.Candidates == nil || st.History == nil || st.Protocols == nil {
+	if st.Protocols == nil {
 		t.Fatalf("tables must be non-nil for the UI: %+v", st)
 	}
-	if len(st.Candidates) != 0 || len(st.History) != 0 || len(st.Protocols) != 0 {
-		t.Fatalf("tables must be empty: %+v", st)
+	if len(st.Protocols) != 0 {
+		t.Fatalf("protocols must be empty: %+v", st)
 	}
 	if st.LastWAN.Verdict != verdictNotChecked {
 		t.Fatalf("lastWAN = %q, want %q", st.LastWAN.Verdict, verdictNotChecked)
@@ -139,6 +139,7 @@ func TestGetStatusParsesSatelliteSnapshot(t *testing.T) {
 			"queuedChecks": 3,
 			"addsUsedHour": 7,
 			"addsLimit": 50,
+			"waitingCandidates": 5,
 			"candidates": [{
 				"id": "domain|example.com|tcp|443",
 				"target": {"domain": "example.com", "host": "www.example.com", "ip": "93.184.216.34", "network": "tcp", "port": 443},
@@ -197,36 +198,38 @@ func TestGetStatusParsesSatelliteSnapshot(t *testing.T) {
 	if st.ActiveChecks != 2 || st.QueuedChecks != 3 {
 		t.Fatalf("checks = %d/%d", st.ActiveChecks, st.QueuedChecks)
 	}
-	if st.AddsUsedHour != 7 || st.AddsLimit != 50 {
-		t.Fatalf("adds = %d/%d", st.AddsUsedHour, st.AddsLimit)
+	if st.AddsUsedHour != 7 || st.AddsLimit != 50 || st.WaitingCandidates != 5 {
+		t.Fatalf("adds = %d/%d waiting=%d", st.AddsUsedHour, st.AddsLimit, st.WaitingCandidates)
 	}
-	if len(st.Candidates) != 1 || len(st.History) != 1 {
-		t.Fatalf("tables = %+v", st)
+}
+
+// The operational status never carries the candidate/history tables: an old
+// satellite that still serves them in /status is parsed with those fields
+// ignored (asserted above by the absence of any table assertions).
+func TestGetStatusIgnoresSatelliteTables(t *testing.T) {
+	sat := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"version":"0.9.0-1","candidates":[{"id":"x"}],"history":[{"action":"added"}]}`))
+	}))
+	defer sat.Close()
+
+	s, _ := testService(t)
+	s.statusAddr = strings.TrimPrefix(sat.URL, "http://")
+	st := s.GetStatus(context.Background())
+	if !st.Running || st.Version != "0.9.0-1" {
+		t.Fatalf("status = %+v", st)
 	}
-	cand := st.Candidates[0]
-	if cand.Target.Domain != "example.com" || cand.Target.Host != "www.example.com" ||
-		cand.Target.IP != "93.184.216.34" || cand.Target.Network != "tcp" || cand.Target.Port != 443 {
-		t.Fatalf("candidate target = %+v", cand.Target)
-	}
-	if cand.State != "waiting" || cand.Reason != "tls-no-answer" {
-		t.Fatalf("candidate state/reason = %q %q", cand.State, cand.Reason)
-	}
-	if cand.Direct.Verdict != "blocked" || cand.WAN.Verdict != "reachable" || cand.Tunnel.Verdict != "not-checked" {
-		t.Fatalf("candidate evidence = %+v", cand)
-	}
-	if cand.Coverage.Covered {
-		t.Fatalf("coverage = %+v", cand.Coverage)
-	}
-	if cand.ClientIP != "192.168.31.144" || cand.ClientMAC != "4c:9f:f1:b9:93:e7" {
-		t.Fatalf("candidate client = %q %q", cand.ClientIP, cand.ClientMAC)
-	}
-	hist := st.History[0]
-	if hist.Action != "added" || hist.Source != "auto" || hist.Interface != "nwg0" ||
-		hist.Outbound != "awg-main" || hist.Result != "ok" || hist.Port != 443 {
-		t.Fatalf("history entry = %+v", hist)
-	}
-	if hist.ClientIP != "192.168.31.144" || hist.ClientMAC != "4c:9f:f1:b9:93:e7" {
-		t.Fatalf("history client = %q %q", hist.ClientIP, hist.ClientMAC)
+}
+
+func TestGetStatusSetupRequired(t *testing.T) {
+	sat := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"setupRequired":true}`))
+	}))
+	defer sat.Close()
+	s, _ := testService(t)
+	s.statusAddr = strings.TrimPrefix(sat.URL, "http://")
+	st := s.GetStatus(context.Background())
+	if !st.Running || !st.SetupRequired || st.CaptureActive {
+		t.Fatalf("status = %+v", st)
 	}
 }
 
@@ -245,9 +248,6 @@ func TestGetStatusHTTPErrorSetsLastError(t *testing.T) {
 	st := s.GetStatus(context.Background())
 	if st.Running || st.LastError == "" {
 		t.Fatalf("HTTP 500 from a live satellite must set lastError: %+v", st)
-	}
-	if len(st.Candidates) != 0 || len(st.History) != 0 {
-		t.Fatalf("failed poll must not emit table rows: %+v", st)
 	}
 }
 
@@ -409,9 +409,9 @@ func TestStatusEndpointIsLoopbackConstant(t *testing.T) {
 	}
 }
 
-// The intent is read from the legacy flat-path file while it is the only
-// copy, and the first write consolidates it into the satellite directory.
-func TestEnabledIntentLegacyFallbackAndMigration(t *testing.T) {
+// The first read migrates the legacy intent into the working directory;
+// subsequent writes use only that directory.
+func TestEnabledIntentLegacyMigration(t *testing.T) {
 	s, dir := testService(t)
 	if err := os.WriteFile(s.initPath, []byte("#!/bin/sh\n"), 0755); err != nil {
 		t.Fatal(err)
@@ -419,7 +419,7 @@ func TestEnabledIntentLegacyFallbackAndMigration(t *testing.T) {
 	newPath := filepath.Join(dir, "enabled")
 	legacyPath := legacyEnabledFile
 
-	// Legacy ENABLED=no is honored while the new file does not exist.
+	// Legacy ENABLED=no is migrated on the first read, preserving the intent.
 	if err := os.WriteFile(legacyPath, []byte("ENABLED=no\n"), 0600); err != nil {
 		t.Fatal(err)
 	}

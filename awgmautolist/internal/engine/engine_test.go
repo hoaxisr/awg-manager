@@ -20,11 +20,10 @@ import (
 	"github.com/hoaxisr/awg-manager/awgmautolist/internal/store"
 )
 
-// configConfig, storeState and tunnelType are single-file aliases for table
+// configConfig and storeState are single-file aliases for table
 // entries.
 type configConfig = config.Config
 type storeState = store.State
-type tunnelType = awgm.Tunnel
 
 var errFake = errors.New("fake coverage failure")
 
@@ -363,7 +362,7 @@ func TestConfigPatchInvalidates(t *testing.T) {
 	h.probes.hold(t, key)
 	h.capture.suspect(target, "tcp-rst")
 	h.waitFor(func() bool { return h.engine.Status().ActiveChecks == 1 })
-	if _, err := h.engine.PatchConfig([]byte(`{"verbose":true}`)); err != nil {
+	if _, err := h.engine.PatchConfig([]byte(`{"addsPerHour":75}`)); err != nil {
 		t.Fatal(err)
 	}
 	h.probes.unhold(key)
@@ -821,62 +820,6 @@ func TestStopIsIdempotentAndUserActionsAfterStop(t *testing.T) {
 	eng.Stop() // second call must not panic or block
 	if err := eng.Add(context.Background(), "anything"); err == nil {
 		t.Fatal("user action accepted after stop")
-	}
-}
-
-// TestTunnelUnavailableProducesWaitingCandidate verifies that a missing
-// tunnel interface still yields a waiting candidate with tunnel error
-// evidence and never an automatic write.
-func TestTunnelUnavailableProducesWaitingCandidate(t *testing.T) {
-	h := newHarness(t, func(cfg *configConfig) {
-		cfg.AutoAdd = true
-		cfg.TargetInterface = ""
-	})
-	h.engine.deps.DefaultTunnel = func(context.Context) (tunnelType, error) {
-		return tunnelType{}, ErrNoTunnel
-	}
-	target := h.tcpTarget("example.com")
-	key := target.CandidateKey()
-	h.probes.setDirect(key, model.VerdictBlocked)
-	h.probes.setTunnel(key, model.VerdictReachable)
-	h.capture.suspect(target, "tcp-rst")
-	h.waitFor(func() bool {
-		candidate, ok := h.candidate(key)
-		return ok && candidate.State == model.CandidateWaiting
-	})
-	candidate := waitingCandidate(t, h, key)
-	if candidate.Tunnel.Verdict != model.VerdictError {
-		t.Fatalf("tunnel verdict=%s, want error", candidate.Tunnel.Verdict)
-	}
-	if len(h.writer.adds) != 0 {
-		t.Fatalf("unexpected writes: %v", h.writer.adds)
-	}
-}
-
-// TestDefaultTunnelNotPersisted verifies that the implicit first tunnel is
-// used but never written back into the saved configuration.
-func TestDefaultTunnelNotPersisted(t *testing.T) {
-	h := newHarness(t, func(cfg *configConfig) {
-		cfg.TunnelProbe = false
-		cfg.TargetInterface = ""
-	})
-	h.engine.deps.DefaultTunnel = func(context.Context) (tunnelType, error) {
-		return tunnelType{Interface: "nocli0", Outbound: "out", Enabled: true}, nil
-	}
-	target := h.tcpTarget("example.com")
-	key := target.CandidateKey()
-	h.probes.setDirect(key, model.VerdictBlocked)
-	h.capture.suspect(target, "tcp-rst")
-	h.waitFor(func() bool {
-		candidate, ok := h.candidate(key)
-		return ok && candidate.State == model.CandidateWaiting
-	})
-	candidate := waitingCandidate(t, h, key)
-	if candidate.TargetInterface != "nocli0" {
-		t.Fatalf("candidate interface=%q, want implicit nocli0", candidate.TargetInterface)
-	}
-	if saved := h.config.Config(); saved.TargetInterface != "" {
-		t.Fatalf("implicit default persisted: %q", saved.TargetInterface)
 	}
 }
 

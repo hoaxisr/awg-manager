@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -122,22 +123,40 @@ func TestAdditionsArePrunedAtOneHour(t *testing.T) {
 	}
 }
 
-func TestHistoryAndCandidatesAreBounded(t *testing.T) {
-	store := New("")
+// The candidate and history tables are unbounded (BACKLOG section 5): no
+// silent eviction, an "added" card survives list growth and restarts.
+func TestHistoryAndCandidatesAreUnbounded(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	store := New(path)
 	now := time.Now()
-	if err := store.Update(false, func(state *State) {
-		for i := 0; i < HistoryLimit+20; i++ {
+	const total = 600 // more than the old 512 cap
+	if err := store.Update(true, func(state *State) {
+		for i := 0; i < total; i++ {
 			state.History = append(state.History, model.HistoryEntry{At: now.Add(time.Duration(i) * time.Second)})
-		}
-		for i := 0; i < CandidateLimit+20; i++ {
-			candidate := model.Candidate{ID: string(rune(i)), FirstAt: now.Add(time.Duration(i) * time.Second)}
-			state.Candidates[candidate.ID] = candidate
+			state.Candidates[fmt.Sprintf("id-%03d", i)] = model.Candidate{
+				ID:      fmt.Sprintf("id-%03d", i),
+				State:   model.CandidateAdded,
+				FirstAt: now.Add(time.Duration(i) * time.Second),
+			}
 		}
 	}); err != nil {
 		t.Fatal(err)
 	}
 	state := store.Snapshot(time.Now())
-	if len(state.History) != HistoryLimit || len(state.Candidates) != CandidateLimit {
-		t.Fatalf("history=%d candidates=%d", len(state.History), len(state.Candidates))
+	if len(state.History) != total || len(state.Candidates) != total {
+		t.Fatalf("history=%d candidates=%d, want %d each", len(state.History), len(state.Candidates), total)
+	}
+	restarted := New(path)
+	if err := restarted.Load(); err != nil {
+		t.Fatal(err)
+	}
+	reloaded := restarted.Snapshot(time.Now())
+	if len(reloaded.History) != total || len(reloaded.Candidates) != total {
+		t.Fatalf("reloaded history=%d candidates=%d", len(reloaded.History), len(reloaded.Candidates))
+	}
+	for i := 0; i < total; i++ {
+		if reloaded.Candidates[fmt.Sprintf("id-%03d", i)].State != model.CandidateAdded {
+			t.Fatalf("candidate id-%03d lost its added state", i)
+		}
 	}
 }

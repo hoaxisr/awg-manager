@@ -16,7 +16,6 @@ type Config struct {
 	WANMonitorEnabled bool     `json:"wanMonitorEnabled"`
 	TunnelProbe       bool     `json:"tunnelProbe"`
 	UDPEnabled        bool     `json:"udpEnabled"`
-	Verbose           bool     `json:"verbose"`
 	AddsPerHour       int      `json:"addsPerHour"`
 	ExcludeDomains    []string `json:"excludeDomains,omitempty"`
 	ExcludeRuleSets   []string `json:"excludeRuleSets,omitempty"`

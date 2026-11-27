@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -78,6 +79,7 @@ type Engine struct {
 
 	baseCtx    context.Context
 	baseCancel context.CancelFunc
+	startCtx   context.Context // родительский контекст Start: старт по wizard из PatchConfig
 	stopCh     chan struct{}
 	queue      chan capture.Suspect
 
@@ -116,26 +118,33 @@ func New(deps Dependencies) *Engine {
 	return &Engine{deps: deps, active: map[string]*attempt{}}
 }
 
-// Start launches capture, the optional WAN monitor and the workers. It is
-// idempotent.
+// Start launches capture, the optional WAN monitor and the workers — but
+// only when the tunnel was chosen explicitly: an empty targetInterface means
+// the initial setup is not finished, so the engine stays idle (Status
+// reports setupRequired) while the HTTP API keeps serving the wizard.
+// It is idempotent.
 func (e *Engine) Start(ctx context.Context) error {
 	if e.Running() {
 		return nil
 	}
 	cfg := e.deps.Config.Config()
-	e.pruneBlockedCandidates(cfg)
-	var defaultInterface, defaultOutbound string
-	if cfg.TargetInterface == "" && e.deps.DefaultTunnel != nil {
-		if tunnel, err := e.deps.DefaultTunnel(ctx); err == nil && tunnel.Enabled {
-			defaultInterface, defaultOutbound = tunnel.Interface, tunnel.Outbound
-		}
+	if cfg.TargetInterface == "" {
+		e.mu.Lock()
+		// Запоминаем родительский контекст: PatchConfig (empty->explicit)
+		// стартует движок уже после старта main.
+		e.startCtx = ctx
+		e.mu.Unlock()
+		e.logf("setup required: no target interface configured, engine idle")
+		return nil
 	}
+	e.pruneBlockedCandidates(cfg)
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.running {
 		return nil
 	}
-	e.tunnelInterface, e.tunnelOutbound = defaultInterface, defaultOutbound
+	e.startCtx = ctx
+	e.tunnelInterface, e.tunnelOutbound = "", ""
 	e.baseCtx, e.baseCancel = context.WithCancel(ctx)
 	e.stopCh = make(chan struct{})
 	e.queue = make(chan capture.Suspect, queueCapacity)
@@ -163,6 +172,17 @@ func (e *Engine) Running() bool {
 	return e.running
 }
 
+// startParentCtx returns the context remembered by Start, so a PatchConfig
+// that completes the wizard can launch the engine under the same parent.
+func (e *Engine) startParentCtx() context.Context {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.startCtx != nil {
+		return e.startCtx
+	}
+	return context.Background()
+}
+
 // Stop closes admission, cancels and waits for the monitor, workers, capture
 // and every in-flight probe. It is idempotent.
 func (e *Engine) Stop() {
@@ -176,6 +196,8 @@ func (e *Engine) Stop() {
 	monitorCancel := e.monitorCancel
 	captureRef := e.capture
 	baseCancel := e.baseCancel
+	e.tunnelInterface = ""
+	e.tunnelOutbound = ""
 	attempts := make([]*attempt, 0, len(e.active))
 	for _, att := range e.active {
 		attempts = append(attempts, att)
@@ -205,15 +227,39 @@ func (e *Engine) Stop() {
 // mode change rebuilds the capture and monitor changes start or stop the
 // periodic WAN check. Disabling the monitor while paused resumes the capture,
 // because a disabled monitor never pauses anything. The configuration store
-// itself already forces autoAdd off when tunnelProbe is off. A
-// targetInterface change re-points the route objects at the new outbound
-// immediately, so existing entries follow the new tunnel without waiting
-// for the next add.
+// itself already forces autoAdd off when tunnelProbe is off.
+//
+// Tunnel lifecycle (BACKLOG section 3): the engine runs only with an
+// explicitly chosen tunnel. empty->explicit starts it, explicit->empty stops
+// it and deliberately leaves every AWGM rule untouched (no refresh is ever
+// called with an empty interface), explicit A->B re-points the route objects
+// at the new outbound immediately, so existing entries follow the new tunnel
+// without waiting for the next add.
 func (e *Engine) PatchConfig(data []byte) (config.Config, error) {
 	old := e.deps.Config.Config()
 	cfg, err := e.deps.Config.Patch(data)
 	if err != nil {
 		return config.Config{}, err
+	}
+	if cfg.TargetInterface == "" {
+		// Без выбранного туннеля движок не работает, и ничего операционного
+		// запускать нельзя (у idle-движка нет валидного baseCtx). Уход
+		// explicit->empty останавливает рабочий движок, не перенаправляя и не
+		// удаляя существующие AWGM-правила; empty->empty просто сохраняет
+		// конфиг.
+		if e.Running() {
+			e.Stop()
+			e.logf("target interface cleared: engine stopped, routing rules left untouched")
+		}
+		return cfg, nil
+	}
+	if old.TargetInterface == "" {
+		// Wizard finished: launch the working engine. Start reads the fresh
+		// config, so no apply section is needed here.
+		if err := e.Start(e.startParentCtx()); err != nil {
+			return cfg, err
+		}
+		return cfg, nil
 	}
 	e.commitMu.Lock()
 	e.mu.Lock()
@@ -393,17 +439,6 @@ func (e *Engine) endAttempt(key string, att *attempt) {
 	att.cancel()
 }
 
-// invalidate makes every in-flight decision stale: queued and running checks
-// are cancelled and later side effects are refused. Used on configuration
-// changes.
-func (e *Engine) invalidate(reason string) {
-	e.commitMu.Lock()
-	defer e.commitMu.Unlock()
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.invalidateLocked(reason)
-}
-
 // invalidateLocked assumes commitMu (and, on the pause path, mu) is held.
 func (e *Engine) invalidateLocked(reason string) {
 	e.gen.Add(1)
@@ -529,8 +564,9 @@ func (e *Engine) process(suspect capture.Suspect, recheckState model.CandidateSt
 	}
 	cand.Direct = probeEvidence(results.Direct)
 	cand.WAN = probeEvidence(results.WAN)
-	e.logf("%s direct=%s wan=%s outbound=%s interface=%s",
-		att.id, results.Direct.Verdict, results.WAN.Verdict, directPath.Outbound, directPath.Interface)
+	e.logf("%s direct=%s wan=%s outbound=%s interface=%s%s%s",
+		att.id, results.Direct.Verdict, results.WAN.Verdict, directPath.Outbound, directPath.Interface,
+		probeLogDetail(results.Direct), probeLogDetail(results.WAN))
 	if results.Direct.Verdict != model.VerdictBlocked || results.WAN.Verdict != model.VerdictReachable {
 		// reachable needs no candidate; error and WAN failure prove nothing.
 		switch {
@@ -581,7 +617,7 @@ func (e *Engine) process(suspect capture.Suspect, recheckState model.CandidateSt
 		return
 	}
 	cand.Tunnel = probeEvidence(tunnelResult)
-	e.logf("%s tunnel=%s interface=%s", att.id, tunnelResult.Verdict, tunnel.Interface)
+	e.logf("%s tunnel=%s interface=%s%s", att.id, tunnelResult.Verdict, tunnel.Interface, probeLogDetail(tunnelResult))
 	if tunnelResult.Verdict == model.VerdictBlocked {
 		e.discardCandidate(att, key)
 		return
@@ -621,21 +657,23 @@ func (e *Engine) logf(format string, args ...any) {
 
 // Status is the operational picture for the main screen.
 type Status struct {
-	Running         bool                `json:"running"`
-	CaptureRunning  bool                `json:"captureActive"`
-	CapturePaused   bool                `json:"capturePaused"`
-	Protocols       []string            `json:"protocols"`
-	UDPEnabled      bool                `json:"udpEnabled"`
-	TargetInterface string              `json:"targetInterface,omitempty"`
-	TargetOutbound  string              `json:"targetOutbound,omitempty"`
-	ResolveVia      string              `json:"resolveVia,omitempty"`
-	LastWAN         model.CheckEvidence `json:"lastWAN"`
-	QueueDepth      int                 `json:"queuedChecks"`
-	ActiveChecks    int                 `json:"activeChecks"`
-	QueueDropped    uint64              `json:"queueDropped,omitempty"`
-	AdditionsUsed   int                 `json:"addsUsedHour"`
-	AdditionsLimit  int                 `json:"addsLimit"`
-	LastError       string              `json:"lastError,omitempty"`
+	Running           bool                `json:"running"`
+	SetupRequired     bool                `json:"setupRequired"`
+	CaptureRunning    bool                `json:"captureActive"`
+	CapturePaused     bool                `json:"capturePaused"`
+	Protocols         []string            `json:"protocols"`
+	UDPEnabled        bool                `json:"udpEnabled"`
+	TargetInterface   string              `json:"targetInterface,omitempty"`
+	TargetOutbound    string              `json:"targetOutbound,omitempty"`
+	ResolveVia        string              `json:"resolveVia,omitempty"`
+	LastWAN           model.CheckEvidence `json:"lastWAN"`
+	QueueDepth        int                 `json:"queuedChecks"`
+	ActiveChecks      int                 `json:"activeChecks"`
+	QueueDropped      uint64              `json:"queueDropped,omitempty"`
+	AdditionsUsed     int                 `json:"addsUsedHour"`
+	AdditionsLimit    int                 `json:"addsLimit"`
+	WaitingCandidates int                 `json:"waitingCandidates"`
+	LastError         string              `json:"lastError,omitempty"`
 }
 
 func (e *Engine) Status() Status {
@@ -654,6 +692,7 @@ func (e *Engine) Status() Status {
 	}
 	e.mu.Unlock()
 	cfg := e.deps.Config.Config()
+	status.SetupRequired = cfg.TargetInterface == ""
 	status.UDPEnabled = cfg.UDPEnabled
 	status.AdditionsLimit = cfg.AddsPerHour
 	if cfg.TargetInterface != "" {
@@ -665,6 +704,7 @@ func (e *Engine) Status() Status {
 		status.Protocols = append(status.Protocols, "udp/stun-turn")
 	}
 	status.AdditionsUsed = e.additionsUsed()
+	status.WaitingCandidates = e.deps.State.CountCandidates("waiting")
 	return status
 }
 
@@ -676,6 +716,33 @@ func probeEvidence(r probe.Result) model.CheckEvidence {
 		Detail:     r.Detail,
 		CheckedAt:  time.Now(),
 	}
+}
+
+// probeLogDetail renders the curl error detail and the phase timings of one
+// non-reachable probe result, so the journal shows which stage failed without
+// a separate debug mode (TimeDNS/TimeConnect/TimeTLS stay observable). A
+// reachable result adds nothing.
+func probeLogDetail(r probe.Result) string {
+	if r.Verdict == model.VerdictReachable {
+		return ""
+	}
+	parts := make([]string, 0, 4)
+	if r.Detail != "" {
+		parts = append(parts, "detail="+strconv.Quote(r.Detail))
+	}
+	if r.TimeDNS > 0 {
+		parts = append(parts, fmt.Sprintf("dns=%dms", r.TimeDNS.Milliseconds()))
+	}
+	if r.TimeConnect > 0 {
+		parts = append(parts, fmt.Sprintf("connect=%dms", r.TimeConnect.Milliseconds()))
+	}
+	if r.TimeTLS > 0 {
+		parts = append(parts, fmt.Sprintf("tls=%dms", r.TimeTLS.Milliseconds()))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " (" + strings.Join(parts, " ") + ")"
 }
 
 func describeTarget(t model.Target) string {

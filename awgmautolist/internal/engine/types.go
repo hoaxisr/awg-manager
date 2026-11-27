@@ -15,7 +15,6 @@ import (
 
 type CoverageOutcome struct {
 	Evidence model.CoverageEvidence
-	Revision string
 }
 
 type Coverage interface {
@@ -68,5 +67,4 @@ type Dependencies struct {
 	Writer         Writer
 	CaptureFactory CaptureFactory
 	Logger         *log.Logger
-	DefaultTunnel  func(context.Context) (awgm.Tunnel, error)
 }

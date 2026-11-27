@@ -5,6 +5,11 @@ import type {
 	AutolistCandidate,
 	AutolistConfig,
 	AutolistControlAction,
+	AutolistHistoryEntry,
+	AutolistListKind,
+	AutolistListRequest,
+	AutolistListResponse,
+	AutolistListState,
 	AutolistSatellitePath,
 	AutolistStatus,
 	ClientRoute,
@@ -46,8 +51,6 @@ function emptyAutolistStatus(): AutolistStatus {
 		queuedChecks: 0,
 		addsUsedHour: 0,
 		addsLimit: 0,
-		candidates: [],
-		history: []
 	};
 }
 
@@ -407,6 +410,27 @@ export class RoutingClient extends ServersClient {
 	/** Применить конфигурацию сателлита — POST /config через прокси. */
 	async setAutolistConfig(cfg: AutolistConfig): Promise<void> {
 		await this.autolistProxy('/config', cfg as unknown as Record<string, unknown>);
+	}
+
+	/**
+	 * Постраничный список кандидатов или истории — POST /list через прокси.
+	 * Единая ручка для всех вкладок: candidates FirstAt ASC, история — новые
+	 * первыми; state 'active' = waiting+checking. Поиск q выполняет бэкенд
+	 * по domain/host/ip/clientIP/clientMAC; смена q/фильтра начинает с
+	 * первой страницы (cursor '').
+	 */
+	async listAutolist<T = AutolistCandidate | AutolistHistoryEntry>(
+		kind: AutolistListKind,
+		opts: { state?: AutolistListState; q?: string; cursor?: string; limit?: number } = {},
+	): Promise<AutolistListResponse<T>> {
+		const body: AutolistListRequest = {
+			kind,
+			state: opts.state ?? '',
+			q: opts.q ?? '',
+			cursor: opts.cursor ?? '',
+			limit: opts.limit ?? 128,
+		};
+		return this.autolistProxy<AutolistListResponse<T>>('/list', body as unknown as Record<string, unknown>);
 	}
 
 	/** Единая проверка per-ID результата: HTTP 200 не скрывает writer error. */

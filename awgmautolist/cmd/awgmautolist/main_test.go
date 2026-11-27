@@ -5,7 +5,9 @@ import (
 	"errors"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -208,5 +210,113 @@ func TestParseServerPort(t *testing.T) {
 	port, err = parseServerPort(write(`{"singboxRouter":{"clashPort":9100,"listenPort":9101}}`))
 	if err == nil || port != 0 {
 		t.Fatalf("foreign port: port=%d err=%v", port, err)
+	}
+}
+
+// initScriptPath locates the Entware lifecycle script relative to the test
+// file (cmd/awgmautolist -> ../../entware).
+func initScriptPath(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join("..", "..", "entware", "S99awgmautolist")
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(abs); err != nil {
+		t.Skipf("init script not available: %v", err)
+	}
+	return abs
+}
+
+// rewriteInitScript copies the init script with the absolute Entware prefixes
+// replaced by a temporary root so the migration and sourcing can run without
+// touching the real /opt.
+func rewriteInitScript(t *testing.T, root string) string {
+	t.Helper()
+	data, err := os.ReadFile(initScriptPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := strings.ReplaceAll(string(data), "/opt/etc", filepath.Join(root, "etc"))
+	script = strings.ReplaceAll(script, "/opt/var", filepath.Join(root, "var"))
+	script = strings.ReplaceAll(script, "/opt/bin/awgmautolist", filepath.Join(root, "bin", "awgmautolist"))
+	path := filepath.Join(root, "S99awgmautolist")
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// The init script migrates the legacy flat key/enabled into the working
+// directory before sourcing them: the moved files keep content and
+// permissions, the legacy paths disappear and the migrated intent is what the
+// script actually sources.
+func TestInitScriptMigratesLegacyShellFilesBeforeSourcing(t *testing.T) {
+	root := t.TempDir()
+	etc := filepath.Join(root, "etc")
+	if err := os.MkdirAll(etc, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(etc, "awgmautolist.key"), []byte("AWGM_API_KEY=secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(etc, "awgmautolist.enabled"), []byte("ENABLED=no"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := rewriteInitScript(t, root)
+
+	// "start" proves sourcing: ENABLED=no from the migrated file stops the
+	// start path with the disabled message.
+	out, err := exec.Command("sh", script, "start").CombinedOutput()
+	if err != nil {
+		t.Fatalf("script: %v (%s)", err, out)
+	}
+	if !strings.Contains(string(out), "disabled") {
+		t.Fatalf("migrated enabled file was not sourced: %q", out)
+	}
+	key, err := os.ReadFile(filepath.Join(etc, "awgmautolist", "key"))
+	if err != nil || string(key) != "AWGM_API_KEY=secret" {
+		t.Fatalf("migrated key=%q err=%v", key, err)
+	}
+	info, err := os.Stat(filepath.Join(etc, "awgmautolist", "key"))
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("key perm=%v err=%v", info, err)
+	}
+	for _, legacy := range []string{"awgmautolist.key", "awgmautolist.enabled"} {
+		if _, err := os.Stat(filepath.Join(etc, legacy)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("legacy %s survived the move: %v", legacy, err)
+		}
+	}
+}
+
+// A fresh key/enabled in the working directory has priority: the init script
+// neither moves nor reads the legacy file and never overwrites the new one.
+func TestInitScriptKeepsFreshShellFiles(t *testing.T) {
+	root := t.TempDir()
+	etc := filepath.Join(root, "etc")
+	confDir := filepath.Join(etc, "awgmautolist")
+	if err := os.MkdirAll(confDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(confDir, "key"), []byte("AWGM_API_KEY=new"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(etc, "awgmautolist.key"), []byte("AWGM_API_KEY=old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script := rewriteInitScript(t, root)
+
+	out, err := exec.Command("sh", script, "status").CombinedOutput()
+	if err != nil {
+		t.Fatalf("script: %v (%s)", err, out)
+	}
+	key, err := os.ReadFile(filepath.Join(confDir, "key"))
+	if err != nil || string(key) != "AWGM_API_KEY=new" {
+		t.Fatalf("fresh key overwritten: %q err=%v", key, err)
+	}
+	// The legacy key stays on disk as an unread leftover.
+	legacy, err := os.ReadFile(filepath.Join(etc, "awgmautolist.key"))
+	if err != nil || string(legacy) != "AWGM_API_KEY=old" {
+		t.Fatalf("legacy key changed: %q err=%v", legacy, err)
 	}
 }

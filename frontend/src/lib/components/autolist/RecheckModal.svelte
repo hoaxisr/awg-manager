@@ -178,14 +178,8 @@
 				<span class="opacity-60">{m.autolist_col_last_seen()}: {formatAutolistTime(shown.lastAt)}</span>
 			</div>
 		</div>
-	{#if shown.lastError}
-			<div class="text-error text-xs break-all mt-2">
-				<span class="opacity-60">{m.autolist_last_error()}:</span>
-				{shown.lastError}
-			</div>
-	{/if}
 		<!-- Детали проверки: тот же блок, что у карточки кандидата. -->
-		{@render details?.(shown, false)}
+		{@render details?.(shown, true)}
 	{/if}
 	{#snippet actions()}
 		<!-- Перенос строк: набор действий шире карточки и не должен вылезать за её край. -->

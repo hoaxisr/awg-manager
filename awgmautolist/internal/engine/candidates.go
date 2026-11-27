@@ -46,26 +46,12 @@ func (e *Engine) publishDecision(att *attempt, key string, cand model.Candidate,
 	return stored
 }
 
-// resolveTunnel returns the tunnel used for checks and rules. A saved
-// TargetInterface wins; DefaultTunnel is consulted only while the saved value
-// is empty and the implicit choice is never persisted back into config.
+// resolveTunnel returns the explicitly configured tunnel used for checks and rules.
 func (e *Engine) resolveTunnel(ctx context.Context, cfg config.Config) (awgm.Tunnel, error) {
-	var tunnel awgm.Tunnel
-	if cfg.TargetInterface != "" {
-		tunnel = awgm.Tunnel{Interface: cfg.TargetInterface, Enabled: true}
-	} else {
-		if e.deps.DefaultTunnel == nil {
-			return awgm.Tunnel{}, ErrNoTunnel
-		}
-		var err error
-		tunnel, err = e.deps.DefaultTunnel(ctx)
-		if err != nil {
-			return awgm.Tunnel{}, err
-		}
-		if !tunnel.Enabled || tunnel.Interface == "" {
-			return awgm.Tunnel{}, ErrNoTunnel
-		}
+	if cfg.TargetInterface == "" {
+		return awgm.Tunnel{}, ErrNoTunnel
 	}
+	tunnel := awgm.Tunnel{Interface: cfg.TargetInterface, Enabled: true}
 	e.mu.Lock()
 	e.tunnelInterface = tunnel.Interface
 	e.tunnelOutbound = tunnel.Outbound
@@ -82,6 +68,10 @@ func (e *Engine) resolveTunnel(ctx context.Context, cfg config.Config) (awgm.Tun
 //   - current decision generation;
 //   - fresh WAN reachable on the same direct path;
 //   - budget: at most 50 actual new additions in the rolling hour.
+//
+// A write error never moves the candidate to added: the card stays in its
+// previous working state, carries the error and is completed idempotently
+// by a later add.
 func (e *Engine) autoAdd(att *attempt, cand *model.Candidate, directPath awgm.DirectPath, manual bool) bool {
 	if cand.Tunnel.Verdict != model.VerdictReachable {
 		return false
@@ -132,23 +122,31 @@ func (e *Engine) autoAdd(att *attempt, cand *model.Candidate, directPath awgm.Di
 	}
 
 	result, err := e.deps.Writer.Add(att.ctx, cand.Target, iface)
-	if err != nil && !result.Persisted {
+	if err != nil {
+		// Any write error leaves the candidate in its previous working
+		// state: not added, not dropped. The error is carried on the card
+		// and journaled. Partially written route objects are NOT rolled
+		// back: a retry completes the same operation idempotently, and a
+		// destination entry that was really created spends the rolling
+		// budget exactly once.
+		cand.LastError = err.Error()
 		e.setLastError(fmt.Sprintf("%s writer: %v", att.id, err))
 		e.logf("%s auto-add write failed: %v", att.id, err)
 		failed := *cand
 		failed.TargetInterface = iface
 		failed.TargetOutbound = result.Outbound
-		_ = e.deps.State.Update(true, func(s *store.State) {
+		updateErr := e.deps.State.Update(true, func(s *store.State) {
+			if result.NewEntry {
+				s.Additions = append(s.Additions, time.Now())
+			}
 			s.History = append(s.History, historyEntry(failed, "added", "auto", "error: "+err.Error()))
 		})
+		if updateErr != nil {
+			e.setLastError(fmt.Sprintf("%s state write: %v", att.id, updateErr))
+		}
 		return false
 	}
-	if err != nil {
-		// Content was persisted, but a later owner/apply step failed. Preserve
-		// that partial success instead of presenting the operation as no-op.
-		cand.LastError = err.Error()
-		e.setLastError(fmt.Sprintf("%s writer partial: %v", att.id, err))
-	}
+	cand.LastError = ""
 
 	stored := false
 	updateErr := e.deps.State.Update(true, func(s *store.State) {
@@ -167,20 +165,14 @@ func (e *Engine) autoAdd(att *attempt, cand *model.Candidate, directPath awgm.Di
 			// Confirmed new destination: spend the rolling budget once. Owner/
 			// outbound repairs and duplicate no-ops are free.
 			s.Additions = append(s.Additions, time.Now())
-			note := ""
-			if err != nil {
-				note = "partial: " + err.Error()
-			}
-			s.History = append(s.History, historyEntry(*cand, "added", "auto", note))
+			s.History = append(s.History, historyEntry(*cand, "added", "auto", ""))
 		}
 	})
 	if updateErr != nil {
 		e.setLastError(fmt.Sprintf("%s state write: %v", att.id, updateErr))
 	}
-	if result.Persisted && err == nil {
+	if result.Persisted {
 		e.logf("%s auto-added %s via %s (%s)", att.id, cand.ID, iface, result.Outbound)
-	} else if result.Persisted {
-		e.logf("%s auto-add partially persisted %s via %s: %v", att.id, cand.ID, iface, err)
 	} else {
 		e.logf("%s auto-add was a duplicate, no budget spent", att.id)
 	}
@@ -281,7 +273,9 @@ func (e *Engine) ClearHistory() error {
 // only a tunnel interface is needed for the writer mapping. Idempotent: an
 // already added candidate is not written twice. The rolling hourly limit
 // covers manual and automatic additions alike and is checked immediately
-// before the writer call.
+// before the writer call. Any write error leaves the candidate in its
+// previous state with the error on the card; a retry completes the same
+// operation idempotently.
 func (e *Engine) Add(ctx context.Context, id string) error {
 	return e.userAction(ctx, id, "added", false, func(cand model.Candidate) (model.Candidate, string, bool, error) {
 		if cand.State == model.CandidateAdded {
@@ -304,18 +298,19 @@ func (e *Engine) Add(ctx context.Context, id string) error {
 			cand.TargetOutbound = tunnel.Outbound
 		}
 		if err != nil {
-			if result.Persisted {
-				cand.State = model.CandidateAdded
-				cand.TargetInterface = tunnel.Interface
-				cand.LastError = err.Error()
-				if result.NewEntry {
-					e.spendAddition()
-				}
+			// The candidate keeps its state; userAction journals the error
+			// and stores it on the card. A destination entry that was really
+			// created spends the rolling budget once, so the idempotent
+			// retry of the same add is free.
+			cand.LastError = err.Error()
+			if result.NewEntry {
+				e.spendAddition()
 			}
 			return cand, "", false, err
 		}
 		cand.State = model.CandidateAdded
 		cand.TargetInterface = tunnel.Interface
+		cand.LastError = ""
 		if result.NewEntry {
 			e.spendAddition()
 			return cand, "", false, nil
@@ -479,21 +474,24 @@ func (e *Engine) recheckAdded(ctx context.Context, id string, cand model.Candida
 		return err
 	}
 	results := e.deps.Probes.DirectAndWAN(ctx, cand.Target, cfg.WANCheckURL, probe.Path{Interface: directPath.Interface})
-	tunnel := model.CheckEvidence{Verdict: model.VerdictNotChecked}
+	tunnelResult := probe.Result{Verdict: model.VerdictNotChecked}
 	if cfg.TunnelProbe {
 		iface := cand.TargetInterface
 		if iface == "" {
 			resolved, err := e.resolveTunnel(ctx, cfg)
 			if err != nil {
-				tunnel = model.CheckEvidence{Verdict: model.VerdictError, Detail: err.Error(), CheckedAt: time.Now()}
+				tunnelResult = probe.Result{Verdict: model.VerdictError, Detail: err.Error()}
 			} else {
 				iface = resolved.Interface
 			}
 		}
-		if tunnel.Verdict == model.VerdictNotChecked {
-			tunnel = probeEvidence(e.deps.Probes.Check(ctx, cand.Target, probe.Path{Interface: iface}))
+		if tunnelResult.Verdict == model.VerdictNotChecked {
+			tunnelResult = e.deps.Probes.Check(ctx, cand.Target, probe.Path{Interface: iface})
 		}
 	}
+	tunnel := probeEvidence(tunnelResult)
+	e.logf("recheck %s direct=%s%s wan=%s%s tunnel=%s%s", id,
+		results.Direct.Verdict, probeLogDetail(results.Direct), results.WAN.Verdict, probeLogDetail(results.WAN), tunnelResult.Verdict, probeLogDetail(tunnelResult))
 	updated := cand
 	updated.Direct = probeEvidence(results.Direct)
 	updated.WAN = probeEvidence(results.WAN)
@@ -548,8 +546,11 @@ func (e *Engine) userAction(ctx context.Context, id, action string, missingOK bo
 		_ = e.deps.State.Update(true, func(s *store.State) {
 			if removeCard {
 				delete(s.Candidates, id)
-			} else if updated.State != before {
-				s.Candidates[id] = updated
+			} else if updated.State != before || updated.LastError != cand.LastError {
+				// Persist error annotations even when the state did not
+				// change, so the card keeps its error for the UI instead of
+				// silently reverting to the stale snapshot.
+				s.Candidates[id] = failed
 			}
 			s.History = append(s.History, historyEntry(failed, action, "user", "error: "+actionErr.Error()))
 		})

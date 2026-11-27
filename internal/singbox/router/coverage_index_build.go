@@ -270,7 +270,6 @@ func (s *ServiceImpl) buildCoverageIndex(ctx context.Context, extraTags []string
 	// projection and do not read these inline JSON files again.
 	restored := materializer.restoreConfig(cfg)
 	snapshot.rules = restored.Route.Rules
-	snapshot.ruleSets = restored.Route.RuleSet
 	return snapshot, nil
 }
 

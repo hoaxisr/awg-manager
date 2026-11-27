@@ -35,13 +35,14 @@ type Writer struct {
 func NewWriter(client *Client) *Writer { return &Writer{client: client} }
 
 // WriteResult reports what a call actually changed. Outbound is the
-// destination selected by the interface mapping. Persisted is true only
-// when this call wrote at least one route object (rule-set entry, owner
-// rule or target outbound) confirmed by a readback; duplicates and
-// healthy repeats are no-ops with Persisted=false.
+// destination selected by the interface mapping. Persisted is true when
+// this call wrote at least one route object (rule-set entry, owner rule
+// or target outbound) as a router draft; duplicates and healthy repeats
+// are no-ops with Persisted=false. A nil error is the destination readback
+// proof; Persisted alone does not prove it.
 type WriteResult struct {
 	Outbound string
-	// Persisted reports any confirmed route-object write, including owner or
+	// Persisted reports any route-object write, including owner or
 	// outbound repair. NewEntry is true only for a newly added destination;
 	// the rolling 50/hour budget is spent from NewEntry, never from repairs.
 	Persisted bool
@@ -107,13 +108,11 @@ func (w *Writer) RefreshTargetOutbound(ctx context.Context, targetInterface stri
 		}
 		ownRemoved = removed
 	}
-	if !mutated && !ownerMutated && !ownRemoved {
-		return WriteResult{Outbound: outbound}, nil
+	persisted := mutated || ownerMutated || ownRemoved
+	if err := w.applyStagingIfNeeded(ctx, persisted); err != nil {
+		return WriteResult{Outbound: outbound, Persisted: persisted}, fmt.Errorf("route objects written (as draft), but staging apply failed: %w", err)
 	}
-	if err := w.applyStaging(ctx); err != nil {
-		return WriteResult{Outbound: outbound, Persisted: true}, fmt.Errorf("route objects written (as draft), but staging apply failed: %w", err)
-	}
-	return WriteResult{Outbound: outbound, Persisted: true}, nil
+	return WriteResult{Outbound: outbound, Persisted: persisted}, nil
 }
 
 // Remove undoes exactly what Add wrote for target: the destination entry in
@@ -189,12 +188,8 @@ func (w *Writer) write(ctx context.Context, target model.Target, targetInterface
 		}
 	}
 
-	if result.Persisted {
-		// One staging apply after all required mutations. NO_DRAFT is not
-		// accepted on its own; the readback below proves the state.
-		if err := w.applyStaging(ctx); err != nil {
-			return result, fmt.Errorf("route objects written (as draft), but staging apply failed: %w", err)
-		}
+	if err := w.applyStagingIfNeeded(ctx, result.Persisted); err != nil {
+		return result, fmt.Errorf("route objects written (as draft), but staging apply failed: %w", err)
 	}
 	// Readback after success and after NO_DRAFT: only the observed server
 	// state proves the outcome (AWGM edits are last-write-wins).
@@ -727,6 +722,23 @@ func (w *Writer) ensureOwnerRule(ctx context.Context, outbound string) (bool, er
 		}
 		return true, nil
 	}
+}
+
+// applyStagingIfNeeded applies new mutations and any draft left by an earlier
+// failed call. A healthy repeat without a draft stays a no-op.
+func (w *Writer) applyStagingIfNeeded(ctx context.Context, mutated bool) error {
+	if !mutated {
+		var status struct {
+			HasDraft bool `json:"hasDraft"`
+		}
+		if err := w.client.get(ctx, "/api/singbox/router/staging", &status); err != nil {
+			return fmt.Errorf("staging status: %w", err)
+		}
+		if !status.HasDraft {
+			return nil
+		}
+	}
+	return w.applyStaging(ctx)
 }
 
 // applyStaging applies the router draft.

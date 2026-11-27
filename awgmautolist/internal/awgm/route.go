@@ -145,18 +145,3 @@ func (s routeState) resolve(tag string, visited map[string]bool) (DirectPath, er
 	}
 	return DirectPath{}, fmt.Errorf("no unambiguous direct/interface mapping for outbound %q", tag)
 }
-
-// FirstTunnel implements the setting default without persisting over a saved
-// choice. Disabled or incompletely mapped tunnels are not eligible.
-func FirstTunnel(ctx context.Context, client RouteClient) (Tunnel, error) {
-	tunnels, err := client.TunnelCatalog(ctx)
-	if err != nil {
-		return Tunnel{}, err
-	}
-	for _, tunnel := range tunnels {
-		if tunnel.Enabled && tunnel.Interface != "" && tunnel.Outbound != "" {
-			return tunnel, nil
-		}
-	}
-	return Tunnel{}, fmt.Errorf("no available tunnel interfaces")
-}

@@ -24,8 +24,6 @@ function status(running: boolean): AutolistStatus {
 		queuedChecks: 0,
 		addsUsedHour: 0,
 		addsLimit: 50,
-		candidates: [],
-		history: [],
 	};
 }
 

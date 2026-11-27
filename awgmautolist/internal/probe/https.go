@@ -99,12 +99,11 @@ func resolveArg(target model.Target) (string, bool) {
 }
 
 type curlMeta struct {
-	known        bool
-	httpCode     int
-	dnsSec       float64
-	connectSec   float64
-	appConnect   float64
-	effectiveURL string
+	known      bool
+	httpCode   int
+	dnsSec     float64
+	connectSec float64
+	appConnect float64
 }
 
 // splitCurlMeta separates the write-out trailer from the body. The marker is
@@ -115,7 +114,7 @@ func splitCurlMeta(raw []byte) ([]byte, curlMeta) {
 		return raw, curlMeta{}
 	}
 	parts := strings.SplitN(string(raw[idx+len(curlMetaMarker):]), "|", 5)
-	if len(parts) < 5 {
+	if len(parts) < 4 {
 		return raw, curlMeta{}
 	}
 	code, err1 := strconv.Atoi(parts[0])
@@ -127,7 +126,6 @@ func splitCurlMeta(raw []byte) ([]byte, curlMeta) {
 	}
 	return raw[:idx], curlMeta{
 		known: true, httpCode: code, dnsSec: dns, connectSec: connect, appConnect: app,
-		effectiveURL: parts[4],
 	}
 }
 
@@ -280,7 +278,7 @@ func curlOnce(ctx context.Context, targetURL, resolve string, path Path, remaini
 		"--connect-timeout", formatSeconds(remaining),
 		"--max-time", formatSeconds(remaining),
 		"--user-agent", userAgent,
-		"--write-out", curlMetaMarker + "%{http_code}|%{time_namelookup}|%{time_connect}|%{time_appconnect}|%{url_effective}",
+		"--write-out", curlMetaMarker + "%{http_code}|%{time_namelookup}|%{time_connect}|%{time_appconnect}",
 	}
 	if path.Interface != "" {
 		args = append(args, "--interface", path.Interface)

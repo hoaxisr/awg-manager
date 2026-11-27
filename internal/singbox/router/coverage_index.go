@@ -16,10 +16,9 @@ import (
 // It is built together with the indexed sets, so rules and their rule_set
 // references can never come from different configuration slots.
 type CoverageSnapshot struct {
-	Generation uint64    `json:"generation"`
-	Slot       string    `json:"slot"`
-	Rules      []Rule    `json:"rules"`
-	RuleSets   []RuleSet `json:"rule_sets"`
+	Generation uint64 `json:"generation"`
+	Slot       string `json:"slot"`
+	Rules      []Rule `json:"rules"`
 	// SkippedRuleSets — наборы, не влезшие в потолок памяти: в покрытии они
 	// не учитываются (исключение по ним не применяется).
 	SkippedRuleSets []string `json:"skipped_rule_sets,omitempty"`
@@ -40,7 +39,6 @@ type coverageIndexSnapshot struct {
 	generation uint64
 	slot       string
 	rules      []Rule
-	ruleSets   []RuleSet
 	entries    map[string]*coverageIndexEntry
 	// skipped holds tags whose rule-set did not fit the memory budget.
 	skipped map[string]struct{}
@@ -65,7 +63,6 @@ func (s *coverageIndexSnapshot) projection() CoverageSnapshot {
 		Generation:      s.generation,
 		Slot:            s.slot,
 		Rules:           slices.Clone(s.rules),
-		RuleSets:        slices.Clone(s.ruleSets),
 		SkippedRuleSets: slices.Sorted(maps.Keys(s.skipped)),
 	}
 }

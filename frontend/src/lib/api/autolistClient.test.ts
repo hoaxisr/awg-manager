@@ -27,14 +27,13 @@ describe('Autolist client', () => {
 			running: true,
 			installed: true,
 			enabled: true,
+			setupRequired: false,
 			captureActive: true,
 			capturePaused: false,
 			activeChecks: 1,
 			queuedChecks: 0,
 			addsUsedHour: 0,
 			addsLimit: 50,
-			candidates: [],
-			history: [],
 		};
 		globalThis.fetch = reply({ success: true, data: { autolistStatus: full } });
 		await expect(api.getAutolistStatus()).resolves.toEqual(full);
@@ -51,8 +50,6 @@ describe('Autolist client', () => {
 			queuedChecks: 0,
 			addsUsedHour: 0,
 			addsLimit: 0,
-			candidates: [],
-			history: [],
 		});
 	});
 
@@ -79,12 +76,45 @@ describe('Autolist client', () => {
 			excludeDomains: [],
 			excludeRuleSets: [],
 			udpEnabled: false,
-			verbose: false,
 		});
 		const written = JSON.parse(capturedBody);
 		expect(written.path).toBe('/config');
 		expect(written.body.autoAdd).toBe(false);
 		expect(written.body.targetInterface).toBe('nwg0');
+		// verbose из конфигурации удалён: в теле его быть не должно.
+		expect('verbose' in written.body).toBe(false);
+	});
+
+	it('sends paged list requests as { path: "/list", body: { kind, state, q, cursor, limit } }', async () => {
+		const bodies: unknown[] = [];
+		globalThis.fetch = vi.fn().mockImplementation(async (_input: RequestInfo | URL, init?: RequestInit) => {
+			const payload = JSON.parse(String(init?.body ?? '')) as { path?: string; body?: Record<string, unknown> };
+			bodies.push(payload);
+			return new Response(
+				JSON.stringify({
+					success: true,
+					data: { items: [{ id: 'domain|a.example|tcp|443' }], total: 200, nextCursor: 'cur-2', hasMore: true },
+				}),
+				{ status: 200, headers: { 'Content-Type': 'application/json' } },
+			);
+		});
+
+		const page = await api.listAutolist('candidates', { state: 'active', q: 'example', cursor: '', limit: 128 });
+
+		expect(bodies[0]).toEqual({
+			path: '/list',
+			body: { kind: 'candidates', state: 'active', q: 'example', cursor: '', limit: 128 },
+		});
+		expect(page.items).toEqual([{ id: 'domain|a.example|tcp|443' }]);
+		expect(page.total).toBe(200);
+		expect(page.nextCursor).toBe('cur-2');
+		expect(page.hasMore).toBe(true);
+
+		await api.listAutolist('history', { cursor: 'cur-2' });
+		expect(bodies[1]).toEqual({
+			path: '/list',
+			body: { kind: 'history', state: '', q: '', cursor: 'cur-2', limit: 128 },
+		});
 	});
 
 	it('sends candidate actions as { path, body: { id } }', async () => {

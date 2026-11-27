@@ -64,11 +64,3 @@ func TestRouteResolverRejectsAmbiguousAndCycles(t *testing.T) {
 		})
 	}
 }
-
-func TestFirstTunnel(t *testing.T) {
-	client := fakeRouteClient{tunnels: []Tunnel{{Interface: "nwg0", Outbound: "off", Enabled: false}, {Interface: "nocli0", Outbound: "on", Enabled: true}}}
-	tunnel, err := FirstTunnel(context.Background(), client)
-	if err != nil || tunnel.Interface != "nocli0" {
-		t.Fatalf("tunnel=%+v err=%v", tunnel, err)
-	}
-}

@@ -21,8 +21,9 @@ export function normalizeAutolistAddsPerHour(raw: unknown): number {
 
 /**
  * Whitelist ровно настроек 0.9.3: лишние поля черновика (legacy, локальные
- * флаги) в JSON-тело не попадают. Строки сохраняются пустыми — они значимы
- * ('' targetInterface = первый доступный туннель, '' resolveVia = dns.final).
+ * флаги) в JSON-тело не попадают. Строки сохраняются пустыми: '' resolveVia =
+ * dns.final; targetInterface обязателен для работы engine (UI не даёт
+ * сохранить пустой выбор).
  */
 export function buildAutolistConfigPayload(cfg: AutolistConfig): AutolistConfig {
 	return {
@@ -35,7 +36,6 @@ export function buildAutolistConfigPayload(cfg: AutolistConfig): AutolistConfig 
 		excludeDomains: cfg.excludeDomains ?? [],
 		excludeRuleSets: cfg.excludeRuleSets ?? [],
 		udpEnabled: cfg.udpEnabled ?? false,
-		verbose: cfg.verbose ?? false,
 		addsPerHour: normalizeAutolistAddsPerHour(cfg.addsPerHour),
 	};
 }
@@ -56,7 +56,6 @@ export function autolistConfigDraft(cfg: Partial<AutolistConfig>): AutolistConfi
 		excludeDomains: cfg.excludeDomains ?? [],
 		excludeRuleSets: cfg.excludeRuleSets ?? [],
 		udpEnabled: cfg.udpEnabled === true,
-		verbose: cfg.verbose === true,
 		addsPerHour: normalizeAutolistAddsPerHour(cfg.addsPerHour),
 	};
 }

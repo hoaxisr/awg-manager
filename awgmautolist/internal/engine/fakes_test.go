@@ -375,6 +375,18 @@ type testHarness struct {
 
 func newHarness(t *testing.T, configure func(*config.Config)) *testHarness {
 	t.Helper()
+	return newHarnessWithTunnel(t, configure, true)
+}
+
+// newSetupHarness builds an engine whose config has no targetInterface: Start
+// leaves it idle (setupRequired) until the wizard chooses a tunnel.
+func newSetupHarness(t *testing.T, configure func(*config.Config)) *testHarness {
+	t.Helper()
+	return newHarnessWithTunnel(t, configure, false)
+}
+
+func newHarnessWithTunnel(t *testing.T, configure func(*config.Config), testTunnel bool) *testHarness {
+	t.Helper()
 	cfgStore := config.NewStore(filepath.Join(t.TempDir(), "config.json"))
 	if _, err := cfgStore.Load(); err != nil {
 		t.Fatal(err)
@@ -383,9 +395,10 @@ func newHarness(t *testing.T, configure func(*config.Config)) *testHarness {
 	if configure != nil {
 		configure(&cfg)
 	}
-	// Tests that do not care about the tunnel get the fixed interface; tests
-	// that pass an explicit TargetInterface (including empty) keep theirs.
-	if configure == nil {
+	// Production never runs the engine without an explicit tunnel: tests that
+	// need a running engine get the fixed interface, tests that opt out (via
+	// newSetupHarness) exercise the setupRequired state.
+	if testTunnel && cfg.TargetInterface == "" {
 		cfg.TargetInterface = "awg0"
 	}
 	patch, err := json.Marshal(cfg)
@@ -417,9 +430,6 @@ func newHarness(t *testing.T, configure func(*config.Config)) *testHarness {
 			return cap
 		},
 		Logger: log.New(&discardWriter{}, "", 0),
-		DefaultTunnel: func(context.Context) (awgm.Tunnel, error) {
-			return awgm.Tunnel{Interface: "awg0", Outbound: "awg0-out", Enabled: true}, nil
-		},
 	}
 	eng := New(engineDeps)
 	if err := eng.Start(context.Background()); err != nil {
