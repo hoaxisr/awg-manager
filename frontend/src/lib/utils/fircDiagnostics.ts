@@ -106,6 +106,55 @@ export function formatFircTunnelWhy(raw?: string | null): string {
 	return trimmed;
 }
 
+export function formatFircProbeError(raw?: string | null): string {
+	const lower = (raw ?? '').trim().toLowerCase();
+	if (!lower) return m.firc_tunnel_edit_probe_timeout();
+	if (lower.includes('clienthello') && lower.includes('timeout')) {
+		return m.firc_tunnel_edit_probe_tls_timeout();
+	}
+	if (lower.includes('timeout') || lower.includes('timed out')) {
+		return m.firc_tunnel_edit_probe_timeout();
+	}
+	if (lower.includes('refused')) {
+		return m.firc_tunnel_edit_probe_refused();
+	}
+	if (lower.includes('did not resolve') || lower.includes('does not resolve') || /\bdns\b/.test(lower)) {
+		return m.firc_tunnel_edit_probe_dns();
+	}
+	if (lower.includes('did not accept the key')) {
+		return m.firc_tunnel_edit_probe_rejected();
+	}
+	if (
+		lower.includes('did not prove its identity') ||
+		lower.includes('certificate') ||
+		lower.includes('pinned fingerprint') ||
+		lower.includes('root store')
+	) {
+		return m.firc_tunnel_edit_probe_cert();
+	}
+	if (
+		lower.includes('serverhello') ||
+		/\btls\b/.test(lower) ||
+		lower.includes('aead') ||
+		lower.includes('finished') ||
+		lower.includes('cipher suite') ||
+		lower.includes('key share') ||
+		lower.includes('helloretryrequest') ||
+		/\bech\b/.test(lower)
+	) {
+		return m.firc_tunnel_edit_probe_tls();
+	}
+	if (
+		lower.includes('sent no data') ||
+		lower.includes('closed the connection') ||
+		lower.includes('no response') ||
+		lower.includes('response too short')
+	) {
+		return m.firc_tunnel_edit_probe_no_data();
+	}
+	return m.firc_tunnel_edit_probe_failed();
+}
+
 function mostCommonSkipReason(nodes: FircTunnelNodeState[]): string {
 	const counts = new Map<string, number>();
 	let bestRaw = '';
