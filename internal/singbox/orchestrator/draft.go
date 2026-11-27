@@ -369,7 +369,15 @@ func (o *Orchestrator) ApplyDraftChecked(slot Slot, check func(draft []byte) err
 		}
 	}
 
-	// Atomic commit.
+	// Atomic commit. Выключенный слот остаётся выключенным: черновик ложится
+	// в disabled/, иначе sing-box (-C config.d) подхватил бы его на ближайшем
+	// reload при слоте «выключен» в UI (F936). Включает его SetEnabled.
+	if !o.enabled[slot] {
+		if err := os.Rename(pendingPath, o.disabledPath(meta)); err != nil {
+			return ValidationResult{}, fmt.Errorf("ApplyDraft rename: %w", err)
+		}
+		return res, nil
+	}
 	if err := os.Rename(pendingPath, o.activePath(meta)); err != nil {
 		return ValidationResult{}, fmt.Errorf("ApplyDraft rename: %w", err)
 	}

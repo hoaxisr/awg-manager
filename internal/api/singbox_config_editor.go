@@ -403,9 +403,7 @@ func (h *SingboxConfigEditorHandler) ApplyUserConfig(w http.ResponseWriter, r *h
 	// успеха безопасно и не оставляет побочек на провале: 422 оставляет
 	// припаркованный слот выключенным, а его старый конфиг в disabled/ —
 	// нетронутым (не воскресает). ApplyDraft у выключенного слота кладёт
-	// файл в active/ — немедленный SetEnabled ниже (внутри debounce-окна
-	// reload) убирает возможный устаревший дубль из disabled/ и выравнивает
-	// enabled-карту с диском.
+	// файл в disabled/ (F936) — SetEnabled ниже переносит его в active/.
 	// Черновик читаем ДО применения: после коммита он уже удалён, а advisory
 	// по его содержимому нужно вернуть вместе с результатом.
 	draft, _ := h.orch.LoadDraft(orchestrator.SlotUser)

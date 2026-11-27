@@ -271,6 +271,45 @@ func TestApplyDraft_DisabledTargetIncludedInSnapshot(t *testing.T) {
 	}
 }
 
+// F936: применённый черновик выключенного слота остаётся выключенным —
+// ложится в disabled/, а не в живой config.d, который грузит sing-box.
+// Включение после этого переносит именно применённый черновик.
+func TestApplyDraft_DisabledTargetStaysParked(t *testing.T) {
+	dir := t.TempDir()
+	o := New(dir, nil)
+	t.Cleanup(o.Close)
+	if err := o.Register(SlotMeta{Slot: SlotRouter, Filename: "20-router.json"}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	if err := o.Bootstrap(); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	active := filepath.Join(dir, "20-router.json")
+	parked := filepath.Join(dir, "disabled", "20-router.json")
+	if err := os.WriteFile(parked, []byte(`{"old":true}`), 0644); err != nil {
+		t.Fatalf("seed parked: %v", err)
+	}
+	draft := []byte(`{"outbounds":[{"tag":"draft-ob","type":"direct"}]}`)
+	if err := o.SaveDraft(SlotRouter, draft); err != nil {
+		t.Fatalf("SaveDraft: %v", err)
+	}
+	if res, err := o.ApplyDraft(SlotRouter); err != nil || !res.Ok() {
+		t.Fatalf("ApplyDraft: %v %s", err, res.Error())
+	}
+	if _, err := os.Stat(active); !os.IsNotExist(err) {
+		t.Fatalf("disabled slot's applied draft reached live config.d (err=%v)", err)
+	}
+	if got, _ := os.ReadFile(parked); string(got) != string(draft) {
+		t.Fatalf("disabled/ holds %s, want the applied draft", got)
+	}
+	if err := o.SetEnabled(SlotRouter, true); err != nil {
+		t.Fatalf("SetEnabled: %v", err)
+	}
+	if got, _ := os.ReadFile(active); string(got) != string(draft) {
+		t.Fatalf("after enable active holds %s, want the applied draft", got)
+	}
+}
+
 func TestApplyDraft_NoDraft(t *testing.T) {
 	o, _ := setupOrch(t)
 	res, err := o.ApplyDraft(SlotRouter)
