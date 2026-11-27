@@ -3,7 +3,7 @@
 	import type { FircTunnelFilteredNode, FircTunnelProbeRow } from '$lib/types/firc';
 	import { formatFircSkipReason } from '$lib/utils/fircDiagnostics';
 	import { Button, Badge, Toggle, IconButton } from '$lib/components/ui';
-	import { Activity, ArrowUp, ArrowDown, Search } from 'lucide-svelte';
+	import { Activity, ArrowUp, ArrowDown, Search, LoaderCircle } from 'lucide-svelte';
 	import { totalProbeLatencyMs, type DisplayNode } from './fircTunnelEdit';
 
 	interface Props {
@@ -22,6 +22,8 @@
 		enabled?: boolean;
 		uplinkKind?: string;
 		subFetching?: boolean;
+		saving?: boolean;
+		onsave?: () => void;
 		onprobe: () => void;
 		onprobenode: (key: string) => void;
 		onsort: () => void;
@@ -46,6 +48,8 @@
 		enabled = true,
 		uplinkKind = 'auto',
 		subFetching = false,
+		saving = false,
+		onsave,
 		onprobe,
 		onprobenode,
 		onsort,
@@ -95,11 +99,27 @@
 			{#if filteredNodes.length > 0}
 				{m.firc_filter_all_nodes_hidden()}
 			{:else if hasSources && subFetching}
-				{m.firc_reason_sub_fetching()}
+				<span class="sub-empty-loading">
+					<LoaderCircle size={14} class="animate-spin" />
+					<span>{m.firc_reason_sub_fetching()}</span>
+				</span>
 			{:else if hasSources && !enabled && uplinkKind !== 'auto'}
 				{m.firc_tunnel_edit_nodes_enable_uplink_to_load()}
 			{:else if hasSources && isDirty}
-				{m.firc_tunnel_edit_nodes_save_to_load()}
+				<div class="sub-empty-stack">
+					<span>{m.firc_tunnel_edit_nodes_save_to_load()}</span>
+					{#if onsave}
+						<Button
+							variant="primary"
+							size="sm"
+							loading={saving}
+							disabled={busyAction === 'refresh'}
+							onclick={onsave}
+						>
+							{m.firc_tunnel_edit_save_and_load()}
+						</Button>
+					{/if}
+				</div>
 			{:else}
 				{m.firc_tunnel_edit_nodes_empty()}
 			{/if}
@@ -405,6 +425,18 @@
 		font-size: 12px;
 		border: 1px dashed var(--border);
 		border-radius: 8px;
+	}
+	.sub-empty-stack {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 10px;
+	}
+	.sub-empty-loading {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		color: var(--text-secondary);
 	}
 	.probe-cell {
 		display: flex;

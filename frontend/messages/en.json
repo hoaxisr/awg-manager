@@ -9124,6 +9124,7 @@
 	"firc_tunnel_edit_sort_by_ping": "Sort by ping",
 	"firc_tunnel_edit_nodes_empty": "No nodes. Go to the “Subscriptions and links” tab to add a subscription or a vless:// link.",
 	"firc_tunnel_edit_nodes_save_to_load": "Click “Save” to download nodes from the added sources.",
+	"firc_tunnel_edit_save_and_load": "Save and load",
 	"firc_tunnel_edit_nodes_enable_uplink_to_load": "The tunnel is off and uses a custom uplink — enable and save the tunnel to fetch the subscription through it.",
 	"firc_tunnel_edit_col_priority": "Prio.",
 	"firc_tunnel_edit_col_node": "Node",

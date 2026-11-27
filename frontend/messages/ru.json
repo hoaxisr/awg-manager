@@ -9526,6 +9526,7 @@
 	"firc_tunnel_edit_sort_by_ping": "Сортировать по пингу",
 	"firc_tunnel_edit_nodes_empty": "Нет узлов. Перейдите во вкладку «Подписки и ссылки», чтобы добавить подписку или ссылку vless://.",
 	"firc_tunnel_edit_nodes_save_to_load": "Нажмите «Сохранить», чтобы загрузить узлы из добавленных источников.",
+	"firc_tunnel_edit_save_and_load": "Сохранить и загрузить",
 	"firc_tunnel_edit_nodes_enable_uplink_to_load": "Туннель выключен и использует выбранный аплинк — включите туннель и сохраните, чтобы загрузить подписку через него.",
 	"firc_tunnel_edit_col_priority": "Приор.",
 	"firc_tunnel_edit_col_node": "Узел",

@@ -12,6 +12,7 @@
 		type FircTunnelInbound,
 		type FircTunnelPreview,
 		type FircTunnelProbeRow,
+		type FircTunnelState,
 	} from '$lib/types/firc';
 	import {
 		fircStatus,
@@ -59,6 +60,153 @@
 	let deferredDirectPreview = false;
 	let destroyed = false;
 
+	const SUB_POLL_INTERVAL_MS = 300;
+	const SUB_POLL_MAX_ATTEMPTS = 30;
+	let awaitingSubLoad = $state(false);
+	let subLoadPollTimer: ReturnType<typeof setTimeout> | null = null;
+	let subLoadPollEpoch = 0;
+	let subLoadPollTargetId = '';
+	let subLoadPollExpectedSubs = 0;
+	let subLoadPollUplinkKind = 'auto';
+	let subLoadPollBaselineStamp: string | undefined = undefined;
+	let subLoadPollSawFetching = false;
+
+	function subStateStamp(st: FircTunnelState | undefined): string {
+		return (st?.subscriptions ?? [])
+			.map((s) => `${s.name}:${s.lastTry ?? 0}:${s.lastOk ?? 0}:${s.nodes ?? 0}:${s.error ?? ''}:${s.fetching ? 1 : 0}`)
+			.join('|');
+	}
+
+	function isCustomUplinkDown(uplinkKind: string | undefined, st: FircTunnelState | undefined): boolean {
+		return (uplinkKind ?? 'auto') !== 'auto' && (st?.uplinkOk === false || st?.status === 'uplink_down');
+	}
+
+	function isSubStateSettled(
+		st: FircTunnelState | undefined,
+		expectedSubs: number,
+		uplinkKind: string,
+		baselineStamp?: string,
+		sawFetching = false,
+	): boolean {
+		if (!st) return false;
+		const subs = st.subscriptions ?? [];
+		if (subs.some((s) => s.fetching)) return false;
+		if (isCustomUplinkDown(uplinkKind, st)) return true;
+		if (subs.length < expectedSubs) return false;
+		if (
+			!subs.every(
+				(s) =>
+					(s.nodes ?? 0) > 0 ||
+					(s.lastTry ?? 0) > 0 ||
+					(s.lastOk ?? 0) > 0 ||
+					Boolean(s.error),
+			)
+		) {
+			return false;
+		}
+		if (baselineStamp !== undefined && !sawFetching && subStateStamp(st) === baselineStamp) {
+			return false;
+		}
+		return true;
+	}
+
+	function stopSubLoadPoll() {
+		subLoadPollEpoch++;
+		if (subLoadPollTimer !== null) {
+			clearTimeout(subLoadPollTimer);
+			subLoadPollTimer = null;
+		}
+		subLoadPollTargetId = '';
+		subLoadPollExpectedSubs = 0;
+		subLoadPollUplinkKind = 'auto';
+		subLoadPollBaselineStamp = undefined;
+		subLoadPollSawFetching = false;
+		awaitingSubLoad = false;
+	}
+
+	function shouldExpectSubFetch(tun: FircTunnel | null, st: FircTunnelState | undefined): boolean {
+		if (!tun) return false;
+		if (!$fircStatus?.running) return false;
+		if (!tun.sources.some((s) => s.kind === 'subscription')) return false;
+		const uplinkKind = tun.uplink?.kind ?? 'auto';
+		if (tun.enable === false) {
+			return uplinkKind === 'auto';
+		}
+		if (isCustomUplinkDown(uplinkKind, st) && !st?.subscriptions?.some((s) => s.fetching)) {
+			return false;
+		}
+		return true;
+	}
+
+	function maybeStartSubLoadPoll(
+		tun: FircTunnel | null,
+		opts?: { baselineStamp?: string },
+	) {
+		stopSubLoadPoll();
+		if (destroyed || !tun) return;
+		const targetId = tun.id;
+		const uplinkKind = tun.uplink?.kind ?? 'auto';
+		const currentLive = $fircTunnelsState.find((s) => s.id === targetId);
+		if (!shouldExpectSubFetch(tun, currentLive)) return;
+		const expectedSubs = tun.sources.filter((s) => s.kind === 'subscription').length;
+		const baselineStamp = opts?.baselineStamp;
+		const sawFetchingNow = Boolean(currentLive?.subscriptions?.some((s) => s.fetching));
+		if (isSubStateSettled(currentLive, expectedSubs, uplinkKind, baselineStamp, sawFetchingNow)) {
+			return;
+		}
+		const epoch = ++subLoadPollEpoch;
+		subLoadPollTargetId = targetId;
+		subLoadPollExpectedSubs = expectedSubs;
+		subLoadPollUplinkKind = uplinkKind;
+		subLoadPollBaselineStamp = baselineStamp;
+		subLoadPollSawFetching = sawFetchingNow;
+		awaitingSubLoad = true;
+
+		let attempts = 0;
+		const tick = async () => {
+			subLoadPollTimer = null;
+			if (destroyed || epoch !== subLoadPollEpoch || !draft || draft.id !== targetId) {
+				if (epoch === subLoadPollEpoch) stopSubLoadPoll();
+				return;
+			}
+			attempts++;
+			try {
+				const states = await api.fircGetTunnelsState();
+				if (destroyed || epoch !== subLoadPollEpoch || !draft || draft.id !== targetId) {
+					return;
+				}
+				if (Array.isArray(states)) {
+					fircTunnelsState.set(states);
+					const nextLive = states.find((s) => s.id === targetId);
+					if (nextLive?.subscriptions?.some((s) => s.fetching)) {
+						subLoadPollSawFetching = true;
+					}
+					if (isSubStateSettled(nextLive, expectedSubs, uplinkKind, baselineStamp, subLoadPollSawFetching)) {
+						stopSubLoadPoll();
+						return;
+					}
+				}
+			} catch {
+				// Transient poll error; retry until attempt cap.
+			}
+			if (destroyed || epoch !== subLoadPollEpoch || !draft || draft.id !== targetId) {
+				return;
+			}
+			const cap = baselineStamp !== undefined && !subLoadPollSawFetching ? 10 : SUB_POLL_MAX_ATTEMPTS;
+			if (attempts >= cap) {
+				stopSubLoadPoll();
+				return;
+			}
+			subLoadPollTimer = setTimeout(() => {
+				void tick();
+			}, SUB_POLL_INTERVAL_MS);
+		};
+
+		subLoadPollTimer = setTimeout(() => {
+			void tick();
+		}, SUB_POLL_INTERVAL_MS);
+	}
+
 	function cancelAllPendingPreviews() {
 		const eff = cancelEffectPreview;
 		const dir = cancelDirectPreview;
@@ -82,6 +230,7 @@
 		previewEpoch++;
 		deferredDirectPreview = false;
 		cancelAllPendingPreviews();
+		stopSubLoadPoll();
 	});
 
 	// Source modal state
@@ -139,6 +288,7 @@
 			draft = null;
 			baselineJson = '';
 			clearPreview();
+			stopSubLoadPoll();
 			closeSourceModal();
 			filteredOpen = false;
 			nodeQuery = '';
@@ -150,6 +300,7 @@
 			draft = c;
 			baselineJson = JSON.stringify(c);
 			clearPreview();
+			stopSubLoadPoll();
 			closeSourceModal();
 			filteredOpen = false;
 		}
@@ -193,6 +344,46 @@
 	const hasSubscriptionSource = $derived(
 		(draft?.sources ?? []).some((s) => s.kind === 'subscription'),
 	);
+	const liveSubFetching = $derived(
+		hasSubscriptionSource &&
+			!isDirty &&
+			Boolean(
+				liveState?.subscriptions?.some(
+					(s) =>
+						s.fetching ||
+						((s.nodes ?? 0) === 0 &&
+							(s.lastTry ?? 0) === 0 &&
+							(s.lastOk ?? 0) === 0 &&
+							!s.error &&
+							Boolean($fircStatus?.running) &&
+							!isCustomUplinkDown(draft?.uplink?.kind, liveState) &&
+							(draft?.enable !== false || (draft?.uplink?.kind ?? 'auto') === 'auto')),
+				),
+			),
+	);
+
+	$effect(() => {
+		if (!awaitingSubLoad) return;
+		const st = liveState;
+		if (!draft || draft.id !== subLoadPollTargetId || !hasSubscriptionSource) {
+			stopSubLoadPoll();
+			return;
+		}
+		if (st?.subscriptions?.some((s) => s.fetching)) {
+			subLoadPollSawFetching = true;
+		}
+		if (
+			isSubStateSettled(
+				st,
+				subLoadPollExpectedSubs,
+				subLoadPollUplinkKind,
+				subLoadPollBaselineStamp,
+				subLoadPollSawFetching,
+			)
+		) {
+			stopSubLoadPoll();
+		}
+	});
 
 	$effect(() => {
 		const tun = draft;
@@ -284,8 +475,13 @@
 		fircEditTunnelId.set(null);
 	}
 
-	async function saveDraft(closeAfter = false): Promise<boolean> {
-		if (!draft || saving) return false;
+	async function saveDraft(
+		closeAfter = false,
+		opts?: { silent?: boolean; allowDuringRefresh?: boolean },
+	): Promise<boolean> {
+		if (!draft || saving || (busyAction === 'refresh' && !opts?.allowDuringRefresh)) return false;
+		const targetId = draft.id;
+		const sentJson = JSON.stringify(draft);
 		saving = true;
 		try {
 			const updated = cloneTunnel(draft);
@@ -297,16 +493,33 @@
 				nextList.push(updated);
 			}
 			const res = await api.fircSaveTunnels(nextList);
+			if (subLoadPollTargetId === targetId) {
+				stopSubLoadPoll();
+			}
 			const finalTunnels = res?.tunnels ?? nextList;
-			clearPreview();
 			fircTunnels.set(finalTunnels);
 			const fresh = finalTunnels.find((t) => t.id === updated.id) ?? updated;
-			draft = cloneTunnel(fresh);
-			baselineJson = JSON.stringify(draft);
+			if (!destroyed && draft && draft.id === targetId) {
+				const clonedFresh = cloneTunnel(fresh);
+				baselineJson = JSON.stringify(clonedFresh);
+				if (JSON.stringify(draft) === sentJson) {
+					clearPreview();
+					draft = clonedFresh;
+				}
+			}
 			await reloadFircAll();
-			notifications.success(m.firc_tunnel_edit_saved({ device: updated.device }));
+			if (destroyed) return true;
+			if (!opts?.silent) {
+				notifications.success(m.firc_tunnel_edit_saved({ device: updated.device }));
+			}
 			if (closeAfter) {
-				fircEditTunnelId.set(null);
+				if (!destroyed && (!draft || (draft.id === targetId && !isDirty))) {
+					stopSubLoadPoll();
+					fircEditTunnelId.set(null);
+				}
+			} else if (!destroyed && draft && draft.id === targetId && !isDirty && hasSubscriptionSource) {
+				const savedTun = $fircTunnels.find((t) => t.id === targetId) ?? fresh;
+				maybeStartSubLoadPoll(savedTun);
 			}
 			return true;
 		} catch (e: unknown) {
@@ -388,22 +601,29 @@
 	}
 
 	async function handleRefresh() {
-		if (!draft || busyAction) return;
+		if (!draft || busyAction || saving) return;
 		const targetId = draft.id;
 		const targetDev = draft.device;
 		busyAction = 'refresh';
 		try {
 			if (isDirty) {
-				const saved = await saveDraft(false);
-				if (!saved || !draft || draft.id !== targetId) return;
+				const saved = await saveDraft(false, { allowDuringRefresh: true });
+				if (destroyed || !saved || !draft || draft.id !== targetId) return;
 			}
+			const beforeStamp = subStateStamp(liveState);
 			clearPreview();
+			stopSubLoadPoll();
 			const res = await api.fircRefreshTunnel(targetId);
 			await reloadFircAll();
+			if (destroyed) return;
 			if (res?.queued === false) {
 				notifications.warning(m.firc_tunnel_edit_refresh_not_queued({ device: targetDev }));
 			} else {
 				notifications.success(m.firc_tunnel_edit_refresh_done({ device: targetDev }));
+				if (draft && draft.id === targetId && !isDirty && hasSubscriptionSource) {
+					const savedTun = $fircTunnels.find((t) => t.id === targetId) ?? draft;
+					maybeStartSubLoadPoll(savedTun, { baselineStamp: beforeStamp });
+				}
 			}
 		} catch (e: unknown) {
 			notifications.error((e instanceof Error ? e.message : undefined) ?? m.firc_tunnel_edit_refresh_error());
@@ -555,6 +775,31 @@
 		if (wasEmpty && !draft.enable && draft.sources.length > 0) {
 			draft.enable = true;
 		}
+		const hasAddedSubscription = deduped.some((s) => s.kind === 'subscription');
+		if (
+			hasAddedSubscription &&
+			!includeWarning &&
+			!excludeWarning &&
+			!saving &&
+			busyAction !== 'refresh'
+		) {
+			const saved = await saveDraft(false, { silent: true });
+			if (destroyed) return;
+			const sameModal = sourceModalSession === modalSession;
+			if (sameModal) {
+				closeSourceModal();
+			}
+			if (!saved || !draft || draft.id !== targetId) return;
+			if (sameModal) {
+				fircEditTunnelSubTab.set('nodes');
+			}
+			notifications.success(
+				deduped.length > 1
+					? m.firc_tunnel_edit_sources_added({ count: deduped.length })
+					: m.firc_tunnel_edit_source_added(),
+			);
+			return;
+		}
 		const stillCurrent = await previewDraftSources(targetId, true);
 		if (destroyed) return;
 		const sameModal = sourceModalSession === modalSession;
@@ -580,6 +825,9 @@
 		draft.sources = prevSources.filter((s) => s.id !== sourceId);
 		draft.order = (draft.order ?? []).filter((k) => !k.startsWith(prefix));
 		draft.exclude = (draft.exclude ?? []).filter((k) => !k.startsWith(prefix));
+		if (!draft.sources.some((s) => s.kind === 'subscription')) {
+			stopSubLoadPoll();
+		}
 		if (draft.sources.length === 0) {
 			draft.enable = false;
 			clearPreview();
@@ -654,7 +902,11 @@
 					{isDirty}
 					enabled={draft.enable !== false}
 					uplinkKind={draft.uplink?.kind ?? 'auto'}
-					subFetching={hasSubscriptionSource && Boolean(liveState?.subscriptions?.some((s) => s.fetching))}
+					subFetching={hasSubscriptionSource &&
+						!isDirty &&
+						(awaitingSubLoad || liveSubFetching || (saving && shouldExpectSubFetch(draft, liveState)))}
+					{saving}
+					onsave={() => void saveDraft(false)}
 					onprobe={handleProbe}
 					onprobenode={handleProbeNode}
 					onsort={sortNodesByLatency}
@@ -704,7 +956,7 @@
 						variant="primary"
 						size="sm"
 						loading={saving}
-						disabled={!isDirty}
+						disabled={!isDirty || busyAction === 'refresh'}
 						onclick={() => saveDraft(false)}
 					>
 						{m.common_save()}

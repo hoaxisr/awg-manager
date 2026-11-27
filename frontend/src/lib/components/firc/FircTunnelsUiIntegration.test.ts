@@ -984,7 +984,7 @@ describe('FIRC tunnels UI integration', () => {
 		expect(savedArg[0].filterExclude).toBe('(?i)(RU|LTE)');
 	});
 
-	it('shows live nodes after adding an uncached subscription and saving without getting stuck on empty preview', async () => {
+	it('auto-saves a newly added subscription and fast-polls until live nodes appear without manual Save', async () => {
 		const baseTunnel = {
 			id: 'tun-new-sub',
 			device: 'tunvless2',
@@ -1003,10 +1003,10 @@ describe('FIRC tunnels UI integration', () => {
 			advanced: { ca: '', insecure: false, timeout: 8, kernelTcp: true, fingerprint: '' },
 			inbounds: [],
 		};
-		const emptyState = {
+		const fetchingState = {
 			id: 'tun-new-sub',
 			device: 'tunvless2',
-			status: 'no_node',
+			status: 'waiting',
 			active: [],
 			nodes: [],
 			filteredNodes: [],
@@ -1021,12 +1021,26 @@ describe('FIRC tunnels UI integration', () => {
 			tcpPort: 41002,
 			tcpSkipped: [],
 			tcpOff: '',
-			subscriptions: [],
+			subscriptions: [{ name: 'Nebesniy', nodes: 0, fetching: true, lastOk: 0, lastTry: 0, error: '' }],
+		};
+		const loadedState = {
+			...fetchingState,
+			status: 'up',
+			active: ['Germany'],
+			nodes: [
+				{ key: 'sub-new:Germany', name: 'Germany', source: 'Nebesniy', state: 'active', since: 0 },
+				{ key: 'sub-new:Netherlands', name: 'Netherlands', source: 'Nebesniy', state: 'reserve', since: 0 },
+			],
+			subscriptions: [{ name: 'Nebesniy', nodes: 2, fetching: false, lastOk: 1700000100, lastTry: 1700000100, error: '' }],
 		};
 		fircTunnels.set([baseTunnel as never]);
-		fircTunnelsState.set([emptyState as never]);
+		fircTunnelsState.set([]);
 		fircGetTunnels.mockResolvedValue([baseTunnel]);
-		fircGetTunnelsState.mockResolvedValue([emptyState]);
+		let stateCalls = 0;
+		fircGetTunnelsState.mockImplementation(async () => {
+			stateCalls++;
+			return stateCalls === 1 ? [fetchingState] : [loadedState];
+		});
 		fircNormalizeSource.mockResolvedValue({
 			sources: [
 				{
@@ -1037,13 +1051,6 @@ describe('FIRC tunnels UI integration', () => {
 					interval: 21600,
 				},
 			],
-		});
-		fircPreviewTunnel.mockResolvedValue({
-			total: 0,
-			matched: 0,
-			nodes: [],
-			filteredNodes: [],
-			subscriptions: [{ name: 'Nebesniy', cached: false }],
 		});
 		fircSaveTunnels.mockImplementation(async (list: unknown[]) => {
 			fircGetTunnels.mockResolvedValue(list);
@@ -1060,34 +1067,17 @@ describe('FIRC tunnels UI integration', () => {
 		await fireEvent.click(screen.getByRole('button', { name: m.common_add() }));
 
 		await waitFor(() => {
-			expect(fircPreviewTunnel).toHaveBeenCalledTimes(1);
-		});
-
-		await fireEvent.click(screen.getByRole('button', { name: m.common_save() }));
-		await waitFor(() => {
 			expect(fircSaveTunnels).toHaveBeenCalledTimes(1);
-			expect(notifications.success).toHaveBeenCalledWith(m.firc_tunnel_edit_saved({ device: 'tunvless2' }));
+			expect(notifications.success).toHaveBeenCalledWith(m.firc_tunnel_edit_source_added());
 		});
+		expect(fircPreviewTunnel).not.toHaveBeenCalled();
 
-		// Background fetch completes after Save and updates live state via poller.
-		fircTunnelsState.set([
-			{
-				...emptyState,
-				status: 'up',
-				active: ['Germany'],
-				nodes: [
-					{ key: 'sub-new:Germany', name: 'Germany', source: 'Nebesniy', state: 'active', since: 0 },
-					{ key: 'sub-new:Netherlands', name: 'Netherlands', source: 'Nebesniy', state: 'reserve', since: 0 },
-				],
-				subscriptions: [{ name: 'Nebesniy', nodes: 2, fetching: false, lastOk: 1700000100, lastTry: 1700000100, error: '' }],
-			} as never,
-		]);
-
-		expect(await screen.findByText('Germany')).toBeInTheDocument();
+		// Fast poller fetches live nodes automatically without requiring a manual Save click.
+		expect(await screen.findByText('Germany', {}, { timeout: 2000 })).toBeInTheDocument();
 		expect(screen.getByText('Netherlands')).toBeInTheDocument();
 		expect(screen.queryByText(m.firc_tunnel_edit_nodes_empty())).not.toBeInTheDocument();
-		await new Promise((r) => setTimeout(r, 360));
-		expect(fircPreviewTunnel).toHaveBeenCalledTimes(1);
+		expect(screen.getByRole('button', { name: m.firc_tunnel_edit_tab_nodes({ count: 2 }) })).toBeInTheDocument();
+		expect(fircPreviewTunnel).not.toHaveBeenCalled();
 	});
 
 	it('clears stale preview on subscription refresh instead of overwriting with pre-fetch preview', async () => {
@@ -1509,7 +1499,15 @@ describe('FIRC tunnels UI integration', () => {
 			filterExclude: '',
 			order: [],
 			exclude: [],
-			sources: [],
+			sources: [
+				{
+					id: 'sub-exist',
+					kind: 'subscription',
+					name: 'ExistSub',
+					url: 'https://sub.example/exist',
+					interval: 21600,
+				},
+			],
 			uplink: { kind: 'auto', ref: '' },
 			advanced: { ca: '', insecure: false, timeout: 8, kernelTcp: true, fingerprint: '' },
 			inbounds: [],
@@ -1521,11 +1519,10 @@ describe('FIRC tunnels UI integration', () => {
 		fircNormalizeSource.mockResolvedValue({
 			sources: [
 				{
-					id: 'sub-slow',
-					kind: 'subscription',
-					name: 'SlowSub',
-					url: 'https://sub.example/slow',
-					interval: 21600,
+					id: 'lnk-slow',
+					kind: 'link',
+					name: 'SlowLink',
+					link: 'vless://u@5.5.5.5:443#SlowNode',
 				},
 			],
 		});
@@ -1539,9 +1536,9 @@ describe('FIRC tunnels UI integration', () => {
 								matched: 1,
 								nodes: [
 									{
-										key: 'sub-slow:SlowNode',
+										key: 'lnk-slow:SlowNode',
 										name: 'SlowNode',
-										source: 'SlowSub',
+										source: 'SlowLink',
 										isNew: true,
 										missing: false,
 										excluded: false,
@@ -1549,7 +1546,7 @@ describe('FIRC tunnels UI integration', () => {
 									},
 								],
 								filteredNodes: [],
-								subscriptions: [{ name: 'SlowSub', cached: true }],
+								subscriptions: [{ name: 'ExistSub', cached: true }],
 							}),
 						380,
 					),
@@ -1564,13 +1561,13 @@ describe('FIRC tunnels UI integration', () => {
 		fircEditTunnelSubTab.set('sources');
 		render(FircTunnelEditModal);
 
-		// Make filter dirty BEFORE adding a subscription so Effect 2 is eligible once hasSubscriptionSource flips true.
+		// Make filter dirty BEFORE adding a link while a subscription exists so Effect 2 is eligible.
 		const includeInp = await screen.findByLabelText(m.firc_filter_include_label());
 		await fireEvent.input(includeInp, { target: { value: 'Slow' } });
 
-		await fireEvent.click(screen.getByRole('button', { name: m.firc_tunnel_edit_add_subscription() }));
-		await fireEvent.input(await screen.findByLabelText(m.firc_tunnel_edit_sub_url_label()), {
-			target: { value: 'https://sub.example/slow' },
+		await fireEvent.click(screen.getByRole('button', { name: m.firc_tunnel_edit_add_link() }));
+		await fireEvent.input(await screen.findByLabelText(m.firc_tunnel_edit_links_label()), {
+			target: { value: 'vless://u@5.5.5.5:443#SlowNode' },
 		});
 		await fireEvent.click(screen.getByRole('button', { name: m.common_add() }));
 
@@ -1583,7 +1580,7 @@ describe('FIRC tunnels UI integration', () => {
 			expect(fircSaveTunnels).toHaveBeenCalledTimes(1);
 		});
 		const savedArg = fircSaveTunnels.mock.calls[0][0];
-		expect(savedArg[0].order).toEqual(['sub-slow:SlowNode']);
+		expect(savedArg[0].order).toEqual(['lnk-slow:SlowNode']);
 	});
 
 	it('aborts in-flight addSources preview when that source is removed before preview resolves', async () => {
@@ -2793,7 +2790,7 @@ describe('FIRC tunnels UI integration', () => {
 		expect(screen.queryByText(m.firc_node_state_skipped())).not.toBeInTheDocument();
 	});
 
-	it('auto-enables empty disabled tunnel on first source add, supports header toggle, and guides save-to-load', async () => {
+	it('auto-enables and auto-saves empty disabled tunnel on first subscription add, shows fetching state, and supports header toggle', async () => {
 		const emptyTunnel = {
 			id: 'tun-new-empty',
 			device: 'tunvless1',
@@ -2812,10 +2809,30 @@ describe('FIRC tunnels UI integration', () => {
 			advanced: { ca: '', insecure: false, timeout: 8, kernelTcp: true, fingerprint: '' },
 			inbounds: [],
 		};
+		const pendingState = {
+			id: 'tun-new-empty',
+			device: 'tunvless1',
+			status: 'waiting',
+			active: [],
+			nodes: [],
+			filteredNodes: [],
+			inbounds: [],
+			groups: [],
+			rxBps: 0,
+			txBps: 0,
+			since: 0,
+			backoffS: 0,
+			lastExit: 0,
+			uplinkOk: true,
+			tcpPort: 0,
+			tcpSkipped: [],
+			tcpOff: '',
+			subscriptions: [{ name: 'Sub', nodes: 0, fetching: false, lastOk: 0, lastTry: 0, error: '' }],
+		};
 		fircTunnels.set([emptyTunnel as never]);
 		fircTunnelsState.set([]);
 		fircGetTunnels.mockResolvedValue([emptyTunnel]);
-		fircGetTunnelsState.mockResolvedValue([]);
+		fircGetTunnelsState.mockResolvedValue([pendingState]);
 		fircNormalizeSource.mockResolvedValue({
 			sources: [
 				{
@@ -2826,13 +2843,6 @@ describe('FIRC tunnels UI integration', () => {
 					interval: 21600,
 				},
 			],
-		});
-		fircPreviewTunnel.mockResolvedValue({
-			total: 0,
-			matched: 0,
-			nodes: [],
-			filteredNodes: [],
-			subscriptions: [{ name: 'Sub', cached: false }],
 		});
 		fircSaveTunnels.mockImplementation(async (list: unknown[]) => {
 			fircGetTunnels.mockResolvedValue(list);
@@ -2853,19 +2863,7 @@ describe('FIRC tunnels UI integration', () => {
 		});
 		await fireEvent.click(screen.getByRole('button', { name: m.common_add() }));
 
-		// First source added to an empty disabled tunnel enables the draft and shows save-to-load hint.
-		const disableToggle = await screen.findByRole('checkbox', { name: m.firc_tunnel_edit_disable() });
-		expect(disableToggle).toBeChecked();
-		expect(disableToggle).not.toBeDisabled();
-		expect(await screen.findByText(m.firc_tunnel_edit_nodes_save_to_load())).toBeInTheDocument();
-
-		// User can still toggle it off before saving if desired, then toggle back on and save.
-		await fireEvent.click(disableToggle);
-		expect(screen.getByRole('checkbox', { name: m.firc_tunnel_edit_enable() })).not.toBeChecked();
-		await fireEvent.click(screen.getByRole('checkbox', { name: m.firc_tunnel_edit_enable() }));
-		expect(screen.getByRole('checkbox', { name: m.firc_tunnel_edit_disable() })).toBeChecked();
-
-		await fireEvent.click(screen.getByRole('button', { name: m.common_save() }));
+		// First subscription added to an empty disabled tunnel auto-enables, auto-saves, and shows fetching hint.
 		await waitFor(() => {
 			expect(fircSaveTunnels).toHaveBeenCalledWith(
 				expect.arrayContaining([
@@ -2873,6 +2871,148 @@ describe('FIRC tunnels UI integration', () => {
 				]),
 			);
 		});
+		const disableToggle = await screen.findByRole('checkbox', { name: m.firc_tunnel_edit_disable() });
+		expect(disableToggle).toBeChecked();
+		expect(disableToggle).not.toBeDisabled();
+		expect(await screen.findByText(m.firc_reason_sub_fetching())).toBeInTheDocument();
+
+		// User can toggle off and save cleanly via the header toggle.
+		await fireEvent.click(disableToggle);
+		expect(screen.getByRole('checkbox', { name: m.firc_tunnel_edit_enable() })).not.toBeChecked();
+		await fireEvent.click(screen.getByRole('button', { name: m.common_save() }));
+		await waitFor(() => {
+			expect(fircSaveTunnels).toHaveBeenLastCalledWith(
+				expect.arrayContaining([
+					expect.objectContaining({ id: 'tun-new-empty', enable: false }),
+				]),
+			);
+		});
+	});
+
+	it('offers inline Save and load button on Nodes tab when subscription URL is edited inline without saving', async () => {
+		const subTunnel = {
+			id: 'tun-inline-dirty',
+			device: 'tunvless11',
+			description: 'InlineDirty',
+			enable: true,
+			active: 1,
+			by: 'connection',
+			interval: 60,
+			silence: 20,
+			filter: '',
+			filterExclude: '',
+			order: [],
+			exclude: [],
+			sources: [
+				{
+					id: 'sub-d1',
+					kind: 'subscription',
+					name: 'Sub',
+					url: 'https://sub.example/old',
+					interval: 21600,
+				},
+			],
+			uplink: { kind: 'auto', ref: '' },
+			advanced: { ca: '', insecure: false, timeout: 8, kernelTcp: true, fingerprint: '' },
+			inbounds: [],
+		};
+		const loadedState = {
+			id: 'tun-inline-dirty',
+			device: 'tunvless11',
+			status: 'up',
+			active: ['DE'],
+			nodes: [{ key: 'sub-d1:DE', name: 'DE', source: 'Sub', state: 'active', since: 0 }],
+			filteredNodes: [],
+			inbounds: [],
+			groups: [],
+			rxBps: 0,
+			txBps: 0,
+			since: 0,
+			backoffS: 0,
+			lastExit: 0,
+			uplinkOk: true,
+			tcpPort: 41011,
+			tcpSkipped: [],
+			tcpOff: '',
+			subscriptions: [{ name: 'Sub', nodes: 1, fetching: false, lastOk: 1700000200, lastTry: 1700000200, error: '' }],
+		};
+		fircTunnels.set([subTunnel as never]);
+		fircTunnelsState.set([]);
+		fircGetTunnels.mockResolvedValue([subTunnel]);
+		fircGetTunnelsState.mockResolvedValue([loadedState]);
+		fircSaveTunnels.mockImplementation(async (list: unknown[]) => {
+			fircGetTunnels.mockResolvedValue(list);
+			return { tunnels: list };
+		});
+
+		fircEditTunnelId.set('tun-inline-dirty');
+		fircEditTunnelSubTab.set('sources');
+		render(FircTunnelEditModal);
+
+		const urlInp = await screen.findByDisplayValue('https://sub.example/old');
+		await fireEvent.input(urlInp, { target: { value: 'https://sub.example/new' } });
+		await fireEvent.click(screen.getByRole('button', { name: m.firc_tunnel_edit_tab_nodes({ count: 0 }) }));
+
+		expect(await screen.findByText(m.firc_tunnel_edit_nodes_save_to_load())).toBeInTheDocument();
+		await fireEvent.click(screen.getByRole('button', { name: m.firc_tunnel_edit_save_and_load() }));
+
+		await waitFor(() => {
+			expect(fircSaveTunnels).toHaveBeenCalledTimes(1);
+			expect(screen.getByText('DE')).toBeInTheDocument();
+		});
+	});
+
+	it('keeps added subscription in dirty draft and shows error when auto-save fails', async () => {
+		const emptyTunnel = {
+			id: 'tun-sub-save-fail',
+			device: 'tunvless12',
+			description: 'SaveFail',
+			enable: false,
+			active: 1,
+			by: 'connection',
+			interval: 60,
+			silence: 20,
+			filter: '',
+			filterExclude: '',
+			order: [],
+			exclude: [],
+			sources: [],
+			uplink: { kind: 'auto', ref: '' },
+			advanced: { ca: '', insecure: false, timeout: 8, kernelTcp: true, fingerprint: '' },
+			inbounds: [],
+		};
+		fircTunnels.set([emptyTunnel as never]);
+		fircTunnelsState.set([]);
+		fircNormalizeSource.mockResolvedValue({
+			sources: [
+				{
+					id: 'sub-fail',
+					kind: 'subscription',
+					name: 'SubFail',
+					url: 'https://sub.example/fail',
+					interval: 21600,
+				},
+			],
+		});
+		fircSaveTunnels.mockRejectedValueOnce(new Error('save failed'));
+
+		fircEditTunnelId.set('tun-sub-save-fail');
+		fircEditTunnelSubTab.set('sources');
+		render(FircTunnelEditModal);
+
+		await fireEvent.click(await screen.findByRole('button', { name: m.firc_tunnel_edit_add_subscription() }));
+		await fireEvent.input(await screen.findByLabelText(m.firc_tunnel_edit_sub_url_label()), {
+			target: { value: 'https://sub.example/fail' },
+		});
+		await fireEvent.click(screen.getByRole('button', { name: m.common_add() }));
+
+		await waitFor(() => {
+			expect(notifications.error).toHaveBeenCalledWith('save failed');
+		});
+		expect(notifications.success).not.toHaveBeenCalled();
+		// Stays on Sources tab with the added subscription preserved in the dirty draft for retry.
+		expect(screen.getByDisplayValue('https://sub.example/fail')).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: m.common_save() })).not.toBeDisabled();
 	});
 
 	it('warns when refresh returns queued:false and explains custom-uplink disabled empty nodes', async () => {
@@ -3048,5 +3188,357 @@ describe('FIRC tunnels UI integration', () => {
 		await fireEvent.click(screen.getByRole('button', { name: m.firc_tunnel_edit_tab_nodes({ count: 0 }) }));
 		expect(await screen.findByText(m.firc_tunnel_edit_nodes_empty())).toBeInTheDocument();
 		expect(screen.queryByText(m.firc_reason_sub_fetching())).not.toBeInTheDocument();
+	});
+
+	it('does not show permanent loading spinner or spin futile polls when enabled custom uplink is down', async () => {
+		const downUplinkTunnel = {
+			id: 'tun-uplink-down',
+			device: 'tunvless13',
+			description: 'Uplink Down',
+			enable: true,
+			active: 1,
+			by: 'connection',
+			interval: 60,
+			silence: 20,
+			filter: '',
+			filterExclude: '',
+			order: [],
+			exclude: [],
+			sources: [
+				{
+					id: 'sub-ud1',
+					kind: 'subscription',
+					name: 'WgSub',
+					url: 'https://sub.example/wg',
+					interval: 21600,
+				},
+			],
+			uplink: { kind: 'iface', ref: 'wg0' },
+			advanced: { ca: '', insecure: false, timeout: 8, kernelTcp: true, fingerprint: '' },
+			inbounds: [],
+		};
+		const downUplinkState = {
+			id: 'tun-uplink-down',
+			device: 'tunvless13',
+			status: 'uplink_down',
+			active: [],
+			nodes: [],
+			filteredNodes: [],
+			inbounds: [],
+			groups: [],
+			rxBps: 0,
+			txBps: 0,
+			since: 0,
+			backoffS: 0,
+			lastExit: 0,
+			uplinkOk: false,
+			tcpPort: 0,
+			tcpSkipped: [],
+			tcpOff: '',
+			subscriptions: [{ name: 'WgSub', nodes: 0, fetching: false, lastOk: 0, lastTry: 0, error: '' }],
+		};
+		fircTunnels.set([downUplinkTunnel as never]);
+		fircTunnelsState.set([downUplinkState as never]);
+		fircGetTunnels.mockResolvedValue([downUplinkTunnel]);
+		fircGetTunnelsState.mockResolvedValue([downUplinkState]);
+		fircSaveTunnels.mockImplementation(async (list: unknown[]) => {
+			fircGetTunnels.mockResolvedValue(list);
+			return { tunnels: list };
+		});
+
+		fircEditTunnelId.set('tun-uplink-down');
+		fircEditTunnelSubTab.set('nodes');
+		render(FircTunnelEditModal);
+
+		expect(await screen.findByText(m.firc_tunnel_edit_nodes_empty())).toBeInTheDocument();
+		expect(screen.queryByText(m.firc_reason_sub_fetching())).not.toBeInTheDocument();
+
+		const nameInp = screen.getByPlaceholderText(m.firc_tunnel_edit_name_placeholder());
+		await fireEvent.input(nameInp, { target: { value: 'Uplink Down 2' } });
+		await fireEvent.click(screen.getByRole('button', { name: m.common_save() }));
+		await waitFor(() => {
+			expect(fircSaveTunnels).toHaveBeenCalledTimes(1);
+			expect(notifications.success).toHaveBeenCalledWith(m.firc_tunnel_edit_saved({ device: 'tunvless13' }));
+		});
+
+		const callsAfterSave = fircGetTunnelsState.mock.calls.length;
+		await new Promise((r) => setTimeout(r, 400));
+		expect(fircGetTunnelsState.mock.calls.length).toBe(callsAfterSave);
+		expect(screen.queryByText(m.firc_reason_sub_fetching())).not.toBeInTheDocument();
+	});
+
+	it('treats disk-cached subscriptions with nodes>0 and lastTry=0 as settled without futile polling', async () => {
+		const cachedTunnel = {
+			id: 'tun-disk-cache',
+			device: 'tunvless14',
+			description: 'DiskCached',
+			enable: false,
+			active: 1,
+			by: 'connection',
+			interval: 0,
+			silence: 20,
+			filter: '',
+			filterExclude: '',
+			order: [],
+			exclude: [],
+			sources: [
+				{
+					id: 'sub-dc1',
+					kind: 'subscription',
+					name: 'CachedSub',
+					url: 'https://sub.example/cached',
+					interval: 0,
+				},
+			],
+			uplink: { kind: 'auto', ref: '' },
+			advanced: { ca: '', insecure: false, timeout: 8, kernelTcp: true, fingerprint: '' },
+			inbounds: [],
+		};
+		const cachedState = {
+			id: 'tun-disk-cache',
+			device: 'tunvless14',
+			status: 'off',
+			active: [],
+			nodes: [{ key: 'sub-dc1:DE', name: 'DE', source: 'CachedSub', state: 'reserve', since: 0 }],
+			filteredNodes: [],
+			inbounds: [],
+			groups: [],
+			rxBps: 0,
+			txBps: 0,
+			since: 0,
+			backoffS: 0,
+			lastExit: 0,
+			uplinkOk: true,
+			tcpPort: 0,
+			tcpSkipped: [],
+			tcpOff: '',
+			subscriptions: [{ name: 'CachedSub', nodes: 1, fetching: false, lastOk: 0, lastTry: 0, error: '' }],
+		};
+		fircTunnels.set([cachedTunnel as never]);
+		fircTunnelsState.set([cachedState as never]);
+		fircGetTunnels.mockResolvedValue([cachedTunnel]);
+		fircGetTunnelsState.mockResolvedValue([cachedState]);
+		fircSaveTunnels.mockImplementation(async (list: unknown[]) => {
+			fircGetTunnels.mockResolvedValue(list);
+			return { tunnels: list };
+		});
+
+		fircEditTunnelId.set('tun-disk-cache');
+		fircEditTunnelSubTab.set('nodes');
+		render(FircTunnelEditModal);
+
+		const nameInp = await screen.findByPlaceholderText(m.firc_tunnel_edit_name_placeholder());
+		await fireEvent.input(nameInp, { target: { value: 'DiskCached 2' } });
+		await fireEvent.click(screen.getByRole('button', { name: m.common_save() }));
+		await waitFor(() => {
+			expect(fircSaveTunnels).toHaveBeenCalledTimes(1);
+			expect(notifications.success).toHaveBeenCalledWith(m.firc_tunnel_edit_saved({ device: 'tunvless14' }));
+		});
+
+		const callsAfterSave = fircGetTunnelsState.mock.calls.length;
+		await new Promise((r) => setTimeout(r, 400));
+		expect(fircGetTunnelsState.mock.calls.length).toBe(callsAfterSave);
+		expect(screen.getByText('DE')).toBeInTheDocument();
+	});
+
+	it('reveals Save and load button instead of stale spinner if subscription URL is edited inline mid-poll', async () => {
+		const emptyTunnel = {
+			id: 'tun-midpoll-dirty',
+			device: 'tunvless15',
+			description: 'MidPollDirty',
+			enable: false,
+			active: 1,
+			by: 'connection',
+			interval: 60,
+			silence: 20,
+			filter: '',
+			filterExclude: '',
+			order: [],
+			exclude: [],
+			sources: [],
+			uplink: { kind: 'auto', ref: '' },
+			advanced: { ca: '', insecure: false, timeout: 8, kernelTcp: true, fingerprint: '' },
+			inbounds: [],
+		};
+		const fetchingState = {
+			id: 'tun-midpoll-dirty',
+			device: 'tunvless15',
+			status: 'waiting',
+			active: [],
+			nodes: [],
+			filteredNodes: [],
+			inbounds: [],
+			groups: [],
+			rxBps: 0,
+			txBps: 0,
+			since: 0,
+			backoffS: 0,
+			lastExit: 0,
+			uplinkOk: true,
+			tcpPort: 0,
+			tcpSkipped: [],
+			tcpOff: '',
+			subscriptions: [{ name: 'Sub', nodes: 0, fetching: true, lastOk: 0, lastTry: 0, error: '' }],
+		};
+		fircTunnels.set([emptyTunnel as never]);
+		fircTunnelsState.set([]);
+		fircGetTunnels.mockResolvedValue([emptyTunnel]);
+		fircGetTunnelsState.mockResolvedValue([fetchingState]);
+		fircNormalizeSource.mockResolvedValue({
+			sources: [
+				{
+					id: 'sub-mp1',
+					kind: 'subscription',
+					name: 'Sub',
+					url: 'https://sub.example/typo',
+					interval: 21600,
+				},
+			],
+		});
+		fircSaveTunnels.mockImplementation(async (list: unknown[]) => {
+			fircGetTunnels.mockResolvedValue(list);
+			return { tunnels: list };
+		});
+
+		fircEditTunnelId.set('tun-midpoll-dirty');
+		fircEditTunnelSubTab.set('sources');
+		render(FircTunnelEditModal);
+
+		await fireEvent.click(await screen.findByRole('button', { name: m.firc_tunnel_edit_add_subscription() }));
+		await fireEvent.input(await screen.findByLabelText(m.firc_tunnel_edit_sub_url_label()), {
+			target: { value: 'https://sub.example/typo' },
+		});
+		await fireEvent.click(screen.getByRole('button', { name: m.common_add() }));
+		await waitFor(() => {
+			expect(document.querySelector('.sub-empty-loading')).toHaveTextContent(m.firc_reason_sub_fetching());
+		});
+
+		// Switch to Sources and fix the URL inline while poll is active -> Nodes tab must show Save and load, not spinner.
+		await fireEvent.click(screen.getByRole('button', { name: m.firc_tunnel_edit_tab_sources({ count: 1 }) }));
+		await fireEvent.input(await screen.findByDisplayValue('https://sub.example/typo'), {
+			target: { value: 'https://sub.example/fixed' },
+		});
+		await fireEvent.click(screen.getByRole('button', { name: m.firc_tunnel_edit_tab_nodes({ count: 0 }) }));
+
+		expect(await screen.findByText(m.firc_tunnel_edit_nodes_save_to_load())).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: m.firc_tunnel_edit_save_and_load() })).toBeInTheDocument();
+		expect(document.querySelector('.sub-empty-loading')).toBeNull();
+		expect(document.querySelector('.sub-empty')).not.toHaveTextContent(m.firc_reason_sub_fetching());
+	});
+
+	it('preserves concurrent draft edits made during an in-flight save and prevents save/refresh overlap', async () => {
+		const baseTunnel = {
+			id: 'tun-concurrent',
+			device: 'tunvless16',
+			description: 'Original Name',
+			enable: true,
+			active: 1,
+			by: 'connection',
+			interval: 60,
+			silence: 20,
+			filter: '',
+			filterExclude: '',
+			order: [],
+			exclude: [],
+			sources: [
+				{
+					id: 'sub-c1',
+					kind: 'subscription',
+					name: 'SubC',
+					url: 'https://sub.example/c1',
+					interval: 21600,
+				},
+			],
+			uplink: { kind: 'auto', ref: '' },
+			advanced: { ca: '', insecure: false, timeout: 8, kernelTcp: true, fingerprint: '' },
+			inbounds: [],
+		};
+		const subState = {
+			id: 'tun-concurrent',
+			device: 'tunvless16',
+			status: 'waiting',
+			active: [],
+			nodes: [],
+			filteredNodes: [],
+			inbounds: [],
+			groups: [],
+			rxBps: 0,
+			txBps: 0,
+			since: 0,
+			backoffS: 0,
+			lastExit: 0,
+			uplinkOk: true,
+			tcpPort: 0,
+			tcpSkipped: [],
+			tcpOff: '',
+			subscriptions: [{ name: 'SubC', nodes: 0, fetching: false, lastOk: 0, lastTry: 100, error: '' }],
+		};
+		fircTunnels.set([baseTunnel as never]);
+		fircTunnelsState.set([subState as never]);
+		fircGetTunnels.mockResolvedValue([baseTunnel]);
+		fircGetTunnelsState.mockResolvedValue([subState]);
+
+		let releaseSave!: (v: unknown) => void;
+		fircSaveTunnels.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					releaseSave = resolve;
+				}),
+		);
+
+		fircEditTunnelId.set('tun-concurrent');
+		fircEditTunnelSubTab.set('sources');
+		render(FircTunnelEditModal);
+
+		const nameInp = await screen.findByPlaceholderText(m.firc_tunnel_edit_name_placeholder());
+		await fireEvent.input(nameInp, { target: { value: 'First Edit' } });
+		await fireEvent.click(screen.getByRole('button', { name: m.common_save() }));
+		await waitFor(() => expect(fircSaveTunnels).toHaveBeenCalledTimes(1));
+
+		// Clicking Refresh while saveDraft is in flight must be blocked.
+		await fireEvent.click(screen.getByRole('button', { name: m.firc_tunnel_edit_refresh() }));
+		expect(fircRefreshTunnel).not.toHaveBeenCalled();
+
+		// Edit description again while the first save is still in flight.
+		await fireEvent.input(nameInp, { target: { value: 'Second Concurrent Edit' } });
+
+		const savedFirst = { ...baseTunnel, description: 'First Edit' };
+		fircGetTunnels.mockResolvedValue([savedFirst]);
+		releaseSave({ tunnels: [savedFirst] });
+
+		await waitFor(() => {
+			expect(notifications.success).toHaveBeenCalledWith(m.firc_tunnel_edit_saved({ device: 'tunvless16' }));
+		});
+		// Concurrent edit must remain intact in draft and Save button must remain enabled.
+		expect(nameInp).toHaveValue('Second Concurrent Edit');
+		expect(screen.getByRole('button', { name: m.common_save() })).not.toBeDisabled();
+
+		// Revert to clean, start a deferred Refresh, then make draft dirty mid-refresh:
+		// Save and inline "Save and load" buttons must stay disabled during the active refresh.
+		await fireEvent.input(nameInp, { target: { value: 'First Edit' } });
+		let releaseRefresh!: (v: unknown) => void;
+		fircRefreshTunnel.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					releaseRefresh = resolve;
+				}),
+		);
+		await fireEvent.click(screen.getByRole('button', { name: m.firc_tunnel_edit_refresh() }));
+		await waitFor(() => expect(fircRefreshTunnel).toHaveBeenCalledTimes(1));
+
+		await fireEvent.input(nameInp, { target: { value: 'Edit During Refresh' } });
+		const footerSaveBtn = screen.getByRole('button', { name: m.common_save() });
+		expect(footerSaveBtn).toBeDisabled();
+		await fireEvent.click(screen.getByRole('button', { name: m.firc_tunnel_edit_tab_nodes({ count: 0 }) }));
+		const inlineSaveBtn = await screen.findByRole('button', { name: m.firc_tunnel_edit_save_and_load() });
+		expect(inlineSaveBtn).toBeDisabled();
+		expect(fircSaveTunnels).toHaveBeenCalledTimes(1);
+
+		releaseRefresh({ queued: true });
+		await waitFor(() => {
+			expect(notifications.success).toHaveBeenCalledWith(m.firc_tunnel_edit_refresh_done({ device: 'tunvless16' }));
+		});
+		expect(screen.getByRole('button', { name: m.common_save() })).not.toBeDisabled();
+		expect(screen.getByRole('button', { name: m.firc_tunnel_edit_save_and_load() })).not.toBeDisabled();
 	});
 });
