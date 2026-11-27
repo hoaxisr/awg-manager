@@ -112,7 +112,14 @@
     </div>
     <Toggle
       checked={invertedBool('app.dnsProxy.disableRemap53')}
-      onchange={(v) => setInvertedBool('app.dnsProxy.disableRemap53', v)}
+      onchange={(v) => {
+        setInvertedBool('app.dnsProxy.disableRemap53', v);
+        // remap DNATs to <LAN IP>:port: a loopback listener would drop all LAN DNS
+        const addr = strVal('app.dnsProxy.host.address', '').replace(/^\[|\]$/g, '');
+        if (v && (addr.startsWith('127.') || addr === '::1' || addr === 'localhost')) {
+          setField('app.dnsProxy.host.address', '[::]');
+        }
+      }}
     />
   </div>
 
