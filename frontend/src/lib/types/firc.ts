@@ -584,11 +584,9 @@ export interface FircEnginePurgeResult {
 	runtimeRemoved: boolean;
 	snapshotCreated?: FircSnapshotMeta;
 	preservedSnapshots: number;
-	savedSingboxPreserved: boolean;
 }
 
 export interface FircMigrationOptions {
-	mode?: 'merge' | 'replace';
 	routerSource?: 'auto' | 'tproxy' | 'fakeip' | 'both';
 	includeTunnels?: boolean;
 	includeSubscriptions?: boolean;
@@ -598,7 +596,6 @@ export interface FircMigrationOptions {
 	selectedTunnelIds?: string[];
 	selectedGroupIds?: string[];
 	postSingboxAction?: 'switch_standby' | 'switch_and_stop' | 'switch_and_uninstall' | 'keep_current';
-	createSnapshot?: boolean;
 }
 
 export interface FircFakeIPMigrationInfo {
@@ -631,30 +628,6 @@ export interface FircSnapshotMeta {
 	recoveryRequired?: boolean;
 }
 
-export interface FircSavedSingboxStatus {
-	available: boolean;
-	verificationStatus?: 'verified' | 'validator_unavailable' | 'invalid' | 'missing' | string;
-	source?: 'saved_bundle' | 'snapshot' | string;
-	snapshotId?: string;
-	createdAt?: number;
-	label?: string;
-	tunnelsCount: number;
-	subscriptionsCount: number;
-	groupsCount: number;
-	filesCount: number;
-	unavailableReason?: string;
-}
-
-export interface FircSavedSingboxRestoreResult {
-	source: string;
-	restoredFiles: number;
-	snapshotCreated?: FircSnapshotMeta;
-	postActionApplied?: string;
-	postActionError?: string;
-	removedEngine?: FircEnginePurgeResult;
-	recoveryRequired?: boolean;
-}
-
 export interface FircMigrationWizardState {
 	dismissedAutoPopup: boolean;
 	dismissedAt?: number;
@@ -662,51 +635,6 @@ export interface FircMigrationWizardState {
 	lastDirection?: string;
 	lastSnapshotId?: string;
 	lastPostAction?: string;
-}
-
-export interface FircReverseMigrationOptions {
-	mode?: 'merge' | 'replace';
-	includeTunnels?: boolean;
-	includeGroups?: boolean;
-	selectedTunnelIds?: string[];
-	selectedGroupIds?: string[];
-	postFircAction?: 'switch_to_singbox' | 'switch_and_stop_firc' | 'switch_and_uninstall_firc' | 'keep_current';
-	createSnapshot?: boolean;
-}
-
-export interface FircReverseMigratedTunnelItem {
-	id: string;
-	name: string;
-	device: string;
-	kind: 'subscription' | 'outbound' | string;
-	linksCount: number;
-	subUrl?: string;
-	targetTag: string;
-}
-
-export interface FircReverseMigratedGroupItem {
-	id: string;
-	name: string;
-	outboundTag: string;
-	rulesCount: number;
-	ruleSetUrl?: string;
-	devices?: string[];
-}
-
-export interface FircReverseMigrationSummary {
-	tunnels?: FircReverseMigratedTunnelItem[];
-	groups?: FircReverseMigratedGroupItem[];
-	outboundsCreated?: number;
-	subscriptionsMigrated?: number;
-	rulesMigrated?: number;
-	ruleSetsMigrated?: number;
-	clientRoutesMigrated?: number;
-	skipped?: string[];
-	snapshotCreated?: FircSnapshotMeta;
-	postActionApplied?: string;
-	postActionError?: string;
-	removedEngine?: FircEnginePurgeResult;
-	recoveryRequired?: boolean;
 }
 
 export interface FircMigrationOverview {
@@ -722,9 +650,7 @@ export interface FircMigrationOverview {
 	fircTunnelsCount?: number;
 	fircGroupsCount?: number;
 	snapshots: FircSnapshotMeta[];
-	savedSingbox?: FircSavedSingboxStatus;
 	forwardPreview?: FircMigrationSummary;
-	reversePreview?: FircReverseMigrationSummary;
 }
 
 export interface FircMigrationSummary {

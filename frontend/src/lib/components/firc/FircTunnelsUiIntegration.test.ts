@@ -303,7 +303,7 @@ describe('FIRC tunnels UI integration', () => {
 		const migBtn = screen.getByRole('button', { name: m.singbox_saved_migrate_btn() });
 		await fireEvent.click(migBtn);
 		expect(get(fircMigrationModalOpen)).toBe(true);
-		expect(get(fircMigrationModalTab)).toBe('reverse');
+		expect(get(fircMigrationModalTab)).toBe('snapshots');
 	});
 
 	it('renders FircResourceCard UI parity with TrustTunnel/Hysteria2 badges, StatStrip, Test modal, and Edit modal', async () => {

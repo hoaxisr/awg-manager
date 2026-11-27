@@ -1,6 +1,6 @@
 import { writable } from 'svelte/store';
 
-export type FircMigrationWizardTab = 'forward' | 'reverse' | 'snapshots';
+export type FircMigrationWizardTab = 'forward' | 'snapshots';
 
 export const fircMigrationModalOpen = writable<boolean>(false);
 export const fircMigrationModalTab = writable<FircMigrationWizardTab>('forward');

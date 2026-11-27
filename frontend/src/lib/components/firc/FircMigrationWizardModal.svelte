@@ -7,9 +7,6 @@
     FircMigrationOptions,
     FircMigrationOverview,
     FircMigrationSummary,
-    FircReverseMigrationOptions,
-    FircReverseMigrationSummary,
-    FircSavedSingboxStatus,
     FircInstallStatus,
     FircSnapshotMeta,
   } from '$lib/types/firc';
@@ -40,7 +37,6 @@
   import FircMigrationEngineStrip from './FircMigrationEngineStrip.svelte';
   import FircMigrationExecNotice from './FircMigrationExecNotice.svelte';
   import FircMigrationForwardTab from './FircMigrationForwardTab.svelte';
-  import FircMigrationReverseTab from './FircMigrationReverseTab.svelte';
   import FircMigrationSnapshotsTab from './FircMigrationSnapshotsTab.svelte';
   import {
     engineLabel,
@@ -49,8 +45,6 @@
     purgeItemsSummary,
     purgeNotice,
     restoreNotice,
-    reverseNotice,
-    savedReturnNotice,
     type ExecNotice,
     type MigrationEngine,
   } from './fircMigrationNotices';
@@ -101,34 +95,15 @@
   let fwdPreview = $state<FircMigrationSummary | null>(null);
   let fwdLoading = $state(false);
   let fwdApplying = $state(false);
-  let fwdMode = $state<'merge' | 'replace'>('merge');
   let fwdRouterSource = $state<'auto' | 'tproxy' | 'fakeip' | 'both'>('auto');
   let fwdPostAction = $state<'switch_standby' | 'switch_and_stop' | 'switch_and_uninstall' | 'keep_current'>('switch_standby');
-  let fwdCreateSnapshot = $state(true);
   let fwdIncludeFakeIP = $state(false);
   let fwdSelectedTunnelIds = $state<string[]>([]);
   let fwdSelectedGroupIds = $state<string[]>([]);
   let fwdInitializedSelection = $state(false);
   let fwdConfirmReplace = $state(false);
-
-  // Return to Sing-box: two distinct scenarios ('saved' vs 'convert')
-  let returnScenario = $state<'saved' | 'convert'>('saved');
-  let savedSingbox = $state<FircSavedSingboxStatus | null>(null);
-  let savedPostAction = $state<'switch_to_singbox' | 'switch_and_stop_firc' | 'switch_and_uninstall_firc' | 'keep_current'>('switch_to_singbox');
-  let savedCreateSnapshot = $state(true);
-  let savedReturning = $state(false);
-
-  // Reverse migration (Scenario 2: FIRC -> Sing-box) state
-  let revPreview = $state<FircReverseMigrationSummary | null>(null);
-  let revLoading = $state(false);
-  let revApplying = $state(false);
-  let revMode = $state<'merge' | 'replace'>('merge');
-  let revPostAction = $state<'switch_to_singbox' | 'switch_and_stop_firc' | 'switch_and_uninstall_firc' | 'keep_current'>('switch_to_singbox');
-  let revCreateSnapshot = $state(true);
-  let revSelectedTunnelIds = $state<string[]>([]);
-  let revSelectedGroupIds = $state<string[]>([]);
-  let revInitializedSelection = $state(false);
-  let revConfirmReplace = $state(false);
+  // Импорт заменяет выбранные категории: подтверждение нужно, только если есть что терять.
+  let fwdReplacesExisting = $derived(fircTunnelsCount + fircGroupsCount > 0);
 
   // Snapshots state
   let snapshots = $state<FircSnapshotMeta[]>([]);
@@ -142,7 +117,6 @@
   let overviewReqSeq = 0;
   let prefetchedAutoOverview: FircMigrationOverview | null = null;
   let fwdPreviewReqSeq = 0;
-  let revPreviewReqSeq = 0;
 
   let isBusy = $derived(
     loadingOverview ||
@@ -152,9 +126,6 @@
       Boolean(installStatus?.busy) ||
       fwdLoading ||
       fwdApplying ||
-      revLoading ||
-      revApplying ||
-      savedReturning ||
       snapCreating ||
       snapRestoringId !== null ||
       snapDeletingId !== null,
@@ -162,18 +133,8 @@
 
   const tabs = $derived.by<Tab[]>(() => {
     const fwdCount = (fwdPreview?.tunnels?.length ?? 0) + (fwdPreview?.groups?.length ?? 0);
-    const revCount = (revPreview?.tunnels?.length ?? 0) + (revPreview?.groups?.length ?? 0);
     return [
       { id: 'forward', label: m.firc_migration_tab_forward(), badge: fwdCount > 0 ? fwdCount : undefined },
-      {
-        id: 'reverse',
-        label: m.firc_migration_tab_reverse(),
-        ...(savedSingbox?.available
-          ? { badge: m.firc_migration_tab_saved_badge(), badgeTone: 'success' as const }
-          : revCount > 0
-            ? { badge: revCount, badgeTone: 'muted' as const }
-            : {}),
-      },
       {
         id: 'snapshots',
         label: m.firc_migration_tab_snapshots(),
@@ -308,20 +269,6 @@
     }
   }
 
-  function applyRevPreview(preview: FircReverseMigrationSummary, resetSelection: boolean) {
-    revPreview = preview;
-    if (resetSelection || !revInitializedSelection) {
-      revSelectedTunnelIds = (preview.tunnels ?? []).map((t) => t.id);
-      revSelectedGroupIds = (preview.groups ?? []).map((g) => g.id);
-      revInitializedSelection = true;
-    } else {
-      const validTun = new Set((preview.tunnels ?? []).map((t) => t.id));
-      const validGrp = new Set((preview.groups ?? []).map((g) => g.id));
-      revSelectedTunnelIds = revSelectedTunnelIds.filter((id) => validTun.has(id));
-      revSelectedGroupIds = revSelectedGroupIds.filter((id) => validGrp.has(id));
-    }
-  }
-
   async function loadFullWizardData(preserveUserSelections = false) {
     const seq = ++overviewReqSeq;
     loadingOverview = true;
@@ -363,21 +310,11 @@
       fircGroupsCount = ov.fircGroupsCount ?? 0;
       dontShowAgain = Boolean(ov.wizardState?.dismissedAutoPopup);
       snapshots = ov.snapshots ?? [];
-      savedSingbox = ov.savedSingbox ?? null;
-      if (!savedSingbox?.available && returnScenario === 'saved') {
-        returnScenario = 'convert';
-      }
 
-      if (ov.forwardPreview && fwdRouterSource === 'auto' && fwdMode === 'merge') {
+      if (ov.forwardPreview && fwdRouterSource === 'auto') {
         applyFwdPreview(ov.forwardPreview, !preserveUserSelections);
       } else {
         await refreshForwardPreview(fwdRouterSource, !preserveUserSelections || !fwdInitializedSelection);
-      }
-
-      if (ov.reversePreview && revMode === 'merge') {
-        applyRevPreview(ov.reversePreview, !preserveUserSelections);
-      } else {
-        await refreshReversePreview(!preserveUserSelections || !revInitializedSelection);
       }
     } catch (e: unknown) {
       if (seq === overviewReqSeq) {
@@ -437,12 +374,6 @@
     wasForeign = now;
   });
 
-  $effect(() => {
-    if (fwdPostAction === 'switch_and_uninstall') fwdCreateSnapshot = true;
-    if (savedPostAction === 'switch_and_uninstall_firc') savedCreateSnapshot = true;
-    if (revPostAction === 'switch_and_uninstall_firc') revCreateSnapshot = true;
-  });
-
   async function handleToggleDontShow(checked: boolean) {
     dontShowAgain = checked;
     setFircMigrationPopupLocallyDismissed(checked);
@@ -476,7 +407,6 @@
     fwdLoading = true;
     try {
       const res = await api.fircMigrateFromSingbox(true, {
-        mode: fwdMode,
         routerSource,
         includeTunnels: true,
         includeSubscriptions: true,
@@ -498,35 +428,28 @@
 
   async function applyForwardMigration() {
     if (isBusy) return;
-    if (
-      fwdSelectedTunnelIds.length === 0 &&
-      fwdSelectedGroupIds.length === 0 &&
-      !fwdIncludeFakeIP &&
-      fwdMode !== 'replace'
-    ) {
+    if (fwdSelectedTunnelIds.length === 0 && fwdSelectedGroupIds.length === 0 && !fwdIncludeFakeIP) {
       notifications.error(m.firc_migration_fwd_nothing_selected());
       return;
     }
-    if (fwdMode === 'replace' && !fwdConfirmReplace) {
+    if (fwdReplacesExisting && !fwdConfirmReplace) {
       notifications.error(m.firc_migration_fwd_confirm_replace_required());
       return;
     }
     fwdApplying = true;
     lastExecutionNotice = null;
     try {
-      const effectiveSnap = fwdCreateSnapshot || fwdPostAction === 'switch_and_uninstall';
+      // Категория без выбранных элементов не трогается; выбранные заменяют её целиком.
       const options: FircMigrationOptions = {
-        mode: fwdMode,
         routerSource: fwdRouterSource,
-        includeTunnels: fwdSelectedTunnelIds.length > 0 || fwdMode === 'replace',
-        includeSubscriptions: fwdSelectedTunnelIds.length > 0 || fwdMode === 'replace',
-        includeGroups: fwdSelectedGroupIds.length > 0 || fwdMode === 'replace',
-        includeClientRoutes: fwdSelectedGroupIds.length > 0 || fwdMode === 'replace',
+        includeTunnels: fwdSelectedTunnelIds.length > 0,
+        includeSubscriptions: fwdSelectedTunnelIds.length > 0,
+        includeGroups: fwdSelectedGroupIds.length > 0,
+        includeClientRoutes: fwdSelectedGroupIds.length > 0,
         includeFakeIPConfig: fwdIncludeFakeIP,
         selectedTunnelIds: fwdSelectedTunnelIds.length > 0 ? fwdSelectedTunnelIds : ['__none__'],
         selectedGroupIds: fwdSelectedGroupIds.length > 0 ? fwdSelectedGroupIds : ['__none__'],
         postSingboxAction: fwdPostAction,
-        createSnapshot: effectiveSnap,
       };
       const res = await api.fircMigrateFromSingbox(false, options);
       if (dontShowAgain) {
@@ -542,7 +465,6 @@
         res.postActionApplied !== fwdPostAction ||
         (fwdPostAction !== 'keep_current' && res.engineSwitched === false);
       lastExecutionNotice = forwardNotice(res, {
-        effectiveSnap,
         postAction: fwdPostAction,
         activeEngine,
         hasPostErr,
@@ -562,126 +484,6 @@
       notifications.error(errorText(e, m.firc_migration_fwd_failed()));
     } finally {
       fwdApplying = false;
-    }
-  }
-
-  // ── Return to Sing-box: Scenario 1 (Saved Config) & Scenario 2 (Reverse Migration) ──
-
-  async function applyReturnToSavedSingbox() {
-    if (isBusy) return;
-    if (singboxMissing) {
-      notifications.error(m.firc_migration_saved_need_singbox());
-      return;
-    }
-    if (!savedSingbox?.available) {
-      notifications.error(m.firc_migration_saved_unavailable());
-      return;
-    }
-    savedReturning = true;
-    lastExecutionNotice = null;
-    try {
-      const effectiveSnap = savedCreateSnapshot || savedPostAction === 'switch_and_uninstall_firc';
-      const res = await api.fircReturnToSavedSingbox({
-        createSnapshot: effectiveSnap,
-        postFircAction: savedPostAction,
-      });
-      await reloadAfterChange();
-      notifyFircMigrationApplied();
-      onApplied?.();
-
-      const hasPostErr = Boolean(res.postActionError) || res.postActionApplied !== savedPostAction;
-      lastExecutionNotice = savedReturnNotice(res, effectiveSnap, hasPostErr);
-
-      if (hasPostErr || res.recoveryRequired) {
-        notifications.error(
-          m.firc_migration_saved_post_failed({ error: res.postActionError || m.firc_migration_switch_error() }),
-        );
-      } else {
-        const files = res.restoredFiles;
-        notifications.success(
-          res.removedEngine ? m.firc_migration_saved_done_removed({ files }) : m.firc_migration_saved_done({ files }),
-        );
-        closeFircMigrationModal();
-      }
-    } catch (e: unknown) {
-      notifications.error(errorText(e, m.firc_migration_saved_failed()));
-    } finally {
-      savedReturning = false;
-    }
-  }
-
-  async function refreshReversePreview(resetSelection = false) {
-    const seq = ++revPreviewReqSeq;
-    revLoading = true;
-    try {
-      const res = await api.fircReverseMigrateToSingbox(true, {
-        mode: revMode,
-        includeTunnels: true,
-        includeGroups: true,
-      });
-      if (seq !== revPreviewReqSeq) return;
-      applyRevPreview(res, resetSelection);
-    } catch (e: unknown) {
-      if (seq === revPreviewReqSeq) {
-        notifications.error(errorText(e, m.firc_migration_rev_preview_failed()));
-      }
-    } finally {
-      if (seq === revPreviewReqSeq) {
-        revLoading = false;
-      }
-    }
-  }
-
-  async function applyReverseMigration() {
-    if (isBusy) return;
-    if (revSelectedTunnelIds.length === 0 && revSelectedGroupIds.length === 0 && revMode !== 'replace') {
-      notifications.error(m.firc_migration_rev_nothing_selected());
-      return;
-    }
-    if (revMode === 'replace' && !revConfirmReplace) {
-      notifications.error(m.firc_migration_rev_confirm_replace_required());
-      return;
-    }
-    revApplying = true;
-    lastExecutionNotice = null;
-    try {
-      const effectiveSnap = revCreateSnapshot || revPostAction === 'switch_and_uninstall_firc';
-      const options: FircReverseMigrationOptions = {
-        mode: revMode,
-        includeTunnels: revSelectedTunnelIds.length > 0 || revMode === 'replace',
-        includeGroups: revSelectedGroupIds.length > 0 || revMode === 'replace',
-        selectedTunnelIds: revSelectedTunnelIds.length > 0 ? revSelectedTunnelIds : ['__none__'],
-        selectedGroupIds: revSelectedGroupIds.length > 0 ? revSelectedGroupIds : ['__none__'],
-        postFircAction: revPostAction,
-        createSnapshot: effectiveSnap,
-      };
-      const res = await api.fircReverseMigrateToSingbox(false, options);
-      await reloadAfterChange();
-      notifyFircMigrationApplied();
-      onApplied?.();
-
-      const hasPostErr = Boolean(res.postActionError) || res.postActionApplied !== revPostAction;
-      lastExecutionNotice = reverseNotice(res, effectiveSnap, hasPostErr);
-
-      if (hasPostErr || res.recoveryRequired) {
-        notifications.error(
-          m.firc_migration_rev_post_failed({ error: res.postActionError || m.firc_migration_action_unconfirmed() }),
-        );
-      } else {
-        const counts = {
-          outbounds: res.outboundsCreated ?? 0,
-          subs: res.subscriptionsMigrated ?? 0,
-          rules: res.rulesMigrated ?? 0,
-        };
-        notifications.success(
-          res.removedEngine ? m.firc_migration_rev_done_removed(counts) : m.firc_migration_rev_done(counts),
-        );
-        closeFircMigrationModal();
-      }
-    } catch (e: unknown) {
-      notifications.error(errorText(e, m.firc_migration_rev_failed()));
-    } finally {
-      revApplying = false;
     }
   }
 
@@ -810,34 +612,14 @@
         {installingRuntime}
         {activeEngine}
         bind:postAction={fwdPostAction}
-        bind:mode={fwdMode}
         bind:routerSource={fwdRouterSource}
-        bind:createSnapshot={fwdCreateSnapshot}
         bind:includeFakeIP={fwdIncludeFakeIP}
+        replacesExisting={fwdReplacesExisting}
         bind:confirmReplace={fwdConfirmReplace}
         bind:selectedTunnelIds={fwdSelectedTunnelIds}
         bind:selectedGroupIds={fwdSelectedGroupIds}
         oninstallRuntime={installFircRuntimeFromModal}
         onrefresh={(source) => void refreshForwardPreview(source, false)}
-      />
-    {:else if activeTab === 'reverse'}
-      <FircMigrationReverseTab
-        {isBusy}
-        {singboxMissing}
-        {installingSingbox}
-        saved={savedSingbox}
-        preview={revPreview}
-        bind:scenario={returnScenario}
-        bind:savedPostAction
-        bind:savedCreateSnapshot
-        bind:revPostAction
-        bind:revMode
-        bind:revCreateSnapshot
-        bind:revConfirmReplace
-        bind:revSelectedTunnelIds
-        bind:revSelectedGroupIds
-        oninstallSingbox={installSingboxFromModal}
-        onrefresh={() => void refreshReversePreview(false)}
       />
     {:else}
       <FircMigrationSnapshotsTab
@@ -886,33 +668,11 @@
             variant="primary"
             size="sm"
             loading={fwdApplying || fwdLoading}
-            disabled={isBusy || (fwdMode === 'replace' && !fwdConfirmReplace)}
+            disabled={isBusy || (fwdReplacesExisting && !fwdConfirmReplace)}
             onclick={applyForwardMigration}
           >
             {m.firc_migration_fwd_apply()}
           </Button>
-        {:else if activeTab === 'reverse'}
-          {#if returnScenario === 'saved'}
-            <Button
-              variant="primary"
-              size="sm"
-              loading={savedReturning}
-              disabled={isBusy || singboxMissing || !savedSingbox?.available}
-              onclick={applyReturnToSavedSingbox}
-            >
-              {m.firc_migration_saved_apply()}
-            </Button>
-          {:else}
-            <Button
-              variant="primary"
-              size="sm"
-              loading={revApplying || revLoading}
-              disabled={isBusy || singboxMissing || (revMode === 'replace' && !revConfirmReplace)}
-              onclick={applyReverseMigration}
-            >
-              {m.firc_migration_rev_apply()}
-            </Button>
-          {/if}
         {/if}
       </div>
     </div>
