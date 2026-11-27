@@ -71,6 +71,12 @@ int cert_verify_server_ex(const unsigned char *cert_body, size_t cert_n,
                           const unsigned char *transcript, size_t thash_n,
                           const char *host, const char *roots, const struct cert_policy *pol);
 
+/* Verifies a DER certificate chain (der[0] = leaf, der[1..count-1] = intermediates) against the
+ * shared root store, verified-chain cache, hostname/vcn, and pcs/pks pin rules. Does not verify
+ * a handshake transcript signature (the TLS stack checks ServerKeyExchange / CertificateVerify). */
+int cert_verify_chain(const unsigned char *const *der, const size_t *der_n, size_t count,
+                      const char *host, const char *roots, const struct cert_policy *pol);
+
 #define CERTV_ENOTREALITY (-75) /* the server did not prove it is Reality: it did not accept us */
 #define CERTV_EPQ         (-76) /* accepted by Reality, but no valid ML-DSA-65 signature (pqv) */
 

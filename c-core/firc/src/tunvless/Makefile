@@ -44,8 +44,9 @@ TLS_SRC       := src/proto/tls/tls13.c src/proto/tls/certverify.c src/proto/tls/
                  src/proto/tls/h2.c src/proto/tls/h2wire.c src/proto/tls/h2mux.c src/proto/tls/hpack.c src/proto/tls/ech.c \
                  src/proto/tls/roots.c
 LIB_SRC       := src/lib/osrand.c src/lib/tscratch.c src/lib/portpick.c
-# The one file that sees wolfSSL headers: built with the library's own flags.
+# Files that see wolfSSL headers: built with the library's own flags.
 CRYPTO_SRC    := src/lib/scrypto.c
+TLS12_SRC     := src/proto/tls/tls12.c
 SRC           := src/main.c src/ctlnodes.c src/ctlinb.c $(TUNNEL_SRC) $(VLESS_SRC) $(TRANSPORT_SRC) $(TLS_SRC) $(LIB_SRC)
 HDR           := $(wildcard src/*/*.h src/proto/*/*.h)
 
@@ -106,6 +107,10 @@ $(O)/scrypto.o: $(CRYPTO_SRC) src/lib/scrypto.h src/lib/blake3.h $(WOLFSSL_LIB)
 	@mkdir -p $(O)
 	$(CC) $(ALL_CFLAGS) $(WOLFSSL_FLAGS) -c $< -o $@
 
+$(O)/tls12.o: $(TLS12_SRC) src/proto/tls/tls12.h src/proto/tls/tls13.h src/proto/tls/certverify.h src/proto/transport/transport.h src/proto/transport/fmlink.h $(WOLFSSL_LIB)
+	@mkdir -p $(O)
+	$(CC) $(ALL_CFLAGS) $(WOLFSSL_FLAGS) -c $< -o $@
+
 QUIC_FLAGS = -Isrc/proto/quic $(shell cat $(NGTCP2_LIB).cflags 2>/dev/null)
 
 HY2_OBJS := $(O)/quic.o $(O)/qcssl.o $(O)/qcbrutal.o $(O)/hy2wire.o $(O)/hy2conn.o $(O)/hy2node.o $(O)/hy2run.o $(O)/hy2check.o $(O)/hy2dial.o $(O)/hy2loss.o
@@ -152,9 +157,9 @@ $(O)/hy2loss.o: src/proto/hysteria2/hy2loss.c src/proto/hysteria2/hy2loss.h
 	@mkdir -p $(O)
 	$(CC) $(ALL_CFLAGS) -c $< -o $@
 
-$(O)/tunvless: $(SRC) $(HDR) $(HY2_OBJS) $(O)/scrypto.o $(O)/certzip.o $(NGTCP2_LIB) $(WOLFSSL_LIB) $(CERTZIP_LIBS)
+$(O)/tunvless: $(SRC) $(HDR) $(HY2_OBJS) $(O)/scrypto.o $(O)/tls12.o $(O)/certzip.o $(NGTCP2_LIB) $(WOLFSSL_LIB) $(CERTZIP_LIBS)
 	@mkdir -p $(O)
-	$(CC) $(ALL_CFLAGS) $(HY2_CFLAGS) $(DEFS) -o $@ $(SRC) $(HY2_OBJS) $(O)/scrypto.o $(O)/certzip.o $(NGTCP2_LIB) $(WOLFSSL_LIB) \
+	$(CC) $(ALL_CFLAGS) $(HY2_CFLAGS) $(DEFS) -o $@ $(SRC) $(HY2_OBJS) $(O)/scrypto.o $(O)/tls12.o $(O)/certzip.o $(NGTCP2_LIB) $(WOLFSSL_LIB) \
 		$(CERTZIP_LIBS) $(LDFLAGS) -Wl,--gc-sections -lpthread
 
 install: $(O)/tunvless
@@ -211,7 +216,7 @@ XHUP_SRC := src/proto/tls/h2.c src/proto/tls/h2wire.c src/proto/transport/transp
             src/proto/transport/fmlink.c src/proto/transport/fmfrag.c src/proto/transport/fmhc.c src/proto/transport/fmask.c \
             src/proto/transport/fmsd.c src/proto/transport/fmsdtab.c src/lib/gorand.c \
             $(SCRATCH_SRC)
-$(T)/xhupmatch: tests/xhupmatch.c tests/trvenc-stub.c src/proto/transport/trxhttp.c $(XHUP_SRC) $(T)/scrypto.o $(HDR)
+$(T)/xhupmatch: tests/xhupmatch.c tests/trvenc-stub.c src/proto/transport/trxhttp.c $(XHUP_SRC) $(T)/scrypto.o $(T)/tls12-stub.o $(HDR)
 	@mkdir -p $(T)
 	$(CC) $(T_CFLAGS) -Wl,--wrap=calloc -Wl,--wrap=xconn_io -o $@ tests/xhupmatch.c tests/trvenc-stub.c $(XHUP_SRC) $(T_FMCRYPTO) -lpthread
 
@@ -223,7 +228,7 @@ WS_SRC := src/proto/transport/trws.c src/proto/transport/trupgrade.c src/proto/t
           src/proto/transport/fmlink.c src/proto/transport/fmfrag.c src/proto/transport/fmhc.c src/proto/transport/fmask.c \
           src/proto/transport/fmsd.c src/proto/transport/fmsdtab.c src/lib/gorand.c \
           $(SCRATCH_SRC)
-$(T)/wsmatch: tests/wsmatch.c tests/trvenc-stub.c $(WS_SRC) $(T)/scrypto.o $(HDR)
+$(T)/wsmatch: tests/wsmatch.c tests/trvenc-stub.c $(WS_SRC) $(T)/scrypto.o $(T)/tls12-stub.o $(HDR)
 	@mkdir -p $(T)
 	$(CC) $(T_CFLAGS) -o $@ tests/wsmatch.c tests/trvenc-stub.c $(WS_SRC) $(T_FMCRYPTO) -lpthread
 
@@ -232,11 +237,11 @@ $(T)/xhoptsmatch: tests/xhoptsmatch.c src/proto/transport/xhopts.c src/proto/tra
 	$(CC) $(T_CFLAGS) -o $@ tests/xhoptsmatch.c src/proto/transport/xhopts.c src/proto/transport/xhreq.c src/lib/osrand.c
 
 XMUX_SRC := $(XHUP_SRC) src/proto/transport/trxhttp.c
-$(T)/xmuxmatch: tests/xmuxmatch.c tests/trvenc-stub.c $(XMUX_SRC) $(T)/scrypto.o $(HDR)
+$(T)/xmuxmatch: tests/xmuxmatch.c tests/trvenc-stub.c $(XMUX_SRC) $(T)/scrypto.o $(T)/tls12-stub.o $(HDR)
 	@mkdir -p $(T)
 	$(CC) $(T_CFLAGS) -o $@ tests/xmuxmatch.c tests/trvenc-stub.c $(XMUX_SRC) $(T_FMCRYPTO) -lpthread
 
-$(T)/pqfallbackmatch: tests/pqfallbackmatch.c src/proto/transport/trsec.c $(FMLINK_SRC) $(T)/scrypto.o $(HDR)
+$(T)/pqfallbackmatch: tests/pqfallbackmatch.c src/proto/transport/trsec.c $(FMLINK_SRC) $(T)/scrypto.o $(T)/tls12-stub.o $(HDR)
 	@mkdir -p $(T)
 	$(CC) $(T_CFLAGS) -o $@ tests/pqfallbackmatch.c src/proto/transport/trsec.c $(FMLINK_SRC) $(T_FMCRYPTO) -lpthread
 
@@ -292,7 +297,7 @@ $(T)/tunnamematch: tests/tunnamematch.c src/tunnel/tun.c $(HDR)
 
 # grpcmatch includes trgrpc.c (its framing functions are static) and links the rest for real.
 GRPC_TEST_SRC := $(filter-out src/proto/transport/trgrpc.c,$(XHUP_SRC)) src/proto/transport/trxhttp.c
-$(T)/grpcmatch: tests/grpcmatch.c tests/trvenc-stub.c src/proto/transport/trgrpc.c $(GRPC_TEST_SRC) $(T)/scrypto.o $(HDR)
+$(T)/grpcmatch: tests/grpcmatch.c tests/trvenc-stub.c src/proto/transport/trgrpc.c $(GRPC_TEST_SRC) $(T)/scrypto.o $(T)/tls12-stub.o $(HDR)
 	@mkdir -p $(T)
 	$(CC) $(T_CFLAGS) -Wl,--wrap=calloc -o $@ tests/grpcmatch.c tests/trvenc-stub.c $(GRPC_TEST_SRC) $(T_FMCRYPTO) -lpthread
 
@@ -377,6 +382,14 @@ $(T)/scrypto.o: $(CRYPTO_SRC) src/lib/scrypto.h src/lib/blake3.h $(TW_LIB)
 	@mkdir -p $(T)
 	$(CC) $(T_CFLAGS) $(TW_FLAGS) -c $< -o $@
 
+$(T)/tls12.o: $(TLS12_SRC) src/proto/tls/tls12.h src/proto/tls/tls13.h src/proto/tls/certverify.h src/proto/transport/transport.h src/proto/transport/fmlink.h $(TW_LIB)
+	@mkdir -p $(T)
+	$(CC) $(T_CFLAGS) $(TW_FLAGS) -c $< -o $@
+
+$(T)/tls12-stub.o: $(TLS12_SRC) src/proto/tls/tls12.h src/proto/tls/tls13.h
+	@mkdir -p $(T)
+	$(CC) $(T_CFLAGS) -DSTEER_TLS12_STUB -c $< -o $@
+
 $(T)/certgen.o: tests/certgen.c tests/certgen.h $(TW_LIB)
 	@mkdir -p $(T)
 	$(CC) $(T_CFLAGS) $(TW_FLAGS) -c $< -o $@
@@ -407,7 +420,7 @@ $(T)/quicmatch: tests/quicmatch.c tests/hoppair.h tests/certgen.h tests/unit.h $
 	$(CC) $(T_CFLAGS) $(QC_TFLAGS) -Wl,--wrap=connect -Wl,--wrap=getsockopt -Wl,--wrap=sendmsg -Wl,--wrap=sendmmsg -Wl,--wrap=recvmmsg \
 		-Wl,--wrap=__getsockopt64 -Wl,--wrap=__sendmsg64 -Wl,--wrap=__sendmmsg64 -Wl,--wrap=__recvmmsg64 -o $@ tests/quicmatch.c $(T)/quic.o $(T)/qcssl.o $(T)/qcbrutal.o $(T)/certgen.o src/lib/portpick.c $(SCRATCH_SRC) $(TN_LIB) $(T_CRYPTO)
 
-T_FMCRYPTO = -Wl,--wrap=sc_wipe $(T)/scrypto.o $(TW_LIB)
+T_FMCRYPTO = -Wl,--wrap=sc_wipe $(T)/scrypto.o $(T)/tls12-stub.o $(TW_LIB)
 
 $(T)/certzip.o: src/lib/certzip.c src/lib/certzip.h $(CERTZIP_LIBS)
 	@mkdir -p $(T)
@@ -448,16 +461,16 @@ HY2CHK_WRAP := -Wl,--wrap=tr_sock_prepare -Wl,--wrap=connect -Wl,--wrap=timerfd_
                -Wl,--wrap=timerfd_create \
                -Wl,--wrap=qcssl_ctx_client -Wl,--wrap=os_rand_seed -Wl,--wrap=qc_open
 $(T)/hy2checkmatch: tests/hy2checkmatch.c tests/hy2peer.h tests/hy2-frozen.h tests/certgen.h tests/unit.h $(HY2CHK_SRC) \
-                    src/proto/transport/trdial.c $(T)/quic.o $(T)/qcssl.o $(T)/qcbrutal.o $(T)/certgen.o $(T)/scrypto.o $(T)/certzip.o $(HDR)
+                    src/proto/transport/trdial.c $(T)/quic.o $(T)/qcssl.o $(T)/qcbrutal.o $(T)/certgen.o $(T)/scrypto.o $(T)/tls12.o $(T)/certzip.o $(HDR)
 	$(CC) $(T_CFLAGS) $(QC_TFLAGS) -Isrc/proto/hysteria2 $(HY2CHK_WRAP) -o $@ tests/hy2checkmatch.c $(HY2CHK_SRC) \
-		$(T)/quic.o $(T)/qcssl.o $(T)/qcbrutal.o $(T)/certgen.o $(T_CERTZIP) $(TN_LIB) $(T_CRYPTO)
+		$(T)/quic.o $(T)/qcssl.o $(T)/qcbrutal.o $(T)/certgen.o $(T)/tls12.o $(T_CERTZIP) $(TN_LIB) $(T_CRYPTO)
 
 HY2DIAL_SRC := src/proto/hysteria2/hy2dial.c src/proto/hysteria2/hy2loss.c $(filter-out src/proto/hysteria2/hy2run.c src/proto/hysteria2/hy2check.c,$(HY2CHK_SRC))
 $(T)/hy2dialmatch: tests/hy2dialmatch.c tests/hy2peer.h tests/hy2-frozen.h tests/certgen.h tests/unit.h $(HY2DIAL_SRC) \
-                   src/proto/transport/trdial.c $(T)/quic.o $(T)/qcssl.o $(T)/qcbrutal.o $(T)/certgen.o $(T)/scrypto.o $(T)/certzip.o $(HDR)
+                   src/proto/transport/trdial.c $(T)/quic.o $(T)/qcssl.o $(T)/qcbrutal.o $(T)/certgen.o $(T)/scrypto.o $(T)/tls12.o $(T)/certzip.o $(HDR)
 	$(CC) $(T_CFLAGS) $(QC_TFLAGS) -Isrc/proto/hysteria2 -Wl,--wrap=tr_sock_prepare -Wl,--wrap=connect \
 		-Wl,--wrap=qc_stream_consumed -Wl,--wrap=qc_conn_consumed -o $@ tests/hy2dialmatch.c \
-		$(HY2DIAL_SRC) $(T)/quic.o $(T)/qcssl.o $(T)/qcbrutal.o $(T)/certgen.o $(T_CERTZIP) $(TN_LIB) $(T_CRYPTO)
+		$(HY2DIAL_SRC) $(T)/quic.o $(T)/qcssl.o $(T)/qcbrutal.o $(T)/certgen.o $(T)/tls12.o $(T_CERTZIP) $(TN_LIB) $(T_CRYPTO)
 
 $(T)/scryptomatch: tests/scryptomatch.c tests/scrypto-pki.h tests/scrypto-pq.h $(T)/scrypto.o
 	$(CC) $(T_CFLAGS) -o $@ tests/scryptomatch.c $(T_CRYPTO)
@@ -471,38 +484,38 @@ $(T)/echmatch: tests/echmatch.c src/proto/tls/ech.c src/proto/tls/reality.c $(T)
 # vlessmatch includes trdial.c, roots.c and trsec.c (it reaches their static seams).
 VLM_SRC := $(filter-out src/proto/transport/trsec.c src/proto/tls/certverify.c,$(CLIENT_SRC)) src/proto/transport/sockmark.c
 $(T)/vlessmatch: tests/vlessmatch.c tests/fmrelay.h tests/sdpeer.h $(CLIENT_SRC) src/proto/transport/trdial.c src/proto/transport/sockmark.c src/proto/tls/roots.c \
-                 $(T)/certgen.o $(T)/scrypto.o $(T)/certzip.o $(HDR)
-	$(CC) $(T_CFLAGS) -DSTEER_HAVE_X509WRITE -Wl,--wrap=sc_wipe -Wl,--wrap=time -Wl,--wrap=__time64 -o $@ tests/vlessmatch.c $(VLM_SRC) $(T)/certgen.o $(T_CERTZIP) $(T_CRYPTO)
+                 $(T)/certgen.o $(T)/scrypto.o $(T)/tls12.o $(T)/certzip.o $(HDR)
+	$(CC) $(T_CFLAGS) -DSTEER_HAVE_X509WRITE -Wl,--wrap=sc_wipe -Wl,--wrap=time -Wl,--wrap=__time64 -o $@ tests/vlessmatch.c $(VLM_SRC) $(T)/certgen.o $(T)/tls12.o $(T_CERTZIP) $(T_CRYPTO)
 
 $(T)/xconnmatch: tests/xconnmatch.c tests/vlessmatch.c tests/fmrelay.h tests/sdpeer.h $(CLIENT_SRC) src/proto/transport/trdial.c src/proto/transport/sockmark.c \
-                 src/proto/tls/roots.c $(T)/certgen.o $(T)/scrypto.o $(T)/certzip.o $(HDR)
+                 src/proto/tls/roots.c $(T)/certgen.o $(T)/scrypto.o $(T)/tls12.o $(T)/certzip.o $(HDR)
 	$(CC) $(T_CFLAGS) -DSTEER_HAVE_X509WRITE -Wl,--wrap=sc_wipe -Wl,--wrap=send -Wl,--wrap=fm_grow -Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=time -Wl,--wrap=__time64 -o $@ tests/xconnmatch.c \
-		$(VLM_SRC) $(T)/certgen.o $(T_CERTZIP) $(T_CRYPTO)
+		$(VLM_SRC) $(T)/certgen.o $(T)/tls12.o $(T_CERTZIP) $(T_CRYPTO)
 
-$(T)/probematch: tests/probematch.c $(CLIENT_SRC) src/proto/transport/trdial.c src/proto/transport/sockmark.c src/proto/tls/roots.c $(T)/scrypto.o $(T)/certzip.o $(HDR)
-	$(CC) $(T_CFLAGS) -o $@ tests/probematch.c $(CLIENT_SRC) src/proto/transport/sockmark.c src/proto/tls/roots.c $(T_CERTZIP) $(T_CRYPTO)
+$(T)/probematch: tests/probematch.c $(CLIENT_SRC) src/proto/transport/trdial.c src/proto/transport/sockmark.c src/proto/tls/roots.c $(T)/scrypto.o $(T)/tls12.o $(T)/certzip.o $(HDR)
+	$(CC) $(T_CFLAGS) -o $@ tests/probematch.c $(CLIENT_SRC) src/proto/transport/sockmark.c src/proto/tls/roots.c $(T)/tls12.o $(T_CERTZIP) $(T_CRYPTO)
 
 FP_TEST_SRC := $(filter-out src/proto/transport/trfp.c,$(CLIENT_SRC)) src/proto/transport/trdial.c src/proto/transport/sockmark.c
-$(T)/fpmatch: tests/fpmatch.c src/proto/transport/trfp.c $(FP_TEST_SRC) src/proto/tls/roots.c $(T)/scrypto.o $(T)/certzip.o $(HDR)
-	$(CC) $(T_CFLAGS) -o $@ tests/fpmatch.c $(FP_TEST_SRC) src/proto/tls/roots.c $(T_CERTZIP) $(T_CRYPTO)
+$(T)/fpmatch: tests/fpmatch.c src/proto/transport/trfp.c $(FP_TEST_SRC) src/proto/tls/roots.c $(T)/scrypto.o $(T)/tls12.o $(T)/certzip.o $(HDR)
+	$(CC) $(T_CFLAGS) -o $@ tests/fpmatch.c $(FP_TEST_SRC) src/proto/tls/roots.c $(T)/tls12.o $(T_CERTZIP) $(T_CRYPTO)
 
-$(T)/takematch: tests/takematch.c src/proto/vless/vldial.c $(CLIENT_SRC) src/proto/transport/sockmark.c $(T)/scrypto.o $(T)/certzip.o $(HDR)
+$(T)/takematch: tests/takematch.c src/proto/vless/vldial.c $(CLIENT_SRC) src/proto/transport/sockmark.c $(T)/scrypto.o $(T)/tls12.o $(T)/certzip.o $(HDR)
 	$(CC) $(T_CFLAGS) -o $@ tests/takematch.c src/proto/vless/vldial.c $(TUNNEL_SRC) $(CLIENT_SRC) \
-		src/ctlinb.c src/ctlnodes.c src/proto/transport/trdial.c src/proto/transport/sockmark.c src/proto/tls/roots.c $(T_CERTZIP) $(T_CRYPTO)
+		src/ctlinb.c src/ctlnodes.c src/proto/transport/trdial.c src/proto/transport/sockmark.c src/proto/tls/roots.c $(T)/tls12.o $(T_CERTZIP) $(T_CRYPTO)
 
-$(T)/xudpmatch: tests/xudpmatch.c src/proto/vless/vldial.c $(CLIENT_SRC) src/proto/transport/sockmark.c $(T)/scrypto.o $(T)/certzip.o $(HDR)
+$(T)/xudpmatch: tests/xudpmatch.c src/proto/vless/vldial.c $(CLIENT_SRC) src/proto/transport/sockmark.c $(T)/scrypto.o $(T)/tls12.o $(T)/certzip.o $(HDR)
 	$(CC) $(T_CFLAGS) -o $@ tests/xudpmatch.c $(TUNNEL_SRC) $(CLIENT_SRC) \
-		src/ctlinb.c src/ctlnodes.c src/proto/transport/trdial.c src/proto/transport/sockmark.c src/proto/tls/roots.c $(T_CERTZIP) $(T_CRYPTO)
+		src/ctlinb.c src/ctlnodes.c src/proto/transport/trdial.c src/proto/transport/sockmark.c src/proto/tls/roots.c $(T)/tls12.o $(T_CERTZIP) $(T_CRYPTO)
 
 # -- probes for the interop scripts (a real server on the other side) --
 
-$(T)/vencprobe: tests/vencprobe.c $(CLIENT_SRC) src/proto/transport/sockmark.c $(T)/scrypto.o $(T)/certzip.o $(HDR)
+$(T)/vencprobe: tests/vencprobe.c $(CLIENT_SRC) src/proto/transport/sockmark.c $(T)/scrypto.o $(T)/tls12.o $(T)/certzip.o $(HDR)
 	$(CC) $(T_CFLAGS) -o $@ tests/vencprobe.c $(CLIENT_SRC) src/proto/transport/trdial.c src/proto/transport/sockmark.c \
-		src/proto/tls/roots.c $(T_CERTZIP) $(T_CRYPTO)
+		src/proto/tls/roots.c $(T)/tls12.o $(T_CERTZIP) $(T_CRYPTO)
 
-$(T)/xudpprobe: tests/xudpprobe.c src/proto/vless/vldial.c $(CLIENT_SRC) src/proto/transport/sockmark.c $(T)/scrypto.o $(T)/certzip.o $(HDR)
+$(T)/xudpprobe: tests/xudpprobe.c src/proto/vless/vldial.c $(CLIENT_SRC) src/proto/transport/sockmark.c $(T)/scrypto.o $(T)/tls12.o $(T)/certzip.o $(HDR)
 	$(CC) $(T_CFLAGS) -o $@ tests/xudpprobe.c src/proto/vless/vldial.c $(CLIENT_SRC) \
-		src/proto/transport/trdial.c src/proto/transport/sockmark.c src/proto/tls/roots.c $(T_CERTZIP) $(T_CRYPTO)
+		src/proto/transport/trdial.c src/proto/transport/sockmark.c src/proto/tls/roots.c $(T)/tls12.o $(T_CERTZIP) $(T_CRYPTO)
 
 $(T)/h2tap: tests/h2tap.c tests/hpackread.h $(T)/scrypto.o
 	$(CC) $(T_CFLAGS) -o $@ tests/h2tap.c $(T_CRYPTO)

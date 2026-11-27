@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { m } from '$lib/i18n';
 import type { FircStatus, FircTunnel, FircTunnelState } from '$lib/types/firc';
 import {
+	formatFircProbeError,
 	formatFircSkipReason,
 	formatFircSubError,
 	getFircTunnelDiagnostic,
@@ -88,6 +89,44 @@ describe('formatFircSkipReason', () => {
 			m.firc_skip_unsupported_transport({ detail: 'kcp' }),
 		);
 		expect(formatFircSkipReason('custom unmapped reason')).toBe('custom unmapped reason');
+	});
+});
+
+describe('formatFircProbeError', () => {
+	it('classifies probe failures accurately instead of labeling everything timeout', () => {
+		expect(formatFircProbeError('')).toBe(m.firc_tunnel_edit_probe_timeout());
+		expect(formatFircProbeError('node did not answer the TCP connection (timeout)')).toBe(
+			m.firc_tunnel_edit_probe_timeout(),
+		);
+		expect(formatFircProbeError('node did not answer the ClientHello (timeout)')).toBe(
+			m.firc_tunnel_edit_probe_tls_timeout(),
+		);
+		expect(formatFircProbeError('ServerHello without key_share')).toBe(
+			m.firc_tunnel_edit_probe_tls(),
+		);
+		expect(
+			formatFircProbeError(
+				'server did not prove its identity: certificate does not chain to a root or names another host',
+			),
+		).toBe(m.firc_tunnel_edit_probe_cert());
+		expect(formatFircProbeError('server did not accept the key')).toBe(
+			m.firc_tunnel_edit_probe_rejected(),
+		);
+		expect(formatFircProbeError('connection refused')).toBe(m.firc_tunnel_edit_probe_refused());
+		expect(formatFircProbeError('name did not resolve')).toBe(m.firc_tunnel_edit_probe_dns());
+		expect(formatFircProbeError('czech.example.com does not resolve')).toBe(
+			m.firc_tunnel_edit_probe_dns(),
+		);
+		expect(
+			formatFircProbeError('server rejected ECH (stale or unknown ECH key in the link)'),
+		).toBe(m.firc_tunnel_edit_probe_tls());
+		expect(formatFircProbeError('no answer from tech.example.com')).toBe(
+			m.firc_tunnel_edit_probe_failed(),
+		);
+		expect(formatFircProbeError('server sent no data')).toBe(m.firc_tunnel_edit_probe_no_data());
+		expect(formatFircProbeError('server answered 404 instead of 101 (check path and host)')).toBe(
+			m.firc_tunnel_edit_probe_failed(),
+		);
 	});
 });
 

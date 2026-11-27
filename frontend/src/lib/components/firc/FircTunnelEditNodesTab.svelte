@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { m } from '$lib/i18n';
 	import type { FircTunnelFilteredNode, FircTunnelProbeRow } from '$lib/types/firc';
-	import { formatFircSkipReason } from '$lib/utils/fircDiagnostics';
+	import { formatFircProbeError, formatFircSkipReason } from '$lib/utils/fircDiagnostics';
 	import { Button, Badge, Toggle, IconButton } from '$lib/components/ui';
 	import { Activity, ArrowUp, ArrowDown, Search } from 'lucide-svelte';
 	import { totalProbeLatencyMs, type DisplayNode } from './fircTunnelEdit';
@@ -172,7 +172,7 @@
 											{#if pr}
 												{@const totalMs = totalProbeLatencyMs(pr)}
 												{#if !pr.ok}
-													<span class="probe-err" title={pr.why}>{m.firc_tunnel_edit_probe_timeout()}</span>
+													<span class="probe-err" title={pr.why}>{formatFircProbeError(pr.why)}</span>
 												{:else if totalMs !== null}
 													<span
 														class="probe-ok"

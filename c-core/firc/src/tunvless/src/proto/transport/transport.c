@@ -287,7 +287,7 @@ void transport_tx_direct(struct transport *t) {
 }
 
 int transport_can_tx_direct(const struct transport *t) {
-    return !t->enc && t->fr == &tr_tcp && !t->link.plain;
+    return !t->enc && t->fr == &tr_tcp && !t->link.plain && !t->link.tls.t12;
 }
 
 void transport_moved(struct transport *t) {

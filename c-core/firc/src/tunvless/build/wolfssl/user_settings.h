@@ -1,7 +1,7 @@
 /* wolfSSL build options for tunvless — the ONLY place they are written.
  *
- * Every wolfSSL .c sees this file (-DWOLFSSL_USER_SETTINGS), and so does the one tunvless file
- * that includes wolfSSL headers, src/lib/scrypto.c. That is a correctness condition, not taste:
+ * Every wolfSSL .c sees this file (-DWOLFSSL_USER_SETTINGS), and so do the tunvless files
+ * that include wolfSSL headers (src/lib/scrypto.c, src/proto/tls/tls12.c, src/proto/quic/qcssl.c). That is a correctness condition, not taste:
  * the layout of wolfSSL structures (Aes, wc_Sha256, Hmac...) depends on these macros, and a
  * library built with one set next to a caller built with another corrupts memory silently. So
  * the options live nowhere else — not on command lines, not in configure.
@@ -12,9 +12,10 @@
  * name and validity (RSA PKCS#1 v1.5 and PSS, ECDSA P-256/P-384/P-521 signatures). The chain is
  * checked by wolfSSL's X509 store, which is why part of its TLS layer (OPENSSL_EXTRA) is built.
  *
- * WHAT IS LEFT OUT ON PURPOSE: wolfSSL's TLS 1.2 and older, a TLS server, DH, DSA, DES, RC4, MD4, PSK, PBKDF, Ed25519 (certverify.c
+ * WHAT IS LEFT OUT ON PURPOSE: SSLv3/TLS 1.0/1.1 (NO_OLD_TLS), a TLS server, DH, DSA, DES, RC4, MD4, PSK, PBKDF, Ed25519 (certverify.c
  * reads the Ed25519 Reality certificate itself), the filesystem (certverify.c reads the roots
- * itself, into a buffer) and socket I/O.
+ * itself, into a buffer) and socket I/O. TLS 1.2 client remains enabled as a fallback for
+ * security=tls nodes that do not support TLS 1.3 (src/proto/tls/tls12.c).
  *
  * SIZE. tunvless links wolfSSL statically with -ffunction-sections and --gc-sections, so what is
  * built but never called does not reach the binary.
@@ -59,10 +60,12 @@ extern int os_rand_seed(unsigned char *out, unsigned int n);
  * compatibility layer). The OpenWrt and Entware wolfssl package does the same. */
 #define HAVE_REPRODUCIBLE_BUILD
 
-/* ---- wolfSSL TLS stack: just what the X509 store needs --------------------------------- */
+/* ---- wolfSSL TLS stack: X509 store, QUIC TLS 1.3, and TLS 1.2 fallback ----------------- */
 #define WOLFSSL_TLS13
-#define WOLFSSL_NO_TLS12
 #define NO_OLD_TLS
+/* Always invoke the peer verify callback on the leaf cert (error_depth == 0) so tls12.c and
+ * qcssl.c can run certverify / pin checks on the complete chain even when intermediates pass. */
+#define WOLFSSL_ALWAYS_VERIFY_CB
 /* No TLS server in the shipped library. STEER_WOLFSSL_SERVER gives one to the test build of the
  * library (Makefile) for the tests that need a TLS peer, as WOLFSSL_CERT_GEN gives them
  * certificate issuing; tunvless builds never set it. */
