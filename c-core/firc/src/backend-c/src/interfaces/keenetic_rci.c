@@ -12,6 +12,7 @@
 
 #include "firc/log.h"
 #include "firc/rci_token.h"
+#include "firc/utf8.h"
 
 static bool is_space(char c) {
     return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f';
@@ -25,7 +26,8 @@ static void copy_trimmed(char *dst, size_t dst_sz, const char *src) {
     while (*src && is_space(*src)) { src++; }
     size_t len = strlen(src);
     while (len > 0 && is_space(src[len - 1])) { len--; }
-    if (len >= dst_sz) { len = dst_sz - 1; }
+    /* Описания NDMS — UTF-8 (кириллица, флаги): резать только по границе символа. */
+    if (len >= dst_sz) { len = (size_t)firc_utf8_clamp(src, (int)dst_sz - 1); }
     memcpy(dst, src, len);
     dst[len] = '\0';
 }
@@ -209,8 +211,10 @@ firc_err_t firc_kn_build_aliases(const firc_kn_iface_meta_t *metas, size_t n, fi
         if (strcmp(ndms_name, system_name) == 0) { ndms_name[0] = '\0'; }
 
         snprintf(arr[count].system_name, sizeof(arr[count].system_name), "%.15s", system_name);
-        snprintf(arr[count].description, sizeof(arr[count].description), "%.63s", description);
-        snprintf(arr[count].ndms_name, sizeof(arr[count].ndms_name), "%.63s", ndms_name);
+        snprintf(arr[count].description, sizeof(arr[count].description), "%.*s",
+                 firc_utf8_clamp(description, 63), description);
+        snprintf(arr[count].ndms_name, sizeof(arr[count].ndms_name), "%.*s", firc_utf8_clamp(ndms_name, 63),
+                 ndms_name);
         arr[count].inet = metas[i].inet;
         count++;
     }

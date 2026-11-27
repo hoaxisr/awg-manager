@@ -18,6 +18,7 @@
 #include "firc/keenetic_resolvers.h"
 #include "firc/log.h"
 #include "firc/models.h"
+#include "firc/utf8.h"
 
 static void must_route(firc_httpd_t *h, const char *method, const char *pattern, firc_http_handler_fn fn,
                        void *ud) {
@@ -799,7 +800,8 @@ void firc_system_name_tunnels(firc_iface_info_t *ifaces, size_t n, const firc_tu
         if (ts->t[i].description[0] == '\0') { continue; }
         for (size_t j = 0; j < n; j++) {
             if (strcmp(ifaces[j].id, ts->t[i].device) == 0) {
-                snprintf(ifaces[j].name, sizeof(ifaces[j].name), "%.63s", ts->t[i].description);
+                snprintf(ifaces[j].name, sizeof(ifaces[j].name), "%.*s",
+                         firc_utf8_clamp(ts->t[i].description, 63), ts->t[i].description);
             }
         }
     }

@@ -2854,9 +2854,13 @@ firc_err_t firc_app_list_interfaces(const firc_kn_aliases_t *aliases, const firc
         memset(&arr[n], 0, sizeof(arr[n]));
         snprintf(arr[n].id, sizeof(arr[n].id), "%s", p->ifa_name);
         const char *description = firc_kn_aliases_lookup(aliases, arr[n].id);
-        if (description) { snprintf(arr[n].name, sizeof(arr[n].name), "%.63s", description); }
+        if (description) {
+            snprintf(arr[n].name, sizeof(arr[n].name), "%.*s", firc_utf8_clamp(description, 63), description);
+        }
         const char *ndms_name = firc_kn_aliases_ndms_name(aliases, arr[n].id);
-        if (ndms_name) { snprintf(arr[n].ndms_name, sizeof(arr[n].ndms_name), "%.63s", ndms_name); }
+        if (ndms_name) {
+            snprintf(arr[n].ndms_name, sizeof(arr[n].ndms_name), "%.*s", firc_utf8_clamp(ndms_name, 63), ndms_name);
+        }
         arr[n].role = iface_role(arr[n].id, p->ifa_flags, firc_kn_aliases_inet(aliases, arr[n].id), ts);
         if (aliases->n > 0 && arr[n].role != FIRC_IFACE_TUNNEL && !firc_kn_aliases_known(aliases, arr[n].id)) {
             continue;
