@@ -235,9 +235,9 @@ export function primaryIface(iface: string | string[]): string {
 }
 
 export function formatIfaceOption(opt: FircInterfaceOption): string {
-	const rawDesc = opt.name || opt.ndmsName || '';
-	const shortDesc = rawDesc.split(' (')[0].trim();
-	return shortDesc && shortDesc !== opt.id ? `${opt.id} — ${shortDesc}` : opt.id;
+	// Имя целиком: хвост в скобках часто и есть различие («🇳🇱 WG (NL)», «WG (DE)»).
+	const desc = (opt.name || opt.ndmsName || '').trim();
+	return desc && desc !== opt.id ? `${opt.id} — ${desc}` : opt.id;
 }
 
 /** Делает id основным выходом группы; true — пикер надо закрыть. */
