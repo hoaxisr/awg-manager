@@ -7646,6 +7646,22 @@ definitions:
           the cached and force=true branches of Check (task #559-4, MAJOR-2).
         example: "2024-01-16T05:00:00Z"
         type: string
+      upgradeError:
+        description: |-
+          UpgradeError — строки ошибок opkg, если последнее обновление не
+          установилось, а демон остался жив (internal/updater.Service.LastUpgradeFailure).
+        example: 'wget: bad address ''bin.entware.net'''
+        type: string
+      upgradeErrorAt:
+        example: "2024-01-15T05:00:00Z"
+        type: string
+      upgradeErrorHint:
+        enum:
+        - dns
+        - space
+        - lock
+        example: dns
+        type: string
     type: object
   api.UpdatePeerRequestDTO:
     properties:

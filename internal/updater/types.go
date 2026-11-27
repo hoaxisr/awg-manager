@@ -21,6 +21,15 @@ type UpdateInfo struct {
 	Warning   string    `json:"warning,omitempty"`
 }
 
+// UpgradeFailure — почему opkg не установил обновление. Reason — строки ошибок
+// из лога opkg как есть; Hint — код подсказки для UI: "dns", "space", "lock"
+// или пусто.
+type UpgradeFailure struct {
+	Reason string
+	Hint   string
+	At     time.Time
+}
+
 var ErrUpgradeInProgress = errors.New("upgrade already in progress")
 
 // ErrRestoreInProgress — идёт восстановление из резервной копии или снимка.

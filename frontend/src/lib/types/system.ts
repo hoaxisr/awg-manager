@@ -320,6 +320,10 @@ export interface UpdateInfo {
 	nextAutoInstallAt?: string;
 	/** Absent until the first auto-install attempt has run. */
 	lastAutoInstallAt?: string;
+	/** opkg error lines when the last update was not installed and the daemon stayed alive. */
+	upgradeError?: string;
+	upgradeErrorHint?: 'dns' | 'space' | 'lock';
+	upgradeErrorAt?: string;
 }
 
 /** Снимок настроек, который AWG Manager сохраняет перед установкой обновления. */

@@ -25,6 +25,11 @@ type UpdateInfoData struct {
 	// the cached and force=true branches of Check (task #559-4, MAJOR-2).
 	NextAutoInstallAt string `json:"nextAutoInstallAt,omitempty" example:"2024-01-16T05:00:00Z"`
 	LastAutoInstallAt string `json:"lastAutoInstallAt,omitempty" example:"2024-01-15T05:00:00Z"`
+	// UpgradeError — строки ошибок opkg, если последнее обновление не
+	// установилось, а демон остался жив (internal/updater.Service.LastUpgradeFailure).
+	UpgradeError     string `json:"upgradeError,omitempty" example:"wget: bad address 'bin.entware.net'"`
+	UpgradeErrorHint string `json:"upgradeErrorHint,omitempty" enums:"dns,space,lock" example:"dns"`
+	UpgradeErrorAt   string `json:"upgradeErrorAt,omitempty" example:"2024-01-15T05:00:00Z"`
 }
 
 // UpdateCheckResponse is the envelope for GET /system/update/check.
@@ -78,6 +83,9 @@ type updateCheckResponseData struct {
 	updater.UpdateInfo
 	NextAutoInstallAt string `json:"nextAutoInstallAt,omitempty"`
 	LastAutoInstallAt string `json:"lastAutoInstallAt,omitempty"`
+	UpgradeError      string `json:"upgradeError,omitempty"`
+	UpgradeErrorHint  string `json:"upgradeErrorHint,omitempty"`
+	UpgradeErrorAt    string `json:"upgradeErrorAt,omitempty"`
 }
 
 // UpdateHandler handles update check and apply endpoints.
@@ -128,6 +136,11 @@ func (h *UpdateHandler) Check(w http.ResponseWriter, r *http.Request) {
 	}
 	if !last.IsZero() {
 		data.LastAutoInstallAt = last.Format(time.RFC3339)
+	}
+	if f := h.updater.LastUpgradeFailure(); f.Reason != "" {
+		data.UpgradeError = f.Reason
+		data.UpgradeErrorHint = f.Hint
+		data.UpgradeErrorAt = f.At.Format(time.RFC3339)
 	}
 
 	response.Success(w, data)

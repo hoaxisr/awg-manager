@@ -29,6 +29,9 @@ type Service struct {
 
 	// Guard against concurrent upgrades
 	upgrading bool
+	// failure — почему не установилось последнее обновление (под mu); пусто,
+	// пока попытки не было или последняя началась заново.
+	failure UpgradeFailure
 
 	// dataDir is where the auto-install marker file lives.
 	dataDir string
@@ -249,8 +252,9 @@ func (s *Service) ApplyUpgrade(ctx context.Context) error {
 		return fmt.Errorf("no download URL available, run check first")
 	}
 	s.upgrading = true
+	s.failure = UpgradeFailure{}
 	s.mu.Unlock()
-	if err := upgradeWithDownloader(ctx, downloadURL, wantSHA256, s.downloader, s.snapshotBeforeInstall); err != nil {
+	if err := upgradeWithDownloader(ctx, downloadURL, wantSHA256, s.downloader, s.snapshotBeforeInstall, s.onUpgradeExit); err != nil {
 		s.mu.Lock()
 		s.upgrading = false
 		s.mu.Unlock()
@@ -267,6 +271,31 @@ func (s *Service) ApplyUpgrade(ctx context.Context) error {
 		s.mu.Unlock()
 	})
 	return nil
+}
+
+// onUpgradeExit — итог скрипта установки, который демон дождался. Ненулевой
+// код при живом демоне значит, что opkg отказал до prerm и старая версия
+// продолжает работать: причину берём из лога установки и отдаём в UI.
+func (s *Service) onUpgradeExit(err error) {
+	if err == nil {
+		return
+	}
+	raw, _ := os.ReadFile(upgradeLogPath)
+	f := UpgradeFailure{Reason: upgradeFailureReason(string(raw)), At: time.Now()}
+	f.Hint = upgradeFailureHint(f.Reason)
+	s.mu.Lock()
+	s.upgrading = false
+	s.failure = f
+	s.mu.Unlock()
+	s.appLog.Warn("apply", "", "Upgrade not installed: "+f.Reason)
+}
+
+// LastUpgradeFailure — причина, по которой не установилось последнее
+// обновление; нулевое значение, если такой нет.
+func (s *Service) LastUpgradeFailure() UpgradeFailure {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.failure
 }
 
 // SetEventBus подключает SSE-шину для подсказки «список снимков изменился».

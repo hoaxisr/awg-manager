@@ -90,7 +90,8 @@ func checkWithDownloader(ctx context.Context, currentVersion, channel string, dl
 // stopped by the package prerm mid-install, so this file is the ONLY
 // diagnostic left if opkg fails and the router ends up without awg-manager.
 // /tmp — системный tmpfs (RAM): не пишем на накопитель, не переживает ребут.
-const upgradeLogPath = "/tmp/awg-manager-upgrade.log"
+// Переменная — тесты подменяют путь.
+var upgradeLogPath = "/tmp/awg-manager-upgrade.log"
 
 // installedBinPath — куда пакет кладёт бинарь; проверяется после opkg install.
 const installedBinPath = "/opt/bin/awg-manager"
@@ -101,17 +102,28 @@ const installedBinPath = "/opt/bin/awg-manager"
 // веба (#571: сбойная запись на накопитель оставила 0-байтный бинарь, а вся
 // обвязка молча отчиталась об успехе). IPK удаляется только после успешной
 // проверки — иначе остаётся для ручного opkg install.
+//
+// opkg update перед установкой: зависимости пакета opkg качает по локальному
+// списку, а у старого списка файл зависимости на сервере уже заменён новой
+// версией (F933). Код update не проверяем — без сети install всё равно
+// попробуем: зависимости могут уже стоять. Провал — ненулевой код выхода и
+// строка «upgrade FAILED» в логе: демон, если ещё жив, покажет причину в UI.
 func buildUpgradeScript(ipkPath, binPath string) string {
-	return fmt.Sprintf(`sleep 2; opkg install %[1]s; rc=$?
+	return fmt.Sprintf(`sleep 2; opkg update; opkg install %[1]s; rc=$?
 if [ "$rc" = "0" ] && [ -s %[2]s ] && dd if=%[2]s bs=4 count=1 2>/dev/null | grep -q ELF; then
 	rm -f %[1]s
 	logger -t awg-manager "upgrade: opkg install OK, binary verified"
 else
+	echo "upgrade FAILED: opkg rc=$rc"
 	logger -t awg-manager -p daemon.err "upgrade FAILED: opkg rc=$rc or corrupt binary %[2]s; ipk kept: %[1]s"
+	exit 1
 fi`, ipkPath, binPath)
 }
 
-var startDetachedUpgrade = func(ipkPath string) error {
+// startDetachedUpgrade запускает установку отдельным сеансом. done (может
+// быть nil) зовётся с итогом скрипта, если демон его дождался: при успехе
+// prerm пакета останавливает демон раньше, так что done(nil) почти не бывает.
+var startDetachedUpgrade = func(ipkPath string, done func(error)) error {
 	cmd := osexec.Command("sh", "-c", buildUpgradeScript(ipkPath, installedBinPath))
 	if logf, err := os.OpenFile(upgradeLogPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644); err == nil {
 		cmd.Stdout = logf
@@ -122,14 +134,19 @@ var startDetachedUpgrade = func(ipkPath string) error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	go cmd.Wait()
+	go func() {
+		err := cmd.Wait()
+		if done != nil {
+			done(err)
+		}
+	}()
 	return nil
 }
 
 // beforeInstall (может быть nil) зовётся с путём пакета после скачивания и
 // проверки, перед установкой: снимок не пишется, если обновление не дошло до
 // установки.
-func upgradeWithDownloader(ctx context.Context, downloadURL, wantSHA256 string, dl Downloader, beforeInstall func(ipkPath string)) error {
+func upgradeWithDownloader(ctx context.Context, downloadURL, wantSHA256 string, dl Downloader, beforeInstall func(ipkPath string), done func(error)) error {
 	if dl == nil {
 		dl = newDefaultDownloader()
 	}
@@ -163,7 +180,7 @@ func upgradeWithDownloader(ctx context.Context, downloadURL, wantSHA256 string, 
 	if beforeInstall != nil {
 		beforeInstall(ipkPath)
 	}
-	if err := startDetachedUpgrade(ipkPath); err != nil {
+	if err := startDetachedUpgrade(ipkPath, done); err != nil {
 		os.Remove(ipkPath)
 		return err
 	}
@@ -224,4 +241,47 @@ func isSafeIPKFilename(name string) bool {
 		return false
 	}
 	return safeIPKFilenameRe.MatchString(name)
+}
+
+// upgradeFailureReason вынимает из лога установки строки ошибок: «* …» из
+// «Collected errors» opkg, «wget: …» и итог скрипта «upgrade FAILED: …».
+// Повторы схлопываются, берутся последние maxReasonLines.
+func upgradeFailureReason(log string) string {
+	const maxReasonLines = 6
+	var lines []string
+	seen := make(map[string]bool)
+	for _, l := range strings.Split(log, "\n") {
+		l = strings.TrimSpace(l)
+		if rest, ok := strings.CutPrefix(l, "* "); ok {
+			l = rest
+		} else if !strings.HasPrefix(l, "wget: ") && !strings.HasPrefix(l, "upgrade FAILED") {
+			continue
+		}
+		if !seen[l] {
+			seen[l] = true
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) == 0 {
+		return "opkg install failed, see " + upgradeLogPath
+	}
+	if len(lines) > maxReasonLines {
+		lines = lines[len(lines)-maxReasonLines:]
+	}
+	return strings.Join(lines, "\n")
+}
+
+// upgradeFailureHint узнаёт частые причины: DNS (busybox wget «bad address»,
+// GNU wget «unable to resolve»), нет места, opkg занят другой установкой.
+func upgradeFailureHint(reason string) string {
+	r := strings.ToLower(reason)
+	switch {
+	case strings.Contains(r, "bad address"), strings.Contains(r, "unable to resolve"):
+		return "dns"
+	case strings.Contains(r, "no space left"):
+		return "space"
+	case strings.Contains(r, "could not lock"):
+		return "lock"
+	}
+	return ""
 }
