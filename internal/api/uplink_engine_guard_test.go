@@ -24,6 +24,8 @@ func TestFircEngineSwitchRejectsProtectedUplinkWithConflict(t *testing.T) {
 	}
 	controller := uplink.New(store, nil, nil)
 	op := firc.NewOperator(firc.Options{ConfigDir: dir})
+	// Рантайм «установлен»: проверяется конфликт uplink, а не отказ без fircd.
+	op.SetLifecycleHooks(func(context.Context) error { return nil }, func(context.Context) error { return nil })
 	op.SetDefaultEngineHooks(firc.EngineSwitchHooks{AcquireTransition: func(ctx context.Context) (firc.EngineTransitionGuard, error) {
 		return controller.AcquireEngineTransition(ctx)
 	}})

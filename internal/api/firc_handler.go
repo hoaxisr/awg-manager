@@ -366,6 +366,23 @@ func (h *FircHandler) rejectNotSelected(w http.ResponseWriter) {
 	response.ErrorWithStatus(w, http.StatusConflict, "AWGM Route engine is not selected", "FIRC_NOT_SELECTED")
 }
 
+// rejectFircRuntimeMissing — смена ядра на AWGM Route без рантайма. Без проверки
+// смена доходила до запуска кандидата и падала на «fircd binary missing»; как и
+// миграция с восстановлением снимка, отказываем до любых изменений.
+func (h *FircHandler) rejectFircRuntimeMissing(w http.ResponseWriter, target string) bool {
+	if !strings.EqualFold(strings.TrimSpace(target), "firc") {
+		return false
+	}
+	if writeForeignFirc(w, h.op.CheckNotForeign()) {
+		return true
+	}
+	if err := h.op.CheckRuntimeInstalledForSwitch(); err != nil {
+		response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "FIRC_RUNTIME_NOT_INSTALLED")
+		return true
+	}
+	return false
+}
+
 func offlineAutolistStatus() *firc.AutolistStatus {
 	return &firc.AutolistStatus{
 		Enabled:    false,
@@ -1411,6 +1428,9 @@ func (h *FircHandler) handlePutSettings(w http.ResponseWriter, r *http.Request) 
 	}
 	if eng, ok := payload["routingEngine"].(string); ok && strings.TrimSpace(eng) != "" {
 		delete(payload, "routingEngine")
+		if h.rejectFircRuntimeMissing(w, eng) {
+			return
+		}
 		if err := h.SwitchEngineWithOptions(firc.WithTurnOff(r.Context()), eng, firc.EngineSwitchOptions{
 			AuthorizeDisabledStart: strings.EqualFold(strings.TrimSpace(eng), "firc"),
 		}); err != nil {
@@ -1425,6 +1445,9 @@ func (h *FircHandler) handlePutSettings(w http.ResponseWriter, r *http.Request) 
 		targetEngine := "sing-box"
 		if sel {
 			targetEngine = "firc"
+		}
+		if h.rejectFircRuntimeMissing(w, targetEngine) {
+			return
 		}
 		if err := h.SwitchEngineWithOptions(firc.WithTurnOff(r.Context()), targetEngine, firc.EngineSwitchOptions{
 			AuthorizeDisabledStart: sel,
@@ -1482,6 +1505,9 @@ func (h *FircHandler) handleSwitchEngine(w http.ResponseWriter, r *http.Request)
 	}
 	if target == "" {
 		response.ErrorWithStatus(w, http.StatusBadRequest, "engine is required", "BAD_REQUEST")
+		return
+	}
+	if h.rejectFircRuntimeMissing(w, target) {
 		return
 	}
 	if err := h.SwitchEngineWithOptions(firc.WithTurnOff(r.Context()), target, firc.EngineSwitchOptions{
