@@ -130,6 +130,10 @@ func (h *AutolistHandler) Control(w http.ResponseWriter, r *http.Request) {
 			response.ErrorWithStatus(w, http.StatusNotFound, err.Error(), "AUTOLIST_NOT_INSTALLED")
 			return
 		}
+		if errors.Is(err, autolistdetect.ErrNeedApiKey) {
+			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "AUTOLIST_NEED_API_KEY")
+			return
+		}
 		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "AUTOLIST_CONTROL_FAILED")
 		return
 	}

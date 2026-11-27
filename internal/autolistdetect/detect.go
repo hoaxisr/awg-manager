@@ -465,7 +465,13 @@ func (s *Service) SetEnabled(ctx context.Context, enabled bool) error {
 	if err := s.writeEnabledState(state); err != nil {
 		return err
 	}
-	if err := s.runInit(execCtx, action); err != nil {
+	// Ключ пишется перед стартом: сателлит читает его при запуске, а ключ
+	// мог смениться (или появиться вместе с авторизацией) после установки.
+	if s.installer != nil {
+		if err := s.installer.WriteKeyAndRun(execCtx, action); err != nil {
+			return err
+		}
+	} else if err := s.runInit(execCtx, action); err != nil {
 		return err
 	}
 	confirm := s.confirm

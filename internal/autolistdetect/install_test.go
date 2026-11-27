@@ -301,6 +301,72 @@ func TestWriteKeyMigratesLegacyKey(t *testing.T) {
 	}
 }
 
+// A start writes the current API key first: the satellite reads it at start,
+// so a stale key leaves it unauthorized once the panel has auth enabled.
+func TestWriteKeyAndRunWritesKeyBeforeStart(t *testing.T) {
+	installer, _, _ := testInstaller(t)
+	installer.keys = fakeKeys{key: "fresh", auth: true}
+	var ran string
+	installer.runInit = func(_ context.Context, action string) error {
+		ran = action
+		data, err := os.ReadFile(installer.keyPath)
+		if err != nil || string(data) != "AWGM_API_KEY='fresh'\n" {
+			t.Fatalf("key not written before init: %q err=%v", data, err)
+		}
+		return nil
+	}
+	if err := installer.WriteKeyAndRun(context.Background(), "start"); err != nil {
+		t.Fatal(err)
+	}
+	if ran != "start" {
+		t.Fatalf("init action=%q", ran)
+	}
+}
+
+// Auth enabled without a key: the satellite could not authorize itself, so
+// the start is refused instead of looping on AUTH_REQUIRED.
+func TestWriteKeyAndRunRefusesStartWithoutKey(t *testing.T) {
+	installer, _, _ := testInstaller(t)
+	installer.keys = fakeKeys{key: "", auth: true}
+	called := false
+	installer.runInit = func(context.Context, string) error { called = true; return nil }
+	if err := installer.WriteKeyAndRun(context.Background(), "start"); !errors.Is(err, ErrNeedApiKey) {
+		t.Fatalf("err=%v, want ErrNeedApiKey", err)
+	}
+	if called {
+		t.Fatal("init ran without a key")
+	}
+}
+
+// Enabling the satellite writes the current API key first: the daemon reads
+// it at start, and a stale key leaves it unauthorized once auth is enabled.
+func TestSetEnabledWritesKeyBeforeStart(t *testing.T) {
+	s, dir := testService(t)
+	if err := os.WriteFile(s.initPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	installer := NewInstaller(&fakePackageManager{}, fakeKeys{key: "fresh", auth: true})
+	installer.keyPath = filepath.Join(dir, "key")
+	installer.enabledPath = s.statePath
+	installer.initPath = s.initPath
+	s.installer = installer
+	var ran string
+	installer.runInit = func(_ context.Context, action string) error {
+		ran = action
+		data, err := os.ReadFile(installer.keyPath)
+		if err != nil || string(data) != "AWGM_API_KEY='fresh'\n" {
+			t.Fatalf("key not written before init: %q err=%v", data, err)
+		}
+		return nil
+	}
+	if err := s.SetEnabled(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	if ran != "start" {
+		t.Fatalf("init action=%q", ran)
+	}
+}
+
 // The port-change restart touches only an installed and enabled satellite;
 // a disabled or absent one is left alone.
 func TestRestartAfterPanelPortChange(t *testing.T) {

@@ -175,8 +175,8 @@
 			await api.controlAutolist(enabled ? 'enable' : 'disable');
 			notifications.success(enabled ? m.autolist_enable_ok() : m.autolist_disable_ok());
 			autolistStatus.invalidate();
-		} catch {
-			notifications.error(m.autolist_control_err());
+		} catch (e) {
+			notifications.error(errorMessage(e, m.autolist_control_err()));
 		} finally {
 			lifecycleBusy = false;
 		}

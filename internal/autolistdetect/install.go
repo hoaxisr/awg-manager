@@ -30,7 +30,7 @@ const (
 // still holds its lock, so the satellite upgrade waits and retries.
 var autoUpgradeDelay = 2 * time.Minute
 
-var ErrNeedApiKey = errors.New("authorization is enabled, but no AWGM API key is configured")
+var ErrNeedApiKey = errors.New("включена авторизация, но не создан API-ключ — сателлит не сможет подключиться к панели")
 
 var installerWaitDelay = initWaitDelay
 
@@ -283,6 +283,26 @@ func (i *Installer) ApiKeyChanged() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	return i.runInit(ctx, "restart")
+}
+
+// WriteKeyAndRun writes the current API key and then runs an init action.
+// The satellite reads the key at start, so a start without a fresh key leaves
+// it unauthorized whenever the panel has auth enabled.
+func (i *Installer) WriteKeyAndRun(ctx context.Context, action string) error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if i.keys == nil {
+		return errors.New("API key source is not configured")
+	}
+	// Запуск без ключа при включённой авторизации — сателлит не сможет
+	// авторизоваться и будет бесконечно повторять попытку.
+	if action == "start" && i.keys.IsAuthEnabled() && i.keys.GetApiKey() == "" {
+		return ErrNeedApiKey
+	}
+	if err := i.writeKey(); err != nil {
+		return err
+	}
+	return i.runInit(ctx, action)
 }
 
 func (i *Installer) runInitCommand(ctx context.Context, action string) error {
