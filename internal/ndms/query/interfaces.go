@@ -1711,8 +1711,9 @@ func (s *InterfaceStore) fetchListMap(ctx context.Context) (map[string]ndms.Inte
 	}
 	out := make(map[string]ndms.Interface, len(raw))
 	wire := make(map[string]json.RawMessage, len(raw))
+	var inetForTargets []string
 	for id, data := range raw {
-		iface, err := parseInterface(id, data)
+		iface, targets, err := parseInterfaceWithRoleFor(id, data)
 		if err != nil {
 			s.log.Warnf("parse interface %s: %v", id, err)
 			continue
@@ -1723,6 +1724,13 @@ func (s *InterfaceStore) fetchListMap(ctx context.Context) (map[string]ndms.Inte
 		// имени резолвера — порты спрашивались на каждом ListAll (F473).
 		out[iface.ID] = iface
 		wire[iface.ID] = data
+		inetForTargets = append(inetForTargets, targets...)
+	}
+	for _, target := range inetForTargets {
+		if iface, ok := out[target]; ok {
+			iface.RoleInet = true
+			out[target] = iface
+		}
 	}
 	return out, wire, nil
 }
@@ -1730,21 +1738,26 @@ func (s *InterfaceStore) fetchListMap(ctx context.Context) (map[string]ndms.Inte
 // === Wire format ===
 
 // ifaceWire is the shape /show/interface/ returns per entry.
+// global, traits и role — сырьё: поле чужого типа уронило бы разбор всей
+// записи, и интерфейс молча выпал бы из стора.
 type ifaceWire struct {
-	ID            string `json:"id"`
-	InterfaceName string `json:"interface-name"`
-	Type          string `json:"type"`
-	Description   string `json:"description"`
-	State         string `json:"state"`
-	Link          string `json:"link"`
-	Connected     string `json:"connected"`
-	SecurityLevel string `json:"security-level"`
-	Address       string `json:"address"`
-	Mask          string `json:"mask"`
-	MTU           int    `json:"mtu"`
-	Uptime        int64  `json:"uptime"`
-	ConfLayer     string `json:"conf-layer"`
-	Priority      int    `json:"priority"`
+	ID            string          `json:"id"`
+	InterfaceName string          `json:"interface-name"`
+	Type          string          `json:"type"`
+	Description   string          `json:"description"`
+	State         string          `json:"state"`
+	Link          string          `json:"link"`
+	Connected     string          `json:"connected"`
+	SecurityLevel string          `json:"security-level"`
+	Global        json.RawMessage `json:"global"`
+	Traits        json.RawMessage `json:"traits"`
+	Role          json.RawMessage `json:"role"`
+	Address       string          `json:"address"`
+	Mask          string          `json:"mask"`
+	MTU           int             `json:"mtu"`
+	Uptime        int64           `json:"uptime"`
+	ConfLayer     string          `json:"conf-layer"`
+	Priority      int             `json:"priority"`
 	Summary       struct {
 		Layer struct {
 			IPv4 string `json:"ipv4"`
@@ -1753,15 +1766,61 @@ type ifaceWire struct {
 	} `json:"summary"`
 }
 
-func parseInterface(id string, data json.RawMessage) (ndms.Interface, error) {
+func parseInterfaceWithRoleFor(id string, data json.RawMessage) (ndms.Interface, []string, error) {
 	var w ifaceWire
 	if err := json.Unmarshal(data, &w); err != nil {
-		return ndms.Interface{}, err
+		return ndms.Interface{}, nil, err
 	}
 	if w.ID == "" {
 		w.ID = id
 	}
-	return wireToInterface(w), nil
+	roleInet, inetFor := parseWireRole(w.Role)
+	iface := wireToInterface(w)
+	iface.RoleInet = roleInet
+	return iface, inetFor, nil
+}
+
+func parseWireRole(raw json.RawMessage) (hasInet bool, inetFor []string) {
+	if len(raw) == 0 {
+		return false, nil
+	}
+	var items []json.RawMessage
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return false, nil
+	}
+	for _, elem := range items {
+		var s string
+		if err := json.Unmarshal(elem, &s); err == nil {
+			if strings.EqualFold(strings.TrimSpace(s), "inet") {
+				hasInet = true
+			}
+			continue
+		}
+		var obj struct {
+			Role string `json:"role"`
+			For  string `json:"for"`
+		}
+		if err := json.Unmarshal(elem, &obj); err == nil &&
+			strings.EqualFold(strings.TrimSpace(obj.Role), "inet") &&
+			strings.TrimSpace(obj.For) != "" {
+			inetFor = append(inetFor, strings.TrimSpace(obj.For))
+		}
+	}
+	return hasInet, inetFor
+}
+
+func classifyWireTraits(traits []string) (vpn, wan, local bool) {
+	for _, tr := range traits {
+		switch strings.ToLower(strings.TrimSpace(tr)) {
+		case "wireguard", "opkgtun", "proxy", "openvpn", "sstp", "ipsec", "encryptedppptunnel", "zerotier":
+			vpn = true
+		case "ethernet", "pppoe", "mobile", "usbmodem", "usblte", "usbqmi", "dsl", "cdcethernet":
+			wan = true
+		case "bridge", "accesspoint", "wifimaster":
+			local = true
+		}
+	}
+	return vpn, wan, local
 }
 
 func wireToInterface(w ifaceWire) ndms.Interface {
@@ -1780,8 +1839,14 @@ func wireToInterface(w ifaceWire) ndms.Interface {
 	if !looksLikeKernelIfname(sysName) {
 		sysName = ""
 	}
+	var global bool
+	_ = json.Unmarshal(w.Global, &global)
+	var traits []string
+	_ = json.Unmarshal(w.Traits, &traits)
+	vpnTrait, wanTrait, localTrait := classifyWireTraits(traits)
 	return ndms.Interface{
 		ID:            w.ID,
+		InterfaceName: w.InterfaceName,
 		SystemName:    sysName,
 		Type:          w.Type,
 		Description:   w.Description,
@@ -1789,6 +1854,10 @@ func wireToInterface(w ifaceWire) ndms.Interface {
 		Link:          w.Link,
 		Connected:     w.Connected,
 		SecurityLevel: w.SecurityLevel,
+		Global:        global,
+		VPNTrait:      vpnTrait,
+		WANTrait:      wanTrait,
+		LocalTrait:    localTrait,
 		IPv4:          w.Summary.Layer.IPv4,
 		Address:       w.Address,
 		Mask:          w.Mask,

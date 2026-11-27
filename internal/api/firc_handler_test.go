@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/firc"
+	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -2400,5 +2401,132 @@ func TestFircHandler_ManualSubscriptionInterval(t *testing.T) {
 				t.Fatalf("normalize-source expected %s in body, got: %s", tc.wantText, rec.Body.String())
 			}
 		})
+	}
+}
+
+func TestFircV1Proxy_SystemInterfaces_EnrichesWANAndNamesFromNDMS(t *testing.T) {
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "firc.sock")
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulates fircd returning incomplete/misclassified RCI metadata:
+	// eth3 came back as role=other with no name/ndmsName, opkgtun10/nwg0 lost labels,
+	// ppp0 (PPPoE) came as role=tunnel, ppp1 (SSTP) mistakenly came as role=wan,
+	// and apcli0 (unused WifiStation) came as role=other.
+	mockJSON := `{
+		"interfaces": [
+			{"id":"blackhole"},
+			{"id":"block"},
+			{"id":"eth3","role":"other","up":true},
+			{"id":"ppp0","role":"tunnel","up":true},
+			{"id":"ppp1","role":"wan","up":true},
+			{"id":"ppp2","role":"tunnel","up":true},
+			{"id":"apcli0","role":"other","up":false},
+			{"id":"br0","role":"lan","up":true},
+			{"id":"opkgtun10","role":"tunnel","up":true},
+			{"id":"nwg0","role":"tunnel","up":true},
+			{"id":"tunvless0","name":"VLESS-1","role":"tunnel","up":true}
+		]
+	}`
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/system/interfaces":
+			_, _ = w.Write([]byte(mockJSON))
+		case "/api/v1/tunnels/state":
+			_, _ = w.Write([]byte(`{"tunnels":[{"id":"t0","device":"tunvless0","status":"up"}]}`))
+		default:
+			_, _ = w.Write([]byte(`{}`))
+		}
+	})}
+	go func() { _ = srv.Serve(l) }()
+	t.Cleanup(func() { _ = srv.Close() })
+
+	h := NewFircHandler(firc.NewOperator(firc.Options{ConfigDir: dir, SocketPath: sock}))
+	h.SetOtherEngineIntegrationHooks(OtherEngineIntegrationHooks{
+		ListNDMSInterfaces: func(context.Context) ([]ndmsquery.FircInterfaceMeta, error) {
+			return []ndmsquery.FircInterfaceMeta{
+				{KernelName: "eth3", NDMSName: "ISP", Description: "Broadband connection", IsWAN: true},
+				{KernelName: "ppp0", NDMSName: "PPPoE0", Description: "Rostelecom", IsWAN: true},
+				{KernelName: "ppp1", NDMSName: "SSTP1", Description: "Dacha", IsWAN: false, IsNonISP: true},
+				// Contradictory metadata (IsWAN + IsNonISP) must never promote to wan.
+				{KernelName: "ppp2", NDMSName: "L2TP1", Description: "L2TP/IPsec", IsWAN: true, IsNonISP: true},
+				// Managed FIRC tunnel must never be promoted to wan even if NDMS claims IsWAN.
+				{KernelName: "tunvless0", NDMSName: "TunVless0", Description: "ShouldNotOverride", IsWAN: true},
+				{KernelName: "apcli0", NDMSName: "WifiMaster0/WifiStation0", IsWAN: false},
+				{KernelName: "br0", NDMSName: "Home", Description: "Основная", IsWAN: false},
+				{KernelName: "opkgtun10", NDMSName: "OpkgTun10", Description: "WARP", IsWAN: false, IsNonISP: true},
+				{KernelName: "nwg0", NDMSName: "Wireguard0", Description: "Wireguard VPN Server", IsWAN: false, IsNonISP: true},
+			}, nil
+		},
+	})
+
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, func(next http.HandlerFunc) http.HandlerFunc { return next })
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/firc/v1/system/interfaces", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/firc/v1/system/interfaces: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var parsed struct {
+		Interfaces []map[string]any `json:"interfaces"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &parsed); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	find := func(id string) map[string]any {
+		for _, it := range parsed.Interfaces {
+			if it["id"] == id {
+				return it
+			}
+		}
+		t.Fatalf("interface %q not found in %+v", id, parsed.Interfaces)
+		return nil
+	}
+
+	if it := find("eth3"); it["role"] != "wan" || it["name"] != "Broadband connection" || it["ndmsName"] != "ISP" {
+		t.Fatalf("eth3 expected wan + NDMS labels, got %+v", it)
+	}
+	if it := find("ppp0"); it["role"] != "wan" || it["name"] != "Rostelecom" || it["ndmsName"] != "PPPoE0" {
+		t.Fatalf("ppp0 (PPPoE) expected wan + NDMS labels, got %+v", it)
+	}
+	if it := find("ppp1"); it["role"] != "tunnel" || it["name"] != "Dacha" {
+		t.Fatalf("ppp1 (SSTP) expected demoted to tunnel, got %+v", it)
+	}
+	if it := find("ppp2"); it["role"] != "tunnel" || it["name"] != "L2TP/IPsec" {
+		t.Fatalf("ppp2 (IsNonISP=true) must stay tunnel even if IsWAN=true, got %+v", it)
+	}
+	if it := find("apcli0"); it["role"] != "other" || it["ndmsName"] != "WifiMaster0/WifiStation0" {
+		t.Fatalf("apcli0 (unused WifiStation) must stay role=other, got %+v", it)
+	}
+	if it := find("br0"); it["role"] != "lan" || it["name"] != "Основная" || it["ndmsName"] != "Home" {
+		t.Fatalf("br0 must stay role=lan with labels, got %+v", it)
+	}
+	if it := find("opkgtun10"); it["role"] != "tunnel" || it["name"] != "WARP" || it["ndmsName"] != "OpkgTun10" {
+		t.Fatalf("opkgtun10 expected tunnel + restored labels, got %+v", it)
+	}
+	if it := find("nwg0"); it["role"] != "tunnel" || it["name"] != "Wireguard VPN Server" || it["ndmsName"] != "Wireguard0" {
+		t.Fatalf("nwg0 expected tunnel + restored server description, got %+v", it)
+	}
+	if it := find("tunvless0"); it["role"] != "tunnel" || it["name"] != "VLESS-1" {
+		t.Fatalf("tunvless0 expected unchanged tunnel, got %+v", it)
+	}
+	// Synthetic entries must not acquire spurious up/name fields.
+	if it := find("blackhole"); it["up"] != nil || it["role"] != nil {
+		t.Fatalf("blackhole must stay unmodified, got %+v", it)
+	}
+
+	// Fail-open: NDMS list errors must not break /api/firc/v1/system/interfaces.
+	h.SetOtherEngineIntegrationHooks(OtherEngineIntegrationHooks{
+		ListNDMSInterfaces: func(context.Context) ([]ndmsquery.FircInterfaceMeta, error) {
+			return nil, errors.New("ndms unavailable")
+		},
+	})
+	recErr := httptest.NewRecorder()
+	mux.ServeHTTP(recErr, httptest.NewRequest(http.MethodGet, "/api/firc/v1/system/interfaces", nil))
+	if recErr.Code != http.StatusOK {
+		t.Fatalf("expected fail-open 200 when ListNDMSInterfaces fails, got %d: %s", recErr.Code, recErr.Body.String())
 	}
 }

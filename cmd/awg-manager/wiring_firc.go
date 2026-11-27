@@ -657,6 +657,12 @@ func (a *app) wireFircEngineCoordinator() {
 				}
 				return a.singboxOp.ListOwnedProxies(ctx)
 			},
+			ListNDMSInterfaces: func(ctx context.Context) ([]ndmsquery.FircInterfaceMeta, error) {
+				if a.ndmsQueries == nil || a.ndmsQueries.Interfaces == nil {
+					return nil, nil
+				}
+				return a.ndmsQueries.Interfaces.ListFircMeta(ctx)
+			},
 		})
 	}
 }

@@ -48,19 +48,81 @@ static bool role_has_inet(const cJSON *entry) {
     return false;
 }
 
-static bool global_ethernet(const cJSON *entry) {
-    const cJSON *traits = cJSON_GetObjectItemCaseSensitive(entry, "traits");
+static bool traits_has(const cJSON *traits, const char *want) {
     const cJSON *tr = NULL;
-    if (!cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(entry, "global")) || !cJSON_IsArray(traits)) {
-        return false;
-    }
+    if (!cJSON_IsArray(traits)) { return false; }
     cJSON_ArrayForEach(tr, traits) {
-        if (cJSON_IsString(tr) && strcmp(tr->valuestring, "Ethernet") == 0) { return true; }
+        if (cJSON_IsString(tr) && strcasecmp(tr->valuestring, want) == 0) { return true; }
     }
     return false;
 }
 
-static void mark_inet_for(const cJSON *entry, firc_kn_iface_meta_t *arr, size_t n) {
+static bool is_vpn_tunnel_entry(const cJSON *entry) {
+    const cJSON *type = cJSON_GetObjectItemCaseSensitive(entry, "type");
+    if (cJSON_IsString(type)) {
+        const char *t = type->valuestring;
+        if (strcasecmp(t, "Wireguard") == 0 || strcasecmp(t, "OpkgTun") == 0 ||
+            strcasecmp(t, "Proxy") == 0 || strcasecmp(t, "OpenVPN") == 0 ||
+            strcasecmp(t, "SSTP") == 0 || strcasecmp(t, "IPsec") == 0 ||
+            strcasecmp(t, "IKE") == 0 || strcasecmp(t, "VirtualIP") == 0 ||
+            strcasecmp(t, "ZeroTier") == 0) {
+            return true;
+        }
+    }
+    const cJSON *traits = cJSON_GetObjectItemCaseSensitive(entry, "traits");
+    return traits_has(traits, "Wireguard") || traits_has(traits, "OpkgTun") ||
+           traits_has(traits, "Proxy") || traits_has(traits, "OpenVPN") ||
+           traits_has(traits, "Sstp") || traits_has(traits, "Ipsec") ||
+           traits_has(traits, "EncryptedPppTunnel") || traits_has(traits, "ZeroTier");
+}
+
+static bool is_excluded_wan_entry(const cJSON *entry) {
+    if (is_vpn_tunnel_entry(entry)) { return true; }
+    const cJSON *sec = cJSON_GetObjectItemCaseSensitive(entry, "security-level");
+    if (cJSON_IsString(sec) && strcasecmp(sec->valuestring, "public") != 0) {
+        return true;
+    }
+    const cJSON *type = cJSON_GetObjectItemCaseSensitive(entry, "type");
+    if (cJSON_IsString(type) &&
+        (strcasecmp(type->valuestring, "Bridge") == 0 || strcasecmp(type->valuestring, "Port") == 0 ||
+         strcasecmp(type->valuestring, "AccessPoint") == 0 ||
+         strcasecmp(type->valuestring, "WifiMaster") == 0)) {
+        return true;
+    }
+    const cJSON *traits = cJSON_GetObjectItemCaseSensitive(entry, "traits");
+    return traits_has(traits, "Bridge") || traits_has(traits, "AccessPoint") ||
+           traits_has(traits, "WifiMaster");
+}
+
+static bool global_wan(const cJSON *entry) {
+    if (is_excluded_wan_entry(entry)) { return false; }
+
+    if (!cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(entry, "global"))) {
+        return false;
+    }
+    const cJSON *traits = cJSON_GetObjectItemCaseSensitive(entry, "traits");
+    if (traits_has(traits, "Ethernet") || traits_has(traits, "Pppoe") ||
+        traits_has(traits, "Mobile") || traits_has(traits, "UsbModem") ||
+        traits_has(traits, "UsbLte") || traits_has(traits, "UsbQmi") ||
+        traits_has(traits, "Dsl") || traits_has(traits, "CdcEthernet")) {
+        return true;
+    }
+    const cJSON *type = cJSON_GetObjectItemCaseSensitive(entry, "type");
+    if (cJSON_IsString(type)) {
+        const char *t = type->valuestring;
+        if (strcasecmp(t, "GigabitEthernet") == 0 || strcasecmp(t, "FastEthernet") == 0 ||
+            strcasecmp(t, "Ethernet") == 0 || strcasecmp(t, "PPPoE") == 0 ||
+            strcasecmp(t, "UsbModem") == 0 || strcasecmp(t, "UsbLte") == 0 ||
+            strcasecmp(t, "UsbQmi") == 0 || strcasecmp(t, "CdcEthernet") == 0 ||
+            strcasecmp(t, "UsbDsl") == 0 || strcasecmp(t, "IPoE") == 0 ||
+            strcasecmp(t, "WifiStation") == 0 || strcasecmp(t, "MwsMobile") == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void mark_inet_for(const cJSON *root, const cJSON *entry, firc_kn_iface_meta_t *arr, size_t n) {
     const cJSON *role = cJSON_GetObjectItemCaseSensitive(entry, "role");
     const cJSON *r = NULL;
     if (!cJSON_IsArray(role)) { return; }
@@ -72,7 +134,10 @@ static void mark_inet_for(const cJSON *entry, firc_kn_iface_meta_t *arr, size_t 
             continue;
         }
         for (size_t i = 0; i < n; i++) {
-            if (strcmp(arr[i].id, target->valuestring) == 0) { arr[i].inet = true; }
+            if (strcmp(arr[i].id, target->valuestring) == 0) {
+                const cJSON *target_entry = cJSON_GetObjectItemCaseSensitive(root, arr[i].id);
+                if (target_entry != NULL && !is_excluded_wan_entry(target_entry)) { arr[i].inet = true; }
+            }
         }
     }
 }
@@ -114,12 +179,12 @@ firc_err_t firc_kn_parse_interface_list(const char *json, firc_kn_iface_meta_t *
         copy_trimmed_member(arr[n].description, sizeof(arr[n].description), entry, "description");
         copy_trimmed_member(arr[n].interface_name, sizeof(arr[n].interface_name), entry,
                             "interface-name");
-        arr[n].inet = role_has_inet(entry) || global_ethernet(entry);
+        arr[n].inet = !is_excluded_wan_entry(entry) && (role_has_inet(entry) || global_wan(entry));
         n++;
     }
 
     cJSON_ArrayForEach(entry, root) {
-        if (cJSON_IsObject(entry)) { mark_inet_for(entry, arr, n); }
+        if (cJSON_IsObject(entry)) { mark_inet_for(root, entry, arr, n); }
     }
 
     cJSON_Delete(root);

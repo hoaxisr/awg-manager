@@ -15,14 +15,20 @@ const BuiltInVPNServerDescription = "Wireguard VPN Server"
 // /show/interface/{name} or extracted from /show/interface/.
 type Interface struct {
 	ID            string `json:"id"`
-	SystemName    string `json:"systemName"` // kernel name, e.g. nwg3
-	Type          string `json:"type"`       // "proxy", "wireguard", "ethernet", ...
+	InterfaceName string `json:"interfaceName,omitempty"` // NDMS interface-name label (e.g. "ISP", "OpkgTun10")
+	SystemName    string `json:"systemName"`              // kernel name, e.g. nwg3
+	Type          string `json:"type"`                    // "proxy", "wireguard", "ethernet", ...
 	Description   string `json:"description"`
 	State         string `json:"state"`     // "up" | "down"
 	Link          string `json:"link"`      // "up" | "down"
 	Connected     string `json:"connected"` // "yes" | "no" | ""
 	SecurityLevel string `json:"securityLevel"`
-	IPv4          string `json:"ipv4,omitempty"` // summary.layer.ipv4 — "running" | "pending" | "disabled" | ""
+	Global        bool   `json:"global,omitempty"` // NDMS "global": true (participates in internet routing)
+	RoleInet      bool   `json:"-"`                // NDMS "role" includes "inet" (directly or via {"role":"inet","for":id})
+	VPNTrait      bool   `json:"-"`                // NDMS "traits" includes a VPN/encrypted tunnel trait
+	WANTrait      bool   `json:"-"`                // NDMS "traits" includes an ISP WAN trait
+	LocalTrait    bool   `json:"-"`                // NDMS "traits" includes Bridge/AccessPoint/WifiMaster
+	IPv4          string `json:"ipv4,omitempty"`   // summary.layer.ipv4 — "running" | "pending" | "disabled" | ""
 	Address       string `json:"address,omitempty"`
 	Mask          string `json:"mask,omitempty"`
 	MTU           int    `json:"mtu,omitempty"`

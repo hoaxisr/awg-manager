@@ -752,9 +752,13 @@ func statusError(msgs ...string) json.RawMessage {
 }
 
 func toWire(i ndms.Interface) ifaceWire {
+	ifName := i.SystemName
+	if ifName == "" {
+		ifName = i.InterfaceName
+	}
 	w := ifaceWire{
 		ID:            i.ID,
-		InterfaceName: i.SystemName,
+		InterfaceName: ifName,
 		Type:          i.Type,
 		Description:   i.Description,
 		State:         i.State,
@@ -767,6 +771,9 @@ func toWire(i ndms.Interface) ifaceWire {
 		Uptime:        i.Uptime,
 		ConfLayer:     i.ConfLayer,
 		Priority:      i.Priority,
+	}
+	if i.Global {
+		w.Global = json.RawMessage(`true`)
 	}
 	w.Summary.Layer.IPv4 = i.IPv4
 	return w
