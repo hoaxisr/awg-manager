@@ -752,15 +752,21 @@ func statusError(msgs ...string) json.RawMessage {
 }
 
 func toWire(i ndms.Interface) ifaceWire {
+	ifName := i.SystemName
+	if ifName == "" {
+		ifName = i.InterfaceName
+	}
 	w := ifaceWire{
 		ID:            i.ID,
-		InterfaceName: i.SystemName,
+		InterfaceName: ifName,
 		Type:          i.Type,
 		Description:   i.Description,
 		State:         i.State,
 		Link:          i.Link,
 		Connected:     i.Connected,
 		SecurityLevel: i.SecurityLevel,
+		Global:        i.Global,
+		DefaultGW:     i.DefaultGW,
 		Address:       i.Address,
 		Mask:          i.Mask,
 		MTU:           i.MTU,

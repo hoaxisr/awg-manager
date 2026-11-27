@@ -657,8 +657,133 @@ func (a *app) wireFircEngineCoordinator() {
 				}
 				return a.singboxOp.ListOwnedProxies(ctx)
 			},
+			ListNDMSInterfaces: a.listFircNDMSInterfaces,
 		})
 	}
+}
+
+func isNonISPNDMSType(ifaceType string) bool {
+	switch strings.ToLower(strings.TrimSpace(ifaceType)) {
+	case "wireguard", "opkgtun", "proxy", "openvpn", "sstp", "ipsec", "ike", "virtualip", "zerotier":
+		return true
+	}
+	return false
+}
+
+func isLocalOnlyNDMSType(ifaceType string) bool {
+	switch strings.ToLower(strings.TrimSpace(ifaceType)) {
+	case "bridge", "accesspoint", "wifimaster", "port":
+		return true
+	}
+	return false
+}
+
+func isWANNDMSType(ifaceType string) bool {
+	switch strings.ToLower(strings.TrimSpace(ifaceType)) {
+	case "gigabitethernet", "fastethernet", "ethernet", "pppoe",
+		"usbmodem", "usblte", "usbqmi", "cdcethernet", "usbdsl",
+		"ipoe", "wifistation", "mwsmobile":
+		return true
+	}
+	return false
+}
+
+// listFircNDMSInterfaces projects the cached NDMS interface store for enriching
+// GET /api/firc/v1/system/interfaces with WAN roles and NDMS names/descriptions.
+func (a *app) listFircNDMSInterfaces(ctx context.Context) ([]api.FircNDMSInterfaceMeta, error) {
+	if a.ndmsQueries == nil || a.ndmsQueries.Interfaces == nil {
+		return nil, nil
+	}
+	return buildFircNDMSInterfaces(ctx, a.ndmsQueries.Interfaces)
+}
+
+func buildFircNDMSInterfaces(ctx context.Context, store *ndmsquery.InterfaceStore) ([]api.FircNDMSInterfaceMeta, error) {
+	if store == nil {
+		return nil, nil
+	}
+	listed, err := store.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	type candidate struct {
+		meta api.FircNDMSInterfaceMeta
+		id   string
+		up   bool
+	}
+	best := make(map[string]candidate, len(listed))
+	for _, iface := range listed {
+		if strings.EqualFold(strings.TrimSpace(iface.Type), "Port") {
+			continue
+		}
+		kernelName := strings.TrimSpace(store.ResolveSystemName(ctx, iface.ID))
+		if kernelName == "" {
+			kernelName = strings.TrimSpace(iface.SystemName)
+		}
+		if kernelName == "" {
+			continue
+		}
+		ndmsName := strings.TrimSpace(iface.InterfaceName)
+		if ndmsName == "" || ndmsName == kernelName {
+			ndmsName = strings.TrimSpace(iface.ID)
+		}
+		if ndmsName == kernelName {
+			ndmsName = ""
+		}
+		desc := strings.TrimSpace(iface.Description)
+		if desc == kernelName {
+			desc = ""
+		}
+		isNonISP := ndmsquery.IsNonISPInterface(kernelName) || isNonISPNDMSType(iface.Type) || iface.VPNTrait
+		isLocalOnly := isLocalOnlyNDMSType(iface.Type) || iface.LocalTrait
+		up := iface.State == "up" && iface.IPv4 == "running"
+		isWAN := !isNonISP &&
+			!isLocalOnly &&
+			strings.EqualFold(strings.TrimSpace(iface.SecurityLevel), "public") &&
+			(iface.RoleInet || iface.DefaultGW || (iface.Global && (iface.WANTrait || isWANNDMSType(iface.Type))))
+
+		cand := candidate{
+			meta: api.FircNDMSInterfaceMeta{
+				KernelName:  kernelName,
+				NDMSName:    ndmsName,
+				Description: desc,
+				IsWAN:       isWAN,
+				IsNonISP:    isNonISP,
+			},
+			id: iface.ID,
+			up: up,
+		}
+		key := strings.ToLower(kernelName)
+		if cur, exists := best[key]; exists {
+			if !preferFircNDMSCandidate(cand.meta, cand.up, cand.id, cur.meta, cur.up, cur.id) {
+				continue
+			}
+		}
+		best[key] = cand
+	}
+	out := make([]api.FircNDMSInterfaceMeta, 0, len(best))
+	for _, c := range best {
+		out = append(out, c.meta)
+	}
+	slices.SortFunc(out, func(a, b api.FircNDMSInterfaceMeta) int {
+		return strings.Compare(a.KernelName, b.KernelName)
+	})
+	return out, nil
+}
+
+func preferFircNDMSCandidate(
+	cand api.FircNDMSInterfaceMeta, candUp bool, candID string,
+	win api.FircNDMSInterfaceMeta, winUp bool, winID string,
+) bool {
+	if candUp != winUp {
+		return candUp
+	}
+	if cand.IsWAN != win.IsWAN {
+		return cand.IsWAN
+	}
+	if (cand.Description != "") != (win.Description != "") {
+		return cand.Description != ""
+	}
+	return candID < winID
 }
 
 func resolveFircConfigDir(dataDir string) string {

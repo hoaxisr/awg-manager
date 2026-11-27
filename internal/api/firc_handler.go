@@ -29,6 +29,18 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/uplink"
 )
 
+// FircNDMSInterfaceMeta supplies cached Keenetic NDMS metadata for one kernel
+// interface so GET /api/firc/v1/system/interfaces can restore WAN roles and
+// interface labels when fircd's own RCI metadata is missing or incomplete
+// (e.g. non-Ethernet ISP uplinks or older fircd runtimes).
+type FircNDMSInterfaceMeta struct {
+	KernelName  string
+	NDMSName    string
+	Description string
+	IsWAN       bool
+	IsNonISP    bool
+}
+
 // OtherEngineIntegrationHooks supplies read/purge/reload callbacks for the sibling
 // routing engine (Sing-box) and AWGM stores without introducing circular imports.
 type OtherEngineIntegrationHooks struct {
@@ -39,6 +51,7 @@ type OtherEngineIntegrationHooks struct {
 	PostRestoreSync    func(ctx context.Context, restoredSingbox, restoredSettings bool) error
 	OnBeforePurgeFirc  func(ctx context.Context)
 	ListOwnedProxies   func(ctx context.Context) ([]string, error)
+	ListNDMSInterfaces func(ctx context.Context) ([]FircNDMSInterfaceMeta, error)
 }
 
 // FircHandler exposes HTTP API endpoints for managing fircd and tunvless.
@@ -2050,17 +2063,53 @@ func (h *FircHandler) handleV1Proxy(w http.ResponseWriter, r *http.Request) {
 			if hasT2S && h.integrationHooks.ListOwnedProxies != nil {
 				ownedProxies = ownedProxySet(h.integrationHooks.ListOwnedProxies(r.Context()))
 			}
+			var ndmsByKernel map[string]FircNDMSInterfaceMeta
+			if h.integrationHooks.ListNDMSInterfaces != nil {
+				if metas, mErr := h.integrationHooks.ListNDMSInterfaces(r.Context()); mErr == nil && len(metas) > 0 {
+					ndmsByKernel = make(map[string]FircNDMSInterfaceMeta, len(metas))
+					for _, m := range metas {
+						if k := strings.ToLower(strings.TrimSpace(m.KernelName)); k != "" {
+							ndmsByKernel[k] = m
+						}
+					}
+				}
+			}
 			for _, item := range payload.Interfaces {
 				id, _ := item["id"].(string)
 				idTrim := strings.TrimSpace(id)
 				if idTrim == "" {
 					continue
 				}
-				if role, _ := item["role"].(string); strings.EqualFold(strings.TrimSpace(role), "wan") && ndmsquery.IsNonISPInterface(idTrim) {
-					item["role"] = "tunnel"
+				idLower := strings.ToLower(idTrim)
+				if idLower == "blackhole" || idLower == "block" || idLower == "dns" {
+					continue
 				}
-				if strings.HasPrefix(strings.ToLower(idTrim), "t2s") {
-					if ownedProxies == nil || ownedProxies[strings.ToLower(idTrim)] {
+				meta, hasMeta := ndmsByKernel[idLower]
+				if hasMeta {
+					if curName, _ := item["name"].(string); strings.TrimSpace(curName) == "" {
+						if desc := strings.TrimSpace(meta.Description); desc != "" && desc != idTrim {
+							item["name"] = desc
+						}
+					}
+					if curNDMS, _ := item["ndmsName"].(string); strings.TrimSpace(curNDMS) == "" {
+						if nName := strings.TrimSpace(meta.NDMSName); nName != "" && nName != idTrim {
+							item["ndmsName"] = nName
+						}
+					}
+				}
+				role, _ := item["role"].(string)
+				roleTrim := strings.TrimSpace(role)
+				_, isManagedFircTunnel := tunStatus[idTrim]
+				if !isManagedFircTunnel {
+					_, isManagedFircTunnel = tunStatus[id]
+				}
+				if strings.EqualFold(roleTrim, "wan") && (ndmsquery.IsNonISPInterface(idTrim) || (hasMeta && meta.IsNonISP)) {
+					item["role"] = "tunnel"
+				} else if hasMeta && meta.IsWAN && !meta.IsNonISP && !isManagedFircTunnel && !ndmsquery.IsNonISPInterface(idTrim) && !strings.EqualFold(roleTrim, "lan") {
+					item["role"] = "wan"
+				}
+				if strings.HasPrefix(idLower, "t2s") {
+					if ownedProxies == nil || ownedProxies[idLower] {
 						item["awgmSingboxProxy"] = true
 					}
 				}
