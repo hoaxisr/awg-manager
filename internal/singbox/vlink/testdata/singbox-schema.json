@@ -2121,6 +2121,33 @@
           "type": "object",
           "properties": {
             "type": {
+              "const": "fallback"
+            },
+            "tag": {
+              "type": "string"
+            },
+            "servers": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "strategy": {
+              "type": "string"
+            },
+            "timeout": {
+              "$ref": "#/$defs/Duration"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
               "const": "h3"
             },
             "tag": {
@@ -12134,6 +12161,318 @@
           "type": "object",
           "properties": {
             "type": {
+              "const": "desync"
+            },
+            "tag": {
+              "type": "string"
+            },
+            "detour": {
+              "type": "string",
+              "x-tag-reference": "outbound"
+            },
+            "bind_interface": {
+              "type": "string"
+            },
+            "inet4_bind_address": {
+              "$ref": "#/$defs/IPAddress"
+            },
+            "inet6_bind_address": {
+              "$ref": "#/$defs/IPAddress"
+            },
+            "bind_address_no_port": {
+              "type": "boolean"
+            },
+            "protect_path": {
+              "type": "string"
+            },
+            "routing_mark": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 4294967295
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "reuse_addr": {
+              "type": "boolean"
+            },
+            "netns": {
+              "type": "string",
+              "x-tag-reference": "network_namespace"
+            },
+            "connect_timeout": {
+              "$ref": "#/$defs/Duration"
+            },
+            "tcp_fast_open": {
+              "type": "boolean"
+            },
+            "tcp_multi_path": {
+              "type": "boolean"
+            },
+            "disable_tcp_keep_alive": {
+              "type": "boolean"
+            },
+            "tcp_keep_alive": {
+              "$ref": "#/$defs/Duration"
+            },
+            "tcp_keep_alive_interval": {
+              "$ref": "#/$defs/Duration"
+            },
+            "udp_fragment": {
+              "type": "boolean"
+            },
+            "domain_resolver": {
+              "$ref": "#/$defs/DomainResolver"
+            },
+            "network_strategy": {
+              "type": "string",
+              "enum": [
+                "default",
+                "fallback",
+                "hybrid"
+              ]
+            },
+            "network_type": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/InterfaceType"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/InterfaceType"
+                  }
+                }
+              ]
+            },
+            "fallback_network_type": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/InterfaceType"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/InterfaceType"
+                  }
+                }
+              ]
+            },
+            "fallback_delay": {
+              "$ref": "#/$defs/Duration"
+            },
+            "finalmask": {
+              "$ref": "#/$defs/FinalMaskOptions"
+            },
+            "preset": {
+              "type": "string",
+              "enum": [
+                "auto",
+                "custom",
+                "split",
+                "disorder",
+                "tlsrec",
+                "fake",
+                "fake_split",
+                "oob",
+                "GT1",
+                "GT2",
+                "GT3",
+                "GT4"
+              ]
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "none",
+                "split",
+                "disorder",
+                "tlsrec",
+                "fake",
+                "fake_split",
+                "oob",
+                "multi_split",
+                "fake_disorder",
+                "multi_disorder",
+                "disoob",
+                "hostfakesplit"
+              ]
+            },
+            "split_pos": {
+              "type": "string"
+            },
+            "fake_sni": {
+              "type": "string"
+            },
+            "fake_host": {
+              "type": "string"
+            },
+            "fake_payload": {
+              "type": "string"
+            },
+            "fake_sni_pool": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "repeats": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 16
+            },
+            "delay": {
+              "$ref": "#/$defs/Duration"
+            },
+            "ttl": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 255
+            },
+            "fooling": {
+              "type": "string",
+              "enum": [
+                "",
+                "none",
+                "badseq",
+                "badack",
+                "badsum",
+                "md5",
+                "md5_badack",
+                "badseq_badack_badsum",
+                "datanoack",
+                "hopbyhop",
+                "destopt",
+                "ipfrag",
+                "ts",
+                "badtimestamp"
+              ]
+            },
+            "tlsrec_first": {
+              "type": "boolean"
+            },
+            "seqovl": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4096
+            },
+            "autottl": {
+              "type": "boolean"
+            },
+            "ipfrag": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65512
+            },
+            "syndata": {
+              "type": "string"
+            },
+            "wsize": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            "wscale": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 14
+            },
+            "udp_mode": {
+              "type": "string",
+              "enum": [
+                "none",
+                "quic",
+                "stun",
+                "auto"
+              ]
+            },
+            "udp_fake_payload": {
+              "type": "string"
+            },
+            "udp_ttl": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 255
+            },
+            "udp_repeats": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 16
+            },
+            "udp_out_range": {
+              "type": "string"
+            },
+            "udp_keep_socket": {
+              "type": "boolean"
+            },
+            "udplen": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 64000
+            },
+            "quic_desync": {
+              "type": "boolean"
+            },
+            "quic_repeats": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 16
+            },
+            "auto_tune": {
+              "type": "boolean"
+            },
+            "adaptive": {
+              "type": "object",
+              "properties": {
+                "max_attempts": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 8
+                },
+                "max_concurrent": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 16
+                },
+                "max_entries": {
+                  "type": "integer",
+                  "minimum": 16,
+                  "maximum": 16384
+                },
+                "ttl": {
+                  "$ref": "#/$defs/Duration"
+                },
+                "timeout": {
+                  "$ref": "#/$defs/Duration"
+                },
+                "max_buffer": {
+                  "type": "integer",
+                  "minimum": 512,
+                  "maximum": 65536
+                },
+                "network_id": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
+            "strategy": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
               "const": "direct"
             },
             "tag": {
@@ -19447,5 +19786,5 @@
       ]
     }
   },
-  "x-singbox-version": "45"
+  "x-singbox-version": "46"
 }
