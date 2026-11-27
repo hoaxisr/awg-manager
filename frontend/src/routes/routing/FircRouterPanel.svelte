@@ -14,6 +14,7 @@
 	import FircMonitorPanel from '$lib/components/firc/FircMonitorPanel.svelte';
 	import FircJournalPanel from '$lib/components/firc/FircJournalPanel.svelte';
 	import { Settings, RotateCw, Power, AlertTriangle } from 'lucide-svelte';
+	import { settingsTabHref } from '$lib/utils/settingsLink';
 
 	let settingsDrawerOpen = $state(false);
 	let settingsHasUnsaved = $state(false);
@@ -114,6 +115,12 @@
 			$fircTunnels.filter((t) => t.enable !== false).length,
 	);
 
+	// Без рантайма кнопки ядра ведут только к «fircd binary missing». При
+	// восстановлении (ядро выбрано, бинаря нет) панель остаётся: там починка.
+	let runtimeMissing = $derived(
+		!!$fircStatus && !$fircStatus.fircdInstalled && !$fircStatus.selected && !$fircStatus.recoveryRequired,
+	);
+
 	let restartLabel = $derived($fircStatus?.recoveryRequired ? m.firc_router_restart_recover() : m.firc_router_restart());
 	let powerLabel = $derived($fircStatus?.running ? m.firc_router_stop() : m.firc_router_start());
 
@@ -187,31 +194,33 @@
 		</div>
 
 		<div class="header-tools">
-			{#if !$fircStatus?.selected}
-				<Button variant="primary" size="sm" onclick={handleSelectFircEngine} disabled={busy}>
-					{m.firc_router_make_active()}
-				</Button>
+			{#if !runtimeMissing}
+				{#if !$fircStatus?.selected}
+					<Button variant="primary" size="sm" onclick={handleSelectFircEngine} disabled={busy}>
+						{m.firc_router_make_active()}
+					</Button>
+				{/if}
+
+				<IconButton
+					size="md"
+					onclick={handleRestartFircDaemon}
+					disabled={busy}
+					title={restartLabel}
+					ariaLabel={restartLabel}
+				>
+					<RotateCw size={15} />
+				</IconButton>
+
+				<IconButton
+					size="md"
+					onclick={handleToggleFircDaemon}
+					disabled={busy}
+					title={powerLabel}
+					ariaLabel={powerLabel}
+				>
+					<Power size={15} />
+				</IconButton>
 			{/if}
-
-			<IconButton
-				size="md"
-				onclick={handleRestartFircDaemon}
-				disabled={busy}
-				title={restartLabel}
-				ariaLabel={restartLabel}
-			>
-				<RotateCw size={15} />
-			</IconButton>
-
-			<IconButton
-				size="md"
-				onclick={handleToggleFircDaemon}
-				disabled={busy}
-				title={powerLabel}
-				ariaLabel={powerLabel}
-			>
-				<Power size={15} />
-			</IconButton>
 
 			<Button variant="outline-primary" size="sm" onclick={() => (settingsDrawerOpen = true)}>
 				{#snippet iconBefore()}<Settings size={16} />{/snippet}
@@ -222,7 +231,22 @@
 
 	<StatStrip cells={statCells} />
 
-	{#if $fircStatus?.restartRequired}
+	{#if runtimeMissing}
+		<div class="firc-recovery-banner" role="status">
+			<div class="recovery-content">
+				<div class="recovery-title">
+					<AlertTriangle size={16} />
+					<span>{m.firc_router_not_installed_title()}</span>
+				</div>
+				<div class="recovery-text">{m.firc_router_not_installed_text()}</div>
+			</div>
+			<div class="recovery-actions">
+				<Button variant="primary" size="sm" href={settingsTabHref('components')}>
+					{m.firc_router_not_installed_action()}
+				</Button>
+			</div>
+		</div>
+	{:else if $fircStatus?.restartRequired}
 		<div class="firc-error-banner" role="alert">{m.firc_foreign_restart_required()}</div>
 	{:else if $fircStatus?.recoveryRequired}
 		<div class="firc-recovery-banner" role="alert">
