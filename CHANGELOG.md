@@ -8,7 +8,7 @@
 
 ### Изменено
 
-- **sing-box (awgm-box) обновлён до 46.** Добавлен outbound `desync`.
+- **sing-box (awgm-box) обновлён до 47.** Добавлен outbound `desync`; на Keenetic работают все его режимы, включая raw (disorder, fake, oob) и autottl.
 
 ### Исправлено
 
