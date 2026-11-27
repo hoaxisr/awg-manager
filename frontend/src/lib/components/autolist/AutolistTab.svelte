@@ -3,6 +3,7 @@
 	import { formatAutolistBytes, formatAutolistDuration, formatAutolistTime } from './time';
 	import { autolistStatus } from '$lib/stores/autolist';
 	import { notifications } from '$lib/stores/notifications';
+	import { settings } from '$lib/stores/settings';
 	import { api } from '$lib/api/client';
 	import {
 		autolistConfigDraft,
@@ -1083,6 +1084,13 @@
 			<Button variant="primary" size="sm" onclick={() => void installSatellite(true)} loading={lifecycleBusy}>
 				{m.autolist_update()}
 			</Button>
+		</div>
+	{/if}
+
+	{#if $settings?.authEnabled && !$settings?.apiKey}
+		<div class="card p-4 flex items-center gap-3 flex-wrap">
+			<TriangleAlert size={18} class="text-warning" aria-hidden="true" />
+			<span class="text-sm flex-1">{m.autolist_need_api_key()}</span>
 		</div>
 	{/if}
 

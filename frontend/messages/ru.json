@@ -7940,6 +7940,7 @@
 	"autolist_update_ok": "Автолист обновлён",
 	"autolist_update_err": "Не удалось обновить автолист",
 	"autolist_not_running": "Автолист не запущен",
+	"autolist_need_api_key": "Включена авторизация, но API-ключ не создан — сателлит не может подключиться к панели. Создайте API-ключ в Настройках и запустите автолист снова.",
 	"autolist_not_running_hint": "Запустите автолист кнопкой ниже. Журнал: /tmp/awgmautolist.log.",
 	"autolist_limit_adds_exhausted": "Лимит добавлений исчерпан ({limit} в час)",
 	"autolist_empty": "Сайтов пока нет",
