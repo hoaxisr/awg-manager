@@ -28,6 +28,7 @@ typedef struct {
     char id[16];
     uint32_t mark;
     uint64_t hsig;
+    bool active;
 } user_t;
 
 typedef struct {
@@ -52,7 +53,7 @@ typedef struct {
     bool fetching;
     size_t nodes;
     firc_subinfo_t info;
-    bool kept, was_wanted;
+    bool kept, was_active, was_known;
 } entry_t;
 
 typedef struct result {
@@ -580,6 +581,26 @@ firc_tunsubs_t *firc_tunsubs_new(firc_loop_t *loop, const char *cache_dir, void 
     return s;
 }
 
+static bool has_active_user(const entry_t *e)
+{
+    for (size_t i = 0; i < e->n_users; i++) {
+        if (e->users[i].active) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static uint32_t fetch_mark(const entry_t *e)
+{
+    for (size_t i = 0; i < e->n_users; i++) {
+        if (e->users[i].active) {
+            return e->users[i].mark;
+        }
+    }
+    return e->n_users > 0 ? e->users[0].mark : 0;
+}
+
 static void enqueue(firc_tunsubs_t *s, entry_t *e)
 {
     if (e->fetching || e->n_users == 0) {
@@ -601,7 +622,7 @@ static void enqueue(firc_tunsubs_t *s, entry_t *e)
     r->url = url;
     memcpy(r->key, e->key, sizeof r->key);
     j->r = r;
-    j->mark = e->users[0].mark;
+    j->mark = fetch_mark(e);
     j->lines = lines;
     snprintf(j->path, sizeof j->path, "%s/%s", s->dir, e->key);
     j->cached = e->cached;
@@ -685,19 +706,26 @@ static entry_t *new_entry(firc_tunsubs_t *s, const char *url, const char *key, c
     return e;
 }
 
-static void add_user(entry_t *e, const char *id, uint32_t mark, uint64_t hsig, int interval_s)
+static void add_user(entry_t *e, const char *id, uint32_t mark, uint64_t hsig, int interval_s, bool active)
 {
     bool known = false;
     for (size_t i = 0; i < e->n_users; i++) {
-        known = known || (strcmp(e->users[i].id, id) == 0 && e->users[i].hsig == hsig);
+        if (strcmp(e->users[i].id, id) == 0 && e->users[i].hsig == hsig) {
+            known = true;
+            if (active && !e->users[i].active) {
+                e->users[i].active = true;
+                e->users[i].mark = mark;
+            }
+        }
     }
     if (!known && e->n_users < FIRC_TUN_MAX) {
         snprintf(e->users[e->n_users].id, sizeof e->users[0].id, "%s", id);
         e->users[e->n_users].mark = mark;
         e->users[e->n_users].hsig = hsig;
+        e->users[e->n_users].active = active;
         e->n_users++;
     }
-    if (interval_s > 0 && (e->interval_s == 0 || interval_s < e->interval_s)) {
+    if (active && interval_s > 0 && (e->interval_s == 0 || interval_s < e->interval_s)) {
         e->interval_s = interval_s;
     }
 }
@@ -706,7 +734,8 @@ void firc_tunsubs_want(firc_tunsubs_t *s, const firc_tunnels_t *t, const uint32_
 {
     size_t old = s->n;
     for (size_t i = 0; i < old; i++) {
-        s->v[i]->was_wanted = s->v[i]->n_users > 0;
+        s->v[i]->was_active = has_active_user(s->v[i]);
+        s->v[i]->was_known = s->v[i]->n_users > 0;
         s->v[i]->n_users = 0;
         s->v[i]->interval_s = 0;
         s->v[i]->kept = false;
@@ -724,9 +753,16 @@ void firc_tunsubs_want(firc_tunsubs_t *s, const firc_tunnels_t *t, const uint32_
             if (e == NULL) {
                 e = new_entry(s, src->sub.url, key, &src->sub);
             }
-            if (e != NULL && tun->enable) {
-                add_user(e, tun->id, marks[i], firc_tun_sub_headers_sig(&src->sub), src->sub.interval_s);
-            } else if (e != NULL) {
+            if (e == NULL) {
+                continue;
+            }
+            uint32_t mark = marks != NULL ? marks[i] : 0;
+            bool active = tun->enable && (tun->uplink == FIRC_UPLINK_AUTO || mark != 0);
+            if (active || tun->uplink == FIRC_UPLINK_AUTO) {
+                uint32_t umark = tun->uplink == FIRC_UPLINK_AUTO ? 0 : mark;
+                add_user(e, tun->id, umark, firc_tun_sub_headers_sig(&src->sub),
+                         src->sub.interval_s, active);
+            } else {
                 e->kept = true;
             }
         }
@@ -741,7 +777,10 @@ void firc_tunsubs_want(firc_tunsubs_t *s, const firc_tunnels_t *t, const uint32_
         }
         s->v[k++] = e;
         users += e->n_users;
-        if (!e->was_wanted && e->n_users > 0 && (!e->have || e->interval_s > 0)) {
+        bool active = has_active_user(e);
+        bool start_active = !e->was_active && active && (!e->have || e->interval_s > 0);
+        bool start_passive = !e->was_known && !active && e->n_users > 0 && !e->have;
+        if (start_active || start_passive) {
             enqueue(s, e);
         }
     }
@@ -821,6 +860,9 @@ void firc_tunsubs_due(firc_tunsubs_t *s)
     int64_t now = mono_ms(s);
     for (size_t i = 0; i < s->n; i++) {
         entry_t *e = s->v[i];
+        if (!has_active_user(e)) {
+            continue;
+        }
         bool scheduled = e->interval_s > 0 && now >= e->done_mono + (int64_t)e->interval_s * 1000;
         bool retry = !e->have && e->done_mono != 0 && now >= e->done_mono + RETRY_MS;
         if (!e->fetching && (scheduled || retry)) {

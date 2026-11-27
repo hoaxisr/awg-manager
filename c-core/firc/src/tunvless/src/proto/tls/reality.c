@@ -30,6 +30,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <errno.h>
+#include <arpa/inet.h>
 #include "osrand.h"
 #include <stdlib.h>
 #if defined(__aarch64__)
@@ -171,6 +172,33 @@ static void ext(struct buf *b, unsigned type, const void *body, size_t n) {
     put(b, body, n);
 }
 
+/* RFC 6066 §3 forbids literal IPv4 and IPv6 addresses in the TLS server_name extension.
+ * Go's crypto/tls (hostnameInSNI), uTLS, Xray-core and sing-box all omit SNI when serverName
+ * is an IP literal; sending it causes Reality servers with an empty serverNames match to reject
+ * the ClientHello and fall back to the camouflage site. Matches qcssl.c for QUIC/Hysteria2. */
+static int sni_is_ip(const char *s) {
+    unsigned char ip[16];
+    if (inet_pton(AF_INET, s, ip) == 1 || inet_pton(AF_INET6, s, ip) == 1) return 1;
+    size_t len = strlen(s);
+    const char *start = s;
+    if (len >= 2 && s[0] == '[' && s[len - 1] == ']') {
+        start++;
+        len -= 2;
+    }
+    const char *pct = memchr(start, '%', len);
+    if (pct && pct > start) len = (size_t)(pct - start);
+    if (start == s && !pct) return 0;
+    if (len == 0 || len >= 64) return 0;
+    char tmp[64];
+    memcpy(tmp, start, len);
+    tmp[len] = '\0';
+    return inet_pton(AF_INET, tmp, ip) == 1 || inet_pton(AF_INET6, tmp, ip) == 1;
+}
+
+static int sni_sendable(const char *s) {
+    return s && s[0] && !sni_is_ip(s);
+}
+
 static size_t sni_body(unsigned char *o, size_t cap, const char *sni) {
     size_t sni_len = strlen(sni);
     struct buf sb = { o, 0, cap };
@@ -282,12 +310,12 @@ static int chrome_body(struct buf *b, size_t *xl, const struct reality_cfg *cfg,
 
     /* server_name: list(2) + type(1) + length(2) + name.
      *
-     * NO NAME MEANS NO EXTENSION, not an empty name. Reality checks the name against its
-     * `serverNames`, where an empty string is legal: the server then expects a ClientHello
-     * without this extension, exactly as Xray sends it with an empty `serverName`. An
-     * extension with a zero-length name is something no browser or client builds, and the
-     * server's check does not recognise it. Subscriptions do declare nodes without `sni`. */
-    if (cfg->sni[0]) {
+     * NO NAME OR IP LITERAL MEANS NO EXTENSION, not an empty name or literal IP (RFC 6066 §3).
+     * Reality checks the name against its `serverNames`, where an empty string is legal: the
+     * server then expects a ClientHello without this extension, exactly as Xray/uTLS/sing-box
+     * send it for an empty or IP-literal `serverName`. Subscriptions do declare nodes without
+     * `sni` or with an IP address in `sni`. */
+    if (sni_sendable(cfg->sni)) {
         px[pn].type = 0x0000; px[pn].body = b_sni; px[pn].n = sni_body(b_sni, sizeof(b_sni), cfg->sni); pn++;
     }
 
@@ -459,7 +487,7 @@ static int firefox_body(struct buf *b, size_t *xl, const struct reality_cfg *cfg
     *xl = b->len;
     put16(b, 0);
 
-    if (cfg->sni[0]) ext(b, 0x0000, sni, sni_body(sni, sizeof sni, cfg->sni));
+    if (sni_sendable(cfg->sni)) ext(b, 0x0000, sni, sni_body(sni, sizeof sni, cfg->sni));
     ext(b, 0x0017, NULL, 0);
     ext(b, 0xFF01, "\x00", 1);
     {

@@ -194,6 +194,9 @@
 			const fresh = finalTunnels.find((t) => t.id === updated.id) ?? updated;
 			draft = cloneTunnel(fresh);
 			baselineJson = JSON.stringify(draft);
+			// Сохранённый туннель показывает живые узлы: предпросмотр, снятый до
+			// скачивания подписки (пустой, без кэша), иначе прятал бы их до закрытия окна.
+			preview = null;
 			await reloadFircAll();
 			notifications.success(m.firc_tunnel_edit_saved({ device: updated.device }));
 			if (closeAfter) {
@@ -284,8 +287,9 @@
 				await saveDraft(false);
 			}
 			await api.fircRefreshTunnel(draft.id);
-			const prev = await api.fircPreviewTunnel(draft).catch(() => null);
-			if (prev) preview = prev;
+			// Обновление только ставит скачивание в очередь: предпросмотр сразу после
+			// него — ещё старые данные. Узлы придут в живом состоянии.
+			preview = null;
 			await reloadFircAll();
 			notifications.success(m.firc_tunnel_edit_refresh_done({ device: draft.device }));
 		} catch (e: unknown) {

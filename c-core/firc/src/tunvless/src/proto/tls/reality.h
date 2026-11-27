@@ -32,7 +32,7 @@ static inline unsigned reality_cert_algs(int fp) {
 
 struct reality_cfg {
     const char *sni;   /* SNI: the camouflage domain (Reality) or the server name (plain);
-                        * "" sends no server_name extension at all */
+                        * "" or an IP literal sends no server_name extension at all (RFC 6066 §3) */
     const char *pbk;   /* server public key, base64url */
     const char *sid;   /* short id, hex; may be empty */
     const char *fp;    /* browser fingerprint: Firefox 148 or Chrome, by reality_fp_of */
