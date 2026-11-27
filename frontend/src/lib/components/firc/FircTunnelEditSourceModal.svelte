@@ -25,6 +25,11 @@
 	let profileKind = $state('');
 	let detecting = $state(false);
 	let busy = $state(false);
+	let mounted = true;
+
+	$effect(() => () => {
+		mounted = false;
+	});
 
 	async function handleDetect() {
 		if (!url.trim() || detecting) return;
@@ -34,6 +39,7 @@
 				([name, value]) => ({ name, value }),
 			);
 			const res = await api.detectSubscriptionHeaders(url.trim(), customHeaders);
+			if (!mounted) return;
 			if (res.normalizedUrl || res.decryptedUrl) {
 				url = res.normalizedUrl || res.decryptedUrl || url;
 			}
@@ -50,9 +56,10 @@
 				}),
 			);
 		} catch (e: unknown) {
+			if (!mounted) return;
 			notifications.error((e instanceof Error ? e.message : undefined) ?? m.firc_tunnel_edit_detect_error());
 		} finally {
-			detecting = false;
+			if (mounted) detecting = false;
 		}
 	}
 
@@ -66,6 +73,7 @@
 
 	async function submit() {
 		if (!url.trim()) return;
+		const submitAdd = onadd;
 		busy = true;
 		try {
 			const headers = kind === 'subscription' ? parseHeadersTextToMap(headersText) : undefined;
@@ -78,6 +86,7 @@
 					interval: kind === 'subscription' ? interval : undefined,
 					headers,
 				});
+				if (!mounted) return;
 				if (normRes?.sources?.length) {
 					addedSources = normRes.sources.map((s) => ({
 						...s,
@@ -88,6 +97,7 @@
 					}));
 				}
 			} catch (normErr: unknown) {
+				if (!mounted) return;
 				// If explicit happ://crypt or FiniteProto v2 parsing failed, surface the error directly
 				const trimmedLower = url.trim().toLowerCase();
 				if (
@@ -100,6 +110,7 @@
 				}
 			}
 
+			if (!mounted) return;
 			if (addedSources.length === 0) {
 				const fallbackSource: FircTunnelSource =
 					kind === 'subscription'
@@ -120,11 +131,12 @@
 				addedSources = [fallbackSource];
 			}
 
-			await onadd(addedSources);
+			await submitAdd(addedSources);
 		} catch (e: unknown) {
+			if (!mounted) return;
 			notifications.error((e instanceof Error ? e.message : undefined) ?? m.firc_tunnel_edit_source_parse_error());
 		} finally {
-			busy = false;
+			if (mounted) busy = false;
 		}
 	}
 </script>

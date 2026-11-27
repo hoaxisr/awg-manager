@@ -29,6 +29,8 @@
 		totalProbeLatencyMs,
 		randomId,
 		cloneTunnel,
+		isEmptyUncachedPreview,
+		prunePreviewSource,
 		buildFilteredNodes,
 		buildDisplayNodes,
 		type DisplayNode,
@@ -50,11 +52,53 @@
 	let preview = $state<FircTunnelPreview | null>(null);
 	let previewError = $state('');
 	let filteredOpen = $state(false);
+	let previewEpoch = 0;
+	let cancelEffectPreview: (() => void) | null = null;
+	let cancelDirectPreview: (() => void) | null = null;
+	let activeDirectPreviewKey = '';
+	let deferredDirectPreview = false;
+	let destroyed = false;
+
+	function cancelAllPendingPreviews() {
+		const eff = cancelEffectPreview;
+		const dir = cancelDirectPreview;
+		cancelEffectPreview = null;
+		cancelDirectPreview = null;
+		activeDirectPreviewKey = '';
+		eff?.();
+		dir?.();
+	}
+
+	function clearPreview() {
+		previewEpoch++;
+		deferredDirectPreview = false;
+		cancelAllPendingPreviews();
+		preview = null;
+		previewError = '';
+	}
+
+	$effect(() => () => {
+		destroyed = true;
+		previewEpoch++;
+		deferredDirectPreview = false;
+		cancelAllPendingPreviews();
+	});
 
 	// Source modal state
-	let sourceModalOpen = $state(false);
-	let sourceModalKind = $state<'subscription' | 'link'>('subscription');
+	interface ActiveSourceModal {
+		session: number;
+		kind: 'subscription' | 'link';
+		onclose: () => void;
+		onadd: (sources: FircTunnelSource[]) => Promise<void>;
+	}
+	let sourceModalSession = 0;
+	let activeSourceModal = $state<ActiveSourceModal | null>(null);
 	let headerProfiles = $state<Array<{ kind: string; label: string; headersText: string }>>([]);
+
+	function closeSourceModal() {
+		sourceModalSession++;
+		activeSourceModal = null;
+	}
 
 	// Happ RSA keys modal state
 	let happKeysModalOpen = $state(false);
@@ -94,8 +138,8 @@
 		if (!id) {
 			draft = null;
 			baselineJson = '';
-			preview = null;
-			previewError = '';
+			clearPreview();
+			closeSourceModal();
 			filteredOpen = false;
 			nodeQuery = '';
 			return;
@@ -105,8 +149,8 @@
 			const c = cloneTunnel(found);
 			draft = c;
 			baselineJson = JSON.stringify(c);
-			preview = null;
-			previewError = '';
+			clearPreview();
+			closeSourceModal();
 			filteredOpen = false;
 		}
 	});
@@ -114,6 +158,29 @@
 	const isDirty = $derived(draft !== null && JSON.stringify(draft) !== baselineJson);
 	const liveState = $derived(
 		draft ? $fircTunnelsState.find((s) => s.id === draft!.id) : undefined,
+	);
+	const liveSubStamp = $derived(
+		(liveState?.subscriptions ?? [])
+			.map((s) => `${s.name}:${s.lastOk}:${s.nodes}:${s.fetching ? 1 : 0}`)
+			.join('|'),
+	);
+	const previewSourcesKey = $derived(
+		(draft?.sources ?? [])
+			.map((s) => {
+				const hdrs = s.headers
+					? Object.keys(s.headers)
+							.sort()
+							.map((k) => `${k}=${s.headers![k]}`)
+							.join('&')
+					: '';
+				return `${s.id}|${s.kind}|${s.name ?? ''}|${s.url ?? ''}|${s.link ?? ''}|${hdrs}`;
+			})
+			.join('\n'),
+	);
+	const previewDraftKey = $derived(
+		draft
+			? `${draft.id}\0${draft.filter ?? ''}\0${draft.filterExclude ?? ''}\0${draft.advanced?.insecure ? 1 : 0}\0${previewSourcesKey}`
+			: '',
 	);
 	const modalDiagnostic = $derived(
 		draft
@@ -129,8 +196,17 @@
 
 	$effect(() => {
 		const tun = draft;
-		if (!tun || !hasSubscriptionSource) return;
-		if (includeWarning || excludeWarning) {
+		if (!tun) return;
+		const hasSubs = hasSubscriptionSource;
+		const incWarn = includeWarning;
+		const excWarn = excludeWarning;
+		const draftKey = previewDraftKey;
+		const hasSources = tun.sources.length > 0;
+		const hasPreview = untrack(() => preview !== null);
+		void liveSubStamp;
+		if (!hasSubs && !hasPreview && !deferredDirectPreview) return;
+		if (!hasSources) return;
+		if (incWarn || excWarn) {
 			previewError = '';
 			return;
 		}
@@ -139,27 +215,59 @@
 		const curExc = tun.filterExclude ?? '';
 		const savedInc = saved?.filter ?? '';
 		const savedExc = saved?.filterExclude ?? '';
-		const hasPreview = untrack(() => preview !== null);
-		if (!hasPreview && curInc === savedInc && curExc === savedExc) {
+		if (!hasPreview && !deferredDirectPreview && curInc === savedInc && curExc === savedExc) {
 			return;
 		}
-		const payload = cloneTunnel(tun);
+		if (activeDirectPreviewKey !== '' && draftKey === activeDirectPreviewKey) {
+			return;
+		}
+		const payload = untrack(() => cloneTunnel(tun));
+		const scheduledEpoch = previewEpoch;
 		const ctrl = new AbortController();
-		const timer = setTimeout(async () => {
-			try {
-				const res = await api.fircPreviewTunnel(payload, ctrl.signal);
-				if (ctrl.signal.aborted) return;
-				preview = res;
-				previewError = '';
-			} catch (e: unknown) {
-				if (e instanceof DOMException && e.name === 'AbortError') return;
-				previewError =
-					e instanceof Error ? e.message : m.firc_filter_preview_error();
-			}
-		}, 300);
-		return () => {
+		const cancel = () => {
 			clearTimeout(timer);
 			ctrl.abort();
+		};
+		const timer = setTimeout(async () => {
+			try {
+				if (destroyed || ctrl.signal.aborted || scheduledEpoch !== previewEpoch) return;
+				const prevDir = cancelDirectPreview;
+				cancelDirectPreview = null;
+				activeDirectPreviewKey = '';
+				if (prevDir && preview === null) {
+					deferredDirectPreview = true;
+				}
+				prevDir?.();
+				const epoch = ++previewEpoch;
+				try {
+					const res = await api.fircPreviewTunnel(payload, ctrl.signal);
+					if (destroyed || ctrl.signal.aborted || epoch !== previewEpoch) return;
+					deferredDirectPreview = false;
+					if (isEmptyUncachedPreview(res)) {
+						preview = null;
+						previewError = '';
+						return;
+					}
+					preview = res;
+					previewError = '';
+				} catch (e: unknown) {
+					if (destroyed || ctrl.signal.aborted || epoch !== previewEpoch) return;
+					if (e instanceof DOMException && e.name === 'AbortError') return;
+					previewError =
+						e instanceof Error ? e.message : m.firc_filter_preview_error();
+				}
+			} finally {
+				if (cancelEffectPreview === cancel) {
+					cancelEffectPreview = null;
+				}
+			}
+		}, 300);
+		cancelEffectPreview = cancel;
+		return () => {
+			cancel();
+			if (cancelEffectPreview === cancel) {
+				cancelEffectPreview = null;
+			}
 		};
 	});
 
@@ -176,8 +284,8 @@
 		fircEditTunnelId.set(null);
 	}
 
-	async function saveDraft(closeAfter = false) {
-		if (!draft || saving) return;
+	async function saveDraft(closeAfter = false): Promise<boolean> {
+		if (!draft || saving) return false;
 		saving = true;
 		try {
 			const updated = cloneTunnel(draft);
@@ -190,6 +298,7 @@
 			}
 			const res = await api.fircSaveTunnels(nextList);
 			const finalTunnels = res?.tunnels ?? nextList;
+			clearPreview();
 			fircTunnels.set(finalTunnels);
 			const fresh = finalTunnels.find((t) => t.id === updated.id) ?? updated;
 			draft = cloneTunnel(fresh);
@@ -199,8 +308,10 @@
 			if (closeAfter) {
 				fircEditTunnelId.set(null);
 			}
+			return true;
 		} catch (e: unknown) {
 			notifications.error((e instanceof Error ? e.message : undefined) ?? m.firc_tunnel_edit_save_error());
+			return false;
 		} finally {
 			saving = false;
 		}
@@ -278,16 +389,18 @@
 
 	async function handleRefresh() {
 		if (!draft || busyAction) return;
+		const targetId = draft.id;
+		const targetDev = draft.device;
 		busyAction = 'refresh';
 		try {
 			if (isDirty) {
-				await saveDraft(false);
+				const saved = await saveDraft(false);
+				if (!saved || !draft || draft.id !== targetId) return;
 			}
-			await api.fircRefreshTunnel(draft.id);
-			const prev = await api.fircPreviewTunnel(draft).catch(() => null);
-			if (prev) preview = prev;
+			clearPreview();
+			await api.fircRefreshTunnel(targetId);
 			await reloadFircAll();
-			notifications.success(m.firc_tunnel_edit_refresh_done({ device: draft.device }));
+			notifications.success(m.firc_tunnel_edit_refresh_done({ device: targetDev }));
 		} catch (e: unknown) {
 			notifications.error((e instanceof Error ? e.message : undefined) ?? m.firc_tunnel_edit_refresh_error());
 		} finally {
@@ -342,27 +455,108 @@
 	}
 
 	function openAddSource(kind: 'subscription' | 'link') {
-		sourceModalKind = kind;
-		sourceModalOpen = true;
+		if (!draft) return;
+		const session = ++sourceModalSession;
+		const targetId = draft.id;
+		activeSourceModal = {
+			session,
+			kind,
+			onclose: () => {
+				if (sourceModalSession === session) closeSourceModal();
+			},
+			onadd: (sources) => addSources(sources, targetId, session),
+		};
 		void ensureSubscriptionAuxLoaded();
 	}
 
-	async function addSources(addedSources: FircTunnelSource[]) {
-		if (!draft) return;
+	async function previewDraftSources(targetId: string, initOrder = false): Promise<boolean> {
+		if (destroyed || !draft || draft.id !== targetId) return false;
+		cancelAllPendingPreviews();
+		const epoch = ++previewEpoch;
+		if (includeWarning || excludeWarning) {
+			if (draft.sources.length > 0 && (preview === null || !hasSubscriptionSource)) {
+				deferredDirectPreview = true;
+			}
+			return true;
+		}
+		const payload = cloneTunnel(draft);
+		const draftKey = previewDraftKey;
+		const startSubStamp = liveSubStamp;
+		const ctrl = new AbortController();
+		const cancel = () => ctrl.abort();
+		cancelDirectPreview = cancel;
+		activeDirectPreviewKey = draftKey;
+		let completed = false;
+		let needsFollowUp = false;
+		try {
+			const prev = await api.fircPreviewTunnel(payload, ctrl.signal).catch(() => null);
+			if (destroyed || ctrl.signal.aborted || epoch !== previewEpoch || !draft || draft.id !== targetId) {
+				return false;
+			}
+			if (previewDraftKey !== draftKey) {
+				if (
+					draft.sources.length > 0 &&
+					!(includeWarning || excludeWarning) &&
+					cancelEffectPreview === null
+				) {
+					needsFollowUp = true;
+				} else if (draft.sources.length > 0 && (preview === null || !hasSubscriptionSource)) {
+					deferredDirectPreview = true;
+				}
+			} else {
+				completed = true;
+				deferredDirectPreview = false;
+				if (prev) {
+					if (isEmptyUncachedPreview(prev)) {
+						preview = null;
+						previewError = '';
+					} else {
+						preview = prev;
+						previewError = '';
+						if (initOrder && (draft.order?.length ?? 0) === 0 && prev.nodes?.length) {
+							draft.order = prev.nodes.map((n) => n.key);
+						}
+					}
+				}
+				needsFollowUp = prev !== null && hasSubscriptionSource && liveSubStamp !== startSubStamp;
+			}
+		} finally {
+			if (cancelDirectPreview === cancel) {
+				cancelDirectPreview = null;
+			}
+			if (activeDirectPreviewKey === draftKey && epoch === previewEpoch) {
+				activeDirectPreviewKey = '';
+			}
+		}
+		if (needsFollowUp) {
+			void previewDraftSources(targetId, false);
+		}
+		return completed;
+	}
+
+	async function addSources(
+		addedSources: FircTunnelSource[],
+		targetId: string,
+		modalSession: number,
+	) {
+		if (destroyed || !draft || draft.id !== targetId || sourceModalSession !== modalSession) {
+			return;
+		}
 		const existingIds = new Set(draft.sources.map((s) => s.id));
 		const deduped = addedSources.map((s) =>
 			existingIds.has(s.id) ? { ...s, id: randomId() } : s,
 		);
 		draft.sources = [...draft.sources, ...deduped];
-		const prev = await api.fircPreviewTunnel(draft).catch(() => null);
-		if (prev) {
-			preview = prev;
-			if ((draft.order?.length ?? 0) === 0 && prev.nodes?.length) {
-				draft.order = prev.nodes.map((n) => n.key);
-			}
+		const stillCurrent = await previewDraftSources(targetId, true);
+		if (destroyed) return;
+		const sameModal = sourceModalSession === modalSession;
+		if (sameModal) {
+			closeSourceModal();
 		}
-		sourceModalOpen = false;
-		fircEditTunnelSubTab.set('nodes');
+		if (!stillCurrent || !draft || draft.id !== targetId) return;
+		if (sameModal) {
+			fircEditTunnelSubTab.set('nodes');
+		}
 		notifications.success(
 			deduped.length > 1
 				? m.firc_tunnel_edit_sources_added({ count: deduped.length })
@@ -372,10 +566,25 @@
 
 	function removeSource(sourceId: string) {
 		if (!draft) return;
+		const targetId = draft.id;
 		const prefix = `${sourceId}:`;
-		draft.sources = draft.sources.filter((s) => s.id !== sourceId);
+		const prevSources = draft.sources;
+		draft.sources = prevSources.filter((s) => s.id !== sourceId);
 		draft.order = (draft.order ?? []).filter((k) => !k.startsWith(prefix));
 		draft.exclude = (draft.exclude ?? []).filter((k) => !k.startsWith(prefix));
+		if (draft.sources.length === 0) {
+			clearPreview();
+			return;
+		}
+		const hadPreview = preview !== null;
+		const hadDirect = cancelDirectPreview !== null;
+		const hadDeferred = deferredDirectPreview;
+		if (hadPreview) {
+			preview = prunePreviewSource(preview, sourceId, prevSources);
+		}
+		if (hadPreview || hadDirect || hadDeferred) {
+			void previewDraftSources(targetId, false);
+		}
 	}
 
 	function addInbound() {
@@ -492,13 +701,15 @@
 	</Modal>
 {/if}
 
-{#if sourceModalOpen}
-	<FircTunnelEditSourceModal
-		kind={sourceModalKind}
-		{headerProfiles}
-		onclose={() => (sourceModalOpen = false)}
-		onadd={addSources}
-	/>
+{#if activeSourceModal}
+	{#key activeSourceModal.session}
+		<FircTunnelEditSourceModal
+			kind={activeSourceModal.kind}
+			{headerProfiles}
+			onclose={activeSourceModal.onclose}
+			onadd={activeSourceModal.onadd}
+		/>
+	{/key}
 {/if}
 
 {#if happKeysModalOpen}

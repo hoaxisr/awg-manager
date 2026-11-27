@@ -4,6 +4,7 @@ import {
 	stripFircEmojis,
 	type FircTunnel,
 	type FircTunnelFilteredNode,
+	type FircTunnelSource,
 	type FircTunnelState,
 	type FircTunnelPreview,
 	type FircTunnelProbeRow,
@@ -109,6 +110,64 @@ export function cloneTunnel(t: FircTunnel): FircTunnel {
 	copy.filter = copy.filter ?? '';
 	copy.filterExclude = copy.filterExclude ?? '';
 	return copy;
+}
+
+export function isEmptyUncachedPreview(preview: FircTunnelPreview | null | undefined): boolean {
+	if (!preview) return false;
+	const hasNodes = (preview.nodes?.length ?? 0) > 0;
+	const hasFiltered = (preview.filteredNodes?.length ?? 0) > 0;
+	if (hasNodes || hasFiltered) return false;
+	return (preview.subscriptions ?? []).some((s) => !s.cached);
+}
+
+/** Синхронно удаляет узлы и подписку удалённого источника из активного предпросмотра. */
+export function prunePreviewSource(
+	preview: FircTunnelPreview | null,
+	sourceId: string,
+	prevSources: FircTunnelSource[],
+): FircTunnelPreview | null {
+	const remainingSources = prevSources.filter((s) => s.id !== sourceId);
+	if (!preview || remainingSources.length === 0) return null;
+	const prefix = `${sourceId}:`;
+	const nodes = (preview.nodes ?? []).filter((n) => !n.key.startsWith(prefix));
+	const filteredNodes = preview.filteredNodes
+		? preview.filteredNodes.filter((n) => !n.key.startsWith(prefix))
+		: undefined;
+	const removed = prevSources.find((s) => s.id === sourceId);
+	let subscriptions = preview.subscriptions ?? [];
+	if (removed?.kind === 'subscription') {
+		const prevSubs = prevSources.filter((s) => s.kind === 'subscription');
+		const subIdx = prevSubs.findIndex((s) => s.id === sourceId);
+		if (subIdx >= 0 && subscriptions.length === prevSubs.length) {
+			subscriptions = subscriptions.filter((_, i) => i !== subIdx);
+		} else {
+			const subCounts = new Map<string, number>();
+			for (const s of remainingSources) {
+				if (s.kind === 'subscription') {
+					const name = s.name ?? '';
+					subCounts.set(name, (subCounts.get(name) ?? 0) + 1);
+				}
+			}
+			const kept: NonNullable<FircTunnelPreview['subscriptions']> = [];
+			for (const sub of subscriptions) {
+				const left = subCounts.get(sub.name) ?? 0;
+				if (left > 0) {
+					kept.push(sub);
+					subCounts.set(sub.name, left - 1);
+				}
+			}
+			subscriptions = kept;
+		}
+	}
+	const pruned: FircTunnelPreview = {
+		...preview,
+		nodes,
+		filteredNodes,
+		matched: nodes.length,
+		total: nodes.length + (filteredNodes?.length ?? 0),
+		subscriptions,
+	};
+	return isEmptyUncachedPreview(pruned) ? null : pruned;
 }
 
 export function buildFilteredNodes(
