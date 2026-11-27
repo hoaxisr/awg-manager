@@ -117,9 +117,6 @@ func TestPurgeFircAndTunnels_FullPurgeAndSnapshotRestore(t *testing.T) {
 		},
 	)
 
-	if err := op.SavePreFircSingboxConfig(sbDir, true); err != nil {
-		t.Fatalf("SavePreFircSingboxConfig: %v", err)
-	}
 	if err := op.SaveMigrationWizardState(MigrationWizardState{DismissedAutoPopup: true, LastDirection: "singbox->firc"}); err != nil {
 		t.Fatalf("SaveMigrationWizardState: %v", err)
 	}
@@ -139,8 +136,8 @@ func TestPurgeFircAndTunnels_FullPurgeAndSnapshotRestore(t *testing.T) {
 	if res.SnapshotCreated == nil || res.SnapshotCreated.Trigger != "auto-pre-purge" {
 		t.Fatalf("expected auto-pre-purge snapshot, got %+v", res.SnapshotCreated)
 	}
-	if !res.SavedSingboxPreserved || res.PreservedSnapshots < 1 {
-		t.Fatalf("expected recovery bundles preserved, got %+v", res)
+	if res.PreservedSnapshots < 1 {
+		t.Fatalf("expected snapshots preserved, got %+v", res)
 	}
 	if stopCalls == 0 || onBeforeCalls != 1 {
 		t.Fatalf("expected stopCalls>0 and onBeforeCalls=1, got stop=%d onBefore=%d", stopCalls, onBeforeCalls)
@@ -169,7 +166,6 @@ func TestPurgeFircAndTunnels_FullPurgeAndSnapshotRestore(t *testing.T) {
 
 	preservedPaths := []string{
 		filepath.Join(fircDir, snapshotsSubdirName, res.SnapshotCreated.ID+".json"),
-		filepath.Join(fircDir, savedSingboxBundleName),
 		filepath.Join(fircDir, wizardStateFileName),
 		filepath.Join(sbDir, "10-tunnels.json"),
 		filepath.Join(awgmDir, "subscriptions.json"),
@@ -263,8 +259,8 @@ func TestPurgeSingboxAndTunnels_FailClosedAndSuccess(t *testing.T) {
 	if res.SnapshotCreated == nil || res.SnapshotCreated.Trigger != "auto-pre-purge" {
 		t.Fatalf("expected auto-pre-purge snapshot, got %+v", res.SnapshotCreated)
 	}
-	if !res.SavedSingboxPreserved || res.PreservedSnapshots < 1 {
-		t.Fatalf("expected saved-singbox & snapshots preserved, got %+v", res)
+	if res.PreservedSnapshots < 1 {
+		t.Fatalf("expected snapshots preserved, got %+v", res)
 	}
 
 	rawSnap, err := os.ReadFile(filepath.Join(fircDir, snapshotsSubdirName, res.SnapshotCreated.ID+".json"))
@@ -288,9 +284,6 @@ func TestPurgeSingboxAndTunnels_FailClosedAndSuccess(t *testing.T) {
 		if !foundFiles[mustContain] {
 			t.Fatalf("expected %s captured in pre-purge snapshot, got keys: %+v", mustContain, foundFiles)
 		}
-	}
-	if _, err := os.Stat(filepath.Join(fircDir, savedSingboxBundleName)); err != nil {
-		t.Fatalf("expected saved-singbox-config.json preserved: %v", err)
 	}
 }
 

@@ -353,19 +353,12 @@ func TestAddConfirmedCandidate_RefusesDNSOnlyGroup(t *testing.T) {
 	}
 }
 
-// Тег "dns" sing-box без туннеля не превращается в группу «только DNS», а такая группа
-// при обратной миграции пропускается, а не валит её.
+// Тег "dns" sing-box без туннеля не превращается в группу «только DNS».
 func TestMigration_SkipsDNSOnlyGroups(t *testing.T) {
 	groups, _ := migrateSingboxRouterFragment([]byte(`{"route":{"rules":[{"domain":["a.example"],"outbound":"dns"},{"domain":["b.example"],"outbound":"vpn"}]}}`),
 		map[string]string{"vpn": "tunvless0"}, nil)
 	if len(groups) != 1 || groups[0].Interface[0] != "tunvless0" {
 		t.Errorf("migrated=%+v", groups)
-	}
-	g := dnsOnlyGroup("d1")
-	g.Rules = []Rule{{Type: "namespace", Rule: "a.example", Enable: true}}
-	res, _, _, _, _, err := buildReverseSingboxPayloads(nil, []Group{g}, "", nil, true)
-	if err != nil || len(res.Skipped) != 1 || len(res.Groups) != 0 {
-		t.Errorf("reverse: res=%+v err=%v", res, err)
 	}
 }
 
@@ -383,7 +376,7 @@ func TestSnapshotPreflight_RefusesResolverInPool(t *testing.T) {
 		return SnapshotFileEntry{Scope: "firc", RelPath: rel, DataB64: base64.StdEncoding.EncodeToString([]byte(data))}
 	}
 	preflight := func(entries ...SnapshotFileEntry) error {
-		_, _, err := op.validateSnapshotEntriesPreflight(context.Background(), "", entries, false, "")
+		_, _, err := op.validateSnapshotEntriesPreflight(context.Background(), "", entries, "")
 		return err
 	}
 	if err := preflight(entry("groups.yaml", groups)); err != nil {

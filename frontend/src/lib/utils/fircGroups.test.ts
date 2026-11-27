@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { CatalogPreset } from '$lib/types';
 import type { FircGroup, FircGroupCheck, FircInterfaceOption, FircProxyGroup } from '$lib/types/firc';
 import {
+	formatIfaceOption,
 	applyProxyGroupToGroup,
 	buildAvailableInterfaces,
 	buildBulkInterfaces,
@@ -771,5 +772,13 @@ describe('Proxy-интерфейсы t2s* в выборе выхода', () => {
 
 		toggleBackupIface(chainGroup, 't2s2');
 		expect(chainGroup.interface).toEqual(['t2s0', 't2s2']);
+	});
+});
+
+describe('formatIfaceOption', () => {
+	it('имя туннеля целиком: хвост в скобках различает туннели', () => {
+		expect(formatIfaceOption({ id: 'nwg0', name: '🇷🇺 WARP (RIX)', role: 'tunnel' })).toBe('nwg0 — 🇷🇺 WARP (RIX)');
+		expect(formatIfaceOption({ id: 'nwg1', name: '🇳🇱 WG (NL)', role: 'tunnel' })).toBe('nwg1 — 🇳🇱 WG (NL)');
+		expect(formatIfaceOption({ id: 'nwg2', name: 'nwg2', role: 'tunnel' })).toBe('nwg2');
 	});
 });

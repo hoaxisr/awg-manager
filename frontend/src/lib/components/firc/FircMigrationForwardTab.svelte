@@ -1,6 +1,7 @@
 <script lang="ts">
-  // Вкладка «Из Sing-box в FIRC»: что сделать с Sing-box, режим записи,
-  // источник правил, FakeIP и выбор туннелей/групп для переноса.
+  // Вкладка «Из Sing-box в FIRC»: что сделать с Sing-box, источник правил,
+  // FakeIP и выбор туннелей/групп для переноса. Импорт только заменяет и
+  // всегда снимает снимок — режима слияния и флажка снимка нет.
   import { m } from '$lib/i18n';
   import type { FircInstallStatus, FircMigrationSummary } from '$lib/types/firc';
   import { Button, Badge } from '$lib/components/ui';
@@ -20,10 +21,10 @@
     installingRuntime: boolean;
     activeEngine: string;
     postAction: PostAction;
-    mode: 'merge' | 'replace';
     routerSource: RouterSource;
-    createSnapshot: boolean;
     includeFakeIP: boolean;
+    /** В AWGM Route уже есть туннели или группы — импорт их заменит. */
+    replacesExisting: boolean;
     confirmReplace: boolean;
     selectedTunnelIds: string[];
     selectedGroupIds: string[];
@@ -39,10 +40,9 @@
     installingRuntime,
     activeEngine,
     postAction = $bindable(),
-    mode = $bindable(),
     routerSource = $bindable(),
-    createSnapshot = $bindable(),
     includeFakeIP = $bindable(),
+    replacesExisting,
     confirmReplace = $bindable(),
     selectedTunnelIds = $bindable(),
     selectedGroupIds = $bindable(),
@@ -181,63 +181,32 @@
     </div>
   </div>
 
-  <div class="field-grid-2">
-    <div class="field">
-      <label class="lbl" for="wiz-fwd-mode">{m.firc_migration_fwd_mode_label()}</label>
-      <select
-        id="wiz-fwd-mode"
-        class="inp"
-        value={mode}
-        disabled={isBusy}
-        onchange={(e) => {
-          mode = (e.currentTarget as HTMLSelectElement).value as 'merge' | 'replace';
-          confirmReplace = false;
-          onrefresh(routerSource);
-        }}
-      >
-        <option value="merge">{m.firc_migration_fwd_mode_merge()}</option>
-        <option value="replace">{m.firc_migration_fwd_mode_replace()}</option>
-      </select>
-    </div>
-
-    <div class="field">
-      <label class="lbl" for="wiz-fwd-source">{m.firc_migration_fwd_source_label()}</label>
-      <select
-        id="wiz-fwd-source"
-        class="inp"
-        value={routerSource}
-        disabled={isBusy}
-        onchange={(e) => {
-          const v = (e.currentTarget as HTMLSelectElement).value as RouterSource;
-          routerSource = v;
-          onrefresh(v);
-        }}
-      >
-        <option value="auto">{m.firc_migration_fwd_source_auto()}</option>
-        <option value="tproxy">{m.firc_migration_fwd_source_tproxy()}</option>
-        <option value="fakeip">{m.firc_migration_fwd_source_fakeip()}</option>
-        <option value="both">{m.firc_migration_fwd_source_both()}</option>
-      </select>
-    </div>
+  <div class="field">
+    <label class="lbl" for="wiz-fwd-source">{m.firc_migration_fwd_source_label()}</label>
+    <select
+      id="wiz-fwd-source"
+      class="inp"
+      value={routerSource}
+      disabled={isBusy}
+      onchange={(e) => {
+        const v = (e.currentTarget as HTMLSelectElement).value as RouterSource;
+        routerSource = v;
+        onrefresh(v);
+      }}
+    >
+      <option value="auto">{m.firc_migration_fwd_source_auto()}</option>
+      <option value="tproxy">{m.firc_migration_fwd_source_tproxy()}</option>
+      <option value="fakeip">{m.firc_migration_fwd_source_fakeip()}</option>
+      <option value="both">{m.firc_migration_fwd_source_both()}</option>
+    </select>
   </div>
 
-  {#if mode === 'replace'}
+  {#if replacesExisting}
     <label class="check-row warn-confirm-box">
       <input type="checkbox" disabled={isBusy} bind:checked={confirmReplace} />
       <span><RichText text={m.firc_migration_fwd_confirm_replace()} /></span>
     </label>
   {/if}
-
-  <label class="check-row">
-    <input type="checkbox" disabled={isBusy || postAction === 'switch_and_uninstall'} bind:checked={createSnapshot} />
-    <span>
-      <RichText
-        text={postAction === 'switch_and_uninstall'
-          ? m.firc_migration_fwd_snapshot_mandatory()
-          : m.firc_migration_fwd_snapshot_optional()}
-      />
-    </span>
-  </label>
 
   {#if preview?.fakeip?.detected}
     <div class="wiz-box fakeip-box">

@@ -11,8 +11,6 @@ const {
 	singboxInstall,
 	fircPurgeEngine,
 	fircMigrateFromSingbox,
-	fircReturnToSavedSingbox,
-	fircReverseMigrateToSingbox,
 	fircRestoreSnapshot,
 	fircCreateSnapshot,
 	fircDeleteSnapshot,
@@ -47,8 +45,6 @@ const {
 		singboxInstall: vi.fn(),
 		fircPurgeEngine: vi.fn(),
 		fircMigrateFromSingbox: vi.fn(),
-		fircReturnToSavedSingbox: vi.fn(),
-		fircReverseMigrateToSingbox: vi.fn(),
 		fircRestoreSnapshot: vi.fn(),
 		fircCreateSnapshot: vi.fn(),
 		fircDeleteSnapshot: vi.fn(),
@@ -64,8 +60,6 @@ vi.mock('$lib/api/client', () => ({
 		singboxInstall,
 		fircPurgeEngine,
 		fircMigrateFromSingbox,
-		fircReturnToSavedSingbox,
-		fircReverseMigrateToSingbox,
 		fircRestoreSnapshot,
 		fircCreateSnapshot,
 		fircDeleteSnapshot,
@@ -164,26 +158,9 @@ function baseOverview(overrides: Partial<FircMigrationOverview> = {}): FircMigra
 		fircTunnelsCount: 1,
 		fircGroupsCount: 1,
 		snapshots: [],
-		savedSingbox: {
-			available: false,
-			source: 'none',
-			tunnelsCount: 0,
-			subscriptionsCount: 0,
-			groupsCount: 0,
-			filesCount: 0,
-		},
 		forwardPreview: {
 			tunnels: [dummyTunnel],
 			groups: [],
-		},
-		reversePreview: {
-			tunnels: [],
-			groups: [],
-			outboundsCreated: 0,
-			subscriptionsMigrated: 0,
-			rulesMigrated: 0,
-			ruleSetsMigrated: 0,
-			clientRoutesMigrated: 0,
 		},
 		...overrides,
 	};
@@ -196,15 +173,6 @@ beforeEach(() => {
 	fircGetInstallStatus.mockResolvedValue(installedFircStatus);
 	fircGetMigrationState.mockResolvedValue(baseOverview());
 	fircMigrateFromSingbox.mockResolvedValue({ tunnels: [], groups: [] });
-	fircReverseMigrateToSingbox.mockResolvedValue({
-		tunnels: [],
-		groups: [],
-		outboundsCreated: 0,
-		subscriptionsMigrated: 0,
-		rulesMigrated: 0,
-		ruleSetsMigrated: 0,
-		clientRoutesMigrated: 0,
-	});
 	fircUpdateMigrationState.mockResolvedValue({ dismissedAutoPopup: false });
 });
 
@@ -221,10 +189,10 @@ describe('FircMigrationWizardModal engine purge & recovery', () => {
 		render(FircMigrationWizardModal);
 		openFircMigrationModal('forward');
 		await waitFor(() => expect(fircGetInstallStatus).toHaveBeenCalled());
-		expect(screen.queryByText(m.firc_migration_tab_reverse())).not.toBeInTheDocument();
+		expect(screen.queryByText(m.firc_migration_tab_snapshots())).not.toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: m.firc_migration_fwd_apply() })).not.toBeInTheDocument();
 		answer(installedFircStatus);
-		expect((await screen.findAllByText(m.firc_migration_tab_reverse())).length).toBeGreaterThan(0); // признак не холостой
+		expect((await screen.findAllByText(m.firc_migration_tab_snapshots())).length).toBeGreaterThan(0); // признак не холостой
 		expect(await screen.findByRole('button', { name: m.firc_migration_fwd_apply() })).toBeInTheDocument();
 
 		closeFircMigrationModal();
@@ -279,13 +247,12 @@ describe('FircMigrationWizardModal engine purge & recovery', () => {
 		expect(await screen.findByText(m.firc_foreign_binary({ path: '/opt/bin/fircd' }))).toBeInTheDocument();
 		// sing-box не установлен: уход с движка означает «выключить».
 		expect(screen.getByRole('button', { name: m.firc_foreign_turn_off() })).toBeInTheDocument();
-		expect(screen.queryByText(m.firc_migration_tab_reverse())).not.toBeInTheDocument();
+		expect(screen.queryByText(m.firc_migration_tab_snapshots())).not.toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: m.firc_migration_fwd_apply() })).not.toBeInTheDocument();
 		expect(fircMigrateFromSingbox).not.toHaveBeenCalled();
-		expect(fircReverseMigrateToSingbox).not.toHaveBeenCalled();
 	});
 
-	it('offers switch_and_uninstall in Tab 1 and enforces mandatory snapshot on submit', async () => {
+	it('импорт с заменой: подтверждение при существующих данных, снимок без флажка', async () => {
 		fircMigrateFromSingbox.mockImplementation(async (dryRun: boolean) => {
 			if (dryRun) {
 				return baseOverview().forwardPreview;
@@ -317,7 +284,6 @@ describe('FircMigrationWizardModal engine purge & recovery', () => {
 					subscriptionsRemoved: 1,
 					runtimeRemoved: true,
 					preservedSnapshots: 1,
-					savedSingboxPreserved: true,
 				},
 			};
 		});
@@ -325,36 +291,36 @@ describe('FircMigrationWizardModal engine purge & recovery', () => {
 		render(FircMigrationWizardModal);
 		openFircMigrationModal('forward');
 
-		const cardText = await screen.findByText(m.firc_migration_fwd_post_uninstall());
-		const radio = screen.getByDisplayValue('switch_and_uninstall');
-		expect(cardText).toBeInTheDocument();
+		await screen.findByText(m.firc_migration_fwd_post_uninstall());
+		expect(document.getElementById('wiz-fwd-mode')).toBeNull();
+		await fireEvent.click(screen.getByDisplayValue('switch_and_uninstall'));
 
-		const snapChk = screen.getByLabelText(/Автоматически создать проверенный/i);
-		await fireEvent.click(snapChk);
-		expect(snapChk).not.toBeChecked();
-
-		await fireEvent.click(radio);
-		await waitFor(() => {
-			expect(snapChk).toBeChecked();
-			expect(snapChk).toBeDisabled();
-		});
-
+		// В AWGM Route уже есть туннель и группа: без подтверждения замены кнопка закрыта.
 		const submitBtn = screen.getByRole('button', { name: m.firc_migration_fwd_apply() });
+		expect(submitBtn).toBeDisabled();
+		await fireEvent.click(screen.getByRole('checkbox', { name: /будут заменены/i }));
+		expect(submitBtn).not.toBeDisabled();
 		await fireEvent.click(submitBtn);
 
 		await waitFor(() => {
-			expect(fircMigrateFromSingbox).toHaveBeenCalledWith(
-				false,
-				expect.objectContaining({
-					postSingboxAction: 'switch_and_uninstall',
-					createSnapshot: true,
-				}),
-			);
-			expect(notifications.success).toHaveBeenLastCalledWith(
-				expect.stringContaining('Sing-box и его туннели удалены'),
-			);
+			expect(fircMigrateFromSingbox).toHaveBeenCalledWith(false, expect.objectContaining({ postSingboxAction: 'switch_and_uninstall' }));
+			expect(notifications.success).toHaveBeenLastCalledWith(expect.stringContaining('Sing-box и его туннели удалены'));
 			expect(get(fircMigrationModalOpen)).toBe(false);
 		});
+		const sent = fircMigrateFromSingbox.mock.calls.find((c) => c[0] === false)?.[1];
+		expect(sent).not.toHaveProperty('mode');
+		expect(sent).not.toHaveProperty('createSnapshot');
+		// Группы не выбраны — их категория не трогается.
+		expect(sent).toMatchObject({ includeTunnels: true, includeGroups: false, includeClientRoutes: false });
+	});
+
+	it('пустой AWGM Route — импорт без подтверждения замены', async () => {
+		fircGetMigrationState.mockResolvedValue(baseOverview({ fircTunnelsCount: 0, fircGroupsCount: 0 }));
+		render(FircMigrationWizardModal);
+		openFircMigrationModal('forward');
+		const submitBtn = await screen.findByRole('button', { name: m.firc_migration_fwd_apply() });
+		expect(screen.queryByRole('checkbox', { name: /будут заменены/i })).toBeNull();
+		expect(submitBtn).not.toBeDisabled();
 	});
 
 	it('allows 2-click purge of inactive Sing-box from engine strip when FIRC is active', async () => {
@@ -388,7 +354,6 @@ describe('FircMigrationWizardModal engine purge & recovery', () => {
 				filesCount: 5,
 			},
 			preservedSnapshots: 1,
-			savedSingboxPreserved: true,
 		});
 		fircGetMigrationState.mockResolvedValue(
 			baseOverview({
@@ -415,101 +380,6 @@ describe('FircMigrationWizardModal engine purge & recovery', () => {
 			expect(fircPurgeEngine).toHaveBeenCalledWith('sing-box');
 		});
 		await screen.findByText(/Движок Sing-box и его туннели удалены/i);
-	});
-
-	it('allows reinstalling removed Sing-box in Tab 2 and returning with switch_and_uninstall_firc', async () => {
-		fircGetMigrationState.mockResolvedValueOnce(
-			baseOverview({
-				activeEngine: 'firc',
-				fircRunning: true,
-				singboxRunning: false,
-				singboxInstalled: false,
-				savedSingbox: {
-					available: true,
-					source: 'saved_bundle',
-					tunnelsCount: 1,
-					subscriptionsCount: 0,
-					groupsCount: 1,
-					filesCount: 4,
-				},
-			}),
-		);
-		singboxInstall.mockResolvedValue({ installed: true, running: false });
-		fircGetMigrationState.mockResolvedValue(
-			baseOverview({
-				activeEngine: 'firc',
-				fircRunning: true,
-				singboxRunning: false,
-				singboxInstalled: true,
-				savedSingbox: {
-					available: true,
-					source: 'saved_bundle',
-					tunnelsCount: 1,
-					subscriptionsCount: 0,
-					groupsCount: 1,
-					filesCount: 4,
-				},
-			}),
-		);
-		fircReturnToSavedSingbox.mockResolvedValue({
-			source: 'saved_bundle',
-			restoredFiles: 4,
-			postActionApplied: 'switch_and_uninstall_firc',
-			snapshotCreated: {
-				id: 'snap-pre-ret',
-				createdAt: 1794900020,
-				label: 'pre-ret',
-				trigger: 'auto-pre-return-singbox',
-				activeEngine: 'firc',
-				singboxTunnelsCount: 0,
-				singboxSubscriptionsCount: 0,
-				singboxGroupsCount: 0,
-				fircTunnelsCount: 1,
-				fircGroupsCount: 1,
-				filesCount: 4,
-			},
-			removedEngine: {
-				engine: 'firc',
-				tunnelsRemoved: 1,
-				groupsRemoved: 1,
-				runtimeRemoved: true,
-				preservedSnapshots: 2,
-				savedSingboxPreserved: true,
-			},
-		});
-
-		render(FircMigrationWizardModal);
-		openFircMigrationModal('reverse');
-
-		await screen.findByText(m.firc_migration_rev_singbox_missing_title());
-		const returnBtn = screen.getByRole('button', { name: m.firc_migration_saved_apply() });
-		expect(returnBtn).toBeDisabled();
-
-		const installBtns = screen.getAllByRole('button', { name: m.firc_migration_install_singbox() });
-		await fireEvent.click(installBtns[0]);
-		await waitFor(() => {
-			expect(singboxInstall).toHaveBeenCalled();
-		});
-
-		await waitFor(() => {
-			expect(screen.queryByText(m.firc_migration_rev_singbox_missing_title())).toBeNull();
-			expect(returnBtn).not.toBeDisabled();
-		});
-
-		const uninstallFircRadio = screen.getByDisplayValue('switch_and_uninstall_firc');
-		await fireEvent.click(uninstallFircRadio);
-		await fireEvent.click(returnBtn);
-
-		await waitFor(() => {
-			expect(fircReturnToSavedSingbox).toHaveBeenCalledWith({
-				createSnapshot: true,
-				postFircAction: 'switch_and_uninstall_firc',
-			});
-			expect(notifications.success).toHaveBeenLastCalledWith(
-				expect.stringContaining('AWGM Route и его туннели удалены'),
-			);
-			expect(get(fircMigrationModalOpen)).toBe(false);
-		});
 	});
 
 	it('shows auto-pre-purge trigger badge and missing-engine restore guard in Tab 3', async () => {
@@ -583,34 +453,4 @@ describe('FircMigrationWizardModal engine purge & recovery', () => {
 		expect(get(fircMigrationModalOpen)).toBe(false);
 	});
 
-	it('shows pending Sing-box badge for saved bundle when validator_unavailable and filesCount > 0', async () => {
-		fircGetMigrationState.mockResolvedValue(
-			baseOverview({
-				activeEngine: 'firc',
-				fircRunning: true,
-				singboxRunning: false,
-				singboxInstalled: false,
-				savedSingbox: {
-					available: false,
-					verificationStatus: 'validator_unavailable',
-					tunnelsCount: 1,
-					subscriptionsCount: 0,
-					groupsCount: 5,
-					filesCount: 6,
-				},
-			}),
-		);
-
-		render(FircMigrationWizardModal);
-		openFircMigrationModal('reverse');
-
-		const cardBadges = await screen.findAllByText(m.firc_migration_saved_badge_pending());
-		expect(cardBadges.length).toBeGreaterThanOrEqual(1);
-		expect(screen.queryByText(m.firc_migration_rev_badge_no_copy())).toBeNull();
-		const scenario1Radio = screen.getByDisplayValue('saved');
-		await fireEvent.click(scenario1Radio);
-		await waitFor(() => {
-			expect(screen.getAllByText(m.firc_migration_saved_badge_pending()).length).toBeGreaterThanOrEqual(2);
-		});
-	});
 });

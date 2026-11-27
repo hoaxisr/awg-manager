@@ -7,9 +7,9 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -591,10 +591,10 @@ func (a *app) wireFircEngineCoordinator() {
 	// Ping не отвечает и у зависшего fircd, а prerm рантайма проверяет pidof:
 	// по одному ping обновление сочло бы процесс остановленным и упало в opkg.
 	installer.SetFircRunningChecker(func(ctx context.Context) bool {
-		return (a.fircOp != nil && a.fircOp.IsRunning(ctx)) || pidofRunning(ctx, "fircd")
+		return (a.fircOp != nil && a.fircOp.IsRunning(ctx)) || procRunning("fircd")
 	})
 	installer.SetTunvlessRunningChecker(func(ctx context.Context) bool {
-		return pidofRunning(ctx, "tunvless")
+		return procRunning("tunvless")
 	})
 	installer.SetDependencyChecker(func(ctx context.Context) ([]string, error) {
 		if a.settingsStore == nil {
@@ -921,26 +921,6 @@ func (a *app) completeFircStartup() {
 	}
 	if !a.runFircStartupRecoveryGate() {
 		return
-	}
-
-	// One-shot migration from sing-box config.d if FIRC runtime is installed and tunnels.yaml & groups.yaml do not exist yet
-	if a.singboxOp != nil && a.fircOp.ValidateBinaries() == nil {
-		_, tunErr := os.Stat(a.fircOp.TunnelsPath())
-		_, grpErr := os.Stat(a.fircOp.GroupsPath())
-		if os.IsNotExist(tunErr) && os.IsNotExist(grpErr) {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			res, err := a.fircOp.MigrateFromSingbox(ctx, a.singboxOp.ConfigDir())
-			cancel()
-			if err != nil {
-				if a.bootLog != nil {
-					a.bootLog.Warn("firc-migration", "", err.Error())
-				}
-			} else if res != nil && (len(res.Tunnels) > 0 || len(res.Groups) > 0) {
-				if a.bootLog != nil {
-					a.bootLog.Info("firc-migration", "", "migrated sing-box tunnels and routing groups to firc")
-				}
-			}
-		}
 	}
 
 	if a.isFircEngineActive() {
@@ -1484,13 +1464,27 @@ func (a *app) syncFircFromRouterSettings(ctx context.Context, prev, next storage
 	}
 }
 
-// pidofRunning: pidof с кодом 1 — процесса нет; любой другой отказ — неизвестно,
-// поэтому «запущен» (безопасная сторона для остановки перед opkg).
-func pidofRunning(ctx context.Context, name string) bool {
-	out, err := exec.CommandContext(ctx, "pidof", name).Output()
-	if err == nil {
-		return len(strings.TrimSpace(string(out))) > 0
+// procRunning ищет процесс по comm в /proc. Внешний pidof не годится: в прошивке
+// его нет, есть только у busybox Entware, а отказ запуска пришлось бы считать
+// «запущен» — и установка рантайма падала бы всегда. Нечитаемый /proc —
+// неизвестно, поэтому «запущен» (безопасная сторона для остановки перед opkg).
+func procRunning(name string) bool {
+	return procRunningIn("/proc", name)
+}
+
+func procRunningIn(procDir, name string) bool {
+	entries, err := os.ReadDir(procDir)
+	if err != nil {
+		return true
 	}
-	var exitErr *exec.ExitError
-	return !errors.As(err, &exitErr) || exitErr.ExitCode() != 1
+	for _, e := range entries {
+		if _, err := strconv.Atoi(e.Name()); err != nil {
+			continue
+		}
+		comm, err := os.ReadFile(filepath.Join(procDir, e.Name(), "comm"))
+		if err == nil && strings.TrimSpace(string(comm)) == name {
+			return true
+		}
+	}
+	return false
 }

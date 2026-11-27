@@ -632,8 +632,10 @@ static void refresh_inbounds(firc_tunrun_t *t, size_t i)
     }
     size_t n_bodies = 0;
     const firc_tun_body_t *bodies = firc_tunsubs_bodies(t->subs, &n_bodies);
+    bool has_bodies = t->ok[i] && (tun->uplink == FIRC_UPLINK_AUTO || t->up[i].mark != 0);
     if (tun->n_inb > 0 &&
-        firc_tun_nodes_links_of(tun, t->up[i].mark, bodies, n_bodies, keys, tun->n_inb, links) != FIRC_OK) {
+        firc_tun_nodes_links_of(tun, t->up[i].mark, has_bodies ? bodies : NULL, has_bodies ? n_bodies : 0, keys,
+                                tun->n_inb, links) != FIRC_OK) {
         return;
     }
     char *text = NULL;
@@ -1440,8 +1442,10 @@ static firc_err_t push(firc_tunrun_t *t, bool want)
         }
         const firc_tunnel_t *tun = &t->cur.t[i];
         uint32_t mark = t->up[i].mark;
+        bool has_bodies = tun->uplink == FIRC_UPLINK_AUTO || mark != 0;
         sent_t fresh = {0};
-        firc_err_t err = sendable(tun, mark, bodies, n_bodies, t->list_max, &fresh);
+        firc_err_t err =
+            sendable(tun, mark, has_bodies ? bodies : NULL, has_bodies ? n_bodies : 0, t->list_max, &fresh);
         if (err != FIRC_OK) {
             firc_log_from(FIRC_LOG_ERROR, tun->device, "node list not built: %s", firc_err_str(err));
         } else {
@@ -1872,7 +1876,8 @@ static void prune_keys(firc_tunrun_t *t)
     for (size_t i = 0; i < t->cur.n; i++) {
         firc_tunnel_t *tun = &t->cur.t[i];
         size_t dropped = 0;
-        if (tun->enable && t->ok[i] &&
+        bool has_bodies = tun->uplink == FIRC_UPLINK_AUTO || t->up[i].mark != 0;
+        if (tun->enable && t->ok[i] && has_bodies &&
             firc_tun_nodes_prune(tun, t->up[i].mark, bodies, n_bodies, &dropped) == FIRC_OK && dropped > 0) {
             FIRC_INFO("tunnel %s: dropped %zu keys no source gives any more", tun->id, dropped);
             any = true;

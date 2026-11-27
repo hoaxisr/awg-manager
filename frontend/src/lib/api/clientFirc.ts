@@ -21,9 +21,6 @@ import {
 	type FircMigrationOverview,
 	type FircMigrationSummary,
 	type FircMigrationWizardState,
-	type FircReverseMigrationOptions,
-	type FircReverseMigrationSummary,
-	type FircSavedSingboxRestoreResult,
 	type FircSnapshotMeta,
 	type FircPolicy,
 	type FircSettingsRes,
@@ -618,31 +615,6 @@ export class FircClient extends WarpScoutClient {
 		return this.request<FircMigrationWizardState>('/firc/migrate/state', {
 			method: 'PUT',
 			body: JSON.stringify(payload),
-		});
-	}
-
-	async fircReverseMigrateToSingbox(
-		dryRun = false,
-		options?: FircReverseMigrationOptions,
-	): Promise<FircReverseMigrationSummary> {
-		const query = dryRun ? '?dry_run=1' : '';
-		return this.request<FircReverseMigrationSummary>(`/firc/migrate/reverse${query}`, {
-			method: 'POST',
-			body: JSON.stringify({
-				dry_run: dryRun,
-				dryRun,
-				...(options ?? {}),
-			}),
-		});
-	}
-
-	async fircReturnToSavedSingbox(options?: {
-		createSnapshot?: boolean;
-		postFircAction?: 'switch_to_singbox' | 'switch_and_stop_firc' | 'switch_and_uninstall_firc' | 'keep_current';
-	}): Promise<FircSavedSingboxRestoreResult> {
-		return this.request<FircSavedSingboxRestoreResult>('/firc/migrate/return-saved-singbox', {
-			method: 'POST',
-			body: JSON.stringify(options ?? {}),
 		});
 	}
 

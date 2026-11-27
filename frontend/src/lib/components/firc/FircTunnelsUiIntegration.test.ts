@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { get } from 'svelte/store';
 import { m } from '$lib/i18n';
 
@@ -303,7 +303,7 @@ describe('FIRC tunnels UI integration', () => {
 		const migBtn = screen.getByRole('button', { name: m.singbox_saved_migrate_btn() });
 		await fireEvent.click(migBtn);
 		expect(get(fircMigrationModalOpen)).toBe(true);
-		expect(get(fircMigrationModalTab)).toBe('reverse');
+		expect(get(fircMigrationModalTab)).toBe('snapshots');
 	});
 
 	it('renders FircResourceCard UI parity with TrustTunnel/Hysteria2 badges, StatStrip, Test modal, and Edit modal', async () => {
@@ -975,5 +975,56 @@ describe('FIRC tunnels UI integration', () => {
 		const savedArg = fircSaveTunnels.mock.calls[0][0];
 		expect(savedArg[0].filter).toBe('(?i)DE');
 		expect(savedArg[0].filterExclude).toBe('(?i)(RU|LTE)');
+	});
+
+	it('после сохранения узлы берутся из живого состояния, а не из устаревшего предпросмотра', async () => {
+		const subTunnel = {
+			id: 'vox',
+			device: 'tunvless0',
+			description: 'VOX',
+			enable: true,
+			active: 1,
+			by: 'connection',
+			interval: 60,
+			silence: 20,
+			filter: '',
+			filterExclude: '',
+			order: [],
+			exclude: [],
+			sources: [{ id: 's1', kind: 'subscription', name: 'VOX', url: 'https://example.com/sub', interval: 21600 }],
+			uplink: { kind: 'auto', ref: '' },
+			advanced: { ca: '', insecure: false, timeout: 8, kernelTcp: true, fingerprint: '' },
+			inbounds: [],
+		};
+		const liveWith = (nodes: { key: string; name: string; source: string; state: string; since: number }[]) => [
+			{
+				id: 'vox', device: 'tunvless0', status: 'up', active: [], nodes, filteredNodes: [], inbounds: [], groups: [],
+				rxBps: 0, txBps: 0, since: 0, backoffS: 0, lastExit: 0, uplinkOk: true, tcpPort: 41000, tcpSkipped: [], tcpOff: '',
+				subscriptions: [{ name: 'VOX', nodes: nodes.length, fetching: false, lastOk: 0, lastTry: 0, error: '' }],
+			},
+		];
+		fircGetTunnels.mockResolvedValue([subTunnel]);
+		fircGetTunnelsState.mockResolvedValue(liveWith([]));
+		// Подписка ещё не скачана: предпросмотр пустой и без кэша.
+		fircPreviewTunnel.mockResolvedValue({ total: 0, matched: 0, nodes: [], filteredNodes: [], subscriptions: [{ name: 'VOX', cached: false }] });
+		fircSaveTunnels.mockResolvedValue({ tunnels: [{ ...subTunnel, filter: '(?i)DE' }] });
+
+		render(FircTunnelsTabSection, { props: { dashboardMode: false, showTrustTunnels: false } });
+		expect(await screen.findByText('VOX')).toBeInTheDocument();
+		await fireEvent.click(screen.getByText(m.common_edit()));
+		await screen.findByText(m.firc_tunnel_edit_title({ name: 'VOX', device: 'tunvless0' }));
+
+		await fireEvent.click(screen.getByRole('button', { name: m.firc_tunnel_edit_tab_sources({ count: 1 }) }));
+		await fireEvent.input(screen.getByLabelText(m.firc_filter_include_label()), { target: { value: '(?i)DE' } });
+		await waitFor(() => expect(fircPreviewTunnel).toHaveBeenCalled(), { timeout: 1500 });
+
+		// Подписка скачалась к моменту сохранения: живое состояние уже с узлом.
+		fircGetTunnelsState.mockResolvedValue(liveWith([{ key: 's1:Germany', name: 'Germany', source: 'VOX', state: 'active', since: 0 }]));
+		await fireEvent.click(screen.getByRole('button', { name: m.common_save() }));
+		await waitFor(() => expect(fircSaveTunnels).toHaveBeenCalled());
+
+		const dialog = screen.getByRole('dialog');
+		await fireEvent.click(within(dialog).getByRole('button', { name: /^Узлы/ }));
+		expect(await within(dialog).findByText('Germany')).toBeInTheDocument();
 	});
 });
