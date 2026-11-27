@@ -314,8 +314,6 @@ func (h *FircHandler) RegisterRoutes(mux *http.ServeMux, auth func(http.HandlerF
 	mux.HandleFunc("POST /api/firc/migrate", guarded(h.handleMigrate))
 	mux.HandleFunc("GET /api/firc/migrate/state", guarded(h.handleGetMigrateState))
 	mux.HandleFunc("PUT /api/firc/migrate/state", guarded(h.handlePutMigrateState))
-	mux.HandleFunc("POST /api/firc/migrate/reverse", guarded(h.handleReverseMigrate))
-	mux.HandleFunc("POST /api/firc/migrate/return-saved-singbox", guarded(h.handleReturnSavedSingbox))
 	mux.HandleFunc("GET /api/firc/snapshots", guarded(h.handleListSnapshots))
 	mux.HandleFunc("POST /api/firc/snapshots", guarded(h.handleCreateSnapshot))
 	mux.HandleFunc("POST /api/firc/snapshots/restore", guarded(h.handleRestoreSnapshot))
@@ -1259,12 +1257,11 @@ func (h *FircHandler) handleMigrate(w http.ResponseWriter, r *http.Request) {
 			dryRun = true
 		}
 	}
-	if reqBody.Mode != "" || reqBody.RouterSource != "" ||
+	if reqBody.RouterSource != "" ||
 		reqBody.IncludeTunnels != nil || reqBody.IncludeSubscriptions != nil ||
 		reqBody.IncludeGroups != nil || reqBody.IncludeClientRoutes != nil ||
 		reqBody.IncludeFakeIPConfig != nil || reqBody.SelectedTunnelIDs != nil ||
-		reqBody.SelectedGroupIDs != nil || reqBody.PostSingboxAction != "" ||
-		reqBody.CreateSnapshot != nil {
+		reqBody.SelectedGroupIDs != nil || reqBody.PostSingboxAction != "" {
 		opts = &reqBody.MigrationOptions
 	}
 	if opts != nil {
@@ -2878,22 +2875,15 @@ func (h *FircHandler) handleGetMigrateState(w http.ResponseWriter, r *http.Reque
 		response.ErrorWithStatus(w, http.StatusServiceUnavailable, "firc operator not initialized", "UNAVAILABLE")
 		return
 	}
-	var (
-		st            firc.Status
-		revPreview    *firc.ReverseMigrationResult
-		fircInstalled bool
-	)
+	var st firc.Status
 	if h.isExplicitlyUnselected() {
 		st = h.op.GetOfflineStatus(false)
-		revPreview, _ = h.op.PreviewReverseToSingboxOffline(r.Context(), h.singboxConfigDir, nil)
 	} else {
 		st = h.op.GetStatus(r.Context(), h.isSelected())
-		revPreview, _ = h.op.PreviewReverseToSingbox(r.Context(), h.singboxConfigDir, nil)
 	}
-	fircInstalled = h.op.ValidateBinaries() == nil
+	fircInstalled := h.op.ValidateBinaries() == nil
 	wiz := h.op.LoadMigrationWizardState()
 	snapshots, _ := h.op.ListSystemSnapshots()
-	savedSingbox := h.op.GetSavedSingboxStatus(h.singboxConfigDir)
 	var fwdPreview *firc.MigrationResult
 	if h.singboxConfigDir != "" {
 		fwdPreview, _ = h.op.PreviewFromSingboxWithOptions(h.singboxConfigDir, nil)
@@ -2933,9 +2923,7 @@ func (h *FircHandler) handleGetMigrateState(w http.ResponseWriter, r *http.Reque
 		FircTunnelsCount:          len(fircTunnelsList),
 		FircGroupsCount:           len(fircGroupsList),
 		Snapshots:                 snapshots,
-		SavedSingbox:              savedSingbox,
 		ForwardPreview:            fwdPreview,
-		ReversePreview:            revPreview,
 	})
 }
 
@@ -2965,169 +2953,6 @@ func (h *FircHandler) handlePutMigrateState(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	response.Success(w, wiz)
-}
-
-func (h *FircHandler) applyPostFircAction(
-	ctx context.Context,
-	action string,
-	snapMeta *firc.SnapshotMeta,
-	setApplied func(string),
-	setError func(string),
-	setRemoved func(*firc.EnginePurgeResult),
-	setRecovery func(bool),
-) {
-	norm := strings.ToLower(strings.TrimSpace(action))
-	switch norm {
-	case "switch_to_singbox":
-		if serr := h.SwitchEngine(ctx, "sing-box"); serr != nil {
-			setError(serr.Error())
-			setRecovery(h.op.IsRecoveryRequired())
-		} else {
-			setApplied("switch_to_singbox")
-			h.op.RecordMigrationPostAction("switch_to_singbox")
-		}
-	case "switch_and_stop_firc":
-		if serr := h.SwitchEngine(ctx, "sing-box"); serr != nil {
-			setError(serr.Error())
-			setRecovery(h.op.IsRecoveryRequired())
-		} else if stopErr := h.op.Stop(ctx); stopErr != nil {
-			setError(stopErr.Error())
-			setRecovery(h.op.IsRecoveryRequired())
-		} else {
-			h.op.CleanupPoolRejectBarrier(ctx)
-			setApplied("switch_and_stop_firc")
-			h.op.RecordMigrationPostAction("switch_and_stop_firc")
-		}
-	case "switch_and_uninstall_firc":
-		if serr := h.SwitchEngine(ctx, "sing-box"); serr != nil {
-			setError(serr.Error())
-			setRecovery(h.op.IsRecoveryRequired())
-		} else {
-			purgeRes, perr := h.op.PurgeFircAndTunnels(
-				ctx,
-				h.singboxConfigDir,
-				"sing-box",
-				h.installer,
-				snapMeta,
-				firc.EnginePurgeHooks{OnBeforeRemoveFircRuntime: h.integrationHooks.OnBeforePurgeFirc},
-			)
-			if perr != nil {
-				setError(perr.Error())
-				setRecovery(h.op.IsRecoveryRequired())
-			} else {
-				setRemoved(purgeRes)
-				setApplied("switch_and_uninstall_firc")
-				h.op.RecordMigrationPostAction("switch_and_uninstall_firc")
-				h.publishEngineInvalidations("purge-firc")
-			}
-		}
-	case "keep_current":
-		setApplied("keep_current")
-		h.op.RecordMigrationPostAction("keep_current")
-	}
-}
-
-func (h *FircHandler) handleReverseMigrate(w http.ResponseWriter, r *http.Request) {
-	if h.op == nil {
-		response.ErrorWithStatus(w, http.StatusServiceUnavailable, "firc operator not initialized", "UNAVAILABLE")
-		return
-	}
-	dryRun := r.URL.Query().Get("dry_run") == "1" || strings.EqualFold(r.URL.Query().Get("dry_run"), "true")
-	var reqBody struct {
-		DryRun      bool `json:"dry_run"`
-		DryRunCamel bool `json:"dryRun"`
-		firc.ReverseMigrationOptions
-	}
-	if r.Body != nil {
-		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil && err != io.EOF {
-			response.ErrorWithStatus(w, http.StatusBadRequest, "invalid request body", "BAD_REQUEST")
-			return
-		}
-		if reqBody.DryRun || reqBody.DryRunCamel {
-			dryRun = true
-		}
-	}
-	opts := &reqBody.ReverseMigrationOptions
-	if dryRun {
-		var (
-			res *firc.ReverseMigrationResult
-			err error
-		)
-		if h.isExplicitlyUnselected() {
-			res, err = h.op.PreviewReverseToSingboxOffline(r.Context(), h.singboxConfigDir, opts)
-		} else {
-			res, err = h.op.PreviewReverseToSingbox(r.Context(), h.singboxConfigDir, opts)
-		}
-		if err != nil {
-			response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "REVERSE_PREVIEW_FAILED")
-			return
-		}
-		response.Success(w, res)
-		return
-	}
-
-	res, err := h.op.ReverseMigrateToSingbox(r.Context(), h.singboxConfigDir, opts, h.currentEngine())
-	if err != nil {
-		if errors.Is(err, firc.ErrSingboxValidatorUnavailable) {
-			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "SINGBOX_NOT_INSTALLED")
-			return
-		}
-		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "REVERSE_MIGRATE_FAILED")
-		return
-	}
-	h.runPostRestoreSync(r.Context(), true, false)
-	h.applyPostFircAction(
-		r.Context(),
-		opts.PostFircAction,
-		res.SnapshotCreated,
-		func(v string) { res.PostActionApplied = v },
-		func(e string) { res.PostActionError = e },
-		func(p *firc.EnginePurgeResult) { res.RemovedEngine = p },
-		func(rec bool) { res.RecoveryRequired = rec },
-	)
-	response.Success(w, res)
-}
-
-func (h *FircHandler) handleReturnSavedSingbox(w http.ResponseWriter, r *http.Request) {
-	if h.op == nil {
-		response.ErrorWithStatus(w, http.StatusServiceUnavailable, "firc operator not initialized", "UNAVAILABLE")
-		return
-	}
-	var req struct {
-		CreateSnapshot *bool  `json:"createSnapshot"`
-		PostFircAction string `json:"postFircAction"` // "switch_to_singbox" (default) | "switch_and_stop_firc" | "switch_and_uninstall_firc" | "keep_current"
-	}
-	if r.Body != nil {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
-			response.ErrorWithStatus(w, http.StatusBadRequest, "invalid request body", "BAD_REQUEST")
-			return
-		}
-	}
-	postAction := strings.ToLower(strings.TrimSpace(req.PostFircAction))
-	if postAction == "" {
-		postAction = "switch_to_singbox"
-	}
-	createSnap := req.CreateSnapshot == nil || *req.CreateSnapshot || postAction == "switch_and_uninstall_firc"
-	res, err := h.op.RestoreSavedSingboxFiles(r.Context(), h.singboxConfigDir, createSnap, h.currentEngine())
-	if err != nil {
-		if errors.Is(err, firc.ErrSingboxValidatorUnavailable) {
-			response.ErrorWithStatus(w, http.StatusConflict, err.Error(), "SINGBOX_NOT_INSTALLED")
-			return
-		}
-		response.ErrorWithStatus(w, http.StatusInternalServerError, err.Error(), "RETURN_SAVED_SINGBOX_FAILED")
-		return
-	}
-	h.runPostRestoreSync(r.Context(), true, false)
-	h.applyPostFircAction(
-		r.Context(),
-		postAction,
-		res.SnapshotCreated,
-		func(v string) { res.PostActionApplied = v },
-		func(e string) { res.PostActionError = e },
-		func(p *firc.EnginePurgeResult) { res.RemovedEngine = p },
-		func(rec bool) { res.RecoveryRequired = rec },
-	)
-	response.Success(w, res)
 }
 
 func (h *FircHandler) handlePurgeEngine(w http.ResponseWriter, r *http.Request) {

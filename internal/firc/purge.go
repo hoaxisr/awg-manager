@@ -18,14 +18,13 @@ var ErrCannotPurgeActiveEngine = errors.New("firc: cannot remove the currently a
 // together with its tunnels, rules/subscriptions, and runtime binaries while
 // preserving recoverable system snapshots.
 type EnginePurgeResult struct {
-	Engine                string        `json:"engine"`
-	TunnelsRemoved        int           `json:"tunnelsRemoved"`
-	GroupsRemoved         int           `json:"groupsRemoved"`
-	SubscriptionsRemoved  int           `json:"subscriptionsRemoved,omitempty"`
-	RuntimeRemoved        bool          `json:"runtimeRemoved"`
-	SnapshotCreated       *SnapshotMeta `json:"snapshotCreated,omitempty"`
-	PreservedSnapshots    int           `json:"preservedSnapshots"`
-	SavedSingboxPreserved bool          `json:"savedSingboxPreserved"`
+	Engine               string        `json:"engine"`
+	TunnelsRemoved       int           `json:"tunnelsRemoved"`
+	GroupsRemoved        int           `json:"groupsRemoved"`
+	SubscriptionsRemoved int           `json:"subscriptionsRemoved,omitempty"`
+	RuntimeRemoved       bool          `json:"runtimeRemoved"`
+	SnapshotCreated      *SnapshotMeta `json:"snapshotCreated,omitempty"`
+	PreservedSnapshots   int           `json:"preservedSnapshots"`
 }
 
 // EnginePurgeHooks supplies cross-package cleanup and notification callbacks
@@ -61,17 +60,9 @@ func (o *Operator) verifySnapshotFileOnDisk(snap *SnapshotMeta) error {
 	return nil
 }
 
-func (o *Operator) hasSavedSingboxBundleFile() bool {
-	if strings.TrimSpace(o.configDir) == "" {
-		return false
-	}
-	st, err := os.Stat(o.savedSingboxConfigPath())
-	return err == nil && !st.IsDir() && st.Size() > 0
-}
-
 // PurgeSingboxAndTunnels removes the inactive Sing-box runtime, config.d slots,
 // tunnels, subscriptions, and owned NDMS ProxyN interfaces after ensuring a
-// verified recoverable SystemSnapshot and saved-singbox bundle exist on disk.
+// verified recoverable SystemSnapshot exists on disk.
 func (o *Operator) PurgeSingboxAndTunnels(
 	ctx context.Context,
 	singboxConfigDir string,
@@ -91,12 +82,6 @@ func (o *Operator) PurgeSingboxAndTunnels(
 	}
 	if hooks.PurgeSingbox == nil {
 		return nil, errors.New("firc: sing-box purge callback is not configured")
-	}
-
-	// Best-effort ensure saved-singbox-config.json is present if valid Sing-box
-	// configs exist on disk and no bundle was saved previously.
-	if strings.TrimSpace(singboxConfigDir) != "" {
-		_ = o.SavePreFircSingboxConfig(singboxConfigDir, false)
 	}
 
 	// Fail-closed: always guarantee a verified snapshot on disk BEFORE removing
@@ -130,19 +115,18 @@ func (o *Operator) PurgeSingboxAndTunnels(
 
 	snaps, _ := o.ListSystemSnapshots()
 	return &EnginePurgeResult{
-		Engine:                "sing-box",
-		TunnelsRemoved:        tunnelsRemoved,
-		SubscriptionsRemoved:  subsRemoved,
-		RuntimeRemoved:        true,
-		SnapshotCreated:       snap,
-		PreservedSnapshots:    len(snaps),
-		SavedSingboxPreserved: o.hasSavedSingboxBundleFile(),
+		Engine:               "sing-box",
+		TunnelsRemoved:       tunnelsRemoved,
+		SubscriptionsRemoved: subsRemoved,
+		RuntimeRemoved:       true,
+		SnapshotCreated:      snap,
+		PreservedSnapshots:   len(snaps),
 	}, nil
 }
 
 // PurgeFircAndTunnels stops FIRC, removes the runtime package (when installed),
 // and cleans all FIRC tunnels, routing groups, configs, and runtime caches while
-// strictly preserving snapshots/, saved-singbox-config.json, and wizard state.
+// strictly preserving snapshots/ and wizard state.
 func (o *Operator) PurgeFircAndTunnels(
 	ctx context.Context,
 	singboxConfigDir string,
@@ -248,7 +232,7 @@ func (o *Operator) PurgeFircAndTunnels(
 	}
 
 	// Phase 3 (mutationMu): delete FIRC active configs, tunnels/groups, runtime caches
-	// while preserving snapshots/, saved-singbox-config.json, and awgm-migration-state.json.
+	// while preserving snapshots/ and awgm-migration-state.json.
 	if err := func() error {
 		o.mutationMu.Lock()
 		defer o.mutationMu.Unlock()
@@ -313,12 +297,11 @@ func (o *Operator) PurgeFircAndTunnels(
 
 	snaps, _ := o.ListSystemSnapshots()
 	return &EnginePurgeResult{
-		Engine:                "firc",
-		TunnelsRemoved:        tunnelsRemoved,
-		GroupsRemoved:         groupsRemoved,
-		RuntimeRemoved:        runtimeRemoved,
-		SnapshotCreated:       snap,
-		PreservedSnapshots:    len(snaps),
-		SavedSingboxPreserved: o.hasSavedSingboxBundleFile(),
+		Engine:             "firc",
+		TunnelsRemoved:     tunnelsRemoved,
+		GroupsRemoved:      groupsRemoved,
+		RuntimeRemoved:     runtimeRemoved,
+		SnapshotCreated:    snap,
+		PreservedSnapshots: len(snaps),
 	}, nil
 }

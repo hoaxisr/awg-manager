@@ -18,8 +18,6 @@ import (
 
 // MigrationOptions controls which categories, router slots, and specific items are migrated from sing-box to firc.
 type MigrationOptions struct {
-	// Mode: "merge" (default: merge into existing FIRC tunnels & groups) or "replace" (overwrite existing tunnels/groups)
-	Mode string `json:"mode,omitempty"`
 	// RouterSource: "auto" (default: active slot first + fallback), "tproxy" (20-router.json), "fakeip" (21-fakeip.json), "both"
 	RouterSource string `json:"routerSource,omitempty"`
 	// Category toggles (nil defaults to true)
@@ -33,16 +31,6 @@ type MigrationOptions struct {
 	SelectedGroupIDs  []string `json:"selectedGroupIds,omitempty"`
 	// PostSingboxAction: "switch_standby" | "switch_and_stop" | "switch_and_uninstall" | "keep_current"
 	PostSingboxAction string `json:"postSingboxAction,omitempty"`
-	// CreateSnapshot: when true (default for interactive migrations), creates a full system snapshot before applying.
-	// Always enforced when PostSingboxAction is "switch_and_uninstall".
-	CreateSnapshot *bool `json:"createSnapshot,omitempty"`
-}
-
-func (o *MigrationOptions) shouldCreateSnapshot() bool {
-	if o != nil && strings.EqualFold(strings.TrimSpace(o.PostSingboxAction), "switch_and_uninstall") {
-		return true
-	}
-	return o != nil && (o.CreateSnapshot == nil || *o.CreateSnapshot)
 }
 
 func (o *MigrationOptions) includeTunnels() bool {
@@ -75,10 +63,6 @@ func (o *MigrationOptions) routerSource() string {
 	default:
 		return "auto"
 	}
-}
-
-func (o *MigrationOptions) isReplaceMode() bool {
-	return o != nil && strings.EqualFold(strings.TrimSpace(o.Mode), "replace")
 }
 
 // FakeIPMigrationInfo describes Sing-box FakeIP-TUN settings discovered in 21-fakeip.json / settings.json.
@@ -333,105 +317,13 @@ func (o *Operator) PreviewFromSingboxWithOptions(singboxConfigDir string, opts *
 	return res, nil
 }
 
-func mergeAndFilterForLiveFircd(prevTunnels []Tunnel, prevGroups []Group, candTunnels []Tunnel, candGroups []Group, skipped []string, inboundPort uint16) ([]Tunnel, []Group, []string) {
-	usedIDs := make(map[string]int, len(prevTunnels))
-	usedDevs := make(map[string]bool, len(prevTunnels))
-	outTunnels := make([]Tunnel, 0, len(prevTunnels)+len(candTunnels))
-	for i, t := range prevTunnels {
-		usedIDs[t.ID] = i
-		usedDevs[t.Device] = true
-		outTunnels = append(outTunnels, t)
-	}
-
-	nextFreeDevice := func() string {
-		for i := 0; i < 64; i++ {
-			dev := fmt.Sprintf("tunvless%d", i)
-			if !usedDevs[dev] {
-				usedDevs[dev] = true
-				return dev
-			}
-		}
-		return "tunvless7"
-	}
-
-	devRemap := make(map[string]string)
-	for _, t := range candTunnels {
-		NormalizeTunnelNodeRefs(&t)
-		if existingIdx, ok := usedIDs[t.ID]; ok {
-			oldDev := t.Device
-			t.Device = outTunnels[existingIdx].Device
-			if oldDev != "" && oldDev != t.Device {
-				devRemap[oldDev] = t.Device
-			}
-			t.Inbounds = PreserveOrRepairInbounds(outTunnels[existingIdx].Inbounds, t)
-			outTunnels[existingIdx] = t
-			continue
-		}
-		oldDev := t.Device
-		t.Device = nextFreeDevice()
-		if oldDev != "" && oldDev != t.Device {
-			devRemap[oldDev] = t.Device
-		}
-		t.Inbounds = nil
-		usedIDs[t.ID] = len(outTunnels)
-		outTunnels = append(outTunnels, t)
-	}
-	for i := range outTunnels {
-		NormalizeTunnelNodeRefs(&outTunnels[i])
-	}
-	if len(outTunnels) > 0 {
-		outTunnels = EnsureInboundPort1099(outTunnels, inboundPort)
-	}
-
-	usedGroupNames := make(map[string]int, len(prevGroups))
-	usedGroupIDs := make(map[string]int, len(prevGroups))
-	outGroups := make([]Group, 0, len(prevGroups)+len(candGroups))
-	for i, g := range prevGroups {
-		usedGroupNames[strings.ToLower(g.Name)] = i
-		usedGroupIDs[g.ID] = i
-		outGroups = append(outGroups, g)
-	}
-	for _, g := range candGroups {
-		dedupIfaces := make([]string, 0, len(g.Interface))
-		for _, iface := range g.Interface {
-			resolved := iface
-			if mapped, ok := devRemap[resolved]; ok {
-				resolved = mapped
-			} else if strings.HasPrefix(resolved, "tunvless") && !usedDevs[resolved] && len(outTunnels) > 0 {
-				resolved = outTunnels[0].Device
-			}
-			if resolved != "" && !slices.Contains(dedupIfaces, resolved) {
-				dedupIfaces = append(dedupIfaces, resolved)
-			}
-		}
-		g.Interface = GroupInterface(dedupIfaces)
-		if existingIdx, ok := usedGroupIDs[g.ID]; ok {
-			g.Name = outGroups[existingIdx].Name
-			outGroups[existingIdx] = g
-			continue
-		}
-		if existingIdx, ok := usedGroupNames[strings.ToLower(g.Name)]; ok {
-			g.ID = outGroups[existingIdx].ID
-			outGroups[existingIdx] = g
-			continue
-		}
-		usedGroupNames[strings.ToLower(g.Name)] = len(outGroups)
-		usedGroupIDs[g.ID] = len(outGroups)
-		outGroups = append(outGroups, g)
-	}
-	return outTunnels, outGroups, skipped
-}
-
-// MigrateFromSingbox transactionally migrates sing-box config fragments from singboxConfigDir,
-// persists the resulting tunnels and routing groups, and applies them to fircd when running.
-// If any file write or runtime apply fails, both disk files and runtime state are rolled back;
-// if rollback fails, recovery_required is set.
-func (o *Operator) MigrateFromSingbox(ctx context.Context, singboxConfigDir string) (*MigrationResult, error) {
-	return o.MigrateFromSingboxWithOptions(ctx, singboxConfigDir, nil)
-}
-
 // MigrateFromSingboxWithOptions transactionally migrates sing-box config fragments from singboxConfigDir
-// according to opts (supporting merge/replace modes, selective tunnel/group IDs, and FakeIP pool/DNS settings).
+// according to opts (selective tunnel/group IDs, FakeIP pool/DNS settings).
+//
+// Импорт только заменяет: выбранные категории AWGM Route переписываются кандидатами
+// целиком. Слияние с прежними tunnels/groups копило группы и туннели давно
+// заменённых выходов, а обратного пути без потерь у него не было. Возврат к
+// прежнему состоянию — снимок auto-pre-migrate, который снимается всегда.
 func (o *Operator) MigrateFromSingboxWithOptions(ctx context.Context, singboxConfigDir string, opts *MigrationOptions) (*MigrationResult, error) {
 	release, err := o.guardUplinkMigration(ctx)
 	if err != nil {
@@ -449,8 +341,6 @@ func (o *Operator) MigrateFromSingboxWithOptions(ctx context.Context, singboxCon
 		return nil, err
 	}
 
-	_ = o.SavePreFircSingboxConfig(singboxConfigDir, false)
-
 	activeEngine := o.resolveSnapshotActiveEngine(singboxConfigDir, "")
 	running := false
 	if !o.HasProductionEngineHooks() || strings.EqualFold(activeEngine, "firc") {
@@ -462,13 +352,11 @@ func (o *Operator) MigrateFromSingboxWithOptions(ctx context.Context, singboxCon
 		}
 	}
 
-	if opts.shouldCreateSnapshot() {
-		snap, serr := o.CreateSystemSnapshot(singboxConfigDir, "", "auto-pre-migrate", activeEngine)
-		if serr != nil {
-			return nil, fmt.Errorf("create pre-migration system snapshot: %w", serr)
-		}
-		res.SnapshotCreated = snap
+	snap, serr := o.CreateSystemSnapshot(singboxConfigDir, "", "auto-pre-migrate", activeEngine)
+	if serr != nil {
+		return nil, fmt.Errorf("create pre-migration system snapshot: %w", serr)
 	}
+	res.SnapshotCreated = snap
 
 	tunSnap, err := captureFileSnapshot(o.TunnelsPath(), 0600)
 	if err != nil {
@@ -551,11 +439,7 @@ func (o *Operator) MigrateFromSingboxWithOptions(ctx context.Context, singboxCon
 		return primaryErr
 	}
 
-	if !opts.isReplaceMode() && (running || opts != nil) {
-		res.Tunnels, res.Groups, res.Skipped = mergeAndFilterForLiveFircd(prevTunnels, prevGroups, res.Tunnels, res.Groups, res.Skipped, o.inboundPort)
-	}
-
-	writeTunnels := len(res.Tunnels) > 0 || (opts.isReplaceMode() && opts.includeTunnels())
+	writeTunnels := len(res.Tunnels) > 0 || opts.includeTunnels()
 	if writeTunnels {
 		if len(res.Tunnels) > 0 {
 			for i := range res.Tunnels {
@@ -590,7 +474,7 @@ func (o *Operator) MigrateFromSingboxWithOptions(ctx context.Context, singboxCon
 		}
 	}
 
-	writeGroups := len(res.Groups) > 0 || (opts.isReplaceMode() && opts.includeGroups())
+	writeGroups := len(res.Groups) > 0 || opts.includeGroups()
 	if writeGroups {
 		if err := o.advanceMigrationJournal(journal, "writing_files", 1, o.GroupsPath()); err != nil {
 			return nil, rollbackAll(err, "journal_groups_yaml", writeTunnels, false)

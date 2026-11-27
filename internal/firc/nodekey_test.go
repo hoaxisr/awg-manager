@@ -153,25 +153,6 @@ func TestNormalizeFircNodeRef_RepairsPercentEncodedStaleKeys(t *testing.T) {
 	if legacyTun.Inbounds[0].Node != TunnelNodePool {
 		t.Fatalf("NormalizeTunnelNodeRefs did not normalize legacy 'default': got %q", legacyTun.Inbounds[0].Node)
 	}
-
-	// Re-migration merge must repair stale percent-encoded inbound node from previous run.
-	prevTunnels := []Tunnel{{
-		ID:       tun.ID,
-		Device:   "tunvless0",
-		Enable:   true,
-		Sources:  tun.Sources,
-		Inbounds: []TunnelInbound{{Port: 1099, Listen: "br0", Node: srcID + ":%F0%9F%87%B1%F0%9F%87%BB%20LAT%20(%D0%9B%D0%B0%D1%82%D0%B2%D0%B8%D1%8F)%20(Premium)"}},
-	}}
-	candTunnels := []Tunnel{{
-		ID:      tun.ID,
-		Device:  "tunvless0",
-		Enable:  true,
-		Sources: tun.Sources,
-	}}
-	mergedTuns, _, _ := mergeAndFilterForLiveFircd(prevTunnels, nil, candTunnels, nil, nil, 1099)
-	if len(mergedTuns) != 1 || len(mergedTuns[0].Inbounds) != 1 || mergedTuns[0].Inbounds[0].Node != want {
-		t.Fatalf("mergeAndFilterForLiveFircd failed to repair stale inbound node: %+v (want %q)", mergedTuns[0].Inbounds, want)
-	}
 }
 
 func TestMigration_TrustTunnelFragmentEmojiNodeAndGroups(t *testing.T) {
@@ -244,7 +225,7 @@ func TestMigration_TrustTunnelFragmentEmojiNodeAndGroups(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := MigrateFromSingboxConfigDirWithOptions(cfgDir, &MigrationOptions{Mode: "replace"})
+	res, err := MigrateFromSingboxConfigDirWithOptions(cfgDir, &MigrationOptions{})
 	if err != nil {
 		t.Fatalf("MigrateFromSingboxConfigDirWithOptions: %v", err)
 	}
@@ -387,7 +368,7 @@ func TestVerifyLiveSyncedTunnels_RejectsNoNodeInboundAndRollsBack(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	_, err := op.MigrateFromSingboxWithOptions(context.Background(), cfgDir, &MigrationOptions{Mode: "replace"})
+	_, err := op.MigrateFromSingboxWithOptions(context.Background(), cfgDir, &MigrationOptions{})
 	if err == nil || !strings.Contains(err.Error(), "no-node") {
 		t.Fatalf("expected rollback error citing no-node inbound state, got %v", err)
 	}

@@ -173,7 +173,7 @@ func TestMigrateFromSingboxConfigDir(t *testing.T) {
 		ConfigDir: fircDir,
 	})
 
-	res, err := op.MigrateFromSingbox(context.Background(), sbDir)
+	res, err := op.MigrateFromSingboxWithOptions(context.Background(), sbDir, nil)
 	if err != nil {
 		t.Fatalf("MigrateFromSingbox failed: %v", err)
 	}
@@ -629,120 +629,136 @@ func TestMigrateFakeIPAndSelectiveOptions(t *testing.T) {
 	}
 }
 
-func TestSystemSnapshotsAndReverseMigration(t *testing.T) {
+// Возврат после импорта — только снимок auto-pre-migrate: он обязан вернуть
+// байт в байт и config.d sing-box, и файлы AWGM Route, какими они были до импорта.
+func TestImportThenSnapshotRestoreReturnsBothEngines(t *testing.T) {
 	tmpDir := t.TempDir()
 	awgmDir := filepath.Join(tmpDir, "awg-manager")
 	sbDir := filepath.Join(awgmDir, "config.d")
 	fircDir := filepath.Join(tmpDir, "firc")
-	if err := os.MkdirAll(sbDir, 0755); err != nil {
-		t.Fatalf("mkdir sbDir: %v", err)
+	for _, d := range []string{sbDir, fircDir} {
+		if err := os.MkdirAll(d, 0755); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := os.MkdirAll(fircDir, 0755); err != nil {
-		t.Fatalf("mkdir fircDir: %v", err)
-	}
-
 	origTunnels := `{"outbounds":[{"type":"vless","tag":"orig-vless","server":"1.2.3.4","server_port":443,"uuid":"11111111-2222-3333-4444-555555555555"}]}`
 	if err := os.WriteFile(filepath.Join(sbDir, "10-tunnels.json"), []byte(origTunnels), 0644); err != nil {
-		t.Fatalf("write 10-tunnels.json: %v", err)
+		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(awgmDir, "settings.json"), []byte(`{"singboxRouter":{"routingEngine":"sing-box"}}`), 0644); err != nil {
-		t.Fatalf("write settings.json: %v", err)
+		t.Fatal(err)
 	}
 
 	op := NewOperator(Options{ConfigDir: fircDir, InboundPort: 1099})
 	op.SetSingboxValidator(func(_ context.Context, _ string) error { return nil })
+	preTunnels := []Tunnel{{ID: "before", Device: "tunvless0", Enable: true, Sources: []TunnelSource{{ID: "0a0b0c0d", Kind: "link", Name: "B",
+		Link: "vless://aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee@before.example.com:443?security=tls&sni=before.example.com#B"}}}}
+	if err := op.SaveTunnelsFile(preTunnels); err != nil {
+		t.Fatal(err)
+	}
+	preGroups := []Group{{ID: "a1b2c3d4", Name: "Before", Interface: []string{"tunvless0"}, Enable: true,
+		Rules: []Rule{{ID: "r1", Type: "namespace", Rule: "before.example.com", Enable: true}}}}
+	if err := op.SaveGroupsFile(preGroups); err != nil {
+		t.Fatal(err)
+	}
+	preGroupsYAML, _ := os.ReadFile(op.GroupsPath())
 
-	// 1. Migrate Sing-box -> FIRC with automatic snapshot creation
-	fwdRes, err := op.MigrateFromSingboxWithOptions(t.Context(), sbDir, &MigrationOptions{
-		Mode: "replace",
-	})
+	res, err := op.MigrateFromSingboxWithOptions(t.Context(), sbDir, &MigrationOptions{})
 	if err != nil {
-		t.Fatalf("MigrateFromSingboxWithOptions: %v", err)
+		t.Fatalf("import: %v", err)
 	}
-	if fwdRes.SnapshotCreated == nil || fwdRes.SnapshotCreated.ID == "" {
-		t.Fatalf("expected SnapshotCreated on forward migration")
+	if res.SnapshotCreated == nil || res.SnapshotCreated.ID == "" {
+		t.Fatal("импорт обязан снимать auto-pre-migrate")
 	}
-
-	// 2. Add a new tunnel + subscription + group in FIRC and reverse-migrate to Sing-box
-	fircTunnels := []Tunnel{
-		{
-			ID:          "tun-rev",
-			Device:      "tunvless0",
-			Description: "Rev-VLESS",
-			Enable:      true,
-			Sources: []TunnelSource{
-				{
-					ID:   "s1",
-					Kind: "link",
-					Name: "Rev-VLESS-Node",
-					Link: "vless://aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee@rev.example.com:443?security=tls&sni=rev.example.com#Rev-VLESS-Node",
-				},
-			},
-		},
-		{
-			ID:            "sub-rev",
-			Device:        "tunvless1",
-			Description:   "Rev-Sub",
-			Enable:        true,
-			Filter:        "(?i)DE",
-			FilterExclude: "(?i)RU",
-			Sources: []TunnelSource{
-				{
-					ID:   "s2",
-					Kind: "subscription",
-					Name: "Rev-Sub",
-					URL:  "https://sub.example.com/api/v1/sub",
-				},
-			},
-		},
-	}
-	fircGroups := []Group{
-		{
-			ID:        "a1b2c3d4",
-			Name:      "AI-Group",
-			Interface: []string{"tunvless0"},
-			Enable:    true,
-			Rules: []Rule{
-				{ID: "r1", Type: "namespace", Rule: "gemini.google.com", Enable: true},
-				{ID: "r2", Type: "subnet", Rule: "142.250.0.0/16", Enable: true},
-			},
-		},
-	}
-	if err := op.SaveTunnelsFile(fircTunnels); err != nil {
-		t.Fatalf("SaveTunnelsFile: %v", err)
-	}
-	if err := op.SaveGroupsFile(fircGroups); err != nil {
-		t.Fatalf("SaveGroupsFile: %v", err)
+	afterImport, _ := os.ReadFile(op.GroupsPath())
+	if strings.Contains(string(afterImport), "before.example.com") {
+		t.Fatalf("импорт заменяет группы, а прежняя осталась:\n%s", afterImport)
 	}
 
-	revRes, err := op.ReverseMigrateToSingbox(t.Context(), sbDir, &ReverseMigrationOptions{
-		Mode: "replace",
-	}, "firc")
-	if err != nil {
-		t.Fatalf("ReverseMigrateToSingbox: %v", err)
+	// Пользователь правит обе стороны после импорта.
+	if err := os.WriteFile(filepath.Join(sbDir, "10-tunnels.json"), []byte(`{"outbounds":[]}`), 0644); err != nil {
+		t.Fatal(err)
 	}
-	if revRes.OutboundsCreated != 1 || revRes.SubscriptionsMigrated != 1 || revRes.RulesMigrated != 2 {
-		t.Errorf("unexpected ReverseMigrationResult counts: %+v", revRes)
+	if err := op.SaveGroupsFile([]Group{{ID: "e5f6a7b8", Name: "After", Interface: []string{"tunvless0"}, Enable: true}}); err != nil {
+		t.Fatal(err)
 	}
 
-	// Verify 10-tunnels.json now has Rev-VLESS / rev.example.com and subscriptions.json preserves filters
-	afterRevTunnels, err := os.ReadFile(filepath.Join(sbDir, "10-tunnels.json"))
-	if err != nil || !strings.Contains(string(afterRevTunnels), "Rev-VLESS") || !strings.Contains(string(afterRevTunnels), "rev.example.com") {
-		t.Errorf("expected Rev-VLESS in 10-tunnels.json after reverse migration, got: %s", string(afterRevTunnels))
-	}
-	afterRevSubs, err := os.ReadFile(filepath.Join(awgmDir, "subscriptions.json"))
-	if err != nil || !strings.Contains(string(afterRevSubs), `"filterInclude": "(?i)DE"`) || !strings.Contains(string(afterRevSubs), `"filterExclude": "(?i)RU"`) {
-		t.Errorf("expected filterInclude and filterExclude in subscriptions.json after reverse migration, got: %s (err=%v)", string(afterRevSubs), err)
-	}
-
-	// 3. Restore original snapshot and verify orig-vless is restored in 10-tunnels.json
-	_, err = op.RestoreSystemSnapshot(t.Context(), fwdRes.SnapshotCreated.ID, sbDir)
-	if err != nil {
+	if _, err := op.RestoreSystemSnapshot(t.Context(), res.SnapshotCreated.ID, sbDir); err != nil {
 		t.Fatalf("RestoreSystemSnapshot: %v", err)
 	}
-	restoredTunnels, err := os.ReadFile(filepath.Join(sbDir, "10-tunnels.json"))
-	if err != nil || !strings.Contains(string(restoredTunnels), "orig-vless") {
-		t.Errorf("expected orig-vless restored from snapshot, got: %s", string(restoredTunnels))
+	gotSB, _ := os.ReadFile(filepath.Join(sbDir, "10-tunnels.json"))
+	if string(gotSB) != origTunnels {
+		t.Errorf("10-tunnels.json не вернулся байт в байт:\n%s", gotSB)
+	}
+	gotGroups, _ := os.ReadFile(op.GroupsPath())
+	if string(gotGroups) != string(preGroupsYAML) {
+		t.Errorf("groups.yaml не вернулся к состоянию до импорта:\n%s\nwant:\n%s", gotGroups, preGroupsYAML)
+	}
+}
+
+// Повторный импорт того же sing-box даёт тот же результат, а после смены выхода
+// в sing-box от прежнего выхода не остаётся ни группы, ни туннеля: слияние
+// оставляло их, и обратная конвертация потом воскрешала давно заменённый выход.
+func TestReimportIsIdempotentAndDropsReplacedOutbound(t *testing.T) {
+	tmpDir := t.TempDir()
+	awgmDir := filepath.Join(tmpDir, "awg-manager")
+	sbDir := filepath.Join(awgmDir, "config.d")
+	fircDir := filepath.Join(tmpDir, "firc")
+	for _, d := range []string{sbDir, fircDir} {
+		if err := os.MkdirAll(d, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tunnels := `{"outbounds":[{"type":"vless","tag":"vless-a","server":"1.2.3.4","server_port":443,"uuid":"11111111-2222-3333-4444-555555555555"}]}`
+	router := `{"route":{"rules":[{"domain_suffix":["example.com"],"outbound":"vless-a"}],"final":"direct"}}`
+	if err := os.WriteFile(filepath.Join(sbDir, "10-tunnels.json"), []byte(tunnels), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sbDir, "20-router.json"), []byte(router), 0644); err != nil {
+		t.Fatal(err)
+	}
+	op := NewOperator(Options{ConfigDir: fircDir, InboundPort: 1099})
+
+	read := func() (string, string) {
+		tu, _ := os.ReadFile(op.TunnelsPath())
+		gr, _ := os.ReadFile(op.GroupsPath())
+		return string(tu), string(gr)
+	}
+	first, err := op.MigrateFromSingboxWithOptions(t.Context(), sbDir, &MigrationOptions{})
+	if err != nil {
+		t.Fatalf("first import: %v", err)
+	}
+	if len(first.Tunnels) == 0 || len(first.Groups) == 0 {
+		t.Fatalf("кандидатов нет — проверять нечего: %+v", first)
+	}
+	t1, g1 := read()
+	if _, err := op.MigrateFromSingboxWithOptions(t.Context(), sbDir, &MigrationOptions{}); err != nil {
+		t.Fatalf("second import: %v", err)
+	}
+	t2, g2 := read()
+	if t1 != t2 {
+		t.Errorf("tunnels.yaml изменился на повторном импорте:\n%s\n---\n%s", t1, t2)
+	}
+	if g1 != g2 {
+		t.Errorf("groups.yaml изменился на повторном импорте:\n%s\n---\n%s", g1, g2)
+	}
+
+	// Выход переименован в sing-box: vless-a → vless-b.
+	if err := os.WriteFile(filepath.Join(sbDir, "10-tunnels.json"), []byte(strings.ReplaceAll(tunnels, "vless-a", "vless-b")), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sbDir, "20-router.json"), []byte(strings.ReplaceAll(router, "vless-a", "vless-b")), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := op.MigrateFromSingboxWithOptions(t.Context(), sbDir, &MigrationOptions{}); err != nil {
+		t.Fatalf("import after rename: %v", err)
+	}
+	t3, g3 := read()
+	if strings.Contains(t3, "vless-a") || strings.Contains(g3, "vless-a") {
+		t.Errorf("после смены выхода остался прежний vless-a:\ntunnels:\n%s\ngroups:\n%s", t3, g3)
+	}
+	if !strings.Contains(t3, "vless-b") || !strings.Contains(g3, "vless-b") {
+		t.Errorf("новый выход vless-b не импортирован:\ntunnels:\n%s\ngroups:\n%s", t3, g3)
 	}
 }
 
@@ -820,107 +836,6 @@ func TestSnapshotRestorePreflightValidationAndNonDestructiveReject(t *testing.T)
 	}
 }
 
-func TestScenario1ReturnToSavedSingboxVsScenario2ReverseMigrate(t *testing.T) {
-	tmpDir := t.TempDir()
-	awgmDir := filepath.Join(tmpDir, "awg-manager")
-	sbDir := filepath.Join(awgmDir, "config.d")
-	fircDir := filepath.Join(tmpDir, "firc")
-	if err := os.MkdirAll(sbDir, 0755); err != nil {
-		t.Fatalf("mkdir sbDir: %v", err)
-	}
-	if err := os.MkdirAll(fircDir, 0755); err != nil {
-		t.Fatalf("mkdir fircDir: %v", err)
-	}
-
-	origTunnels := `{"outbounds":[{"type":"vless","tag":"saved-vless","server":"saved.example.com","server_port":443,"uuid":"11111111-2222-3333-4444-555555555555"}]}`
-	if err := os.WriteFile(filepath.Join(sbDir, "10-tunnels.json"), []byte(origTunnels), 0644); err != nil {
-		t.Fatalf("write 10-tunnels.json: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(awgmDir, "settings.json"), []byte(`{"singboxRouter":{"routingEngine":"sing-box"}}`), 0644); err != nil {
-		t.Fatalf("write settings.json: %v", err)
-	}
-
-	op := NewOperator(Options{ConfigDir: fircDir, InboundPort: 1099})
-	op.SetSingboxValidator(func(_ context.Context, _ string) error { return nil })
-
-	// Step 1: Migrate from Sing-box to FIRC (saves pre-FIRC Sing-box bundle automatically)
-	if _, err := op.MigrateFromSingboxWithOptions(t.Context(), sbDir, &MigrationOptions{Mode: "replace"}); err != nil {
-		t.Fatalf("MigrateFromSingboxWithOptions: %v", err)
-	}
-	savedSt := op.GetSavedSingboxStatus(sbDir)
-	if !savedSt.Available || savedSt.TunnelsCount != 1 {
-		t.Fatalf("expected SavedSingboxStatus Available=true with 1 tunnel, got %+v", savedSt)
-	}
-
-	// Step 2: Modify FIRC tunnels and overwrite Sing-box 10-tunnels.json via Scenario 2
-	fircTunnels := []Tunnel{
-		{
-			ID:          "firc-new",
-			Device:      "tunvless0",
-			Description: "New-FIRC-Only",
-			Enable:      true,
-			Sources: []TunnelSource{
-				{
-					ID:   "s1",
-					Kind: "link",
-					Name: "New-FIRC-Only",
-					Link: "vless://aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee@new-firc.example.com:443?security=tls&sni=new-firc.example.com#New-FIRC-Only",
-				},
-			},
-		},
-	}
-	if err := op.SaveTunnelsFile(fircTunnels); err != nil {
-		t.Fatalf("SaveTunnelsFile: %v", err)
-	}
-
-	// Also test that ReverseMigrateToSingbox rejects a group referencing a deselected/nonexistent outbound
-	badGroup := []Group{
-		{
-			ID:        "badgrp01",
-			Name:      "BadGroup",
-			Interface: []string{"tunvless99"},
-			Enable:    true,
-			Rules:     []Rule{{ID: "r1", Type: "domain", Rule: "example.com", Enable: true}},
-		},
-	}
-	if err := op.SaveGroupsFile(badGroup); err != nil {
-		t.Fatalf("SaveGroupsFile: %v", err)
-	}
-	if _, err := op.ReverseMigrateToSingbox(t.Context(), sbDir, &ReverseMigrationOptions{Mode: "replace"}, "firc"); err == nil {
-		t.Fatalf("expected ReverseMigrateToSingbox to reject group referencing missing tunnel interface tunvless99")
-	}
-
-	// Clear groups in replace mode and verify replace writes empty router rules
-	if err := op.SaveGroupsFile([]Group{}); err != nil {
-		t.Fatalf("SaveGroupsFile empty: %v", err)
-	}
-	if _, err := op.ReverseMigrateToSingbox(t.Context(), sbDir, &ReverseMigrationOptions{Mode: "replace"}, "firc"); err != nil {
-		t.Fatalf("ReverseMigrateToSingbox valid: %v", err)
-	}
-	afterScenario2, _ := os.ReadFile(filepath.Join(sbDir, "10-tunnels.json"))
-	if !strings.Contains(string(afterScenario2), "new-firc.example.com") {
-		t.Fatalf("expected Scenario 2 to write new-firc.example.com, got %s", string(afterScenario2))
-	}
-
-	// Step 3: Execute Scenario 1 ("Return to saved Sing-box config")
-	// Must restore saved.example.com WITHOUT running FIRC converter and WITHOUT deleting FIRC tunnels.yaml!
-	retRes, err := op.RestoreSavedSingboxFiles(t.Context(), sbDir, true, "firc")
-	if err != nil {
-		t.Fatalf("RestoreSavedSingboxFiles: %v", err)
-	}
-	if retRes.RestoredFiles == 0 {
-		t.Fatalf("expected RestoredFiles > 0")
-	}
-	afterScenario1, _ := os.ReadFile(filepath.Join(sbDir, "10-tunnels.json"))
-	if !strings.Contains(string(afterScenario1), "saved.example.com") || strings.Contains(string(afterScenario1), "new-firc.example.com") {
-		t.Fatalf("expected Scenario 1 to restore saved.example.com without new-firc.example.com, got %s", string(afterScenario1))
-	}
-	preservedFircTunnels, err := op.LoadTunnelsFile()
-	if err != nil || len(preservedFircTunnels) != 1 || preservedFircTunnels[0].ID != "firc-new" {
-		t.Fatalf("expected Scenario 1 to preserve FIRC tunnels.yaml untouched, got err=%v tunnels=%+v", err, preservedFircTunnels)
-	}
-}
-
 func TestFakeIPPersistenceWhenStoppedAndAutoSnapshotFailClosed(t *testing.T) {
 	tmpDir := t.TempDir()
 	awgmDir := filepath.Join(tmpDir, "awg-manager")
@@ -936,11 +851,8 @@ func TestFakeIPPersistenceWhenStoppedAndAutoSnapshotFailClosed(t *testing.T) {
 	op := NewOperator(Options{ConfigDir: fircDir, InboundPort: 1099})
 
 	// 1. When singboxConfigDir and fircDir have no files at all, CreateSystemSnapshot fails,
-	// so MigrateFromSingboxWithOptions with CreateSnapshot=true must abort fail-closed.
-	createSnap := true
-	if _, err := op.MigrateFromSingboxWithOptions(t.Context(), sbDir, &MigrationOptions{
-		CreateSnapshot: &createSnap,
-	}); err == nil {
+	// so MigrateFromSingboxWithOptions (snapshot is mandatory) must abort fail-closed.
+	if _, err := op.MigrateFromSingboxWithOptions(t.Context(), sbDir, &MigrationOptions{}); err == nil {
 		t.Fatalf("expected MigrateFromSingboxWithOptions to abort when auto-snapshot fails on empty source")
 	}
 
@@ -961,7 +873,6 @@ func TestFakeIPPersistenceWhenStoppedAndAutoSnapshotFailClosed(t *testing.T) {
 	res, err := op.MigrateFromSingboxWithOptions(t.Context(), sbDir, &MigrationOptions{
 		RouterSource:        "fakeip",
 		IncludeFakeIPConfig: &incFakeIP,
-		CreateSnapshot:      &createSnap,
 	})
 	if err != nil {
 		t.Fatalf("MigrateFromSingboxWithOptions with FakeIP: %v", err)
@@ -1141,91 +1052,6 @@ func TestApplyGroupsNetfilterFailureRollsBackWithoutFircdFileOverwrite(t *testin
 	}
 	if op.IsRecoveryRequired() {
 		t.Fatalf("expected recovery_required=false when rollback succeeded, got reason=%q", op.RecoveryReason())
-	}
-}
-
-func TestR2ReturnSavedSingboxDoesNotSelectOwnAutoBackupOrLiveDisk(t *testing.T) {
-	tmpDir := t.TempDir()
-	awgmDir := filepath.Join(tmpDir, "awg-manager")
-	sbDir := filepath.Join(awgmDir, "config.d")
-	fircDir := filepath.Join(tmpDir, "firc")
-	if err := os.MkdirAll(sbDir, 0755); err != nil {
-		t.Fatalf("mkdir sbDir: %v", err)
-	}
-	if err := os.MkdirAll(fircDir, 0755); err != nil {
-		t.Fatalf("mkdir fircDir: %v", err)
-	}
-
-	// Current live_disk config.d files exist, but NO saved-singbox-config.json and NO auto-pre-migrate snapshot exist.
-	liveTunnels := `{"outbounds":[{"type":"vless","tag":"live-current-vless","server":"live.example.com","server_port":443,"uuid":"11111111-2222-3333-4444-555555555555"}]}`
-	liveRouter := `{"route":{"rules":[{"domain":["example.com"],"outbound":"live-current-vless"}],"final":"direct"}}`
-	if err := os.WriteFile(filepath.Join(sbDir, "10-tunnels.json"), []byte(liveTunnels), 0644); err != nil {
-		t.Fatalf("write 10-tunnels.json: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(sbDir, "20-router.json"), []byte(liveRouter), 0644); err != nil {
-		t.Fatalf("write 20-router.json: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(awgmDir, "settings.json"), []byte(`{"singboxRouter":{"routingEngine":"firc"}}`), 0644); err != nil {
-		t.Fatalf("write settings.json: %v", err)
-	}
-
-	op := NewOperator(Options{ConfigDir: fircDir, InboundPort: 1099})
-	op.SetSingboxValidator(func(_ context.Context, _ string) error { return nil })
-
-	// Even if a manual or auto-pre-reverse snapshot exists, it must NOT be treated as a saved pre-FIRC Sing-box return point.
-	if _, err := op.CreateSystemSnapshot(sbDir, "Manual snap", "manual", "firc"); err != nil {
-		t.Fatalf("CreateSystemSnapshot manual: %v", err)
-	}
-	if _, err := op.CreateSystemSnapshot(sbDir, "Pre-reverse snap", "auto-pre-reverse", "firc"); err != nil {
-		t.Fatalf("CreateSystemSnapshot auto-pre-reverse: %v", err)
-	}
-
-	// 1. GetSavedSingboxStatus must report Available=false (must not fall back to live_disk or non-pre-migrate snapshots).
-	st := op.GetSavedSingboxStatus(sbDir)
-	if st.Available {
-		t.Fatalf("expected GetSavedSingboxStatus Available=false when no saved_bundle or auto-pre-migrate snapshot exists, got %+v", st)
-	}
-	if strings.TrimSpace(st.UnavailableReason) == "" {
-		t.Fatalf("expected non-empty UnavailableReason when Available=false")
-	}
-
-	// 2. RestoreSavedSingboxFiles with createSnapshot=true must fail BEFORE creating auto-pre-return-singbox
-	// and must never pick its own auto-pre-return-singbox backup as the return point.
-	if _, err := op.RestoreSavedSingboxFiles(t.Context(), sbDir, true, "firc"); err == nil {
-		t.Fatalf("expected RestoreSavedSingboxFiles to fail when no verified pre-FIRC return point exists")
-	}
-	stAfter := op.GetSavedSingboxStatus(sbDir)
-	if stAfter.Available {
-		t.Fatalf("expected GetSavedSingboxStatus to remain Available=false after failed RestoreSavedSingboxFiles, got %+v", stAfter)
-	}
-
-	// 3. Now create a legitimate pre-FIRC return point via auto-pre-migrate snapshot, then overwrite 10-tunnels.json
-	// on disk and verify RestoreSavedSingboxFiles restores the pre-migrate config (and NOT the auto-pre-return-singbox backup!).
-	if _, err := op.CreateSystemSnapshot(sbDir, "Pre-migrate snap", "auto-pre-migrate", "sing-box"); err != nil {
-		t.Fatalf("CreateSystemSnapshot auto-pre-migrate: %v", err)
-	}
-	stValid := op.GetSavedSingboxStatus(sbDir)
-	if !stValid.Available || stValid.Source != "snapshot" {
-		t.Fatalf("expected GetSavedSingboxStatus Available=true with Source=snapshot, got %+v", stValid)
-	}
-
-	mutatedTunnels := `{"outbounds":[{"type":"vless","tag":"mutated-later-vless","server":"mutated.example.com","server_port":443,"uuid":"99999999-2222-3333-4444-555555555555"}]}`
-	if err := os.WriteFile(filepath.Join(sbDir, "10-tunnels.json"), []byte(mutatedTunnels), 0644); err != nil {
-		t.Fatalf("overwrite 10-tunnels.json: %v", err)
-	}
-	// Remove 20-router.json so it doesn't fail reference check during auto-pre-return-singbox capture
-	_ = os.Remove(filepath.Join(sbDir, "20-router.json"))
-
-	retRes, err := op.RestoreSavedSingboxFiles(t.Context(), sbDir, true, "firc")
-	if err != nil {
-		t.Fatalf("RestoreSavedSingboxFiles from auto-pre-migrate: %v", err)
-	}
-	if retRes.Source != "snapshot" {
-		t.Fatalf("expected Source=snapshot, got %q", retRes.Source)
-	}
-	restoredBytes, err := os.ReadFile(filepath.Join(sbDir, "10-tunnels.json"))
-	if err != nil || !strings.Contains(string(restoredBytes), "live-current-vless") || strings.Contains(string(restoredBytes), "mutated-later-vless") {
-		t.Fatalf("expected RestoreSavedSingboxFiles to restore pre-migrate live-current-vless (not mutated auto-pre-return backup), got: %s", string(restoredBytes))
 	}
 }
 
@@ -1495,21 +1321,8 @@ func TestSubprocessCrashWorker(t *testing.T) {
 	switch crashOp {
 	case "snapshot_restore":
 		_, _ = op.RestoreSystemSnapshot(context.Background(), snapID, sbDir)
-	case "return_saved_singbox":
-		f := false
-		_, _ = op.RestoreSavedSingboxFiles(context.Background(), sbDir, f, "firc")
-	case "reverse_migrate":
-		f := false
-		_, _ = op.ReverseMigrateToSingbox(context.Background(), sbDir, &ReverseMigrationOptions{
-			Mode:           "replace",
-			CreateSnapshot: &f,
-		}, "firc")
 	case "forward_migrate":
-		f := false
-		_, _ = op.MigrateFromSingboxWithOptions(context.Background(), sbDir, &MigrationOptions{
-			Mode:           "replace",
-			CreateSnapshot: &f,
-		})
+		_, _ = op.MigrateFromSingboxWithOptions(context.Background(), sbDir, &MigrationOptions{})
 	}
 	t.Fatalf("expected subprocess to exit(42) at op=%s stage=%s step=%d mode=%s, but operation returned normally", crashOp, crashStage, crashStep, commitFaultMode)
 }
@@ -1618,99 +1431,6 @@ func TestR1DurableJournalSubprocessCrashAndStartupRecovery(t *testing.T) {
 		}
 	}
 
-	// Sub-test B: Crash during ReverseMigrateToSingbox at writing_files step 1 (after writing 10-tunnels.json and creating new subscriptions.json)
-	{
-		tmpDir := t.TempDir()
-		awgmDir := filepath.Join(tmpDir, "awg-manager")
-		sbDir := filepath.Join(awgmDir, "config.d")
-		fircDir := filepath.Join(tmpDir, "firc")
-		_ = os.MkdirAll(sbDir, 0755)
-		_ = os.MkdirAll(fircDir, 0755)
-
-		orig10 := `{"outbounds":[{"type":"vless","tag":"orig-sb","server":"orig.example.com","server_port":443,"uuid":"11111111-2222-3333-4444-555555555555"}]}`
-		_ = os.WriteFile(filepath.Join(sbDir, "10-tunnels.json"), []byte(orig10), 0644)
-		// Note: subscriptions.json and 20-router.json do NOT exist before reverse migration!
-
-		initOp := NewOperator(Options{ConfigDir: fircDir, InboundPort: 1099})
-		_ = initOp.SaveTunnelsFile([]Tunnel{
-			{
-				ID: "t1", Device: "tunvless0", Enable: true,
-				Sources: []TunnelSource{{ID: "s1", Kind: "link", Name: "N1", Link: "vless://aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee@rev.example.com:443?security=tls&sni=rev.example.com#N1"}},
-			},
-			{
-				ID: "t2", Device: "tunvless1", Enable: true,
-				Sources: []TunnelSource{{ID: "s2", Kind: "subscription", Name: "Sub1", URL: "https://sub.example.com/v1"}},
-			},
-		})
-		_ = initOp.SaveGroupsFile([]Group{
-			{
-				ID: "g1", Name: "G1", Interface: []string{"tunvless0"}, Enable: true,
-				Rules: []Rule{{ID: "r1", Type: "domain", Rule: "example.com", Enable: true}},
-			},
-		})
-
-		runSubprocessCrash(t, "reverse_migrate", "writing_files", 1, sbDir, fircDir, "")
-
-		// Right after crash at step 1, 10-tunnels.json was overwritten and subscriptions.json was created
-		if _, err := os.Stat(filepath.Join(awgmDir, "subscriptions.json")); err != nil {
-			t.Fatalf("expected subscriptions.json to have been created at step 1 before crash: %v", err)
-		}
-
-		// Restart Operator -> must roll back 10-tunnels.json to orig10 and delete newly created subscriptions.json
-		restartedOp := NewOperator(Options{ConfigDir: fircDir, InboundPort: 1099})
-		got10, err := os.ReadFile(filepath.Join(sbDir, "10-tunnels.json"))
-		if err != nil || string(got10) != orig10 {
-			t.Fatalf("expected 10-tunnels.json rolled back to orig10 on startup, got err=%v data=%s", err, string(got10))
-		}
-		if _, err := os.Stat(filepath.Join(awgmDir, "subscriptions.json")); !os.IsNotExist(err) {
-			t.Fatalf("expected newly created subscriptions.json to be deleted on startup rollback")
-		}
-		if !restartedOp.IsRecoveryRequired() {
-			t.Fatalf("expected IsRecoveryRequired()=true after reverse_migrate crash recovery")
-		}
-		_ = restartedOp.ClearRecovery()
-	}
-
-	// Sub-test C: Crash during RestoreSavedSingboxFiles (return_saved_singbox) at writing_files step 0
-	{
-		tmpDir := t.TempDir()
-		awgmDir := filepath.Join(tmpDir, "awg-manager")
-		sbDir := filepath.Join(awgmDir, "config.d")
-		fircDir := filepath.Join(tmpDir, "firc")
-		_ = os.MkdirAll(sbDir, 0755)
-		_ = os.MkdirAll(fircDir, 0755)
-
-		saved10 := `{"outbounds":[{"type":"vless","tag":"saved-sb","server":"saved.example.com","server_port":443,"uuid":"11111111-2222-3333-4444-555555555555"}]}`
-		_ = os.WriteFile(filepath.Join(sbDir, "10-tunnels.json"), []byte(saved10), 0644)
-		_ = os.WriteFile(filepath.Join(awgmDir, "settings.json"), []byte(`{"singboxRouter":{"routingEngine":"sing-box"}}`), 0644)
-
-		initOp := NewOperator(Options{ConfigDir: fircDir, InboundPort: 1099})
-		initOp.SetSingboxValidator(func(_ context.Context, _ string) error { return nil })
-		if err := initOp.SavePreFircSingboxConfig(sbDir, true); err != nil {
-			t.Fatalf("SavePreFircSingboxConfig: %v", err)
-		}
-
-		// Modify working 10-tunnels.json and add 99-extra.json before calling RestoreSavedSingboxFiles
-		modified10 := `{"outbounds":[{"type":"vless","tag":"mod-sb","server":"mod.example.com","server_port":443,"uuid":"22222222-2222-3333-4444-555555555555"}]}`
-		_ = os.WriteFile(filepath.Join(sbDir, "10-tunnels.json"), []byte(modified10), 0644)
-		_ = os.WriteFile(filepath.Join(sbDir, "99-extra.json"), []byte(`{"outbounds":[]}`), 0644)
-
-		runSubprocessCrash(t, "return_saved_singbox", "writing_files", 0, sbDir, fircDir, "")
-
-		restartedOp := NewOperator(Options{ConfigDir: fircDir, InboundPort: 1099})
-		got10, err := os.ReadFile(filepath.Join(sbDir, "10-tunnels.json"))
-		if err != nil || string(got10) != modified10 {
-			t.Fatalf("expected 10-tunnels.json rolled back to modified10 after return_saved_singbox crash, got err=%v data=%s", err, string(got10))
-		}
-		if _, err := os.Stat(filepath.Join(sbDir, "99-extra.json")); err != nil {
-			t.Fatalf("expected 99-extra.json restored after return_saved_singbox crash: %v", err)
-		}
-		if !restartedOp.IsRecoveryRequired() {
-			t.Fatalf("expected IsRecoveryRequired()=true after return_saved_singbox crash recovery")
-		}
-		_ = restartedOp.ClearRecovery()
-	}
-
 	// Sub-test D: Crash during MigrateFromSingboxWithOptions (forward_migrate) at writing_files step 0
 	{
 		tmpDir := t.TempDir()
@@ -1750,7 +1470,7 @@ func TestR1DurableJournalSubprocessCrashAndStartupRecovery(t *testing.T) {
 	}
 }
 
-func TestV1SingboxCandidateValidatorFailClosedAndPreviewStatus(t *testing.T) {
+func TestV1SingboxCandidateValidatorFailClosed(t *testing.T) {
 	tmpDir := t.TempDir()
 	awgmDir := filepath.Join(tmpDir, "awg-manager")
 	sbDir := filepath.Join(awgmDir, "config.d")
@@ -1771,11 +1491,8 @@ func TestV1SingboxCandidateValidatorFailClosedAndPreviewStatus(t *testing.T) {
 	}
 
 	op := NewOperator(Options{ConfigDir: fircDir, InboundPort: 1099})
-	// Save a pre-FIRC Sing-box bundle and a snapshot while validator is mocked as valid
+	// Snapshot while validator is mocked as valid
 	op.SetSingboxValidator(func(_ context.Context, _ string) error { return nil })
-	if err := op.SavePreFircSingboxConfig(sbDir, true); err != nil {
-		t.Fatalf("SavePreFircSingboxConfig: %v", err)
-	}
 	snapMeta, err := op.CreateSystemSnapshot(sbDir, "Valid Snap", "manual", "sing-box")
 	if err != nil {
 		t.Fatalf("CreateSystemSnapshot: %v", err)
@@ -1790,7 +1507,7 @@ func TestV1SingboxCandidateValidatorFailClosedAndPreviewStatus(t *testing.T) {
 	}
 	op.SetSingboxValidator(nil)
 
-	// Mutate working 10-tunnels.json so we can verify it is NEVER modified when apply/return/restore/reverse fails closed
+	// Mutate working 10-tunnels.json so we can verify it is NEVER modified when restore fails closed
 	live10 := `{"outbounds":[{"type":"vless","tag":"live-untouched","server":"live.example.com","server_port":443,"uuid":"22222222-2222-3333-4444-555555555555"}]}`
 	if err := os.WriteFile(filepath.Join(sbDir, "10-tunnels.json"), []byte(live10), 0644); err != nil {
 		t.Fatalf("write live 10-tunnels.json: %v", err)
@@ -1813,29 +1530,9 @@ func TestV1SingboxCandidateValidatorFailClosedAndPreviewStatus(t *testing.T) {
 	for _, tc := range unavailableCases {
 		op.SetSingboxBinary(tc.sbBin)
 
-		// 1. Preview / status must report validator_unavailable (and never Available=true / "verified")
-		st := op.GetSavedSingboxStatus(sbDir)
-		if st.Available || st.VerificationStatus != "validator_unavailable" {
-			t.Fatalf("[%s] expected GetSavedSingboxStatus Available=false and VerificationStatus=validator_unavailable, got %+v", tc.name, st)
-		}
-		prev, pErr := op.PreviewReverseToSingbox(t.Context(), sbDir, &ReverseMigrationOptions{Mode: "replace"})
-		if pErr != nil {
-			t.Fatalf("[%s] PreviewReverseToSingbox returned unexpected error: %v", tc.name, pErr)
-		}
-		if prev.VerificationStatus != "validator_unavailable" {
-			t.Fatalf("[%s] expected PreviewReverseToSingbox VerificationStatus=validator_unavailable, got %+v", tc.name, prev)
-		}
-
-		// 2. Apply / return / restore / reverse-migrate MUST fail-closed with ErrSingboxValidatorUnavailable
+		// Restore MUST fail-closed with ErrSingboxValidatorUnavailable
 		if _, err := op.RestoreSystemSnapshot(t.Context(), snapMeta.ID, sbDir); !errors.Is(err, ErrSingboxValidatorUnavailable) {
 			t.Fatalf("[%s] expected RestoreSystemSnapshot to fail closed with ErrSingboxValidatorUnavailable, got %v", tc.name, err)
-		}
-		if _, err := op.RestoreSavedSingboxFiles(t.Context(), sbDir, false, "firc"); !errors.Is(err, ErrSingboxValidatorUnavailable) {
-			t.Fatalf("[%s] expected RestoreSavedSingboxFiles to fail closed with ErrSingboxValidatorUnavailable, got %v", tc.name, err)
-		}
-		f := false
-		if _, err := op.ReverseMigrateToSingbox(t.Context(), sbDir, &ReverseMigrationOptions{Mode: "replace", CreateSnapshot: &f}, "firc"); !errors.Is(err, ErrSingboxValidatorUnavailable) {
-			t.Fatalf("[%s] expected ReverseMigrateToSingbox to fail closed with ErrSingboxValidatorUnavailable, got %v", tc.name, err)
 		}
 
 		// Verify working 10-tunnels.json was not touched
@@ -1849,16 +1546,6 @@ func TestV1SingboxCandidateValidatorFailClosedAndPreviewStatus(t *testing.T) {
 	op.SetSingboxBinary(os.Args[0])
 	if _, err := op.RestoreSystemSnapshot(t.Context(), snapMeta.ID, sbDir); err == nil || errors.Is(err, ErrSingboxValidatorUnavailable) {
 		t.Fatalf("expected RestoreSystemSnapshot to fail with sing-box check execution error (not unavailable), got %v", err)
-	}
-	if _, err := op.RestoreSavedSingboxFiles(t.Context(), sbDir, false, "firc"); err == nil || errors.Is(err, ErrSingboxValidatorUnavailable) {
-		t.Fatalf("expected RestoreSavedSingboxFiles to fail with sing-box check execution error, got %v", err)
-	}
-	f := false
-	if _, err := op.ReverseMigrateToSingbox(t.Context(), sbDir, &ReverseMigrationOptions{Mode: "replace", CreateSnapshot: &f}, "firc"); err == nil || errors.Is(err, ErrSingboxValidatorUnavailable) {
-		t.Fatalf("expected ReverseMigrateToSingbox to fail with sing-box check execution error, got %v", err)
-	}
-	if st := op.GetSavedSingboxStatus(sbDir); st.Available || st.VerificationStatus != "invalid" {
-		t.Fatalf("expected GetSavedSingboxStatus Available=false and VerificationStatus=invalid on checker failure, got %+v", st)
 	}
 	got10, rErr := os.ReadFile(filepath.Join(sbDir, "10-tunnels.json"))
 	if rErr != nil || string(got10) != live10 {
@@ -1879,8 +1566,8 @@ func TestV2UnifiedStagingManifestExcludesDeletedBaseAndFailsOnCopyError(t *testi
 	}
 
 	// Sub-test A: 00-base.json exists on disk in singboxConfigDir with outbound "base-only-outbound",
-	// and is ABSENT from the snapshot. Because RestoreSystemSnapshot / RestoreSavedSingboxFiles
-	// run with clearStaleSingbox=true (which deletes 00-base.json on apply), the staged directory
+	// and is ABSENT from the snapshot. Because RestoreSystemSnapshot clears stale root files
+	// (which deletes 00-base.json on apply), the staged directory
 	// passed to the checker MUST NOT contain 00-base.json, and validOutboundTags MUST NOT contain "base-only-outbound".
 	diskBase := `{"log":{"level":"info"},"outbounds":[{"type":"direct","tag":"base-only-outbound"}]}`
 	orig10 := `{"outbounds":[{"type":"vless","tag":"snap-vless","server":"snap.example.com","server_port":443,"uuid":"11111111-2222-3333-4444-555555555555"}]}`
@@ -1964,31 +1651,28 @@ func TestV2UnifiedStagingManifestExcludesDeletedBaseAndFailsOnCopyError(t *testi
 		t.Fatalf("staged file set %v does not match final applied file set %v", stagedFilesSeen, appliedFiles)
 	}
 
-	// Sub-test B: Error during staging/copying preserved or candidate files aborts BEFORE any working file is modified
+	// Sub-test B: Error during staging of candidate files aborts BEFORE any working file is modified
 	_ = os.WriteFile(filepath.Join(sbDir, "00-base.json"), []byte(diskBase), 0644)
-	_ = os.WriteFile(filepath.Join(sbDir, "10-tunnels.json"), []byte(orig10), 0644)
-	_ = op.SaveTunnelsFile([]Tunnel{
-		{
-			ID: "t1", Device: "tunvless0", Enable: true,
-			Sources: []TunnelSource{{ID: "s1", Kind: "link", Name: "N1", Link: "vless://aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee@rev.example.com:443?security=tls&sni=rev.example.com#N1"}},
-		},
-	})
+	working10 := `{"outbounds":[{"type":"direct","tag":"working-direct"}]}`
+	_ = os.WriteFile(filepath.Join(sbDir, "10-tunnels.json"), []byte(working10), 0644)
 
 	op.SetSingboxStageCopyHook(func(relPath string) error {
-		if relPath == "00-base.json" {
-			return errors.New("simulated I/O failure copying 00-base.json into staging")
+		if relPath == "10-tunnels.json" {
+			return errors.New("simulated I/O failure copying 10-tunnels.json into staging")
 		}
 		return nil
 	})
 	defer op.SetSingboxStageCopyHook(nil)
 
-	f := false
-	if _, err := op.ReverseMigrateToSingbox(t.Context(), sbDir, &ReverseMigrationOptions{Mode: "merge", CreateSnapshot: &f}, "firc"); err == nil {
-		t.Fatalf("expected ReverseMigrateToSingbox to abort when staging copy of 00-base.json fails")
+	if _, err := op.RestoreSystemSnapshot(t.Context(), "no-base-snap", sbDir); err == nil {
+		t.Fatalf("expected RestoreSystemSnapshot to abort when staging copy of 10-tunnels.json fails")
 	}
 	got10, _ := os.ReadFile(filepath.Join(sbDir, "10-tunnels.json"))
-	if string(got10) != orig10 {
+	if string(got10) != working10 {
 		t.Fatalf("working 10-tunnels.json was modified despite staging copy error: %s", string(got10))
+	}
+	if gotBase, _ := os.ReadFile(filepath.Join(sbDir, "00-base.json")); string(gotBase) != diskBase {
+		t.Fatalf("00-base.json was removed despite staging copy error: %s", gotBase)
 	}
 }
 
@@ -2423,7 +2107,7 @@ func TestMigrateFromSingboxRollsBackOnGroupSyncFailure(t *testing.T) {
 	mockSrv.failGroupsOnce = true
 	mockSrv.mu.Unlock()
 
-	if _, err := op.MigrateFromSingbox(ctx, sbDir); err == nil {
+	if _, err := op.MigrateFromSingboxWithOptions(ctx, sbDir, nil); err == nil {
 		t.Fatal("expected MigrateFromSingbox to fail when SyncGroups fails")
 	}
 	diskTunnelsAfterFail, _ := op.LoadTunnelsFile()
@@ -2471,7 +2155,7 @@ func TestMigrateFromSingboxFailsClosedOnLiveSnapshotFailure(t *testing.T) {
 	sbDir := filepath.Join(tmpDir, "sb-p11")
 	_ = os.MkdirAll(sbDir, 0o755)
 	_ = os.WriteFile(filepath.Join(sbDir, "10-tunnels.json"), []byte(`{"outbounds":[{"type":"socks","tag":"s1","server":"1.2.3.4","server_port":1080}]}`), 0o644)
-	if _, err := op.MigrateFromSingbox(ctx, sbDir); err == nil {
+	if _, err := op.MigrateFromSingboxWithOptions(ctx, sbDir, nil); err == nil {
 		t.Fatal("P1.1 regression: expected MigrateFromSingbox to fail closed when live GetTunnels snapshot fails")
 	}
 
@@ -2594,348 +2278,4 @@ groups:
 	if len(groups) != 2 || groups[1].List == nil || groups[1].List.LastUpdate != 1794918216 {
 		t.Fatalf("unexpected decoded GroupList: %+v", groups)
 	}
-}
-
-func TestReverseMigrateToSingbox_ProxyT2SAndGlobalGroup(t *testing.T) {
-	t.Run("synthesizes direct outbound and 10-tunnels skeleton for t2s0, skips c100d001 and c100d002", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		awgmDir := filepath.Join(tmpDir, "awg-manager")
-		sbDir := filepath.Join(awgmDir, "config.d")
-		fircDir := filepath.Join(tmpDir, "firc")
-		if err := os.MkdirAll(sbDir, 0755); err != nil {
-			t.Fatalf("mkdir sbDir: %v", err)
-		}
-
-		op := NewOperator(Options{ConfigDir: fircDir, InboundPort: 1099})
-		op.SetSingboxValidator(func(_ context.Context, _ string) error { return nil })
-
-		groups := []Group{
-			{
-				ID:        KeenDNSGroupID,
-				Name:      "KeenDNS",
-				Interface: []string{"t2s0"},
-				Enable:    true,
-				Rules:     []Rule{{ID: "k1", Type: "namespace", Rule: "keenetic.net", Enable: true}},
-			},
-			{
-				ID:        globalGroupID,
-				Name:      "Global",
-				Interface: []string{"t2s0"},
-				Enable:    true,
-				Rules:     []Rule{{ID: "g0", Type: "subnet", Rule: "1.0.0.0/8", Enable: true}},
-			},
-			{
-				ID:        "a1b2c3d4",
-				Name:      "SocksGroup",
-				Interface: []string{"t2s0"},
-				Enable:    true,
-				Rules:     []Rule{{ID: "r1", Type: "namespace", Rule: "example.com", Enable: true}},
-			},
-		}
-		if err := op.SaveTunnelsFile(nil); err != nil {
-			t.Fatalf("SaveTunnelsFile: %v", err)
-		}
-		if err := op.SaveGroupsFile(groups); err != nil {
-			t.Fatalf("SaveGroupsFile: %v", err)
-		}
-
-		prev, err := op.PreviewReverseToSingbox(t.Context(), sbDir, &ReverseMigrationOptions{Mode: "replace"})
-		if err != nil {
-			t.Fatalf("PreviewReverseToSingbox: %v", err)
-		}
-		if len(prev.Skipped) != 0 {
-			t.Fatalf("expected 0 skipped groups in preview, got %v", prev.Skipped)
-		}
-		if len(prev.Groups) != 1 || prev.Groups[0].OutboundTag != "proxy-t2s0" {
-			t.Fatalf("expected 1 converted group with OutboundTag proxy-t2s0, got %+v", prev.Groups)
-		}
-
-		f := false
-		revRes, err := op.ReverseMigrateToSingbox(t.Context(), sbDir, &ReverseMigrationOptions{
-			Mode:           "replace",
-			CreateSnapshot: &f,
-		}, "firc")
-		if err != nil {
-			t.Fatalf("ReverseMigrateToSingbox: %v", err)
-		}
-		if revRes.RulesMigrated != 1 {
-			t.Fatalf("expected 1 rule migrated, got %+v", revRes)
-		}
-
-		routerRaw, err := os.ReadFile(filepath.Join(sbDir, "20-router.json"))
-		if err != nil {
-			t.Fatalf("read 20-router.json: %v", err)
-		}
-		var routerDoc struct {
-			Outbounds []map[string]any `json:"outbounds"`
-			Route     struct {
-				Rules []map[string]any `json:"rules"`
-			} `json:"route"`
-		}
-		if err := json.Unmarshal(routerRaw, &routerDoc); err != nil {
-			t.Fatalf("unmarshal 20-router.json: %v", err)
-		}
-		if len(routerDoc.Outbounds) != 1 ||
-			routerDoc.Outbounds[0]["type"] != "direct" ||
-			routerDoc.Outbounds[0]["tag"] != "proxy-t2s0" ||
-			routerDoc.Outbounds[0]["bind_interface"] != "t2s0" {
-			t.Fatalf("unexpected 20-router.json outbounds: %+v", routerDoc.Outbounds)
-		}
-		if len(routerDoc.Route.Rules) != 1 || routerDoc.Route.Rules[0]["outbound"] != "proxy-t2s0" {
-			t.Fatalf("unexpected 20-router.json rules: %+v", routerDoc.Route.Rules)
-		}
-
-		tunnelsRaw, err := os.ReadFile(filepath.Join(sbDir, "10-tunnels.json"))
-		if err != nil || len(tunnelsRaw) == 0 {
-			t.Fatalf("expected 10-tunnels.json skeleton to exist, err=%v", err)
-		}
-	})
-
-	t.Run("merge mode reuses existing direct bind_interface outbound for t2s0", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		awgmDir := filepath.Join(tmpDir, "awg-manager")
-		sbDir := filepath.Join(awgmDir, "config.d")
-		fircDir := filepath.Join(tmpDir, "firc")
-		if err := os.MkdirAll(sbDir, 0755); err != nil {
-			t.Fatalf("mkdir sbDir: %v", err)
-		}
-		existing10 := `{"inbounds":[],"outbounds":[],"route":{"rules":[]}}`
-		if err := os.WriteFile(filepath.Join(sbDir, "10-tunnels.json"), []byte(existing10), 0644); err != nil {
-			t.Fatalf("write 10-tunnels.json: %v", err)
-		}
-		existing15 := `{"outbounds":[{"type":"direct","tag":"keen-socks","bind_interface":"t2s0"}]}`
-		if err := os.WriteFile(filepath.Join(sbDir, "15-awg.json"), []byte(existing15), 0644); err != nil {
-			t.Fatalf("write 15-awg.json: %v", err)
-		}
-
-		op := NewOperator(Options{ConfigDir: fircDir, InboundPort: 1099})
-		op.SetSingboxValidator(func(_ context.Context, _ string) error { return nil })
-
-		groups := []Group{
-			{
-				ID:        "a1b2c3d4",
-				Name:      "SocksGroup",
-				Interface: []string{"t2s0"},
-				Enable:    true,
-				Rules:     []Rule{{ID: "r1", Type: "domain", Rule: "example.org", Enable: true}},
-			},
-		}
-		if err := op.SaveTunnelsFile(nil); err != nil {
-			t.Fatalf("SaveTunnelsFile: %v", err)
-		}
-		if err := op.SaveGroupsFile(groups); err != nil {
-			t.Fatalf("SaveGroupsFile: %v", err)
-		}
-
-		f := false
-		revRes, err := op.ReverseMigrateToSingbox(t.Context(), sbDir, &ReverseMigrationOptions{
-			Mode:           "merge",
-			CreateSnapshot: &f,
-		}, "firc")
-		if err != nil {
-			t.Fatalf("ReverseMigrateToSingbox merge: %v", err)
-		}
-		if len(revRes.Groups) != 1 || revRes.Groups[0].OutboundTag != "keen-socks" {
-			t.Fatalf("expected reused OutboundTag keen-socks, got %+v", revRes.Groups)
-		}
-
-		routerRaw, err := os.ReadFile(filepath.Join(sbDir, "20-router.json"))
-		if err != nil {
-			t.Fatalf("read 20-router.json: %v", err)
-		}
-		if strings.Contains(string(routerRaw), "proxy-t2s0") {
-			t.Fatalf("expected no duplicate proxy-t2s0 outbound in 20-router.json, got %s", string(routerRaw))
-		}
-	})
-
-	t.Run("normalizes Proxy0 interface ID to kernel bind_interface t2s0", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		sbDir := filepath.Join(tmpDir, "awg-manager", "config.d")
-		fircDir := filepath.Join(tmpDir, "firc")
-		if err := os.MkdirAll(sbDir, 0755); err != nil {
-			t.Fatalf("mkdir sbDir: %v", err)
-		}
-
-		op := NewOperator(Options{ConfigDir: fircDir, InboundPort: 1099})
-		op.SetSingboxValidator(func(_ context.Context, _ string) error { return nil })
-
-		groups := []Group{
-			{
-				ID:        "b2c3d4e5",
-				Name:      "ProxyGroup",
-				Interface: []string{"Proxy0"},
-				Enable:    true,
-				Rules:     []Rule{{ID: "r1", Type: "namespace", Rule: "example.net", Enable: true}},
-			},
-		}
-		if err := op.SaveTunnelsFile(nil); err != nil {
-			t.Fatalf("SaveTunnelsFile: %v", err)
-		}
-		if err := op.SaveGroupsFile(groups); err != nil {
-			t.Fatalf("SaveGroupsFile: %v", err)
-		}
-
-		f := false
-		revRes, err := op.ReverseMigrateToSingbox(t.Context(), sbDir, &ReverseMigrationOptions{
-			Mode:           "replace",
-			CreateSnapshot: &f,
-		}, "firc")
-		if err != nil {
-			t.Fatalf("ReverseMigrateToSingbox: %v", err)
-		}
-		if len(revRes.Groups) != 1 || revRes.Groups[0].OutboundTag != "proxy-t2s0" {
-			t.Fatalf("expected proxy-t2s0, got %+v", revRes.Groups)
-		}
-		routerRaw, err := os.ReadFile(filepath.Join(sbDir, "20-router.json"))
-		if err != nil {
-			t.Fatalf("read 20-router.json: %v", err)
-		}
-		var routerDoc struct {
-			Outbounds []map[string]any `json:"outbounds"`
-		}
-		if err := json.Unmarshal(routerRaw, &routerDoc); err != nil {
-			t.Fatalf("unmarshal 20-router.json: %v", err)
-		}
-		if len(routerDoc.Outbounds) != 1 ||
-			routerDoc.Outbounds[0]["tag"] != "proxy-t2s0" ||
-			routerDoc.Outbounds[0]["bind_interface"] != "t2s0" {
-			t.Fatalf("unexpected synthesized outbound for Proxy0: %+v", routerDoc.Outbounds)
-		}
-	})
-
-	t.Run("merge mode reuses existing proxy-t2s0 from disabled/20-router.json without duplicate tags", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		awgmDir := filepath.Join(tmpDir, "awg-manager")
-		sbDir := filepath.Join(awgmDir, "config.d")
-		disabledDir := filepath.Join(sbDir, "disabled")
-		fircDir := filepath.Join(tmpDir, "firc")
-		if err := os.MkdirAll(disabledDir, 0755); err != nil {
-			t.Fatalf("mkdir disabledDir: %v", err)
-		}
-		if err := os.WriteFile(filepath.Join(sbDir, "10-tunnels.json"), []byte(`{"inbounds":[],"outbounds":[],"route":{"rules":[]}}`), 0644); err != nil {
-			t.Fatalf("write 10-tunnels.json: %v", err)
-		}
-		disabled20 := `{"outbounds":[{"type":"direct","tag":"proxy-t2s0","bind_interface":"t2s0"}],"route":{"rules":[{"domain":["old.example"],"outbound":"proxy-t2s0"}]}}`
-		if err := os.WriteFile(filepath.Join(disabledDir, "20-router.json"), []byte(disabled20), 0644); err != nil {
-			t.Fatalf("write disabled/20-router.json: %v", err)
-		}
-
-		op := NewOperator(Options{ConfigDir: fircDir, InboundPort: 1099})
-		op.SetSingboxValidator(func(_ context.Context, _ string) error { return nil })
-
-		groups := []Group{
-			{
-				ID:        "a1b2c3d4",
-				Name:      "Socks0",
-				Interface: []string{"t2s0"},
-				Enable:    true,
-				Rules:     []Rule{{ID: "r1", Type: "domain", Rule: "one.example", Enable: true}},
-			},
-			{
-				ID:        "b2c3d4e5",
-				Name:      "Socks2",
-				Interface: []string{"t2s2"},
-				Enable:    true,
-				Rules:     []Rule{{ID: "r2", Type: "domain", Rule: "two.example", Enable: true}},
-			},
-		}
-		if err := op.SaveTunnelsFile(nil); err != nil {
-			t.Fatalf("SaveTunnelsFile: %v", err)
-		}
-		if err := op.SaveGroupsFile(groups); err != nil {
-			t.Fatalf("SaveGroupsFile: %v", err)
-		}
-
-		f := false
-		revRes, err := op.ReverseMigrateToSingbox(t.Context(), sbDir, &ReverseMigrationOptions{
-			Mode:           "merge",
-			CreateSnapshot: &f,
-		}, "firc")
-		if err != nil {
-			t.Fatalf("ReverseMigrateToSingbox merge: %v", err)
-		}
-		if len(revRes.Groups) != 2 || revRes.Groups[0].OutboundTag != "proxy-t2s0" || revRes.Groups[1].OutboundTag != "proxy-t2s2" {
-			t.Fatalf("unexpected group targets: %+v", revRes.Groups)
-		}
-
-		routerRaw, err := os.ReadFile(filepath.Join(sbDir, "20-router.json"))
-		if err != nil {
-			t.Fatalf("read 20-router.json: %v", err)
-		}
-		var routerDoc struct {
-			Outbounds []map[string]any `json:"outbounds"`
-		}
-		if err := json.Unmarshal(routerRaw, &routerDoc); err != nil {
-			t.Fatalf("unmarshal 20-router.json: %v", err)
-		}
-		tagCounts := map[string]int{}
-		for _, ob := range routerDoc.Outbounds {
-			if tag, _ := ob["tag"].(string); tag != "" {
-				tagCounts[tag]++
-			}
-		}
-		if tagCounts["proxy-t2s0"] != 1 || tagCounts["proxy-t2s2"] != 1 || len(routerDoc.Outbounds) != 2 {
-			t.Fatalf("unexpected merged outbounds (counts=%v): %+v", tagCounts, routerDoc.Outbounds)
-		}
-	})
-
-	t.Run("merge mode materializes root 20-router.json for device-only group reusing disabled/20-router.json outbound", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		awgmDir := filepath.Join(tmpDir, "awg-manager")
-		sbDir := filepath.Join(awgmDir, "config.d")
-		disabledDir := filepath.Join(sbDir, "disabled")
-		fircDir := filepath.Join(tmpDir, "firc")
-		if err := os.MkdirAll(disabledDir, 0755); err != nil {
-			t.Fatalf("mkdir disabledDir: %v", err)
-		}
-		if err := os.WriteFile(filepath.Join(sbDir, "10-tunnels.json"), []byte(`{"inbounds":[],"outbounds":[],"route":{"rules":[]}}`), 0644); err != nil {
-			t.Fatalf("write 10-tunnels.json: %v", err)
-		}
-		disabled20 := `{"outbounds":[{"type":"direct","tag":"keen-socks","bind_interface":"t2s0"}],"route":{"rules":[]}}`
-		if err := os.WriteFile(filepath.Join(disabledDir, "20-router.json"), []byte(disabled20), 0644); err != nil {
-			t.Fatalf("write disabled/20-router.json: %v", err)
-		}
-
-		op := NewOperator(Options{ConfigDir: fircDir, InboundPort: 1099})
-		op.SetSingboxValidator(func(_ context.Context, _ string) error { return nil })
-
-		groups := []Group{
-			{
-				ID:        "c3d4e5f6",
-				Name:      "DeviceOnlySocks",
-				Interface: []string{"t2s0"},
-				Enable:    true,
-				Devices:   GroupDevices{Allow: []string{"192.168.1.55"}},
-			},
-		}
-		if err := op.SaveTunnelsFile(nil); err != nil {
-			t.Fatalf("SaveTunnelsFile: %v", err)
-		}
-		if err := op.SaveGroupsFile(groups); err != nil {
-			t.Fatalf("SaveGroupsFile: %v", err)
-		}
-
-		f := false
-		revRes, err := op.ReverseMigrateToSingbox(t.Context(), sbDir, &ReverseMigrationOptions{
-			Mode:           "merge",
-			CreateSnapshot: &f,
-		}, "firc")
-		if err != nil {
-			t.Fatalf("ReverseMigrateToSingbox device-only merge: %v", err)
-		}
-		if revRes.ClientRoutesMigrated != 1 || len(revRes.Groups) != 1 || revRes.Groups[0].OutboundTag != "keen-socks" {
-			t.Fatalf("unexpected reverse result: %+v", revRes)
-		}
-		routerRaw, err := os.ReadFile(filepath.Join(sbDir, "20-router.json"))
-		if err != nil {
-			t.Fatalf("expected root 20-router.json materialized, got err: %v", err)
-		}
-		if !strings.Contains(string(routerRaw), `"keen-socks"`) {
-			t.Fatalf("expected keen-socks in materialized root 20-router.json, got %s", string(routerRaw))
-		}
-		crRaw, err := os.ReadFile(filepath.Join(awgmDir, "client-routes.json"))
-		if err != nil || !strings.Contains(string(crRaw), `"keen-socks"`) {
-			t.Fatalf("expected keen-socks in client-routes.json, err=%v body=%s", err, string(crRaw))
-		}
-	})
 }
