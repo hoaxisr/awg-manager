@@ -27,21 +27,26 @@ typedef struct {
    loop thread when a body some wanted pair uses changed. NULL when the worker cannot start. */
 firc_tunsubs_t *firc_tunsubs_new(firc_loop_t *loop, const char *cache_dir, void (*changed)(void *ud), void *ud);
 
-/* The subscriptions to keep fresh: every one of every enabled tunnel, keyed by (url, uplink identity) and
-   fetched with the mark of one of its tunnels, marks[i] for t->t[i]. A new pair takes its cached body at
-   once and is fetched now unless it is manual-only and cached. */
+/* The subscriptions to track: every enabled tunnel (fetched with marks[i] and kept fresh on its interval) and
+   every disabled auto-uplink tunnel (mark 0, fetched once when uncached or on explicit refresh, never polled
+   periodically). Disabled tunnels with a non-auto uplink keep their cache only and are never fetched without
+   their uplink mark. A new active pair takes its cached body at once and is fetched now unless manual-only
+   and cached; a new passive auto-uplink pair uses its cached body without fetching unless uncached. */
 void firc_tunsubs_want(firc_tunsubs_t *s, const firc_tunnels_t *t, const uint32_t *marks);
 
 /* Removes every cache file no subscription of any tunnel in all (enabled or not) is keyed to. */
 void firc_tunsubs_sweep(firc_tunsubs_t *s, const firc_tunnels_t *all);
 
-/* Queues every pair whose interval has passed and that is neither queued nor fetching. */
+/* Queues every active (enabled-tunnel) pair whose interval has passed or needs retry, and is neither queued nor
+   fetching. Passive (disabled-only) pairs are skipped. */
 void firc_tunsubs_due(firc_tunsubs_t *s);
 
-/* Queues every subscription of tunnel_id now; FIRC_ERR_NOENT when it has none wanted. */
+/* Queues every fetchable subscription of tunnel_id now (enabled tunnels and disabled auto-uplink tunnels);
+   FIRC_ERR_NOENT when it has none. */
 firc_err_t firc_tunsubs_refresh(firc_tunsubs_t *s, const char *tunnel_id);
 
-/* The held bodies of the wanted pairs; valid until the next call into s. */
+/* The held bodies of tracked fetchable pairs (enabled tunnels and disabled auto-uplink tunnels); valid until
+   the next call into s. */
 const firc_tun_body_t *firc_tunsubs_bodies(const firc_tunsubs_t *s, size_t *n);
 
 /* The held bodies of t's subscriptions as fetched through uplink_of's uplink and with the headers of uplink_of's
@@ -50,8 +55,8 @@ const firc_tun_body_t *firc_tunsubs_bodies(const firc_tunsubs_t *s, size_t *n);
 size_t firc_tunsubs_held(const firc_tunsubs_t *s, const firc_tunnel_t *uplink_of, const firc_tunnel_t *t,
                          firc_tun_body_t *out, size_t cap);
 
-/* Fills out for the subscription url of a tunnel fetching with mark under the headers signature hsig; returns 1,
-   or 0 when none is wanted. */
+/* Fills out for the subscription url of a tracked fetchable tunnel using mark and headers signature hsig;
+   returns 1, or 0 when none is tracked. */
 size_t firc_tunsubs_state(const firc_tunsubs_t *s, const char *url, uint32_t mark, uint64_t hsig,
                           firc_tun_sub_state_t *out);
 

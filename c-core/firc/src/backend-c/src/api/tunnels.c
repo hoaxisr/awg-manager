@@ -959,11 +959,13 @@ static cJSON *node_state_json(firc_tunnels_ctx_t *ctx, const firc_tun_state_t *s
     return o;
 }
 
-static cJSON *sub_state_json(firc_tunnels_ctx_t *ctx, const firc_tun_src_t *src, uint32_t mark)
+static cJSON *sub_state_json(firc_tunnels_ctx_t *ctx, const firc_tunnel_t *t, const firc_tun_src_t *src, uint32_t mark)
 {
     firc_tun_sub_state_t ss;
     memset(&ss, 0, sizeof ss);
-    if (ctx->subs == NULL || firc_tunsubs_state(ctx->subs, src->sub.url, mark, firc_tun_sub_headers_sig(&src->sub), &ss) == 0) {
+    bool has_state = t->uplink == FIRC_UPLINK_AUTO || mark != 0;
+    if (!has_state || ctx->subs == NULL ||
+        firc_tunsubs_state(ctx->subs, src->sub.url, mark, firc_tun_sub_headers_sig(&src->sub), &ss) == 0) {
         memset(&ss, 0, sizeof ss);
     }
     int64_t ok_s = ss.last_ok_ms / 1000;
@@ -1173,7 +1175,7 @@ static cJSON *tunnel_state_json(firc_tunnels_ctx_t *ctx, const firc_tunnel_t *t,
         if (t->src[i].kind != FIRC_TUN_SRC_SUB) {
             continue;
         }
-        cJSON *s = sub_state_json(ctx, &t->src[i], mark);
+        cJSON *s = sub_state_json(ctx, t, &t->src[i], mark);
         ok = s != NULL && cJSON_AddItemToArray(subs, s);
         if (!ok) {
             cJSON_Delete(s);
