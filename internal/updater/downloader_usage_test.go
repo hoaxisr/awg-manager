@@ -271,11 +271,11 @@ func TestUpgradeWithDownloader_UsesFileRequest(t *testing.T) {
 	}
 
 	oldStart := startDetachedUpgrade
-	startDetachedUpgrade = func(_ string) error { return nil }
+	startDetachedUpgrade = func(_ string, _ func(error)) error { return nil }
 	t.Cleanup(func() { startDetachedUpgrade = oldStart })
 
 	url := "http://repo.local/aarch64-k3.10/awg-manager_2.12.0_aarch64-3.10-kn.ipk?token=x"
-	if err := upgradeWithDownloader(context.Background(), url, "", dl, nil); err != nil {
+	if err := upgradeWithDownloader(context.Background(), url, "", dl, nil, nil); err != nil {
 		t.Fatalf("upgradeWithDownloader: %v", err)
 	}
 	if seen.Request.Purpose != "awgm-update-ipk" {
@@ -306,7 +306,7 @@ func TestApplyUpgrade_SnapshotsBeforeInstall(t *testing.T) {
 	}
 	var calls []string
 	oldStart := startDetachedUpgrade
-	startDetachedUpgrade = func(_ string) error { calls = append(calls, "install"); return nil }
+	startDetachedUpgrade = func(_ string, _ func(error)) error { calls = append(calls, "install"); return nil }
 	t.Cleanup(func() { startDetachedUpgrade = oldStart })
 
 	s := New("2.11.0", nil, nil, t.TempDir(), nil)
@@ -335,7 +335,7 @@ func TestUpgradeWithDownloader_NoSnapshotWhenPackageRejected(t *testing.T) {
 		},
 	}
 	oldStart := startDetachedUpgrade
-	startDetachedUpgrade = func(_ string) error {
+	startDetachedUpgrade = func(_ string, _ func(error)) error {
 		t.Fatal("установка после отвергнутого пакета")
 		return nil
 	}
@@ -344,7 +344,7 @@ func TestUpgradeWithDownloader_NoSnapshotWhenPackageRejected(t *testing.T) {
 	called := false
 	url := "http://repo.local/aarch64-k3.10/awg-manager_2.12.0_aarch64-3.10-kn.ipk"
 	// Файла нет, контрольная сумма задана — проверка пакета не проходит.
-	if err := upgradeWithDownloader(context.Background(), url, strings.Repeat("0", 64), dl, func(string) { called = true }); err == nil {
+	if err := upgradeWithDownloader(context.Background(), url, strings.Repeat("0", 64), dl, func(string) { called = true }, nil); err == nil {
 		t.Fatal("ожидалась ошибка проверки пакета")
 	}
 	if called {
@@ -361,7 +361,7 @@ func TestApplyUpgrade_SnapshotDisabledInSettings(t *testing.T) {
 	}
 	var calls []string
 	oldStart := startDetachedUpgrade
-	startDetachedUpgrade = func(_ string) error { calls = append(calls, "install"); return nil }
+	startDetachedUpgrade = func(_ string, _ func(error)) error { calls = append(calls, "install"); return nil }
 	t.Cleanup(func() { startDetachedUpgrade = oldStart })
 
 	dir := t.TempDir()

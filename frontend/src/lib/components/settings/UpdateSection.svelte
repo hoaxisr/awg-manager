@@ -21,6 +21,16 @@
 	let showConfirm = $state(false);
 	let showChangelog = $state(false);
 
+	const failureHint = $derived(
+		updateInfo?.upgradeErrorHint === 'dns'
+			? m.settings_update_failed_hint_dns()
+			: updateInfo?.upgradeErrorHint === 'space'
+				? m.settings_update_failed_hint_space()
+				: updateInfo?.upgradeErrorHint === 'lock'
+					? m.settings_update_failed_hint_lock()
+					: ''
+	);
+
 	const manualCheckTitle = $derived(
 		updateInfo?.available ? m.settings_update_check_newer_title() : m.settings_update_check_title()
 	);
@@ -77,7 +87,8 @@
 
 		// Poll boot-status (public endpoint — no auth, no connection-lost callbacks).
 		// Detect restart via instanceId change, then reload to pick up new frontend.
-		const maxAttempts = 30;
+		// opkg update перед установкой удлиняет её — ждём до двух минут.
+		const maxAttempts = 60;
 
 		for (let i = 0; i < maxAttempts; i++) {
 			await new Promise(r => setTimeout(r, 2000));
@@ -86,6 +97,17 @@
 				if (status.instanceId !== previousInstanceId && !status.initializing) {
 					window.location.reload();
 					return;
+				}
+				if (status.instanceId === previousInstanceId) {
+					// Демон прежний: opkg мог отказать до остановки старой версии.
+					// Прошлую причину сервер сбросил при запуске, так что любая — эта.
+					const info = await api.checkUpdate(false);
+					if (info.upgradeError) {
+						updateInfo = info;
+						notifications.error(m.settings_update_failed());
+						op.upgrading = false;
+						return;
+					}
 				}
 			} catch {
 				// Server still down — expected during upgrade
@@ -123,6 +145,13 @@
 			<span class="setting-description update-warning">
 				{updateInfo.warning}
 			</span>
+		{/if}
+		{#if updateInfo?.upgradeError && !op.upgrading}
+			<span class="font-medium update-failed">{m.settings_update_failed()}</span>
+			{#if failureHint}
+				<span class="setting-description">{failureHint}</span>
+			{/if}
+			<pre class="update-failed-log">{updateInfo.upgradeError}</pre>
 		{/if}
 	</div>
 	<div class="setting-actions">
@@ -203,6 +232,18 @@
 
 	.update-status {
 		color: var(--color-accent);
+	}
+
+	.update-failed {
+		color: var(--color-error);
+	}
+
+	.update-failed-log {
+		margin: 0;
+		font-size: 12px;
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+		color: var(--text-secondary);
 	}
 
 	.update-spinner {

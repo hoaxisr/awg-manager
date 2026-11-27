@@ -332,15 +332,10 @@ build_ipk_one() {
             "$IPK_ROOT/opt/etc/ndm/${hook}.d/50-awg-manager.sh"
     done
 
-    local CRYPTO_DEPENDENCY=""
-    if [[ "$GO_ARCH" == mips || "$GO_ARCH" == mipsle ]]; then
-        CRYPTO_DEPENDENCY=", libopenssl"
-    fi
-
     cat > "$IPK_ROOT/CONTROL/control" << EOF
 Package: awg-manager
 Version: ${VERSION}
-Depends: iptables, ipset, ip-full, wireguard-tools, conntrack, curl${CRYPTO_DEPENDENCY}
+Depends: iptables, ip-full, wireguard-tools, conntrack
 Section: net
 Architecture: ${PKG_ARCH}
 Maintainer: hoaxisr
