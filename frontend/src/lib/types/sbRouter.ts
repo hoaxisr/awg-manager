@@ -440,8 +440,76 @@ export interface SingboxRouterCoverageSnapshot {
 	skipped_rule_sets?: string[];
 }
 
-export interface SingboxRouterOutbound {
-	type: 'direct' | 'urltest' | 'selector' | 'loadbalance' | 'fallback';
+/** Поля outbound'а type "desync" (awgm-box, DESYNC.md); прочие ключи — строкой strategy. */
+export interface SingboxRouterDesyncFields {
+	preset?: string;
+	mode?: string;
+	split_pos?: string;
+	fake_sni?: string;
+	fake_sni_pool?: string[];
+	fake_host?: string;
+	repeats?: number;
+	ttl?: number;
+	fooling?: string;
+	autottl?: boolean;
+	tlsrec_first?: boolean;
+	udp_mode?: string;
+	udp_ttl?: number;
+	udp_repeats?: number;
+	auto_tune?: boolean;
+	adaptive?: {
+		max_attempts?: number;
+		max_concurrent?: number;
+		max_entries?: number;
+		ttl?: string;
+		timeout?: string;
+	};
+}
+
+/** Вывод `awgm-box desync probe`. */
+export interface SingboxDesyncProbeResult {
+	success: boolean;
+	protocol: string;
+	target: string;
+	latency_ms: number;
+	duration_ms: number;
+	bytes: number;
+	throughput_bps?: number;
+	status?: number;
+	tls_version?: number;
+	error?: string;
+}
+
+/** Строка серии «Подобрать»: кандидат и результат его пробы. */
+export interface SingboxDesyncScanRow {
+	label: string;
+	preset: string;
+	mode?: string;
+	result: SingboxDesyncProbeResult;
+}
+
+/** Секция одного outbound'а в GET /desync Clash API (awgm-box). */
+export interface SingboxDesyncDiagnostics {
+	partition: string;
+	entries: Record<
+		string,
+		{
+			updated: string;
+			strategies: Record<string, { success: number; failure: number; latency_ms: number; last_reason: string }>;
+			hosts?: string[];
+		}
+	>;
+	entry_count: number;
+	entries_truncated: boolean;
+	active: number;
+	current?: string;
+	reason?: string;
+	last_switch?: string;
+	persistence_error?: string;
+}
+
+export interface SingboxRouterOutbound extends SingboxRouterDesyncFields {
+	type: 'direct' | 'urltest' | 'selector' | 'loadbalance' | 'fallback' | 'desync';
 	tag: string;
 	bind_interface?: string;
 	outbounds?: string[];

@@ -414,6 +414,39 @@ func TestValidateOutbound_Direct(t *testing.T) {
 	}
 }
 
+func TestValidateOutbound_Desync(t *testing.T) {
+	off := false
+	ok := Outbound{Type: "desync", Tag: "dpi", Strategy: "mode=split", DesyncFields: DesyncFields{
+		Preset: "auto", FakeSNI: "example.org", TTL: 4, AutoTune: &off,
+		Adaptive: &DesyncAdaptive{MaxAttempts: 3, TTL: "24h"},
+	}}
+	if err := validateOutbound(ok); err != nil {
+		t.Fatalf("valid desync rejected: %v", err)
+	}
+	// sing-box ждёт поля стратегии плоско в outbound; явный false пресет перекрывает.
+	raw, _ := json.Marshal(ok)
+	want := `{"type":"desync","tag":"dpi","strategy":"mode=split","preset":"auto","fake_sni":"example.org","ttl":4,"auto_tune":false,"adaptive":{"max_attempts":3,"ttl":"24h"}}`
+	if string(raw) != want {
+		t.Errorf("json:\n got %s\nwant %s", raw, want)
+	}
+	var back Outbound
+	if err := json.Unmarshal(raw, &back); err != nil || back.AutoTune == nil || *back.AutoTune || back.Adaptive.MaxAttempts != 3 {
+		t.Errorf("round-trip lost fields: %+v err=%v", back, err)
+	}
+	if err := validateOutbound(Outbound{Type: "desync", DesyncFields: DesyncFields{Preset: "auto"}}); err == nil {
+		t.Error("desync without tag should fail")
+	}
+	if err := validateOutbound(Outbound{Type: "desync", Tag: "dpi", Outbounds: []string{"a"}}); err == nil {
+		t.Error("desync with members should fail")
+	}
+	if err := validateOutbound(Outbound{Type: "selector", Tag: "g", Outbounds: []string{"a"}, DesyncFields: DesyncFields{TTL: 3}}); err == nil {
+		t.Error("desync field on selector should fail")
+	}
+	if err := validateOutbound(Outbound{Type: "direct", Tag: "x", BindInterface: "ipsec0", DesyncFields: DesyncFields{Preset: "auto"}}); err == nil {
+		t.Error("desync field on direct should fail")
+	}
+}
+
 func TestValidateOutbound_CompositeStillWorks(t *testing.T) {
 	if err := validateOutbound(Outbound{Type: "selector", Tag: "g", Outbounds: []string{"a", "b"}, Default: "a"}); err != nil {
 		t.Errorf("valid selector rejected: %v", err)

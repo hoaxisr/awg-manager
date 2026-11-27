@@ -12,6 +12,9 @@
 	import { resolveMemberLabel } from '$lib/utils/memberLabel';
 	import { api } from '$lib/api/client';
 	import { bindInterfaceLabel, directBindChoices } from '$lib/utils/bindInterface';
+	import DesyncOutboundFields from './DesyncOutboundFields.svelte';
+	import DesyncTools from './DesyncTools.svelte';
+	import { desyncDraftFrom, desyncFieldsFrom } from './desyncDraft';
 
 	// Only urltest, fallback and selector are offered for new groups —
 	// `loadbalance` was removed in sing-box 1.13+ and FATALs on startup if
@@ -31,10 +34,10 @@
 	}
 	let { outbound, outbounds, outboundOptions, onClose, onSave }: Props = $props();
 
-	type OutboundType = 'urltest' | 'fallback' | 'selector' | 'direct';
+	type OutboundType = 'urltest' | 'fallback' | 'selector' | 'direct' | 'desync';
 
 	function editableType(t: SingboxRouterOutbound['type'] | undefined): OutboundType {
-		return t === 'selector' || t === 'direct' || t === 'fallback' ? t : 'urltest';
+		return t === 'selector' || t === 'direct' || t === 'fallback' || t === 'desync' ? t : 'urltest';
 	}
 
 	// svelte-ignore state_referenced_locally
@@ -53,6 +56,14 @@
 	let defaultOutbound = $state(outbound?.default ?? '');
 	// svelte-ignore state_referenced_locally
 	let bindInterface = $state(outbound?.bind_interface ?? '');
+	// svelte-ignore state_referenced_locally
+	let desyncDraft = $state(desyncDraftFrom(outbound?.type === 'desync' ? outbound : undefined));
+	// svelte-ignore state_referenced_locally
+	const initialDesync = JSON.stringify(desyncDraft);
+	// Одна сборка для save и для пробы: проба гоняет ровно то, что сохранится.
+	function buildDesync(): SingboxRouterOutbound {
+		return { type: 'desync', tag: tag.trim() || 'desync-probe', ...desyncFieldsFrom(desyncDraft) };
+	}
 	let bindables = $state<SingboxRouterWANInterface[]>([]);
 	let bindablesLoading = $state(true);
 	function loadBindables(): Promise<void> {
@@ -145,7 +156,8 @@
 			interval !== initialInterval ||
 			tolerance !== initialTolerance ||
 			defaultOutbound !== initialDefaultOutbound ||
-			bindInterface !== initialBind
+			bindInterface !== initialBind ||
+			JSON.stringify(desyncDraft) !== initialDesync
 		);
 	});
 
@@ -219,7 +231,9 @@
 			}
 
 			let built: SingboxRouterOutbound;
-			if (type === 'direct') {
+			if (type === 'desync') {
+				built = buildDesync();
+			} else if (type === 'direct') {
 				if (!bindInterface) {
 					errorKind = 'iface';
 					busy = false;
@@ -262,15 +276,28 @@
 		}
 	}
 
-	const typeOptions = $derived<SegmentedOption<OutboundType>[]>([
-		{ value: 'urltest', label: 'URLTest', disabled: !!outbound && outbound.type === 'direct' },
-		{ value: 'fallback', label: 'Fallback', disabled: !!outbound && outbound.type === 'direct' },
-		{ value: 'selector', label: 'Selector', disabled: !!outbound && outbound.type === 'direct' },
-		{ value: 'direct', label: m.routing_singbox_outbound_type_interface(), disabled: !!outbound && outbound.type !== 'direct' },
-	]);
+	// При правке тип меняется только внутри семьи: группы — между собой,
+	// direct и desync — ни во что другое.
+	function family(t: OutboundType): string {
+		return t === 'direct' || t === 'desync' ? t : 'group';
+	}
+	const lockedFamily = $derived(outbound ? family(editableType(outbound.type)) : null);
+	const typeOptions = $derived<SegmentedOption<OutboundType>[]>(
+		(
+			[
+				{ value: 'urltest', label: 'URLTest' },
+				{ value: 'fallback', label: 'Fallback' },
+				{ value: 'selector', label: 'Selector' },
+				{ value: 'direct', label: m.routing_singbox_outbound_type_interface() },
+				{ value: 'desync', label: 'Desync' },
+			] satisfies SegmentedOption<OutboundType>[]
+		).map((o) => ({ ...o, disabled: lockedFamily !== null && family(o.value) !== lockedFamily })),
+	);
 
 	const typeDescription = $derived(
-		type === 'direct'
+		type === 'desync'
+			? m.routing_singbox_outbound_desc_desync()
+			: type === 'direct'
 			? m.routing_singbox_outbound_desc_direct()
 			: type === 'urltest'
 				? m.routing_singbox_outbound_desc_urltest()
@@ -306,7 +333,7 @@
 			{/if}
 		</label>
 
-		{#if type !== 'direct'}
+		{#if type !== 'direct' && type !== 'desync'}
 			<div class="field">
 				<div class="lbl">{isSubscription ? m.routing_singbox_outbound_members_sub() : m.routing_singbox_outbound_members_min()}</div>	
 				<div class="member-chips" class:empty={members.length === 0}>
@@ -418,6 +445,15 @@
 				/>
 				<ForeignIfacePanel onpicked={onForeignPicked} />
 			</div>
+		{/if}
+
+		{#if type === 'desync'}
+			<DesyncOutboundFields bind:draft={desyncDraft} />
+			<DesyncTools
+				build={buildDesync}
+				savedTag={outbound?.type === 'desync' ? outbound.tag : undefined}
+				onApply={(f) => (desyncDraft = desyncDraftFrom(f))}
+			/>
 		{/if}
 
 		{#if errorText}<div class="error">{errorText}</div>{/if}

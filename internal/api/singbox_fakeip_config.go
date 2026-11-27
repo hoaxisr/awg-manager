@@ -922,6 +922,10 @@ func (h *SingboxFakeIPConfigHandler) AddOutbound(w http.ResponseWriter, r *http.
 		response.BadRequest(w, err.Error())
 		return
 	}
+	if err := checkDesyncOutbound(r.Context(), o); err != nil {
+		response.BadRequest(w, err.Error())
+		return
+	}
 	if err := h.svc.FakeIPAddCompositeOutbound(r.Context(), o); err != nil {
 		h.handleErr(w, "request", err)
 		return
@@ -953,6 +957,10 @@ func (h *SingboxFakeIPConfigHandler) UpdateOutbound(w http.ResponseWriter, r *ht
 		Outbound router.Outbound `json:"outbound"`
 	}
 	if err := decodeBody(r, &body); err != nil {
+		response.BadRequest(w, err.Error())
+		return
+	}
+	if err := checkDesyncOutbound(r.Context(), body.Outbound); err != nil {
 		response.BadRequest(w, err.Error())
 		return
 	}

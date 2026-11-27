@@ -23,6 +23,7 @@ export function isGroupOutbound(
 
 function typeSubtitle(o: SingboxRouterOutbound): string {
 	if (o.type === 'direct') return o.bind_interface ? `direct · → ${o.bind_interface}` : 'direct';
+	if (o.type === 'desync') return o.preset ? `desync · ${o.preset}` : 'desync';
 	return o.type; // selector / urltest / loadbalance
 }
 

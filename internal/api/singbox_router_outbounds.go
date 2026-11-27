@@ -56,6 +56,10 @@ func (h *SingboxRouterHandler) AddOutbound(w http.ResponseWriter, r *http.Reques
 		response.BadRequest(w, err.Error())
 		return
 	}
+	if err := checkDesyncOutbound(r.Context(), o); err != nil {
+		response.BadRequest(w, err.Error())
+		return
+	}
 	if err := h.svc.AddCompositeOutbound(r.Context(), o); err != nil {
 		h.handleErr(w, "request", err)
 		return
@@ -87,6 +91,10 @@ func (h *SingboxRouterHandler) UpdateOutbound(w http.ResponseWriter, r *http.Req
 		Outbound router.Outbound `json:"outbound"`
 	}
 	if err := decodeBody(r, &body); err != nil {
+		response.BadRequest(w, err.Error())
+		return
+	}
+	if err := checkDesyncOutbound(r.Context(), body.Outbound); err != nil {
 		response.BadRequest(w, err.Error())
 		return
 	}

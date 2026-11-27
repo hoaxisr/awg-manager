@@ -268,6 +268,37 @@ type SingboxRouterOutboundDTO struct {
 	Default       string   `json:"default,omitempty" example:"awg-vpn0"`
 	Strategy      string   `json:"strategy,omitempty" example:"prefer_ipv4"`
 	Source        string   `json:"source" example:"router" enums:"router,subscription"`
+	// Поля type "desync" (awgm-box), плоско в outbound.
+	SingboxRouterDesyncFieldsDTO
+}
+
+// SingboxRouterDesyncFieldsDTO mirrors router.DesyncFields.
+type SingboxRouterDesyncFieldsDTO struct {
+	Preset      string                          `json:"preset,omitempty" example:"auto"`
+	Mode        string                          `json:"mode,omitempty" example:"split"`
+	SplitPos    string                          `json:"split_pos,omitempty" example:"midsld"`
+	FakeSNI     string                          `json:"fake_sni,omitempty" example:"example.org"`
+	FakeSNIPool []string                        `json:"fake_sni_pool,omitempty"`
+	FakeHost    string                          `json:"fake_host,omitempty"`
+	Repeats     int                             `json:"repeats,omitempty"`
+	TTL         int                             `json:"ttl,omitempty" example:"3"`
+	Fooling     string                          `json:"fooling,omitempty" example:"badseq"`
+	AutoTTL     bool                            `json:"autottl,omitempty"`
+	TLSRecFirst bool                            `json:"tlsrec_first,omitempty"`
+	UDPMode     string                          `json:"udp_mode,omitempty" example:"auto"`
+	UDPTTL      int                             `json:"udp_ttl,omitempty"`
+	UDPRepeats  int                             `json:"udp_repeats,omitempty"`
+	AutoTune    *bool                           `json:"auto_tune,omitempty"`
+	Adaptive    *SingboxRouterDesyncAdaptiveDTO `json:"adaptive,omitempty"`
+}
+
+// SingboxRouterDesyncAdaptiveDTO mirrors router.DesyncAdaptive.
+type SingboxRouterDesyncAdaptiveDTO struct {
+	MaxAttempts   int    `json:"max_attempts,omitempty" example:"3"`
+	MaxConcurrent int    `json:"max_concurrent,omitempty"`
+	MaxEntries    int    `json:"max_entries,omitempty" example:"1024"`
+	TTL           string `json:"ttl,omitempty" example:"24h"`
+	Timeout       string `json:"timeout,omitempty" example:"10s"`
 }
 
 // SingboxRouterOutboundsListResponse is the envelope for GET /singbox/router/outbounds/list.
@@ -481,6 +512,47 @@ type SingboxRouterRuleSetDeleteRequest struct {
 }
 
 // SingboxRouterOutboundUpdateRequest is the body for POST /singbox/router/outbounds/update.
+// SingboxRouterDesyncProbeRequest — тело POST /singbox/router/desync/probe.
+type SingboxRouterDesyncProbeRequest struct {
+	Outbound SingboxRouterOutboundDTO `json:"outbound"`
+	Target   string                   `json:"target" example:"example.org:443"`
+	Protocol string                   `json:"protocol" example:"tls" enums:"tls,http"`
+}
+
+// SingboxRouterDesyncProbeResult — вывод `awgm-box desync probe`.
+type SingboxRouterDesyncProbeResult struct {
+	Success       bool    `json:"success"`
+	Protocol      string  `json:"protocol"`
+	Target        string  `json:"target"`
+	LatencyMS     float64 `json:"latency_ms"`
+	DurationMS    float64 `json:"duration_ms"`
+	Bytes         int64   `json:"bytes"`
+	ThroughputBPS float64 `json:"throughput_bps,omitempty"`
+	Status        int     `json:"status,omitempty"`
+	TLSVersion    int     `json:"tls_version,omitempty"`
+	Error         string  `json:"error,omitempty"`
+}
+
+// SingboxRouterDesyncProbeResponse is the envelope for POST /singbox/router/desync/probe.
+type SingboxRouterDesyncProbeResponse struct {
+	Success bool                           `json:"success" example:"true"`
+	Data    SingboxRouterDesyncProbeResult `json:"data"`
+}
+
+// SingboxRouterDesyncScanRow — одна строка серии «Подобрать».
+type SingboxRouterDesyncScanRow struct {
+	Label  string                         `json:"label" example:"split"`
+	Preset string                         `json:"preset" example:"split"`
+	Mode   string                         `json:"mode,omitempty" example:"none"`
+	Result SingboxRouterDesyncProbeResult `json:"result"`
+}
+
+// SingboxRouterDesyncScanResponse is the envelope for POST /singbox/router/desync/scan.
+type SingboxRouterDesyncScanResponse struct {
+	Success bool                         `json:"success" example:"true"`
+	Data    []SingboxRouterDesyncScanRow `json:"data"`
+}
+
 type SingboxRouterOutboundUpdateRequest struct {
 	Tag      string                   `json:"tag" example:"my-selector"`
 	Outbound SingboxRouterOutboundDTO `json:"outbound"`

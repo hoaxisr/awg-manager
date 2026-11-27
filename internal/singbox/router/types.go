@@ -293,6 +293,39 @@ type Outbound struct {
 	// direct outbounds stay clean.
 	Server         string          `json:"server,omitempty"`
 	DomainResolver *DomainResolver `json:"domain_resolver,omitempty"`
+	// Поля outbound'а type "desync" (awgm-box, DESYNC.md) лежат в нём плоско,
+	// как их ждёт sing-box. Строку стратегии key=value несёт Strategy выше.
+	DesyncFields
+}
+
+// DesyncFields — часть стратегии desync, которую правит форма; прочие ключи
+// задаются строкой Strategy. Указатели там, где явные false/0 перекрывают
+// пресет (порядок: пресет → strategy → явные поля).
+type DesyncFields struct {
+	Preset      string          `json:"preset,omitempty"`
+	Mode        string          `json:"mode,omitempty"`
+	SplitPos    string          `json:"split_pos,omitempty"`
+	FakeSNI     string          `json:"fake_sni,omitempty"`
+	FakeSNIPool []string        `json:"fake_sni_pool,omitempty"`
+	FakeHost    string          `json:"fake_host,omitempty"`
+	Repeats     int             `json:"repeats,omitempty"`
+	TTL         int             `json:"ttl,omitempty"`
+	Fooling     string          `json:"fooling,omitempty"`
+	AutoTTL     bool            `json:"autottl,omitempty"`
+	TLSRecFirst bool            `json:"tlsrec_first,omitempty"`
+	UDPMode     string          `json:"udp_mode,omitempty"`
+	UDPTTL      int             `json:"udp_ttl,omitempty"`
+	UDPRepeats  int             `json:"udp_repeats,omitempty"`
+	AutoTune    *bool           `json:"auto_tune,omitempty"`
+	Adaptive    *DesyncAdaptive `json:"adaptive,omitempty"`
+}
+
+type DesyncAdaptive struct {
+	MaxAttempts   int    `json:"max_attempts,omitempty"`
+	MaxConcurrent int    `json:"max_concurrent,omitempty"`
+	MaxEntries    int    `json:"max_entries,omitempty"`
+	TTL           string `json:"ttl,omitempty"`
+	Timeout       string `json:"timeout,omitempty"`
 }
 
 // CompositeOutboundView is the API/list projection of a composite

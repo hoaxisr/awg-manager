@@ -23,6 +23,9 @@ import type {
 	SingboxRouterInspectRequest,
 	SingboxRouterInspectResult,
 	SingboxRouterOutbound,
+	SingboxDesyncProbeResult,
+	SingboxDesyncDiagnostics,
+	SingboxDesyncScanRow,
 	SingboxRouterPreset,
 	SingboxRouterRule,
 	SingboxRouterRuleSet,
@@ -180,6 +183,43 @@ export class SbRouterClient extends SingboxClient {
 			method: 'POST',
 			body: JSON.stringify({ tag, force }),
 		});
+	}
+
+	async singboxRouterDesyncProbe(
+		outbound: SingboxRouterOutbound,
+		target: string,
+		protocol: 'tls' | 'http',
+	): Promise<SingboxDesyncProbeResult> {
+		return this.request('/singbox/router/desync/probe', {
+			method: 'POST',
+			body: JSON.stringify({ outbound, target, protocol }),
+		});
+	}
+
+	async singboxRouterDesyncScan(
+		outbound: SingboxRouterOutbound,
+		target: string,
+		protocol: 'tls' | 'http',
+	): Promise<SingboxDesyncScanRow[]> {
+		return this.request('/singbox/router/desync/scan', {
+			method: 'POST',
+			body: JSON.stringify({ outbound, target, protocol }),
+		});
+	}
+
+	// Clash API awgm-box через ClashProxy — ответ без конверта. null — outbound
+	// в работающем sing-box не найден (404: не сохранён или слот не применён;
+	// 502: sing-box не запущен, ClashProxy не достучался).
+	async singboxDesyncDiagnostics(tag: string, clear = false): Promise<SingboxDesyncDiagnostics | null> {
+		const r = await fetch(`${this.baseUrl}/singbox/clash/desync?outbound=${encodeURIComponent(tag)}`, {
+			method: clear ? 'DELETE' : 'GET',
+			credentials: 'same-origin',
+			signal: this.abortController.signal,
+		});
+		if (r.status === 404 || r.status === 502) return null;
+		if (!r.ok) throw new Error(`clash /desync: HTTP ${r.status}`);
+		const body = (await r.json()) as { outbounds?: Record<string, SingboxDesyncDiagnostics> };
+		return body.outbounds?.[tag] ?? null;
 	}
 
 	async singboxRouterListProxies(): Promise<SingboxProxiesListResponse> {

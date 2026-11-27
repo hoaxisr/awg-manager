@@ -1706,6 +1706,44 @@ const api_SingboxRouterDatRuleSetURLResponse: v.GenericSchema = v.looseObject({
 	success: v.optional(v.nullable(v.boolean())),
 });
 
+const api_SingboxRouterDesyncAdaptiveDTO: v.GenericSchema = v.looseObject({
+	max_attempts: v.optional(v.nullable(v.number())),
+	max_concurrent: v.optional(v.nullable(v.number())),
+	max_entries: v.optional(v.nullable(v.number())),
+	timeout: v.optional(v.nullable(v.string())),
+	ttl: v.optional(v.nullable(v.string())),
+});
+
+const api_SingboxRouterDesyncProbeResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.lazy(() => api_SingboxRouterDesyncProbeResult))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_SingboxRouterDesyncProbeResult: v.GenericSchema = v.looseObject({
+	bytes: v.optional(v.nullable(v.number())),
+	duration_ms: v.optional(v.nullable(v.number())),
+	error: v.optional(v.nullable(v.string())),
+	latency_ms: v.optional(v.nullable(v.number())),
+	protocol: v.optional(v.nullable(v.string())),
+	status: v.optional(v.nullable(v.number())),
+	success: v.optional(v.nullable(v.boolean())),
+	target: v.optional(v.nullable(v.string())),
+	throughput_bps: v.optional(v.nullable(v.number())),
+	tls_version: v.optional(v.nullable(v.number())),
+});
+
+const api_SingboxRouterDesyncScanResponse: v.GenericSchema = v.looseObject({
+	data: v.optional(v.nullable(v.array(v.lazy(() => api_SingboxRouterDesyncScanRow)))),
+	success: v.optional(v.nullable(v.boolean())),
+});
+
+const api_SingboxRouterDesyncScanRow: v.GenericSchema = v.looseObject({
+	label: v.optional(v.nullable(v.string())),
+	mode: v.optional(v.nullable(v.string())),
+	preset: v.optional(v.nullable(v.string())),
+	result: v.optional(v.nullable(v.lazy(() => api_SingboxRouterDesyncProbeResult))),
+});
+
 const api_SingboxRouterInspectDNSData: v.GenericSchema = v.looseObject({
 	classification: v.optional(v.nullable(v.string())),
 	final: v.optional(v.nullable(v.string())),
@@ -1787,15 +1825,31 @@ const api_SingboxRouterNATSegmentDTO: v.GenericSchema = v.looseObject({
 });
 
 const api_SingboxRouterOutboundDTO: v.GenericSchema = v.looseObject({
+	adaptive: v.optional(v.nullable(v.lazy(() => api_SingboxRouterDesyncAdaptiveDTO))),
+	auto_tune: v.optional(v.nullable(v.boolean())),
+	autottl: v.optional(v.nullable(v.boolean())),
 	bind_interface: v.optional(v.nullable(v.string())),
 	default: v.optional(v.nullable(v.string())),
+	fake_host: v.optional(v.nullable(v.string())),
+	fake_sni: v.optional(v.nullable(v.string())),
+	fake_sni_pool: v.optional(v.nullable(v.array(v.string()))),
+	fooling: v.optional(v.nullable(v.string())),
 	interval: v.optional(v.nullable(v.string())),
+	mode: v.optional(v.nullable(v.string())),
 	outbounds: v.optional(v.nullable(v.array(v.string()))),
+	preset: v.optional(v.nullable(v.string())),
+	repeats: v.optional(v.nullable(v.number())),
 	source: v.optional(v.nullable(v.string())),
+	split_pos: v.optional(v.nullable(v.string())),
 	strategy: v.optional(v.nullable(v.string())),
 	tag: v.optional(v.nullable(v.string())),
+	tlsrec_first: v.optional(v.nullable(v.boolean())),
 	tolerance: v.optional(v.nullable(v.number())),
+	ttl: v.optional(v.nullable(v.number())),
 	type: v.optional(v.nullable(v.string())),
+	udp_mode: v.optional(v.nullable(v.string())),
+	udp_repeats: v.optional(v.nullable(v.number())),
+	udp_ttl: v.optional(v.nullable(v.number())),
 	url: v.optional(v.nullable(v.string())),
 });
 
@@ -4119,6 +4173,8 @@ export const RESPONSE_SCHEMAS: Record<string, v.GenericSchema> = {
 	"POST /singbox/router/bypass-set/install-deps": v.intersect([v.lazy(() => api_APIEnvelope), v.looseObject({
 	data: v.optional(v.nullable(v.lazy(() => api_BypassSetStatusData))),
 })]),
+	"POST /singbox/router/desync/probe": v.lazy(() => api_SingboxRouterDesyncProbeResponse),
+	"POST /singbox/router/desync/scan": v.lazy(() => api_SingboxRouterDesyncScanResponse),
 	"POST /singbox/router/dns/chain-preset": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/dns/globals": v.lazy(() => api_OkResponse),
 	"POST /singbox/router/dns/rewrites/add": v.lazy(() => api_OkResponse),
