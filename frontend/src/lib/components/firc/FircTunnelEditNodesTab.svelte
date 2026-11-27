@@ -17,6 +17,11 @@
 		probeProgress: { done: number; total: number } | null;
 		nodeQuery: string;
 		filteredOpen: boolean;
+		hasSources?: boolean;
+		isDirty?: boolean;
+		enabled?: boolean;
+		uplinkKind?: string;
+		subFetching?: boolean;
 		onprobe: () => void;
 		onprobenode: (key: string) => void;
 		onsort: () => void;
@@ -36,6 +41,11 @@
 		probeProgress,
 		nodeQuery = $bindable(),
 		filteredOpen = $bindable(),
+		hasSources = false,
+		isDirty = false,
+		enabled = true,
+		uplinkKind = 'auto',
+		subFetching = false,
 		onprobe,
 		onprobenode,
 		onsort,
@@ -84,6 +94,12 @@
 		<div class="sub-empty">
 			{#if filteredNodes.length > 0}
 				{m.firc_filter_all_nodes_hidden()}
+			{:else if hasSources && subFetching}
+				{m.firc_reason_sub_fetching()}
+			{:else if hasSources && !enabled && uplinkKind !== 'auto'}
+				{m.firc_tunnel_edit_nodes_enable_uplink_to_load()}
+			{:else if hasSources && isDirty}
+				{m.firc_tunnel_edit_nodes_save_to_load()}
 			{:else}
 				{m.firc_tunnel_edit_nodes_empty()}
 			{/if}

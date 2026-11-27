@@ -2792,4 +2792,261 @@ describe('FIRC tunnels UI integration', () => {
 		expect(await screen.findByText('LinkNode')).toBeInTheDocument();
 		expect(screen.queryByText(m.firc_node_state_skipped())).not.toBeInTheDocument();
 	});
+
+	it('auto-enables empty disabled tunnel on first source add, supports header toggle, and guides save-to-load', async () => {
+		const emptyTunnel = {
+			id: 'tun-new-empty',
+			device: 'tunvless1',
+			description: 'New Empty',
+			enable: false,
+			active: 1,
+			by: 'connection',
+			interval: 60,
+			silence: 20,
+			filter: '',
+			filterExclude: '',
+			order: [],
+			exclude: [],
+			sources: [],
+			uplink: { kind: 'auto', ref: '' },
+			advanced: { ca: '', insecure: false, timeout: 8, kernelTcp: true, fingerprint: '' },
+			inbounds: [],
+		};
+		fircTunnels.set([emptyTunnel as never]);
+		fircTunnelsState.set([]);
+		fircGetTunnels.mockResolvedValue([emptyTunnel]);
+		fircGetTunnelsState.mockResolvedValue([]);
+		fircNormalizeSource.mockResolvedValue({
+			sources: [
+				{
+					id: 'sub-new1',
+					kind: 'subscription',
+					name: 'Sub',
+					url: 'https://sub.example/new',
+					interval: 21600,
+				},
+			],
+		});
+		fircPreviewTunnel.mockResolvedValue({
+			total: 0,
+			matched: 0,
+			nodes: [],
+			filteredNodes: [],
+			subscriptions: [{ name: 'Sub', cached: false }],
+		});
+		fircSaveTunnels.mockImplementation(async (list: unknown[]) => {
+			fircGetTunnels.mockResolvedValue(list);
+			return { tunnels: list };
+		});
+
+		fircEditTunnelId.set('tun-new-empty');
+		fircEditTunnelSubTab.set('sources');
+		render(FircTunnelEditModal);
+
+		const enableToggle = await screen.findByRole('checkbox', { name: m.firc_tunnel_edit_enable() });
+		expect(enableToggle).not.toBeChecked();
+		expect(enableToggle).toBeDisabled();
+
+		await fireEvent.click(screen.getByRole('button', { name: m.firc_tunnel_edit_add_subscription() }));
+		await fireEvent.input(await screen.findByLabelText(m.firc_tunnel_edit_sub_url_label()), {
+			target: { value: 'https://sub.example/new' },
+		});
+		await fireEvent.click(screen.getByRole('button', { name: m.common_add() }));
+
+		// First source added to an empty disabled tunnel enables the draft and shows save-to-load hint.
+		const disableToggle = await screen.findByRole('checkbox', { name: m.firc_tunnel_edit_disable() });
+		expect(disableToggle).toBeChecked();
+		expect(disableToggle).not.toBeDisabled();
+		expect(await screen.findByText(m.firc_tunnel_edit_nodes_save_to_load())).toBeInTheDocument();
+
+		// User can still toggle it off before saving if desired, then toggle back on and save.
+		await fireEvent.click(disableToggle);
+		expect(screen.getByRole('checkbox', { name: m.firc_tunnel_edit_enable() })).not.toBeChecked();
+		await fireEvent.click(screen.getByRole('checkbox', { name: m.firc_tunnel_edit_enable() }));
+		expect(screen.getByRole('checkbox', { name: m.firc_tunnel_edit_disable() })).toBeChecked();
+
+		await fireEvent.click(screen.getByRole('button', { name: m.common_save() }));
+		await waitFor(() => {
+			expect(fircSaveTunnels).toHaveBeenCalledWith(
+				expect.arrayContaining([
+					expect.objectContaining({ id: 'tun-new-empty', enable: true }),
+				]),
+			);
+		});
+	});
+
+	it('warns when refresh returns queued:false and explains custom-uplink disabled empty nodes', async () => {
+		const offCustomUplink = {
+			id: 'tun-off-wg',
+			device: 'tunvless2',
+			description: 'Off WG',
+			enable: false,
+			active: 1,
+			by: 'connection',
+			interval: 60,
+			silence: 20,
+			filter: '',
+			filterExclude: '',
+			order: [],
+			exclude: [],
+			sources: [
+				{
+					id: 'sub-wg1',
+					kind: 'subscription',
+					name: 'WgSub',
+					url: 'https://sub.example/wg',
+					interval: 21600,
+				},
+			],
+			uplink: { kind: 'iface', ref: 'wg0' },
+			advanced: { ca: '', insecure: false, timeout: 8, kernelTcp: true, fingerprint: '' },
+			inbounds: [],
+		};
+		fircTunnels.set([offCustomUplink as never]);
+		fircTunnelsState.set([
+			{
+				id: 'tun-off-wg',
+				device: 'tunvless2',
+				status: 'off',
+				active: [],
+				nodes: [],
+				filteredNodes: [],
+				inbounds: [],
+				groups: [],
+				rxBps: 0,
+				txBps: 0,
+				since: 0,
+				backoffS: 0,
+				lastExit: 0,
+				uplinkOk: true,
+				tcpPort: 0,
+				tcpSkipped: [],
+				tcpOff: '',
+				subscriptions: [{ name: 'WgSub', nodes: 0, fetching: false, lastOk: 0, lastTry: 0, error: '' }],
+			} as never,
+		]);
+		fircGetTunnels.mockResolvedValue([offCustomUplink]);
+		fircGetTunnelsState.mockResolvedValue([]);
+		fircRefreshTunnel.mockResolvedValue({ queued: false });
+
+		fircEditTunnelId.set('tun-off-wg');
+		fircEditTunnelSubTab.set('nodes');
+		render(FircTunnelEditModal);
+
+		expect(await screen.findByText(m.firc_tunnel_edit_nodes_enable_uplink_to_load())).toBeInTheDocument();
+
+		// Even after editing the description (isDirty === true), disabled custom-uplink hint takes precedence over save-to-load.
+		const nameInp = screen.getByPlaceholderText(m.firc_tunnel_edit_name_placeholder());
+		await fireEvent.input(nameInp, { target: { value: 'Off WG Edited' } });
+		expect(screen.getByText(m.firc_tunnel_edit_nodes_enable_uplink_to_load())).toBeInTheDocument();
+		expect(screen.queryByText(m.firc_tunnel_edit_nodes_save_to_load())).not.toBeInTheDocument();
+		await fireEvent.input(nameInp, { target: { value: 'Off WG' } });
+
+		await fireEvent.click(screen.getByRole('button', { name: m.firc_tunnel_edit_refresh() }));
+		await waitFor(() => {
+			expect(notifications.warning).toHaveBeenCalledWith(
+				m.firc_tunnel_edit_refresh_not_queued({ device: 'tunvless2' }),
+			);
+		});
+		expect(notifications.success).not.toHaveBeenCalledWith(
+			m.firc_tunnel_edit_refresh_done({ device: 'tunvless2' }),
+		);
+	});
+
+	it('allows turning off an already-enabled empty tunnel from the modal header toggle', async () => {
+		const enabledEmpty = {
+			id: 'tun-on-empty',
+			device: 'tunvless7',
+			description: 'Enabled Empty',
+			enable: true,
+			active: 1,
+			by: 'connection',
+			interval: 60,
+			silence: 20,
+			filter: '',
+			filterExclude: '',
+			order: [],
+			exclude: [],
+			sources: [],
+			uplink: { kind: 'auto', ref: '' },
+			advanced: { ca: '', insecure: false, timeout: 8, kernelTcp: true, fingerprint: '' },
+			inbounds: [],
+		};
+		fircTunnels.set([enabledEmpty as never]);
+		fircTunnelsState.set([]);
+
+		fircEditTunnelId.set('tun-on-empty');
+		fircEditTunnelSubTab.set('sources');
+		render(FircTunnelEditModal);
+
+		const disableToggle = await screen.findByRole('checkbox', { name: m.firc_tunnel_edit_disable() });
+		expect(disableToggle).toBeChecked();
+		expect(disableToggle).not.toBeDisabled();
+
+		await fireEvent.click(disableToggle);
+		const enableToggle = await screen.findByRole('checkbox', { name: m.firc_tunnel_edit_enable() });
+		expect(enableToggle).not.toBeChecked();
+		expect(enableToggle).toBeDisabled();
+	});
+
+	it('does not show stale fetching hint in Nodes tab after removing the last subscription source', async () => {
+		const fetchingTunnel = {
+			id: 'tun-fetching-rm',
+			device: 'tunvless8',
+			description: 'Fetching Sub',
+			enable: false,
+			active: 1,
+			by: 'connection',
+			interval: 60,
+			silence: 20,
+			filter: '',
+			filterExclude: '',
+			order: [],
+			exclude: [],
+			sources: [
+				{
+					id: 'sub-f1',
+					kind: 'subscription',
+					name: 'SlowSub',
+					url: 'https://sub.example/slow',
+					interval: 21600,
+				},
+			],
+			uplink: { kind: 'auto', ref: '' },
+			advanced: { ca: '', insecure: false, timeout: 8, kernelTcp: true, fingerprint: '' },
+			inbounds: [],
+		};
+		fircTunnels.set([fetchingTunnel as never]);
+		fircTunnelsState.set([
+			{
+				id: 'tun-fetching-rm',
+				device: 'tunvless8',
+				status: 'off',
+				active: [],
+				nodes: [],
+				filteredNodes: [],
+				inbounds: [],
+				groups: [],
+				rxBps: 0,
+				txBps: 0,
+				since: 0,
+				backoffS: 0,
+				lastExit: 0,
+				uplinkOk: true,
+				tcpPort: 0,
+				tcpSkipped: [],
+				tcpOff: '',
+				subscriptions: [{ name: 'SlowSub', nodes: 0, fetching: true, lastOk: 0, lastTry: 0, error: '' }],
+			} as never,
+		]);
+
+		fircEditTunnelId.set('tun-fetching-rm');
+		fircEditTunnelSubTab.set('sources');
+		render(FircTunnelEditModal);
+
+		await fireEvent.click(await screen.findByRole('button', { name: m.firc_tunnel_edit_remove_source() }));
+		await fireEvent.click(screen.getByRole('button', { name: m.firc_tunnel_edit_tab_nodes({ count: 0 }) }));
+		expect(await screen.findByText(m.firc_tunnel_edit_nodes_empty())).toBeInTheDocument();
+		expect(screen.queryByText(m.firc_reason_sub_fetching())).not.toBeInTheDocument();
+	});
 });

@@ -133,6 +133,24 @@ export function getFircTunnelDiagnostic({
 	status?: FircStatus | null;
 }): FircTunnelDiagnostic {
 	if (tunnel.enable === false) {
+		const hasSub = (tunnel.sources ?? []).some((s) => s.kind === 'subscription');
+		if (!hasSub) {
+			return { stateLabel: m.firc_state_off(), tone: 'muted', reason: '' };
+		}
+		const subs = live?.subscriptions ?? [];
+		const errSub = subs.find((s) => Boolean(s.error?.trim()));
+		if (errSub) {
+			const formatted = formatFircSubError(errSub.error);
+			const reason = subs.length > 1 && errSub.name ? `${errSub.name}: ${formatted}` : formatted;
+			return { stateLabel: m.firc_state_off(), tone: 'error', reason };
+		}
+		if (subs.some((s) => s.fetching)) {
+			return {
+				stateLabel: m.firc_state_off(),
+				tone: 'info',
+				reason: m.firc_reason_sub_fetching(),
+			};
+		}
 		return { stateLabel: m.firc_state_off(), tone: 'muted', reason: '' };
 	}
 

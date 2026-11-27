@@ -3,7 +3,7 @@
 	import type { FircTunnel, FircTunnelState } from '$lib/types/firc';
 	import type { FircTunnelDiagnostic } from '$lib/utils/fircDiagnostics';
 	import { fircEditTunnelSubTab } from '$lib/stores/firc';
-	import { Button, Badge, StatusDot } from '$lib/components/ui';
+	import { Button, Badge, StatusDot, Toggle } from '$lib/components/ui';
 	import { RefreshCw, RotateCw, Link2, Server, Shield, Network } from 'lucide-svelte';
 
 	interface Props {
@@ -29,6 +29,16 @@
 
 	<div class="top-meta-bar">
 		<div class="top-meta-left">
+			<Toggle
+				size="sm"
+				spinner="none"
+				checked={draft.enable !== false}
+				disabled={draft.sources.length === 0 && draft.enable === false}
+				ariaLabel={draft.enable !== false ? m.firc_tunnel_edit_disable() : m.firc_tunnel_edit_enable()}
+				onchange={(v) => {
+					draft.enable = v;
+				}}
+			/>
 			<StatusDot
 				variant={!draft.enable
 					? 'muted'

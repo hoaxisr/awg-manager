@@ -374,4 +374,78 @@ describe('getFircTunnelDiagnostic', () => {
 			reason: m.firc_why_waiting_router(),
 		});
 	});
+
+	it('surfaces subscription error and fetching state while tunnel is disabled', () => {
+		expect(
+			getFircTunnelDiagnostic({
+				tunnel: baseTunnel({ enable: false }),
+				live: baseState({
+					status: 'off',
+					subscriptions: [
+						{
+							name: 'Sub',
+							nodes: 0,
+							fetching: false,
+							lastOk: 0,
+							lastTry: 100,
+							error: 'HTTP 503',
+						},
+					],
+				}),
+				status: baseStatus(),
+			}),
+		).toEqual({
+			stateLabel: m.firc_state_off(),
+			tone: 'error',
+			reason: m.firc_sub_err_http({ code: '503' }),
+		});
+
+		expect(
+			getFircTunnelDiagnostic({
+				tunnel: baseTunnel({ enable: false }),
+				live: baseState({
+					status: 'off',
+					subscriptions: [
+						{
+							name: 'Sub',
+							nodes: 0,
+							fetching: true,
+							lastOk: 0,
+							lastTry: 0,
+							error: '',
+						},
+					],
+				}),
+				status: baseStatus(),
+			}),
+		).toEqual({
+			stateLabel: m.firc_state_off(),
+			tone: 'info',
+			reason: m.firc_reason_sub_fetching(),
+		});
+
+		expect(
+			getFircTunnelDiagnostic({
+				tunnel: baseTunnel({ enable: false, sources: [] }),
+				live: baseState({
+					status: 'off',
+					subscriptions: [
+						{
+							name: 'Sub',
+							nodes: 0,
+							fetching: true,
+							lastOk: 0,
+							lastTry: 0,
+							error: 'HTTP 503',
+						},
+					],
+				}),
+				status: baseStatus(),
+			}),
+		).toEqual({
+			stateLabel: m.firc_state_off(),
+			tone: 'muted',
+			reason: '',
+		});
+	});
 });

@@ -390,9 +390,13 @@
 		if (busyExtra) return;
 		busyExtra = 'refresh';
 		try {
-			await api.fircRefreshTunnel(tunnel.id);
+			const res = await api.fircRefreshTunnel(tunnel.id);
 			await reloadFircAll();
-			notifications.success(m.firc_resource_refreshed({ device: tunnel.device }));
+			if (res?.queued === false) {
+				notifications.warning(m.firc_tunnel_edit_refresh_not_queued({ device: tunnel.device }));
+			} else {
+				notifications.success(m.firc_resource_refreshed({ device: tunnel.device }));
+			}
 		} catch (err: unknown) {
 			notifications.error((err instanceof Error ? err.message : undefined) ?? m.firc_resource_refresh_failed());
 		} finally {

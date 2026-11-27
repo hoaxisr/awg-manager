@@ -398,9 +398,13 @@
 				if (!saved || !draft || draft.id !== targetId) return;
 			}
 			clearPreview();
-			await api.fircRefreshTunnel(targetId);
+			const res = await api.fircRefreshTunnel(targetId);
 			await reloadFircAll();
-			notifications.success(m.firc_tunnel_edit_refresh_done({ device: targetDev }));
+			if (res?.queued === false) {
+				notifications.warning(m.firc_tunnel_edit_refresh_not_queued({ device: targetDev }));
+			} else {
+				notifications.success(m.firc_tunnel_edit_refresh_done({ device: targetDev }));
+			}
 		} catch (e: unknown) {
 			notifications.error((e instanceof Error ? e.message : undefined) ?? m.firc_tunnel_edit_refresh_error());
 		} finally {
@@ -542,11 +546,15 @@
 		if (destroyed || !draft || draft.id !== targetId || sourceModalSession !== modalSession) {
 			return;
 		}
+		const wasEmpty = draft.sources.length === 0;
 		const existingIds = new Set(draft.sources.map((s) => s.id));
 		const deduped = addedSources.map((s) =>
 			existingIds.has(s.id) ? { ...s, id: randomId() } : s,
 		);
 		draft.sources = [...draft.sources, ...deduped];
+		if (wasEmpty && !draft.enable && draft.sources.length > 0) {
+			draft.enable = true;
+		}
 		const stillCurrent = await previewDraftSources(targetId, true);
 		if (destroyed) return;
 		const sameModal = sourceModalSession === modalSession;
@@ -573,6 +581,7 @@
 		draft.order = (draft.order ?? []).filter((k) => !k.startsWith(prefix));
 		draft.exclude = (draft.exclude ?? []).filter((k) => !k.startsWith(prefix));
 		if (draft.sources.length === 0) {
+			draft.enable = false;
 			clearPreview();
 			return;
 		}
@@ -641,6 +650,11 @@
 					{probeProgress}
 					bind:nodeQuery
 					bind:filteredOpen
+					hasSources={draft.sources.length > 0}
+					{isDirty}
+					enabled={draft.enable !== false}
+					uplinkKind={draft.uplink?.kind ?? 'auto'}
+					subFetching={hasSubscriptionSource && Boolean(liveState?.subscriptions?.some((s) => s.fetching))}
 					onprobe={handleProbe}
 					onprobenode={handleProbeNode}
 					onsort={sortNodesByLatency}
