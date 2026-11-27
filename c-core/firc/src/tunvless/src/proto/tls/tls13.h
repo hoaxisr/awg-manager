@@ -73,6 +73,7 @@ struct fm_link;
 struct tls13 {
     int fd;
     struct fm_link *fm;
+    void *t12;          /* opaque TLS 1.2 session (tls12.c) when security=tls fell back to TLS 1.2 */
     int ready;
     /* Read buffer: take everything the socket has in one call and assemble records from here.
      * Without it each record cost several system calls and a wait for the rest of it
@@ -169,6 +170,7 @@ int tls13_handshake_auth(struct tls13 *t, int fd,
 /* Why the server failed to prove itself, as a string, after TLS13_ECERT; "" if it did not
  * fail. Per thread: several connectors handshake at once. */
 const char *tls13_verify_reason(void);
+void tls13_set_verify_reason(const char *msg);
 
 unsigned tls13_server_group(void);
 
@@ -198,7 +200,9 @@ int tls13_seal(struct tls13 *t, const unsigned char *d, size_t n, unsigned char 
 static inline size_t tls13_plain_cap_at(uint64_t seq) {
     return seq >= 13 ? (size_t)TLS13_MAX_PLAIN : (size_t)TLS13_RAMP_STEP * (size_t)(seq + 1);
 }
-static inline size_t tls13_plain_cap(const struct tls13 *t) { return tls13_plain_cap_at(t->wr_seq); }
+static inline size_t tls13_plain_cap(const struct tls13 *t) {
+    return t->t12 ? (size_t)TLS13_MAX_PLAIN : tls13_plain_cap_at(t->wr_seq);
+}
 int tls13_write(struct tls13 *t, const unsigned char *data, size_t n);
 int tls13_read(struct tls13 *t, unsigned char *out, size_t cap, size_t *got);
 

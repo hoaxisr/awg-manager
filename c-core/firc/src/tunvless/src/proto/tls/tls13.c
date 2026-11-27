@@ -30,6 +30,7 @@
 #include "scrypto.h"
 #include "certverify.h"
 #include "certzip.h"
+#include "tls12.h"
 #include "tls13.h"
 #include "fmlink.h"
 #include "transport.h"
@@ -257,6 +258,10 @@ void tls13_keys_free(struct tls13_keys *k) {
  * ready flag meaning "empty" for every layer context (sc_hash_free and sc_aead_free then do
  * nothing), and on freeing setting it back to zero. */
 void tls13_free(struct tls13 *t) {
+    if (t->t12) {
+        tls12_free(t->t12);
+        t->t12 = NULL;
+    }
     tls13_keys_free(&t->rd);
     tls13_keys_free(&t->wr);
     sc_hash_free(&t->tr);
@@ -326,6 +331,10 @@ static int aead_seal_once(const struct tls13_keys *src, uint64_t seq,
 static __thread char g_verify_reason[96];
 
 const char *tls13_verify_reason(void) { return g_verify_reason; }
+
+void tls13_set_verify_reason(const char *msg) {
+    snprintf(g_verify_reason, sizeof(g_verify_reason), "%s", msg ? msg : "");
+}
 
 static __thread unsigned g_server_group;
 
@@ -404,14 +413,21 @@ static int handshake_run(struct tls13 *t, int fd,
     /* ServerHello. */
     int rc = read_record_fd(t, &type, rec, sizeof(rec), &n);
     if (rc) return rc;
-    if (type != 0x16 || n < 44 || rec[0] != 0x02) return TLS13_EBADREC;
+    /* A server that refuses TLS 1.3 with Alert(protocol_version = 70) signals the same version
+     * mismatch as a TLS 1.2 ServerHello without key_share (triggers TLS 1.2 fallback in trsec). */
+    if (type == 0x15 && n >= 2 && rec[1] == 70) return TLS13_ENOKEYSHARE;
+    if (type != 0x16 || n < 42 || rec[0] != 0x02) return TLS13_EBADREC;
     if (!memcmp(rec + 6, HRR_RANDOM, 32)) return TLS13_EHRR;
-    tr_add(t, rec, n);
 
     /* The server's key_share is among the extensions. It is found by type 0x33, not by
      * offset: the session_id length and the extension set vary between servers.
-     * HS_HDR = 4: message type(1) + length(3). */
+     * HS_HDR = 4: message type(1) + length(3). Bound parsing by sh_end (RFC 5246 §7.4.1.3 /
+     * §6.2.1): a TLS 1.2 ServerHello may omit extensions or be coalesced with Certificate in one
+     * record, and both cases must report TLS13_ENOKEYSHARE so trsec can fall back to TLS 1.2. */
     const size_t HS_HDR = 4;
+    size_t sh_len = be24(rec + 1);
+    size_t sh_end = HS_HDR + sh_len;
+    if (sh_end > n || sh_end < HS_HDR + 2 + 32 + 1 + 2 + 1) return TLS13_EBADREC;
     unsigned char server_pub[32];
     /* X25519MLKEM768 hybrid: the server answers with the ML-KEM ciphertext (1088) and its
      * X25519 half (32). */
@@ -419,16 +435,18 @@ static int handshake_run(struct tls13 *t, int fd,
     int have_pub = 0, have_kem = 0;
     {
         size_t p = HS_HDR + 2 + 32;             /* header + version + random */
-        if (p >= n) return TLS13_EBADREC;
+        if (p >= sh_end) return TLS13_EBADREC;
         size_t sid_n = rec[p++];
+        if (p + sid_n + 3 > sh_end) return TLS13_EBADREC;
         p += sid_n;
         p += 2;                                 /* cipher_suite */
         p += 1;                                 /* compression */
-        if (p + 2 > n) return TLS13_EBADREC;
+        if (p == sh_end) return TLS13_ENOKEYSHARE;
+        if (p + 2 > sh_end) return TLS13_EBADREC;
         size_t exts_n = ((size_t)rec[p] << 8) | rec[p + 1];
         p += 2;
         size_t end = p + exts_n;
-        if (end > n) return TLS13_EBADREC;
+        if (end > sh_end) return TLS13_EBADREC;
         while (p + 4 <= end) {
             unsigned etype = ((unsigned)rec[p] << 8) | rec[p + 1];
             size_t elen = ((size_t)rec[p + 2] << 8) | rec[p + 3];
@@ -457,6 +475,8 @@ static int handshake_run(struct tls13 *t, int fd,
         }
     }
     if (!have_pub) return TLS13_ENOKEYSHARE;
+    if (sh_end != n) return TLS13_EBADREC;
+    tr_add(t, rec, sh_end);
     /* A copy of ServerHello for the ML-DSA check, which signs it too: rec is reused for the
      * following records. Made only when the check is on. */
     unsigned char sh_copy[TLS13_SH_KEEP];
@@ -854,6 +874,7 @@ int tls13_handshake_auth(struct tls13 *t, int fd,
 }
 
 int tls13_has_record(const struct tls13 *t) {
+    if (t->t12) return tls12_has_record(t->t12);
     size_t have = t->rbuf_n - t->rbuf_off;
     if (have < 5) return 0;
     const unsigned char *h = t->rbuf + t->rbuf_off;
@@ -862,10 +883,12 @@ int tls13_has_record(const struct tls13 *t) {
 }
 
 size_t tls13_buffered(const struct tls13 *t) {
+    if (t->t12) return tls12_pending(t->t12);
     return t->rbuf_n - t->rbuf_off;
 }
 
 size_t tls13_take_pending(struct tls13 *t, unsigned char *out, size_t cap) {
+    if (t->t12) return tls12_take_pending(t->t12, out, cap);
     size_t have = t->rbuf_n - t->rbuf_off;
     if (!have) return 0;
     if (have > cap) have = cap;
@@ -878,6 +901,7 @@ size_t tls13_take_pending(struct tls13 *t, unsigned char *out, size_t cap) {
 
 int tls13_seal(struct tls13 *t, const unsigned char *d, size_t n, unsigned char *out, size_t cap, size_t *out_n) {
     if (!t->ready) return TLS13_ESTATE;
+    if (t->t12) return tls12_seal(t->t12, d, n, out, cap, out_n);
     size_t need = 0;
     uint64_t seq = t->wr_seq;
     for (size_t left = n; left; seq++) {
@@ -909,6 +933,7 @@ int tls13_seal(struct tls13 *t, const unsigned char *d, size_t n, unsigned char 
 
 int tls13_write(struct tls13 *t, const unsigned char *data, size_t n) {
     if (!t->ready) return TLS13_ESTATE;
+    if (t->t12) return tls12_write(t->t12, data, n);
     unsigned char out[TLS13_MAX_REC + 5];
     while (n) {
         size_t lim = tls13_plain_cap(t);
@@ -974,6 +999,10 @@ static int read_one(struct tls13 *t, const unsigned char **body, size_t *body_n)
 }
 
 int tls13_read(struct tls13 *t, unsigned char *out, size_t cap, size_t *got) {
+    if (t->t12) {
+        if (!t->ready) return TLS13_ESTATE;
+        return tls12_read(t->t12, out, cap, got);
+    }
     const unsigned char *body = NULL;
     size_t n = 0;
     int rc = read_one(t, &body, &n);
@@ -986,5 +1015,16 @@ int tls13_read(struct tls13 *t, unsigned char *out, size_t cap, size_t *got) {
 }
 
 int tls13_read_ref(struct tls13 *t, const unsigned char **body, size_t *body_n) {
+    if (t->t12) {
+        if (!t->ready) return TLS13_ESTATE;
+        *body = NULL;
+        *body_n = 0;
+        size_t got = 0;
+        int rc = tls12_read(t->t12, t->rbuf, TLS13_MAX_PLAIN, &got);
+        if (rc || !got) return rc;
+        *body = t->rbuf;
+        *body_n = got;
+        return 0;
+    }
     return read_one(t, body, body_n);
 }

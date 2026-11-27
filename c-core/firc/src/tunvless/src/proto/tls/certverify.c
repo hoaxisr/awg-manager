@@ -441,20 +441,14 @@ static int cc_chain(struct sc_roots *store_or_null, const unsigned char *pinned_
     return rc;
 }
 
-int cert_verify_server_ex(const unsigned char *cert_body, size_t cert_n,
-                          const unsigned char *cv_body, size_t cv_n,
-                          const unsigned char *transcript, size_t thash_n,
-                          const char *host, const char *roots, const struct cert_policy *pol) {
-    if (!cert_body || !cv_body || !host || !host[0]) return CERTV_EPARSE;
+int cert_verify_chain(const unsigned char *const *der, const size_t *der_n, size_t count,
+                      const char *host, const char *roots, const struct cert_policy *pol) {
+    if (!der || !der_n || !count || !host || !host[0]) return CERTV_EPARSE;
+    if (count > CHAIN_MAX) count = CHAIN_MAX;
+    for (size_t i = 0; i < count; i++)
+        if (!der[i] || !der_n[i]) return CERTV_EPARSE;
 
-    const unsigned char *der[CHAIN_MAX];
-    size_t der_n[CHAIN_MAX], count = 0;
-    int rc = parse_chain(cert_body, cert_n, der, der_n, &count);
-    if (rc) return rc;
-
-    /* insecure: only the signature is checked (see certverify.h). */
-    if (pol && pol->insecure)
-        return check_signature(der[0], der_n[0], cv_body, cv_n, transcript, thash_n);
+    if (pol && pol->insecure) return 0;
 
     const int have_pin = pol && ((pol->pcs && pol->pcs[0]) || (pol->pks && pol->pks[0]));
     const char *names = pol && pol->vcn && pol->vcn[0] ? pol->vcn : host;
@@ -484,10 +478,26 @@ int cert_verify_server_ex(const unsigned char *cert_body, size_t cert_n,
     if (!leaf_pinned) {
         /* The name is checked HERE, with the chain: a separate check would be a second SAN
          * parser, and it would drift from the library's. */
-        rc = cc_chain(NULL, pinned ? der[pinned] : NULL, pinned ? der_n[pinned] : 0, der, der_n, count, names,
-                      pol, roots);
-        if (rc) return rc;
+        return cc_chain(NULL, pinned ? der[pinned] : NULL, pinned ? der_n[pinned] : 0, der, der_n, count,
+                        names, pol, roots);
     }
+    return 0;
+}
+
+int cert_verify_server_ex(const unsigned char *cert_body, size_t cert_n,
+                          const unsigned char *cv_body, size_t cv_n,
+                          const unsigned char *transcript, size_t thash_n,
+                          const char *host, const char *roots, const struct cert_policy *pol) {
+    if (!cert_body || !cv_body || !host || !host[0]) return CERTV_EPARSE;
+
+    const unsigned char *der[CHAIN_MAX];
+    size_t der_n[CHAIN_MAX], count = 0;
+    int rc = parse_chain(cert_body, cert_n, der, der_n, &count);
+    if (rc) return rc;
+
+    /* insecure: only the signature is checked (see certverify.h). */
+    rc = cert_verify_chain(der, der_n, count, host, roots, pol);
+    if (rc) return rc;
     return check_signature(der[0], der_n[0], cv_body, cv_n, transcript, thash_n);
 }
 

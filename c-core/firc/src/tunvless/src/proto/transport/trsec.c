@@ -25,6 +25,7 @@
 #include "certverify.h"
 #include "ech.h"
 #include "fmlink.h"
+#include "tls12.h"
 
 /* security=none — a bare stream, no TLS at all (for a trusted network). Without TLS there is no
  * ALPN negotiation, so an HTTP/2 transport starts HTTP/2 at once: the server either accepts bare
@@ -414,22 +415,167 @@ static int link_nopq(const struct tr_node *n, int *retry) {
     return st == NOPQ_SHORT || !pq_able;
 }
 
-static int link_retry(struct tr_link *l, const struct tr_node *n, const char *alpn, int timeout_s,
-                      int rc, int retry) {
-    if (rc != TLS13_ETIMEOUT || !retry) return rc;
-    int rc2 = link_try(l, n, alpn, timeout_s, 1);
-    if (rc2 == 0) {
-        nopq_remember(n);
-        return 0;
+static long tr_tls12_ttl_s = 3600;
+
+struct tls12_ent {
+    uint64_t key;
+    uint16_t port;
+    uint8_t used, logged;
+    long until;
+    uint64_t seq;
+};
+static struct tls12_ent g_tls12[TR_NOPQ_MAX];
+static uint64_t g_tls12_seq;
+static pthread_mutex_t g_tls12_mu = PTHREAD_MUTEX_INITIALIZER;
+
+static int can_tls12(const struct tr_node *n) {
+    return n && n->security && !strcmp(n->security, "tls") && !(n->ech && n->ech[0]);
+}
+
+static uint64_t tls12_key(const struct tr_node *n) {
+    uint64_t h = 0xcbf29ce484222325ull;
+    const char *host = n->host ? n->host : "";
+    for (; *host; host++) h = (h ^ (unsigned char)*host) * 0x100000001b3ull;
+    h = (h ^ 0xffu) * 0x100000001b3ull;
+    const char *sni = (n->sni && n->sni[0]) ? n->sni : "";
+    for (; *sni; sni++) h = (h ^ (unsigned char)*sni) * 0x100000001b3ull;
+    return h;
+}
+
+static struct tls12_ent *tls12_find(uint64_t key, uint16_t port) {
+    for (size_t i = 0; i < TR_NOPQ_MAX; i++)
+        if (g_tls12[i].used && g_tls12[i].key == key && g_tls12[i].port == port) return &g_tls12[i];
+    return NULL;
+}
+
+static int tls12_cached(const struct tr_node *n) {
+    long now = nopq_now();
+    pthread_mutex_lock(&g_tls12_mu);
+    struct tls12_ent *e = tls12_find(tls12_key(n), n->port);
+    int hit = e && e->until > now;
+    pthread_mutex_unlock(&g_tls12_mu);
+    return hit;
+}
+
+static void tls12_remember(const struct tr_node *n) {
+    long now = nopq_now();
+    pthread_mutex_lock(&g_tls12_mu);
+    uint64_t key = tls12_key(n);
+    struct tls12_ent *e = tls12_find(key, n->port);
+    if (!e) {
+        e = &g_tls12[0];
+        for (size_t i = 0; i < TR_NOPQ_MAX; i++) {
+            struct tls12_ent *c = &g_tls12[i];
+            if (!c->used || c->until <= now) { e = c; break; }
+            if (c->seq < e->seq) e = c;
+        }
+        memset(e, 0, sizeof *e);
+        e->used = 1;
+        e->key = key;
+        e->port = n->port;
     }
-    if (rc2 == TLS13_ETIMEOUT) nopq_useless(n);
+    e->seq = ++g_tls12_seq;
+    e->until = now + tr_tls12_ttl_s;
+    int say = !e->logged;
+    e->logged = 1;
+    pthread_mutex_unlock(&g_tls12_mu);
+    if (say)
+        fprintf(stderr, "tunvless[info]: node %s:%u negotiated TLS 1.2 "
+                        "(TLS 1.3 is tried again in %ld min)\n",
+                n->host, (unsigned)n->port, tr_tls12_ttl_s / 60);
+}
+
+static void tls12_forget(const struct tr_node *n) {
+    pthread_mutex_lock(&g_tls12_mu);
+    struct tls12_ent *e = tls12_find(tls12_key(n), n->port);
+    if (e) e->until = 0;
+    pthread_mutex_unlock(&g_tls12_mu);
+}
+
+static int link_try_tls12(struct tr_link *l, const struct tr_node *n, const char *alpn, int timeout_s) {
+    l->fd = -1;
+    l->plain = 0;
+    l->rx_direct = 0;
+    l->tx_direct = 0;
+    l->nopq = 0;
+    memset(&l->tls, 0, sizeof(l->tls));
+    struct fm_link *fm = NULL;
+    int rc = link_chain(n, &fm);
+    if (rc) return rc;
+    int fd = tr_dial(n->host, n->port, timeout_s);
+    if (fd < 0) {
+        fm_link_free(fm);
+        return fd;
+    }
+    l->fd = fd;
+    l->tls.fm = fm;
+    rc = fm ? fm_link_hs(fm, fd, timeout_s * 1000) : 0;
+    if (!rc) {
+        const char *verify_host = (n->sni && n->sni[0]) ? n->sni : n->host;
+        struct cert_policy pol = { .pcs = n->pcs, .pks = n->pks, .vcn = n->vcn, .insecure = n->insecure };
+        const struct cert_policy *polp = (pol.pcs || pol.pks || pol.vcn || pol.insecure) ? &pol : NULL;
+        rc = tls12_handshake(&l->tls, fd, verify_host, alpn, tls_cert_roots(), polp, n->record_fragment);
+    }
+    if (rc) {
+        close(fd);
+        l->fd = -1;
+        link_unchain(l);
+    }
     return rc;
 }
 
+static int link_can_retry(const struct tr_node *n, int rc, int retry) {
+    return (rc == TLS13_ETIMEOUT && retry) || (rc == TLS13_ENOKEYSHARE && can_tls12(n));
+}
+
+static int link_retry_ex(struct tr_link *l, const struct tr_node *n, const char *alpn, int timeout_s,
+                         int rc, int retry, int allow_tls12) {
+    if (rc == TLS13_ETIMEOUT && retry) {
+        int rc2 = link_try(l, n, alpn, timeout_s, 1);
+        if (rc2 == 0) {
+            nopq_remember(n);
+            return 0;
+        }
+        if (rc2 == TLS13_ETIMEOUT) {
+            nopq_useless(n);
+            return rc;
+        }
+        if (allow_tls12 && rc2 == TLS13_ENOKEYSHARE && can_tls12(n)) {
+            rc = rc2;
+        } else {
+            return rc;
+        }
+    }
+    if (allow_tls12 && rc == TLS13_ENOKEYSHARE && can_tls12(n)) {
+        int rc2 = link_try_tls12(l, n, alpn, timeout_s);
+        if (rc2 == 0) {
+            tls12_remember(n);
+            return 0;
+        }
+        return rc2;
+    }
+    return rc;
+}
+
+static int link_retry(struct tr_link *l, const struct tr_node *n, const char *alpn, int timeout_s,
+                      int rc, int retry) {
+    return link_retry_ex(l, n, alpn, timeout_s, rc, retry, 1);
+}
+
 int tr_link_open(struct tr_link *l, const struct tr_node *n, const char *alpn, int timeout_s) {
+    int allow_tls12 = 1;
+    if (can_tls12(n) && tls12_cached(n)) {
+        int rc = link_try_tls12(l, n, alpn, timeout_s);
+        if (rc == 0) return 0;
+        if (rc != TLS13_EBADREC && rc != TLS13_EBADSUITE && rc != TLS13_ECLOSED)
+            return rc;
+        /* Cached TLS 1.2 peer may have upgraded to TLS 1.3-only: evict and try TLS 1.3 once. */
+        tls12_forget(n);
+        allow_tls12 = 0;
+    }
     int retry;
     const int nopq = link_nopq(n, &retry);
-    return link_retry(l, n, alpn, timeout_s, link_try(l, n, alpn, timeout_s, nopq), retry);
+    return link_retry_ex(l, n, alpn, timeout_s, link_try(l, n, alpn, timeout_s, nopq), retry, allow_tls12);
 }
 
 static int link_first(const struct tr_link *a, const struct tr_node *na, const struct tr_link *b,
@@ -447,6 +593,17 @@ static int link_first(const struct tr_link *a, const struct tr_node *na, const s
 
 int tr_link_open2(struct tr_link *a, const struct tr_node *na, struct tr_link *b,
                   const struct tr_node *nb, const char *alpn, int timeout_s) {
+    if ((can_tls12(na) && tls12_cached(na)) || (can_tls12(nb) && tls12_cached(nb))) {
+        a->fd = b->fd = -1;
+        int rc0 = tr_link_open(a, na, alpn, timeout_s);
+        if (rc0) return rc0;
+        int rc1 = tr_link_open(b, nb, alpn, timeout_s);
+        if (rc1) {
+            tr_link_close(a);
+            return rc1;
+        }
+        return 0;
+    }
     struct tr_link *l[2] = { a, b };
     const struct tr_node *n[2] = { na, nb };
     int rc[2] = { 0, 0 }, retry[2], q[2];
@@ -466,10 +623,10 @@ int tr_link_open2(struct tr_link *a, const struct tr_node *na, struct tr_link *b
             link_drop(b, &p[1]);
         } else {
             rc[f] = link_finish(l[f], n[f], &p[f]);
-            if (rc[f] && !(rc[f] == TLS13_ETIMEOUT && retry[f])) link_drop(l[s], &p[s]);
+            if (rc[f] && !link_can_retry(n[f], rc[f], retry[f])) link_drop(l[s], &p[s]);
             else rc[s] = link_finish(l[s], n[s], &p[s]);
         }
-        if (!rc[s] || (rc[s] == TLS13_ETIMEOUT && retry[s]))
+        if (!rc[s] || link_can_retry(n[s], rc[s], retry[s]))
             rc[f] = link_retry(l[f], n[f], alpn, timeout_s, rc[f], retry[f]);
         if (!rc[f]) rc[s] = link_retry(l[s], n[s], alpn, timeout_s, rc[s], retry[s]);
         for (int i = 0; i < 2; i++)
