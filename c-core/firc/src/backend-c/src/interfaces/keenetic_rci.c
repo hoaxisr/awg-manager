@@ -97,9 +97,6 @@ static bool is_excluded_wan_entry(const cJSON *entry) {
 static bool global_wan(const cJSON *entry) {
     if (is_excluded_wan_entry(entry)) { return false; }
 
-    if (cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(entry, "defaultgw"))) {
-        return true;
-    }
     if (!cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(entry, "global"))) {
         return false;
     }

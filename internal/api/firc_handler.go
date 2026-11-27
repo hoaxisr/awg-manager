@@ -29,18 +29,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/uplink"
 )
 
-// FircNDMSInterfaceMeta supplies cached Keenetic NDMS metadata for one kernel
-// interface so GET /api/firc/v1/system/interfaces can restore WAN roles and
-// interface labels when fircd's own RCI metadata is missing or incomplete
-// (e.g. non-Ethernet ISP uplinks or older fircd runtimes).
-type FircNDMSInterfaceMeta struct {
-	KernelName  string
-	NDMSName    string
-	Description string
-	IsWAN       bool
-	IsNonISP    bool
-}
-
 // OtherEngineIntegrationHooks supplies read/purge/reload callbacks for the sibling
 // routing engine (Sing-box) and AWGM stores without introducing circular imports.
 type OtherEngineIntegrationHooks struct {
@@ -51,7 +39,7 @@ type OtherEngineIntegrationHooks struct {
 	PostRestoreSync    func(ctx context.Context, restoredSingbox, restoredSettings bool) error
 	OnBeforePurgeFirc  func(ctx context.Context)
 	ListOwnedProxies   func(ctx context.Context) ([]string, error)
-	ListNDMSInterfaces func(ctx context.Context) ([]FircNDMSInterfaceMeta, error)
+	ListNDMSInterfaces func(ctx context.Context) ([]ndmsquery.FircInterfaceMeta, error)
 }
 
 // FircHandler exposes HTTP API endpoints for managing fircd and tunvless.
@@ -2086,10 +2074,10 @@ func (h *FircHandler) handleV1Proxy(w http.ResponseWriter, r *http.Request) {
 			if hasT2S && h.integrationHooks.ListOwnedProxies != nil {
 				ownedProxies = ownedProxySet(h.integrationHooks.ListOwnedProxies(r.Context()))
 			}
-			var ndmsByKernel map[string]FircNDMSInterfaceMeta
+			var ndmsByKernel map[string]ndmsquery.FircInterfaceMeta
 			if h.integrationHooks.ListNDMSInterfaces != nil {
 				if metas, mErr := h.integrationHooks.ListNDMSInterfaces(r.Context()); mErr == nil && len(metas) > 0 {
-					ndmsByKernel = make(map[string]FircNDMSInterfaceMeta, len(metas))
+					ndmsByKernel = make(map[string]ndmsquery.FircInterfaceMeta, len(metas))
 					for _, m := range metas {
 						if k := strings.ToLower(strings.TrimSpace(m.KernelName)); k != "" {
 							ndmsByKernel[k] = m

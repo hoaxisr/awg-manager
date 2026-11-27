@@ -765,14 +765,15 @@ func toWire(i ndms.Interface) ifaceWire {
 		Link:          i.Link,
 		Connected:     i.Connected,
 		SecurityLevel: i.SecurityLevel,
-		Global:        i.Global,
-		DefaultGW:     i.DefaultGW,
 		Address:       i.Address,
 		Mask:          i.Mask,
 		MTU:           i.MTU,
 		Uptime:        i.Uptime,
 		ConfLayer:     i.ConfLayer,
 		Priority:      i.Priority,
+	}
+	if i.Global {
+		w.Global = json.RawMessage(`true`)
 	}
 	w.Summary.Layer.IPv4 = i.IPv4
 	return w

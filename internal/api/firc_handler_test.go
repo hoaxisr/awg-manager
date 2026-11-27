@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/hoaxisr/awg-manager/internal/firc"
+	ndmsquery "github.com/hoaxisr/awg-manager/internal/ndms/query"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 )
 
@@ -2445,8 +2446,8 @@ func TestFircV1Proxy_SystemInterfaces_EnrichesWANAndNamesFromNDMS(t *testing.T) 
 
 	h := NewFircHandler(firc.NewOperator(firc.Options{ConfigDir: dir, SocketPath: sock}))
 	h.SetOtherEngineIntegrationHooks(OtherEngineIntegrationHooks{
-		ListNDMSInterfaces: func(context.Context) ([]FircNDMSInterfaceMeta, error) {
-			return []FircNDMSInterfaceMeta{
+		ListNDMSInterfaces: func(context.Context) ([]ndmsquery.FircInterfaceMeta, error) {
+			return []ndmsquery.FircInterfaceMeta{
 				{KernelName: "eth3", NDMSName: "ISP", Description: "Broadband connection", IsWAN: true},
 				{KernelName: "ppp0", NDMSName: "PPPoE0", Description: "Rostelecom", IsWAN: true},
 				{KernelName: "ppp1", NDMSName: "SSTP1", Description: "Dacha", IsWAN: false, IsNonISP: true},
@@ -2519,7 +2520,7 @@ func TestFircV1Proxy_SystemInterfaces_EnrichesWANAndNamesFromNDMS(t *testing.T) 
 
 	// Fail-open: NDMS list errors must not break /api/firc/v1/system/interfaces.
 	h.SetOtherEngineIntegrationHooks(OtherEngineIntegrationHooks{
-		ListNDMSInterfaces: func(context.Context) ([]FircNDMSInterfaceMeta, error) {
+		ListNDMSInterfaces: func(context.Context) ([]ndmsquery.FircInterfaceMeta, error) {
 			return nil, errors.New("ndms unavailable")
 		},
 	})

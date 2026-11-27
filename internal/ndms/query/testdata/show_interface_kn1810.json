@@ -1,0 +1,218 @@
+{
+ "GigabitEthernet1": {
+  "id": "GigabitEthernet1",
+  "interface-name": "ISP",
+  "type": "GigabitEthernet",
+  "description": "Broadband connection",
+  "security-level": "public",
+  "global": false,
+  "traits": [
+   "Mac",
+   "Ethernet",
+   "Ip",
+   "Ip6",
+   "Supplicant",
+   "EthernetIp",
+   "MtkSfpEthernet"
+  ],
+  "state": "up",
+  "summary": {
+   "layer": {
+    "ipv4": "pending"
+   }
+  }
+ },
+ "0": {
+  "id": "GigabitEthernet1/0",
+  "interface-name": "0",
+  "type": "Port",
+  "role": [
+   {
+    "for": "GigabitEthernet1",
+    "role": "inet"
+   }
+  ],
+  "traits": [
+   "EthernetPort",
+   "MtkSfpEthernetPort"
+  ]
+ },
+ "1": {
+  "id": "GigabitEthernet0/0",
+  "interface-name": "1",
+  "type": "Port",
+  "traits": [
+   "EthernetPort",
+   "SwitchPort",
+   "MtkSwitchPort"
+  ]
+ },
+ "PPPoE0": {
+  "id": "PPPoE0",
+  "interface-name": "PPPoE0",
+  "type": "PPPoE",
+  "description": "Broadband connection",
+  "security-level": "public",
+  "global": true,
+  "defaultgw": true,
+  "role": [
+   "inet"
+  ],
+  "traits": [
+   "Ip",
+   "Ip6",
+   "Supplicant",
+   "Peer",
+   "Ppp",
+   "Pppoe"
+  ],
+  "state": "up",
+  "summary": {
+   "layer": {
+    "ipv4": "running"
+   }
+  }
+ },
+ "OpkgTun10": {
+  "id": "OpkgTun10",
+  "interface-name": "OpkgTun10",
+  "type": "OpkgTun",
+  "description": "WARP HEL",
+  "security-level": "public",
+  "global": true,
+  "defaultgw": false,
+  "traits": [
+   "Ip",
+   "Ip6",
+   "OpkgTun"
+  ],
+  "state": "up",
+  "summary": {
+   "layer": {
+    "ipv4": "running"
+   }
+  }
+ },
+ "Bridge0": {
+  "id": "Bridge0",
+  "interface-name": "Home",
+  "type": "Bridge",
+  "description": "Home network",
+  "security-level": "private",
+  "global": false,
+  "traits": [
+   "Mac",
+   "Ethernet",
+   "Ip",
+   "Ip6",
+   "Supplicant",
+   "EthernetIp",
+   "Bridge"
+  ],
+  "state": "up",
+  "summary": {
+   "layer": {
+    "ipv4": "running"
+   }
+  }
+ },
+ "WifiMaster0": {
+  "id": "WifiMaster0",
+  "interface-name": "WifiMaster0",
+  "type": "WifiMaster",
+  "description": "",
+  "traits": [
+   "WifiRadio",
+   "WifiMaster",
+   "MtkWifiMaster"
+  ],
+  "state": "up"
+ },
+ "WifiMaster0/AccessPoint0": {
+  "id": "WifiMaster0/AccessPoint0",
+  "interface-name": "AccessPoint",
+  "type": "AccessPoint",
+  "description": "Wi-Fi access point",
+  "security-level": "public",
+  "global": false,
+  "traits": [
+   "Wireless",
+   "Mac",
+   "Ethernet",
+   "Ip",
+   "Ip6",
+   "Supplicant",
+   "EthernetIp",
+   "Wifi",
+   "AccessPoint",
+   "MtkAccessPoint"
+  ],
+  "state": "down",
+  "summary": {
+   "layer": {
+    "ipv4": "disabled"
+   }
+  }
+ },
+ "WifiMaster0/WifiStation0": {
+  "id": "WifiMaster0/WifiStation0",
+  "interface-name": "WifiMaster0/WifiStation0",
+  "type": "WifiStation",
+  "description": "",
+  "security-level": "public",
+  "global": false,
+  "traits": [
+   "Wireless",
+   "Mac",
+   "Ethernet",
+   "Ip",
+   "Ip6",
+   "Supplicant",
+   "EthernetIp",
+   "Wifi",
+   "WifiStation",
+   "MtkWifiStation"
+  ],
+  "state": "down",
+  "summary": {
+   "layer": {
+    "ipv4": "disabled"
+   }
+  }
+ },
+ "GigabitEthernet0/Vlan1": {
+  "id": "GigabitEthernet0/Vlan1",
+  "interface-name": "GigabitEthernet0/Vlan1",
+  "type": "Vlan",
+  "description": "Home VLAN",
+  "traits": [
+   "Mac",
+   "Ethernet",
+   "Ip",
+   "Ip6",
+   "Supplicant",
+   "EthernetIp",
+   "Vlan"
+  ],
+  "state": "up"
+ },
+ "Wireguard0": {
+  "id": "Wireguard0",
+  "interface-name": "Wireguard0",
+  "type": "Wireguard",
+  "description": "Wireguard VPN Server",
+  "security-level": "private",
+  "global": false,
+  "traits": [
+   "Ip",
+   "Ip6",
+   "Wireguard"
+  ],
+  "state": "down",
+  "summary": {
+   "layer": {
+    "ipv4": "disabled"
+   }
+  }
+ }
+}

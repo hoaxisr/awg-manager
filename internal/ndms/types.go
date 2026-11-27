@@ -23,13 +23,12 @@ type Interface struct {
 	Link          string `json:"link"`      // "up" | "down"
 	Connected     string `json:"connected"` // "yes" | "no" | ""
 	SecurityLevel string `json:"securityLevel"`
-	Global        bool   `json:"global,omitempty"`    // NDMS "global": true (participates in internet routing)
-	DefaultGW     bool   `json:"defaultgw,omitempty"` // NDMS "defaultgw": true (active default gateway)
-	RoleInet      bool   `json:"-"`                   // NDMS "role" includes "inet" (directly or via {"role":"inet","for":id})
-	VPNTrait      bool   `json:"-"`                   // NDMS "traits" includes a VPN/encrypted tunnel trait
-	WANTrait      bool   `json:"-"`                   // NDMS "traits" includes an ISP WAN trait
-	LocalTrait    bool   `json:"-"`                   // NDMS "traits" includes Bridge/AccessPoint/WifiMaster
-	IPv4          string `json:"ipv4,omitempty"`      // summary.layer.ipv4 — "running" | "pending" | "disabled" | ""
+	Global        bool   `json:"global,omitempty"` // NDMS "global": true (participates in internet routing)
+	RoleInet      bool   `json:"-"`                // NDMS "role" includes "inet" (directly or via {"role":"inet","for":id})
+	VPNTrait      bool   `json:"-"`                // NDMS "traits" includes a VPN/encrypted tunnel trait
+	WANTrait      bool   `json:"-"`                // NDMS "traits" includes an ISP WAN trait
+	LocalTrait    bool   `json:"-"`                // NDMS "traits" includes Bridge/AccessPoint/WifiMaster
+	IPv4          string `json:"ipv4,omitempty"`   // summary.layer.ipv4 — "running" | "pending" | "disabled" | ""
 	Address       string `json:"address,omitempty"`
 	Mask          string `json:"mask,omitempty"`
 	MTU           int    `json:"mtu,omitempty"`

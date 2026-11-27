@@ -1738,6 +1738,8 @@ func (s *InterfaceStore) fetchListMap(ctx context.Context) (map[string]ndms.Inte
 // === Wire format ===
 
 // ifaceWire is the shape /show/interface/ returns per entry.
+// global, traits и role — сырьё: поле чужого типа уронило бы разбор всей
+// записи, и интерфейс молча выпал бы из стора.
 type ifaceWire struct {
 	ID            string          `json:"id"`
 	InterfaceName string          `json:"interface-name"`
@@ -1747,9 +1749,8 @@ type ifaceWire struct {
 	Link          string          `json:"link"`
 	Connected     string          `json:"connected"`
 	SecurityLevel string          `json:"security-level"`
-	Global        bool            `json:"global"`
-	DefaultGW     bool            `json:"defaultgw"`
-	Traits        []string        `json:"traits"`
+	Global        json.RawMessage `json:"global"`
+	Traits        json.RawMessage `json:"traits"`
 	Role          json.RawMessage `json:"role"`
 	Address       string          `json:"address"`
 	Mask          string          `json:"mask"`
@@ -1838,7 +1839,11 @@ func wireToInterface(w ifaceWire) ndms.Interface {
 	if !looksLikeKernelIfname(sysName) {
 		sysName = ""
 	}
-	vpnTrait, wanTrait, localTrait := classifyWireTraits(w.Traits)
+	var global bool
+	_ = json.Unmarshal(w.Global, &global)
+	var traits []string
+	_ = json.Unmarshal(w.Traits, &traits)
+	vpnTrait, wanTrait, localTrait := classifyWireTraits(traits)
 	return ndms.Interface{
 		ID:            w.ID,
 		InterfaceName: w.InterfaceName,
@@ -1849,8 +1854,7 @@ func wireToInterface(w ifaceWire) ndms.Interface {
 		Link:          w.Link,
 		Connected:     w.Connected,
 		SecurityLevel: w.SecurityLevel,
-		Global:        w.Global,
-		DefaultGW:     w.DefaultGW,
+		Global:        global,
 		VPNTrait:      vpnTrait,
 		WANTrait:      wanTrait,
 		LocalTrait:    localTrait,
