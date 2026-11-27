@@ -1461,6 +1461,9 @@ func (o *Operator) startRuntime(ctx context.Context) error {
 	if err := o.EnsureConfigFiles(); err != nil {
 		return err
 	}
+	if err := o.ensureRemapListenAddr(); err != nil {
+		o.log.Warn("firc: remap53 listen address check failed", "error", err)
+	}
 
 	var initOut []byte
 	o.mu.Lock()
