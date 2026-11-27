@@ -36,7 +36,48 @@ const (
 	// TunnelNodePool is the special node selector ("*") that routes a tunnel inbound
 	// through the tunnel's active node pool rather than pinning a single node.
 	TunnelNodePool = "*"
+
+	// DefaultSubscriptionInterval is the default subscription auto-refresh interval (6h) matching fircd.
+	DefaultSubscriptionInterval = 21600
+
+	// MinSubscriptionInterval is the minimum non-zero subscription auto-refresh interval (10m) accepted by fircd.
+	MinSubscriptionInterval = 600
+
+	// MaxSubscriptionInterval is the maximum subscription auto-refresh interval (168h) accepted by fircd.
+	MaxSubscriptionInterval = 604800
 )
+
+// NormalizeSubscriptionInterval coerces a subscription refresh interval (in seconds)
+// to the valid fircd range: 0 (manual) or [MinSubscriptionInterval, MaxSubscriptionInterval].
+// Negative values fall back to DefaultSubscriptionInterval.
+func NormalizeSubscriptionInterval(sec int) int {
+	if sec < 0 {
+		return DefaultSubscriptionInterval
+	}
+	if sec == 0 {
+		return 0
+	}
+	if sec < MinSubscriptionInterval {
+		return MinSubscriptionInterval
+	}
+	if sec > MaxSubscriptionInterval {
+		return MaxSubscriptionInterval
+	}
+	return sec
+}
+
+func yamlNodeHasValue(node *yaml.Node) bool {
+	if node == nil || node.Kind == 0 {
+		return false
+	}
+	if node.Kind == yaml.AliasNode && node.Alias != nil {
+		node = node.Alias
+	}
+	if node.Kind == yaml.ScalarNode && (node.Tag == "!!null" || strings.TrimSpace(node.Value) == "") {
+		return false
+	}
+	return true
+}
 
 func parseYAMLSecondsNode(node *yaml.Node) (int, error) {
 	if node == nil || node.Kind == 0 {
@@ -147,20 +188,20 @@ type TunnelSource struct {
 }
 
 func (s TunnelSource) MarshalJSON() ([]byte, error) {
-	if s.Kind == "subscription" || (s.Kind == "" && s.URL != "") {
+	if s.Kind == "subscription" || (s.Kind == "" && strings.TrimSpace(s.URL) != "") {
 		return json.Marshal(struct {
 			ID       string            `json:"id,omitempty"`
 			Kind     string            `json:"kind"`
 			Name     string            `json:"name,omitempty"`
 			URL      string            `json:"url,omitempty"`
-			Interval int               `json:"interval,omitempty"`
+			Interval int               `json:"interval"`
 			Headers  map[string]string `json:"headers,omitempty"`
 		}{
 			ID:       s.ID,
 			Kind:     "subscription",
 			Name:     s.Name,
 			URL:      s.URL,
-			Interval: s.Interval,
+			Interval: NormalizeSubscriptionInterval(s.Interval),
 			Headers:  s.Headers,
 		})
 	}
@@ -175,17 +216,47 @@ func (s TunnelSource) MarshalJSON() ([]byte, error) {
 	})
 }
 
+func (s *TunnelSource) UnmarshalJSON(data []byte) error {
+	if strings.TrimSpace(string(data)) == "null" {
+		return nil
+	}
+	var raw struct {
+		ID       string            `json:"id"`
+		Kind     string            `json:"kind"`
+		Link     string            `json:"link"`
+		Name     string            `json:"name"`
+		URL      string            `json:"url"`
+		Interval *int              `json:"interval"`
+		Headers  map[string]string `json:"headers"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	out := TunnelSource{
+		ID:      raw.ID,
+		Kind:    raw.Kind,
+		Link:    raw.Link,
+		Name:    raw.Name,
+		URL:     raw.URL,
+		Headers: raw.Headers,
+	}
+	isSub := out.Kind == "subscription" || (out.Kind == "" && strings.TrimSpace(out.URL) != "")
+	if raw.Interval != nil {
+		out.Interval = *raw.Interval
+	} else if isSub {
+		out.Interval = DefaultSubscriptionInterval
+	}
+	*s = out
+	return nil
+}
+
 func (s TunnelSource) MarshalYAML() (interface{}, error) {
-	if s.Kind == "subscription" || (s.Kind == "" && s.URL != "") {
+	if s.Kind == "subscription" || (s.Kind == "" && strings.TrimSpace(s.URL) != "") {
 		type subSpec struct {
 			Name     string            `yaml:"name,omitempty"`
 			URL      string            `yaml:"url"`
-			Interval string            `yaml:"interval,omitempty"`
+			Interval string            `yaml:"interval"`
 			Headers  map[string]string `yaml:"headers,omitempty"`
-		}
-		var iv string
-		if s.Interval > 0 {
-			iv = formatYAMLSeconds(s.Interval)
 		}
 		return struct {
 			ID           string  `yaml:"id,omitempty"`
@@ -195,7 +266,7 @@ func (s TunnelSource) MarshalYAML() (interface{}, error) {
 			Subscription: subSpec{
 				Name:     s.Name,
 				URL:      s.URL,
-				Interval: iv,
+				Interval: formatYAMLSeconds(NormalizeSubscriptionInterval(s.Interval)),
 				Headers:  s.Headers,
 			},
 		}, nil
@@ -228,36 +299,46 @@ func (s *TunnelSource) UnmarshalYAML(value *yaml.Node) error {
 	if err := value.Decode(&raw); err != nil {
 		return err
 	}
-	s.ID = raw.ID
+	out := TunnelSource{ID: raw.ID}
 	if raw.Subscription != nil {
-		s.Kind = "subscription"
-		s.Name = raw.Subscription.Name
-		s.URL = raw.Subscription.URL
-		s.Headers = raw.Subscription.Headers
-		sec, err := parseYAMLSecondsNode(&raw.Subscription.Interval)
+		out.Kind = "subscription"
+		out.Name = raw.Subscription.Name
+		out.URL = raw.Subscription.URL
+		out.Headers = raw.Subscription.Headers
+		if yamlNodeHasValue(&raw.Subscription.Interval) {
+			sec, err := parseYAMLSecondsNode(&raw.Subscription.Interval)
+			if err != nil {
+				return err
+			}
+			out.Interval = sec
+		} else {
+			out.Interval = DefaultSubscriptionInterval
+		}
+		*s = out
+		return nil
+	}
+	out.Kind = raw.Kind
+	out.Link = raw.Link
+	out.Name = raw.Name
+	out.URL = raw.URL
+	out.Headers = raw.Headers
+	if out.Kind == "" {
+		if out.Link != "" {
+			out.Kind = "link"
+		} else if strings.TrimSpace(out.URL) != "" {
+			out.Kind = "subscription"
+		}
+	}
+	if yamlNodeHasValue(&raw.Interval) {
+		sec, err := parseYAMLSecondsNode(&raw.Interval)
 		if err != nil {
 			return err
 		}
-		s.Interval = sec
-		return nil
+		out.Interval = sec
+	} else if out.Kind == "subscription" {
+		out.Interval = DefaultSubscriptionInterval
 	}
-	s.Kind = raw.Kind
-	s.Link = raw.Link
-	s.Name = raw.Name
-	s.URL = raw.URL
-	s.Headers = raw.Headers
-	if s.Kind == "" {
-		if s.Link != "" {
-			s.Kind = "link"
-		} else if s.URL != "" {
-			s.Kind = "subscription"
-		}
-	}
-	sec, err := parseYAMLSecondsNode(&raw.Interval)
-	if err != nil {
-		return err
-	}
-	s.Interval = sec
+	*s = out
 	return nil
 }
 

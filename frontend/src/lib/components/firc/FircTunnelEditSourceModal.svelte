@@ -75,7 +75,7 @@
 				const normRes = await api.fircNormalizeSource({
 					input: url.trim(),
 					name: defaultName,
-					interval,
+					interval: kind === 'subscription' ? interval : undefined,
 					headers,
 				});
 				if (normRes?.sources?.length) {
@@ -83,7 +83,7 @@
 						...s,
 						id: s.id || randomId(),
 						name: stripFircEmojis(s.name || defaultName),
-						interval: s.kind === 'subscription' ? (s.interval || interval) : undefined,
+						interval: s.kind === 'subscription' ? (s.interval ?? interval) : undefined,
 						headers: s.kind === 'subscription' ? (s.headers ?? headers) : undefined,
 					}));
 				}

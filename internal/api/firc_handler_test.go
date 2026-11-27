@@ -2228,3 +2228,178 @@ func TestFircV1SystemInterfaces_NormalizesTunnelRoleAndFlagsAwgmProxies(t *testi
 		t.Fatalf("fallback nwg0 must not be flagged, got %+v", it)
 	}
 }
+
+func TestFircHandler_ManualSubscriptionInterval(t *testing.T) {
+	tmpDir := t.TempDir()
+	fircDir := filepath.Join(tmpDir, "firc")
+	if err := os.MkdirAll(fircDir, 0755); err != nil {
+		t.Fatalf("mkdir fircDir: %v", err)
+	}
+
+	sockDir, err := os.MkdirTemp("", "firc-iv-")
+	if err != nil {
+		t.Fatalf("mkdtemp sockDir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
+	sockPath := filepath.Join(sockDir, "d.sock")
+
+	store := storage.NewSettingsStore(tmpDir)
+	if _, err := store.Load(); err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	if err := store.Update(func(s *storage.Settings) error {
+		s.SingboxRouter.RoutingEngine = "sing-box"
+		return nil
+	}); err != nil {
+		t.Fatalf("update settings: %v", err)
+	}
+
+	op := firc.NewOperator(firc.Options{
+		ConfigDir:   fircDir,
+		SocketPath:  sockPath,
+		InboundPort: 1099,
+	})
+	h := NewFircHandler(op)
+	h.SetSettingsStore(store)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, func(next http.HandlerFunc) http.HandlerFunc { return next })
+
+	doReq := func(method, path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// 1. Offline PUT /api/firc/v1/tunnels preserves explicit interval: 0 ("manual")
+	// and persists interval: 0s in tunnels.yaml, while omitting interval defaults to 21600.
+	offlinePayload := `{"tunnels":[{"id":"t1","device":"tunvless0","enable":true,"sources":[{"id":"11111111","kind":"subscription","name":"Manual","url":"https://example.com/manual","interval":0},{"id":"22222222","kind":"subscription","name":"Default","url":"https://example.com/default"}]}]}`
+	rec := doReq(http.MethodPut, "/api/firc/v1/tunnels", offlinePayload)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("offline PUT /api/firc/v1/tunnels: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"interval":0`) {
+		t.Fatalf("offline PUT response omitted \"interval\":0: %s", rec.Body.String())
+	}
+	rawYAML, err := os.ReadFile(op.TunnelsPath())
+	if err != nil {
+		t.Fatalf("read tunnels.yaml: %v", err)
+	}
+	if !strings.Contains(string(rawYAML), "interval: 0s") || !strings.Contains(string(rawYAML), "interval: 21600s") {
+		t.Fatalf("expected both interval: 0s and interval: 21600s in tunnels.yaml:\n%s", string(rawYAML))
+	}
+	loaded, err := op.LoadTunnelsFile()
+	if err != nil || len(loaded) != 1 || len(loaded[0].Sources) != 2 ||
+		loaded[0].Sources[0].Interval != 0 || loaded[0].Sources[1].Interval != firc.DefaultSubscriptionInterval {
+		t.Fatalf("unexpected reloaded tunnels: err=%v loaded=%+v", err, loaded)
+	}
+
+	// 2. Live fircd: mimic tconfig.c where missing "interval" defaults to 21600
+	// while explicit "interval": 0 is kept as 0.
+	if err := store.Update(func(s *storage.Settings) error {
+		s.SingboxRouter.RoutingEngine = "firc"
+		return nil
+	}); err != nil {
+		t.Fatalf("switch engine firc: %v", err)
+	}
+
+	var rawPutToDaemon atomic.Value
+	fakeMux := http.NewServeMux()
+	fakeMux.HandleFunc("/api/v1/system/netfilter", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"active":true,"chains":["FIRC_DNS"]}`))
+	})
+	fakeMux.HandleFunc("/api/v1/tunnels", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"tunnels":[]}`))
+			return
+		}
+		bodyBytes, _ := io.ReadAll(r.Body)
+		rawPutToDaemon.Store(string(bodyBytes))
+		var incoming struct {
+			Tunnels []struct {
+				ID      string `json:"id"`
+				Device  string `json:"device"`
+				Enable  bool   `json:"enable"`
+				Sources []struct {
+					ID       string `json:"id"`
+					Kind     string `json:"kind"`
+					Name     string `json:"name"`
+					URL      string `json:"url"`
+					Interval *int   `json:"interval"`
+				} `json:"sources"`
+			} `json:"tunnels"`
+		}
+		if err := json.Unmarshal(bodyBytes, &incoming); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		out := make([]firc.Tunnel, 0, len(incoming.Tunnels))
+		for _, tun := range incoming.Tunnels {
+			tOut := firc.Tunnel{ID: tun.ID, Device: tun.Device, Enable: tun.Enable}
+			for _, src := range tun.Sources {
+				iv := firc.DefaultSubscriptionInterval
+				if src.Interval != nil {
+					iv = *src.Interval
+				}
+				tOut.Sources = append(tOut.Sources, firc.TunnelSource{
+					ID:       src.ID,
+					Kind:     src.Kind,
+					Name:     src.Name,
+					URL:      src.URL,
+					Interval: iv,
+				})
+			}
+			out = append(out, tOut)
+		}
+		_ = json.NewEncoder(w).Encode(firc.PutTunnelsResponse{Tunnels: out})
+	})
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("listen unix: %v", err)
+	}
+	srv := &http.Server{Handler: fakeMux}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() {
+		_ = srv.Close()
+		_ = ln.Close()
+	})
+
+	livePayload := `{"tunnels":[{"id":"t1","device":"tunvless0","enable":true,"sources":[{"id":"11111111","kind":"subscription","name":"Manual","url":"https://example.com/manual","interval":0}]}]}`
+	rec = doReq(http.MethodPut, "/api/firc/v1/tunnels", livePayload)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("live PUT /api/firc/v1/tunnels: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	gotRawPut, _ := rawPutToDaemon.Load().(string)
+	if !strings.Contains(gotRawPut, `"interval":0`) {
+		t.Fatalf("daemon PUT payload omitted \"interval\":0: %s", gotRawPut)
+	}
+	if !strings.Contains(rec.Body.String(), `"interval":0`) {
+		t.Fatalf("live PUT response did not preserve \"interval\":0: %s", rec.Body.String())
+	}
+
+	// 3. POST /api/firc/tunnels/normalize-source preserves explicit interval: 0,
+	// defaults omitted interval to 21600, clamps short positive values to 600, and defaults negative values.
+	for _, tc := range []struct {
+		name     string
+		body     string
+		wantText string
+	}{
+		{"manual zero", `{"input":"https://example.com/sub","name":"Sub","interval":0}`, `"interval":0`},
+		{"omitted defaults to 21600", `{"input":"https://example.com/sub","name":"Sub"}`, `"interval":21600`},
+		{"too short clamped to 600", `{"input":"https://example.com/sub","name":"Sub","interval":120}`, `"interval":600`},
+		{"negative defaults to 21600", `{"input":"https://example.com/sub","name":"Sub","interval":-5}`, `"interval":21600`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := doReq(http.MethodPost, "/api/firc/tunnels/normalize-source", tc.body)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("normalize-source expected 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), tc.wantText) {
+				t.Fatalf("normalize-source expected %s in body, got: %s", tc.wantText, rec.Body.String())
+			}
+		})
+	}
+}

@@ -285,7 +285,7 @@ func ParseInlineSourcesForFirc(rawInput, defaultName, happKeysPath string) ([]Tu
 						Kind:     "subscription",
 						Name:     SanitizeFircSubName(defaultName),
 						URL:      norm,
-						Interval: 21600,
+						Interval: DefaultSubscriptionInterval,
 					},
 				}, nil
 			}
@@ -311,7 +311,7 @@ func ParseInlineSourcesForFirc(rawInput, defaultName, happKeysPath string) ([]Tu
 						Kind:     "subscription",
 						Name:     SanitizeFircSubName(defaultName),
 						URL:      norm,
-						Interval: 21600,
+						Interval: DefaultSubscriptionInterval,
 					},
 				}, nil
 			}
@@ -505,8 +505,9 @@ func NormalizeTunnelSources(t *Tunnel, happKeysPath string) error {
 					psrc.ID = allocID(psrc.ID, seed)
 					if psrc.Kind == "subscription" {
 						psrc.Name = allocSubName(psrc.Name)
-						if psrc.Interval > 0 && psrc.Interval < 600 {
-							psrc.Interval = 600
+						psrc.Interval = NormalizeSubscriptionInterval(src.Interval)
+						if len(src.Headers) > 0 && len(psrc.Headers) == 0 {
+							psrc.Headers = src.Headers
 						}
 					}
 					normalized = append(normalized, psrc)
@@ -517,9 +518,7 @@ func NormalizeTunnelSources(t *Tunnel, happKeysPath string) error {
 			src.URL = normURL
 			src.Link = ""
 			src.Name = allocSubName(src.Name)
-			if src.Interval > 0 && src.Interval < 600 {
-				src.Interval = 600
-			}
+			src.Interval = NormalizeSubscriptionInterval(src.Interval)
 			src.ID = allocID(src.ID, fmt.Sprintf("src:sub:%s:%s", t.ID, src.URL))
 			normalized = append(normalized, src)
 			continue
@@ -567,8 +566,8 @@ func NormalizeTunnelSources(t *Tunnel, happKeysPath string) error {
 			psrc.ID = allocID(candID, seed)
 			if psrc.Kind == "subscription" {
 				psrc.Name = allocSubName(psrc.Name)
-				if src.Interval >= 600 {
-					psrc.Interval = src.Interval
+				if src.Interval > 0 {
+					psrc.Interval = NormalizeSubscriptionInterval(src.Interval)
 				}
 				if len(src.Headers) > 0 && len(psrc.Headers) == 0 {
 					psrc.Headers = src.Headers
