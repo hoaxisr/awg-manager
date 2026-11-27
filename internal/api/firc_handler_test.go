@@ -1163,7 +1163,6 @@ func TestFircHandler_UnselectedAndStoppedNeverStartsDaemonOrMutatesNetfilter(t *
 		{http.MethodPut, "/api/firc/v1/tunnels", tunnelsPayload},
 		{http.MethodPut, "/api/firc/v1/groups", groupsPayload},
 		{http.MethodPost, "/api/firc/v1/tunnels/preview", previewPayload},
-		{http.MethodPost, "/api/firc/migrate/reverse?dry_run=1", `{}`},
 	} {
 		rec := doReq(tc.method, tc.path, tc.body)
 		if rec.Code != http.StatusOK {

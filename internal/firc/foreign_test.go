@@ -376,9 +376,9 @@ func foreignMutators(sbDir string, inst *OnDemandInstaller) map[string]func(cont
 		"ForceClearRecoveryAdmin": func(_ context.Context, o *Operator) error {
 			return o.ForceClearRecoveryAdmin("FORCE_CLEAR_UNVERIFIED", BreakGlassOptions{Actor: "test"})
 		},
-		"MigrateFromSingbox": func(c context.Context, o *Operator) error { return e(o.MigrateFromSingbox(c, sbDir)) },
+		"MigrateFromSingbox": func(c context.Context, o *Operator) error { return e(o.MigrateFromSingboxWithOptions(c, sbDir, nil)) },
 		"MigrateFromSingboxWithOptions": func(c context.Context, o *Operator) error {
-			return e(o.MigrateFromSingboxWithOptions(c, sbDir, &MigrationOptions{Mode: "replace"}))
+			return e(o.MigrateFromSingboxWithOptions(c, sbDir, &MigrationOptions{}))
 		},
 		"PrepareServerRouting": func(c context.Context, o *Operator) error {
 			return e(o.PrepareServerRouting(c, "tx-new", "vless_xhttp_server", true))
@@ -394,18 +394,12 @@ func foreignMutators(sbDir string, inst *OnDemandInstaller) map[string]func(cont
 			}))
 		},
 		"ReconcileRecovery": func(c context.Context, o *Operator) error { return e(o.ReconcileRecovery(c, "firc")) },
-		"RestoreSavedSingboxFiles": func(c context.Context, o *Operator) error {
-			return e(o.RestoreSavedSingboxFiles(c, sbDir, true, "firc"))
-		},
 		"RestoreSystemSnapshot": func(c context.Context, o *Operator) error {
 			return e(o.RestoreSystemSnapshot(c, "snap-20261101-000000-a", sbDir))
 		},
 		"RestoreSystemSnapshotWithRollback": func(c context.Context, o *Operator) error {
 			_, _, err := o.RestoreSystemSnapshotWithRollback(c, "snap-20261101-000000-a", sbDir, true)
 			return err
-		},
-		"ReverseMigrateToSingbox": func(c context.Context, o *Operator) error {
-			return e(o.ReverseMigrateToSingbox(c, sbDir, &ReverseMigrationOptions{}, "firc"))
 		},
 		"SaveExtConfig": func(_ context.Context, o *Operator) error {
 			return o.SaveExtConfig(ExtConfig{GlobalTarget: "iface:br0"})
@@ -414,9 +408,8 @@ func foreignMutators(sbDir string, inst *OnDemandInstaller) map[string]func(cont
 		"SaveMigrationWizardState": func(_ context.Context, o *Operator) error {
 			return o.SaveMigrationWizardState(MigrationWizardState{LastDirection: "x"})
 		},
-		"SavePreFircSingboxConfig": func(_ context.Context, o *Operator) error { return o.SavePreFircSingboxConfig(sbDir, true) },
-		"SaveTunnelsFile":          func(_ context.Context, o *Operator) error { return o.SaveTunnelsFile(tunnels) },
-		"SetRecoveryRequired":      func(_ context.Context, o *Operator) error { return o.SetRecoveryRequired("x") },
+		"SaveTunnelsFile":     func(_ context.Context, o *Operator) error { return o.SaveTunnelsFile(tunnels) },
+		"SetRecoveryRequired": func(_ context.Context, o *Operator) error { return o.SetRecoveryRequired("x") },
 		"SetRecoveryRequiredWithMeta": func(_ context.Context, o *Operator) error {
 			return o.SetRecoveryRequiredWithMeta(RecoveryMarker{Reason: "x"})
 		},
@@ -455,7 +448,6 @@ func foreignSilent(sbDir string) map[string]func(context.Context, *Operator) {
 		"GetMonitorSnapshot":               func(c context.Context, o *Operator) { o.GetMonitorSnapshot(c, true) },
 		"GetOfflineMonitorSnapshot":        func(c context.Context, o *Operator) { o.GetOfflineMonitorSnapshot(c) },
 		"GetOfflineStatus":                 func(_ context.Context, o *Operator) { o.GetOfflineStatus(false) },
-		"GetSavedSingboxStatus":            func(_ context.Context, o *Operator) { o.GetSavedSingboxStatus(sbDir) },
 		"GetStatus":                        func(c context.Context, o *Operator) { o.GetStatus(c, true) },
 		"GetSystemSnapshotMeta":            func(_ context.Context, o *Operator) { _, _ = o.GetSystemSnapshotMeta("snap-20261101-000000-a") },
 		"IsRunning":                        func(c context.Context, o *Operator) { o.IsRunning(c) },
@@ -469,8 +461,6 @@ func foreignSilent(sbDir string) map[string]func(context.Context, *Operator) {
 		"LoadTunnelsFile":                  func(_ context.Context, o *Operator) { _, _ = o.LoadTunnelsFile() },
 		"PreviewFromSingbox":               func(_ context.Context, o *Operator) { _, _ = o.PreviewFromSingbox(sbDir) },
 		"PreviewFromSingboxWithOptions":    func(_ context.Context, o *Operator) { _, _ = o.PreviewFromSingboxWithOptions(sbDir, nil) },
-		"PreviewReverseToSingbox":          func(c context.Context, o *Operator) { _, _ = o.PreviewReverseToSingbox(c, sbDir, nil) },
-		"PreviewReverseToSingboxOffline":   func(c context.Context, o *Operator) { _, _ = o.PreviewReverseToSingboxOffline(c, sbDir, nil) },
 		"ReconcileExt":                     func(c context.Context, o *Operator) { _ = o.ReconcileExt(c) },
 		"ReconcileExtNetfilter":            func(c context.Context, o *Operator) { o.ReconcileExtNetfilter(c, ExtConfig{}, nil) },
 		"ReconcileExtNetfilterStrict":      func(c context.Context, o *Operator) { _ = o.ReconcileExtNetfilterStrict(c, ExtConfig{}, nil) },

@@ -128,7 +128,7 @@ func TestHandleMigrateFromDisabledSemantics(t *testing.T) {
 
 	// 1. keep_current must NOT clear .awgm-disabled or start fircd.
 	_, mux, op, settingsStore, _, sbRunning := setupSection3MigrateHandler(t, nil)
-	body := `{"mode":"replace","postSingboxAction":"keep_current","includeTunnels":true,"selectedTunnelIds":["vless-test"]}`
+	body := `{"postSingboxAction":"keep_current","includeTunnels":true,"selectedTunnelIds":["vless-test"]}`
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/firc/migrate", bytes.NewReader([]byte(body))))
 	if rec.Code != http.StatusOK {
@@ -149,7 +149,7 @@ func TestHandleMigrateFromDisabledSemantics(t *testing.T) {
 	}
 
 	// 2. First migration with switch_and_stop from .awgm-disabled succeeds without prior manual Start.
-	body = `{"mode":"replace","postSingboxAction":"switch_and_stop","includeTunnels":true,"selectedTunnelIds":["vless-test"]}`
+	body = `{"postSingboxAction":"switch_and_stop","includeTunnels":true,"selectedTunnelIds":["vless-test"]}`
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/firc/migrate", bytes.NewReader([]byte(body))))
 	if rec.Code != http.StatusOK {
@@ -230,7 +230,7 @@ func TestHandleMigrateMissingRuntimeFailsBeforeMutation(t *testing.T) {
 
 	// 1. switch_standby / switch_and_stop must abort BEFORE creating tunnels.yaml, groups.yaml, or snapshots.
 	for _, action := range []string{"switch_standby", "switch_and_stop"} {
-		body := `{"mode":"replace","postSingboxAction":"` + action + `","includeTunnels":true,"selectedTunnelIds":["vless-test"]}`
+		body := `{"postSingboxAction":"` + action + `","includeTunnels":true,"selectedTunnelIds":["vless-test"]}`
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/firc/migrate", bytes.NewReader([]byte(body))))
 		if rec.Code != http.StatusConflict {
@@ -251,7 +251,7 @@ func TestHandleMigrateMissingRuntimeFailsBeforeMutation(t *testing.T) {
 	}
 
 	// 2. keep_current remains allowed to stage config offline without starting/switching FIRC.
-	keepBody := `{"mode":"replace","postSingboxAction":"keep_current","includeTunnels":true,"selectedTunnelIds":["vless-test"]}`
+	keepBody := `{"postSingboxAction":"keep_current","includeTunnels":true,"selectedTunnelIds":["vless-test"]}`
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/firc/migrate", bytes.NewReader([]byte(keepBody))))
 	if rec.Code != http.StatusOK {

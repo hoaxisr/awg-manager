@@ -798,26 +798,6 @@ func (a *app) completeFircStartup() {
 		return
 	}
 
-	// One-shot migration from sing-box config.d if FIRC runtime is installed and tunnels.yaml & groups.yaml do not exist yet
-	if a.singboxOp != nil && a.fircOp.ValidateBinaries() == nil {
-		_, tunErr := os.Stat(a.fircOp.TunnelsPath())
-		_, grpErr := os.Stat(a.fircOp.GroupsPath())
-		if os.IsNotExist(tunErr) && os.IsNotExist(grpErr) {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			res, err := a.fircOp.MigrateFromSingbox(ctx, a.singboxOp.ConfigDir())
-			cancel()
-			if err != nil {
-				if a.bootLog != nil {
-					a.bootLog.Warn("firc-migration", "", err.Error())
-				}
-			} else if res != nil && (len(res.Tunnels) > 0 || len(res.Groups) > 0) {
-				if a.bootLog != nil {
-					a.bootLog.Info("firc-migration", "", "migrated sing-box tunnels and routing groups to firc")
-				}
-			}
-		}
-	}
-
 	if a.isFircEngineActive() {
 		a.parkSingboxForFirc()
 		if !a.fircOp.ManuallyDisabled() {

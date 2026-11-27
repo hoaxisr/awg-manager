@@ -221,7 +221,7 @@ func TestHandleMigrate_SwitchAndUninstall(t *testing.T) {
 	muxMissing := http.NewServeMux()
 	hMissing.RegisterRoutes(muxMissing, func(next http.HandlerFunc) http.HandlerFunc { return next })
 
-	reqBody := `{"mode":"replace","postSingboxAction":"switch_and_uninstall","includeTunnels":true,"selectedTunnelIds":["vless-test"]}`
+	reqBody := `{"postSingboxAction":"switch_and_uninstall","includeTunnels":true,"selectedTunnelIds":["vless-test"]}`
 	rec := httptest.NewRecorder()
 	muxMissing.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/firc/migrate", bytes.NewReader([]byte(reqBody))))
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "FIRC_RUNTIME_NOT_INSTALLED") {
@@ -234,11 +234,11 @@ func TestHandleMigrate_SwitchAndUninstall(t *testing.T) {
 		t.Fatalf("tunnels.yaml written despite missing runtime")
 	}
 
-	// 2. With FIRC binaries installed, switch_and_uninstall forces verified snapshot even if createSnapshot=false,
-	// switches to firc, and purges sing-box + tunnels while preserving snapshots & saved-singbox.
-	_, mux, op, settingsStore, sbDir, _, sbRunning, purgeCalls, _, _ := setupPurgeTestHarness(t, true)
+	// 2. With FIRC binaries installed, switch_and_uninstall takes the mandatory snapshot,
+	// switches to firc, and purges sing-box + tunnels while preserving snapshots.
+	_, mux, op, settingsStore, _, _, sbRunning, purgeCalls, _, _ := setupPurgeTestHarness(t, true)
 	op.SetSingboxValidator(func(context.Context, string) error { return nil })
-	reqBody = `{"mode":"replace","postSingboxAction":"switch_and_uninstall","createSnapshot":false,"includeTunnels":true,"selectedTunnelIds":["vless-test"]}`
+	reqBody = `{"postSingboxAction":"switch_and_uninstall","includeTunnels":true,"selectedTunnelIds":["vless-test"]}`
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/firc/migrate", bytes.NewReader([]byte(reqBody))))
 	if rec.Code != http.StatusOK {
@@ -249,7 +249,7 @@ func TestHandleMigrate_SwitchAndUninstall(t *testing.T) {
 		t.Fatalf("unexpected migrate switch_and_uninstall result: %+v", res)
 	}
 	if res.SnapshotCreated == nil {
-		t.Fatal("expected mandatory pre-purge snapshot even with createSnapshot=false")
+		t.Fatal("expected mandatory pre-purge snapshot")
 	}
 	if res.RemovedEngine == nil || res.RemovedEngine.Engine != "sing-box" || res.RemovedEngine.TunnelsRemoved != 1 || res.RemovedEngine.SubscriptionsRemoved != 1 {
 		t.Fatalf("unexpected RemovedEngine metadata: %+v", res.RemovedEngine)
@@ -260,143 +260,8 @@ func TestHandleMigrate_SwitchAndUninstall(t *testing.T) {
 	if st, _ := settingsStore.Get(); st.SingboxRouter.RoutingEngine != "firc" {
 		t.Fatalf("expected active engine firc, got %s", st.SingboxRouter.RoutingEngine)
 	}
-	if !op.GetSavedSingboxStatus(sbDir).Available {
-		t.Fatal("expected saved-singbox-config.json preserved")
-	}
 	if snaps, err := op.ListSystemSnapshots(); err != nil || len(snaps) == 0 {
 		t.Fatalf("expected preserved snapshot on disk, err=%v snaps=%+v", err, snaps)
-	}
-}
-
-func TestHandleReverseAndReturn_SwitchAndUninstallFirc(t *testing.T) {
-	// 1. Missing sing-box validator -> 409 SINGBOX_NOT_INSTALLED on both reverse & return-saved-singbox.
-	_, mux, op, settingsStore, sbDir, fircAlive, sbRunning, _, sbInstalled, events := setupPurgeTestHarness(t, true)
-	op.SetSingboxValidator(func(context.Context, string) error { return nil })
-	if err := op.SavePreFircSingboxConfig(sbDir, true); err != nil {
-		t.Fatalf("SavePreFircSingboxConfig: %v", err)
-	}
-	_ = os.WriteFile(op.TunnelsPath(), []byte("tunnels:\n  - id: ft1\n    device: tunvless0\n    enable: true\n"), 0644)
-	_ = os.WriteFile(op.GroupsPath(), []byte("groups:\n  - id: fg1\n    name: FG1\n    interface:\n      - tunvless0\n"), 0644)
-	_ = os.WriteFile(filepath.Join(op.ConfigDir(), "firc.conf"), []byte("app:\n  autolist:\n    enabled: true\n"), 0644)
-
-	_ = settingsStore.Update(func(s *storage.Settings) error {
-		s.SingboxRouter.RoutingEngine = "firc"
-		return nil
-	})
-	fircAlive.Store(true)
-	sbRunning.Store(false)
-
-	op.SetSingboxValidator(nil)
-	op.SetSingboxBinary(filepath.Join(t.TempDir(), "nonexistent-awgm-box.exe"))
-	sbInstalled.Store(false)
-
-	for _, ep := range []struct {
-		url  string
-		body string
-	}{
-		{"/api/firc/migrate/reverse", `{"mode":"merge","postFircAction":"switch_and_uninstall_firc"}`},
-		{"/api/firc/migrate/return-saved-singbox", `{"postFircAction":"switch_and_uninstall_firc"}`},
-	} {
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, ep.url, bytes.NewReader([]byte(ep.body))))
-		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "SINGBOX_NOT_INSTALLED") {
-			t.Fatalf("%s expected 409 SINGBOX_NOT_INSTALLED, got %d body=%s", ep.url, rec.Code, rec.Body.String())
-		}
-		if st, _ := settingsStore.Get(); st.SingboxRouter.RoutingEngine != "firc" {
-			t.Fatalf("%s mutated engine on 409", ep.url)
-		}
-	}
-
-	// 2. With validator restored, return-saved-singbox + switch_and_uninstall_firc forces snapshot,
-	// runs PostRestoreSync BEFORE switching to sing-box, and purges FIRC configs.
-	op.SetSingboxValidator(func(context.Context, string) error { return nil })
-	sbInstalled.Store(true)
-	*events = (*events)[:0]
-
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(
-		rec,
-		httptest.NewRequest(http.MethodPost, "/api/firc/migrate/return-saved-singbox", bytes.NewReader([]byte(`{"createSnapshot":false,"postFircAction":"switch_and_uninstall_firc"}`))),
-	)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("return-saved-singbox switch_and_uninstall_firc failed: %d %s", rec.Code, rec.Body.String())
-	}
-	var env struct {
-		Data firc.ReverseMigrationResult `json:"data"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
-		t.Fatalf("decode response: %v (%s)", err, rec.Body.String())
-	}
-	if env.Data.PostActionApplied != "switch_and_uninstall_firc" {
-		t.Fatalf("expected postActionApplied=switch_and_uninstall_firc, got %+v", env.Data)
-	}
-	if env.Data.SnapshotCreated == nil {
-		t.Fatal("expected mandatory pre-purge snapshot")
-	}
-	if env.Data.RemovedEngine == nil || env.Data.RemovedEngine.Engine != "firc" || env.Data.RemovedEngine.TunnelsRemoved != 1 {
-		t.Fatalf("unexpected RemovedEngine on return-saved-singbox: %+v", env.Data.RemovedEngine)
-	}
-	if !sbRunning.Load() || fircAlive.Load() {
-		t.Fatalf("expected sbRunning=true & fircAlive=false, got sb=%v firc=%v", sbRunning.Load(), fircAlive.Load())
-	}
-	if _, err := os.Stat(op.TunnelsPath()); !os.IsNotExist(err) {
-		t.Fatalf("expected FIRC tunnels.yaml deleted")
-	}
-	if !op.GetSavedSingboxStatus(sbDir).Available {
-		t.Fatal("expected saved-singbox-config.json preserved")
-	}
-
-	syncIdx, switchIdx, purgeIdx := -1, -1, -1
-	for i, ev := range *events {
-		switch ev {
-		case "postRestoreSync":
-			if syncIdx == -1 {
-				syncIdx = i
-			}
-		case "startOther:sing-box":
-			if switchIdx == -1 {
-				switchIdx = i
-			}
-		case "onBeforePurgeFirc":
-			if purgeIdx == -1 {
-				purgeIdx = i
-			}
-		}
-	}
-	if syncIdx < 0 || switchIdx < 0 || purgeIdx < 0 || !(syncIdx < switchIdx && switchIdx < purgeIdx) {
-		t.Fatalf("unexpected call order events=%v (need postRestoreSync < startOther:sing-box < onBeforePurgeFirc)", *events)
-	}
-
-	// 3. Reverse convert (FIRC -> Sing-box) with switch_and_uninstall_firc also works cleanly.
-	_ = os.WriteFile(op.TunnelsPath(), []byte("tunnels:\n  - id: ft2\n    device: tunvless0\n    enable: true\n    sources:\n      - id: s1\n        kind: link\n        link: \"vless://11111111-2222-3333-4444-555555555555@example.com:443?security=tls&sni=example.com#ft2\"\n"), 0644)
-	_ = os.WriteFile(op.GroupsPath(), []byte("groups: []\n"), 0644)
-	_ = settingsStore.Update(func(s *storage.Settings) error {
-		s.SingboxRouter.RoutingEngine = "firc"
-		return nil
-	})
-	fircAlive.Store(true)
-	sbRunning.Store(false)
-	*events = (*events)[:0]
-
-	rec = httptest.NewRecorder()
-	mux.ServeHTTP(
-		rec,
-		httptest.NewRequest(http.MethodPost, "/api/firc/migrate/reverse", bytes.NewReader([]byte(`{"mode":"replace","includeTunnels":true,"selectedTunnelIds":["ft2"],"postFircAction":"switch_and_uninstall_firc"}`))),
-	)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("reverse switch_and_uninstall_firc failed: %d %s", rec.Code, rec.Body.String())
-	}
-	var revEnv struct {
-		Data firc.ReverseMigrationResult `json:"data"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &revEnv); err != nil {
-		t.Fatalf("decode reverse resp: %v", err)
-	}
-	if revEnv.Data.PostActionApplied != "switch_and_uninstall_firc" || revEnv.Data.RemovedEngine == nil || revEnv.Data.RemovedEngine.Engine != "firc" {
-		t.Fatalf("unexpected reverse switch_and_uninstall_firc resp: %+v", revEnv.Data)
-	}
-	if _, err := os.Stat(op.TunnelsPath()); !os.IsNotExist(err) {
-		t.Fatal("expected FIRC tunnels.yaml deleted after reverse switch_and_uninstall_firc")
 	}
 }
 

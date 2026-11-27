@@ -303,47 +303,6 @@ func NormalizeTunnelNodeRefs(t *Tunnel) {
 	}
 }
 
-func tunnelHasSourceForRef(t Tunnel, ref string) bool {
-	if ref == TunnelNodePool || ref == "default" {
-		return true
-	}
-	colon := strings.IndexByte(ref, ':')
-	if colon <= 0 || !isLowerOrMixedHex8(ref[:colon]) {
-		return false
-	}
-	srcID := strings.ToLower(ref[:colon])
-	for _, s := range t.Sources {
-		if !strings.EqualFold(strings.TrimSpace(s.ID), srcID) {
-			continue
-		}
-		if s.Kind == "subscription" || (s.Kind == "" && strings.TrimSpace(s.URL) != "") {
-			return true
-		}
-		if CanonicalFircNodeKeyFromLink(srcID, s.Link) == ref {
-			return true
-		}
-	}
-	return false
-}
-
-// PreserveOrRepairInbounds retains existing tunnel inbound port bindings across merges
-// while normalizing node keys and repairing stale refs that no longer resolve in t.Sources.
-func PreserveOrRepairInbounds(prev []TunnelInbound, t Tunnel) []TunnelInbound {
-	if len(prev) == 0 {
-		return nil
-	}
-	out := make([]TunnelInbound, len(prev))
-	for i, inb := range prev {
-		norm := NormalizeFircNodeRef(inb.Node, t)
-		if norm == "" || !tunnelHasSourceForRef(t, norm) {
-			norm = defaultTunnelNodeKey(t)
-		}
-		inb.Node = norm
-		out[i] = inb
-	}
-	return out
-}
-
 // verifyMigratedTunnelsResolved statically verifies that every configured inbound and priority/exclude
 // rule referencing a direct link source uses a canonical key that exists on that tunnel.
 func verifyMigratedTunnelsResolved(tunnels []Tunnel) error {

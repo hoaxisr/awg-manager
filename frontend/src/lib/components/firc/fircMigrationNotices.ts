@@ -6,8 +6,6 @@ import type {
 	FircEnginePurgeResult,
 	FircGroup,
 	FircMigrationSummary,
-	FircReverseMigrationSummary,
-	FircSavedSingboxRestoreResult,
 	FircSnapshotMeta,
 	FircTunnel,
 } from '$lib/types/firc';
@@ -88,7 +86,7 @@ export function purgeNotice(engine: MigrationEngine, res: FircEnginePurgeResult,
 			? () => m.firc_migration_purge_snapshot_created({ id: snap.id, count: res.preservedSnapshots })
 			: () => m.firc_migration_purge_snapshots_kept({ count: res.preservedSnapshots }),
 		engineStatus: () =>
-			(res.savedSingboxPreserved ? m.firc_migration_purge_engine_saved : m.firc_migration_purge_engine)({
+			m.firc_migration_purge_engine({
 				engine: activeEngine,
 				label,
 				tab: m.firc_migration_tab_snapshots(),
@@ -96,17 +94,17 @@ export function purgeNotice(engine: MigrationEngine, res: FircEnginePurgeResult,
 	};
 }
 
-function snapshotStatus(effective: boolean, createdId: string | undefined, strict: boolean): UiText {
-	if (!effective) return strict ? () => m.firc_migration_snap_disabled_by_user() : () => m.firc_migration_snap_disabled();
+// Снимок перед импортом обязателен: без подтверждённого id это ошибка, а не выбор пользователя.
+function snapshotStatus(createdId: string | undefined): UiText {
 	if (createdId) return () => m.firc_migration_snap_created({ id: createdId });
-	return strict ? () => m.firc_migration_snap_unconfirmed_error() : () => m.firc_migration_snap_unconfirmed();
+	return () => m.firc_migration_snap_unconfirmed_error();
 }
 
 type FwdPostAction = 'switch_standby' | 'switch_and_stop' | 'switch_and_uninstall' | 'keep_current';
 
 export function forwardNotice(
 	res: FircMigrationSummary,
-	opts: { effectiveSnap: boolean; postAction: FwdPostAction; activeEngine: string; hasPostErr: boolean },
+	opts: { postAction: FwdPostAction; activeEngine: string; hasPostErr: boolean },
 ): ExecNotice {
 	const tunnels = res.tunnels?.length ?? res.tunnelsCreated ?? 0;
 	const groups = res.groups?.length ?? res.groupsCreated ?? 0;
@@ -135,7 +133,7 @@ export function forwardNotice(
 			res.configMigrated === false
 				? () => m.firc_migration_fwd_config_not_migrated()
 				: () => m.firc_migration_fwd_config_saved({ tunnels, groups }),
-		snapshotStatus: snapshotStatus(opts.effectiveSnap, res.snapshotCreated?.id, true),
+		snapshotStatus: snapshotStatus(res.snapshotCreated?.id),
 		fircStartStatus,
 		engineStatus,
 		recoveryRequired: res.recoveryRequired,
@@ -152,50 +150,6 @@ export function forwardDoneText(res: FircMigrationSummary): string {
 			: m.firc_migration_fwd_done_snap({ tunnels, groups, id });
 	}
 	return res.removedEngine ? m.firc_migration_fwd_done_removed({ tunnels, groups }) : m.firc_migration_fwd_done({ tunnels, groups });
-}
-
-/** Общая часть возврата на Sing-box: сохранённая копия и обратная миграция. */
-function toSingboxEngineStatus(
-	res: { postActionError?: string; postActionApplied?: string; removedEngine?: FircEnginePurgeResult },
-	keepCurrent: () => string,
-): UiText {
-	const err = res.postActionError;
-	const removed = res.removedEngine;
-	const applied = res.postActionApplied ?? '';
-	if (err) return () => m.firc_migration_to_singbox_switch_failed({ error: err });
-	if (applied === 'keep_current') return keepCurrent;
-	if (removed)
-		return () =>
-			m.firc_migration_to_singbox_switched_removed({ tunnels: removed.tunnelsRemoved, groups: removed.groupsRemoved });
-	return () => m.firc_migration_to_singbox_switched({ action: applied });
-}
-
-export function savedReturnNotice(res: FircSavedSingboxRestoreResult, effectiveSnap: boolean, hasPostErr: boolean): ExecNotice {
-	const files = res.restoredFiles;
-	return {
-		kind: hasPostErr || res.recoveryRequired ? 'error' : 'success',
-		configStatus: res.removedEngine
-			? () => m.firc_migration_saved_config_removed({ files })
-			: () => m.firc_migration_saved_config_kept({ files }),
-		snapshotStatus: snapshotStatus(effectiveSnap, res.snapshotCreated?.id, false),
-		engineStatus: toSingboxEngineStatus(res, () => m.firc_migration_saved_keep_current()),
-		recoveryRequired: res.recoveryRequired,
-	};
-}
-
-export function reverseNotice(res: FircReverseMigrationSummary, effectiveSnap: boolean, hasPostErr: boolean): ExecNotice {
-	const counts = {
-		outbounds: res.outboundsCreated ?? 0,
-		subs: res.subscriptionsMigrated ?? 0,
-		rules: res.rulesMigrated ?? 0,
-	};
-	return {
-		kind: hasPostErr || res.recoveryRequired ? 'error' : 'success',
-		configStatus: () => m.firc_migration_rev_config_saved(counts),
-		snapshotStatus: snapshotStatus(effectiveSnap, res.snapshotCreated?.id, false),
-		engineStatus: toSingboxEngineStatus(res, () => m.firc_migration_rev_keep_current()),
-		recoveryRequired: res.recoveryRequired,
-	};
 }
 
 export function restoreNotice(restored: FircSnapshotMeta): ExecNotice {
