@@ -10381,5 +10381,7 @@
 	"servers_ext_wiz_s2_public_ip_cgnat_mismatch_generic": "Warning: the router is behind a private IP / CGNAT. Public IP mode works only if ports are forwarded to the router upstream.",
 	"servers_ext_wiz_s2_switch_private_ip": "Switch to \"Private IP / CGNAT\"",
 	"servers_ext_wiz_s2_public_ip_confirm_behind_nat": "I have external port forwarding configured to the router (DMZ / upstream router / VPS) — continue in Public IP mode",
-	"firc_router_view_journal": "Journal"
+	"firc_router_view_journal": "Journal",
+	"warpscout_adaptive_label": "Automatic obfuscation selection",
+	"warpscout_search_seconds": "Search budget, s"
 }

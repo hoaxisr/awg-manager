@@ -97,8 +97,8 @@
 	</div>
 
 	{#if filters.protocol === 'awg'}
- <label><input type="checkbox" bind:checked={filters.adaptive}/> ?????????? ??????????</label>
- {#if filters.adaptive}<label>?????? ??????, ? <input type="number" min="6" max="120" placeholder="30" bind:value={filters.searchSeconds}/></label>{/if}
+ <label><input type="checkbox" {disabled} bind:checked={filters.adaptive}/> {m.warpscout_adaptive_label()}</label>
+ {#if filters.adaptive}<label>{m.warpscout_search_seconds()} <input type="number" min="6" max="120" placeholder="30" {disabled} bind:value={filters.searchSeconds}/></label>{/if}
  {/if}
  <div class="filters-bar">
 		<Toggle

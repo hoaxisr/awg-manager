@@ -10785,5 +10785,7 @@
 	"servers_ext_wiz_s2_public_ip_cgnat_mismatch_generic": "Внимание: роутер находится за серым IP / CGNAT. Режим «Белый IP» сработает только при внешнем пробросе портов до роутера.",
 	"servers_ext_wiz_s2_switch_private_ip": "Переключиться на «Серый IP / CGNAT»",
 	"servers_ext_wiz_s2_public_ip_confirm_behind_nat": "У меня настроен внешний проброс портов до роутера (DMZ / роутер выше / VPS) — продолжить в режиме «Белый IP»",
-	"firc_router_view_journal": "Журнал"
+	"firc_router_view_journal": "Журнал",
+	"warpscout_adaptive_label": "Автоподбор обфускации",
+	"warpscout_search_seconds": "Бюджет поиска, с"
 }
