@@ -172,7 +172,7 @@
 					title={withDotTitle ? ifaceDotTooltip(rt, group, item.id) : undefined}
 				></span>
 			{/if}
-			<span class="iface-row-text">{label}</span>
+			<span class="iface-row-text" title={label}>{label}</span>
 			{#if isActMember}
 				<span class="pop-active-tag">{m.firc_fallback_active_tag()}</span>
 			{/if}
