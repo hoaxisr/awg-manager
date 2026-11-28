@@ -8,6 +8,26 @@ import (
 	"testing"
 )
 
+func TestCachedRoutingEngineDoesNotInitializeSettings(t *testing.T) {
+	dir := t.TempDir()
+	store := NewSettingsStore(dir)
+	if _, known := store.CachedRoutingEngine(); known {
+		t.Fatal("unloaded settings reported a routing engine")
+	}
+	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
+		t.Fatalf("reading an unloaded store created files: %v, %v", entries, err)
+	}
+	if err := store.Update(func(st *Settings) error {
+		st.SingboxRouter.RoutingEngine = "firc"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if engine, known := store.CachedRoutingEngine(); !known || engine != "firc" {
+		t.Fatalf("cached engine = %q, known = %v", engine, known)
+	}
+}
+
 func TestSettingsStore_LoadDefault(t *testing.T) {
 	tmpDir := t.TempDir()
 	store := NewSettingsStore(tmpDir)

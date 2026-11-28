@@ -1137,6 +1137,20 @@ func (s *SettingsStore) Get() (*Settings, error) {
 	return s.Load()
 }
 
+// CachedRoutingEngine reads the selected engine without triggering Load,
+// which can migrate settings or create a default file.
+func (s *SettingsStore) CachedRoutingEngine() (string, bool) {
+	if s == nil {
+		return "", false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.settings == nil {
+		return "", false
+	}
+	return s.settings.SingboxRouter.RoutingEngine, true
+}
+
 // Snapshot возвращает глубокую копию настроек (JSON round-trip под RLock).
 // Для маршала наружу (HTTP-ответы): Get() возвращает ЖИВОЙ объект, и его
 // map-поля (ServerPeerSecrets, ServerInterfaceMeta) нельзя читать

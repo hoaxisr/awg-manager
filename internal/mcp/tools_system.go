@@ -22,6 +22,16 @@ type logsOut struct {
 
 func registerSystemTools(s *mcp.Server, d Deps) {
 	mcp.AddTool(s, &mcp.Tool{
+		Name: "get_firc_status",
+		Description: "Read AWGM Route (FIRC) engine selection, runtime availability and up to 32 routing groups. " +
+			"Only activeOutbound confirms an egress. Inspect groupsSource and groupsComplete before concluding a group is absent.",
+		Annotations: readOnly("AWGM Route status"),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, FIRCStatus, error) {
+		out, err := d.FIRCStatus(ctx)
+		return nil, out, err
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_system_status",
 		Description: "Router and daemon overview: version, boot phase, WAN interfaces, sing-box state, auth mode, and the raw system info (model, firmware, memory, kernel module).",
 		Annotations: readOnly("System status"),

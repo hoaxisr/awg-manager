@@ -6,6 +6,26 @@ import "time"
 // daemon's storage/service types so localdeps can convert by JSON
 // round-trip; the fake and cmd/mcp-dev use them directly.
 
+// FIRCStatus describes one group inventory, taken from fircd or from disk.
+type FIRCStatus struct {
+	Selected         *bool             `json:"selected,omitempty" jsonschema:"whether AWGM Route is the selected routing engine; omitted until settings are known"`
+	Runtime          string            `json:"runtime" jsonschema:"responding if fircd answered this call; unknown when unobserved or unreachable"`
+	RecoveryRequired bool              `json:"recoveryRequired" jsonschema:"the AWGM operator has flagged recovery as required"`
+	GroupsSource     string            `json:"groupsSource" jsonschema:"runtime for the fircd group inventory, saved for groups.yaml, unknown if neither was readable"`
+	GroupsTotal      *int              `json:"groupsTotal,omitempty" jsonschema:"group count in this source before the output cap; omitted if unknown"`
+	GroupsComplete   bool              `json:"groupsComplete" jsonschema:"all groups from groupsSource are included; a complete saved list describes only saved configuration"`
+	Groups           []FIRCGroupStatus `json:"groups"`
+}
+
+type FIRCGroupStatus struct {
+	ID                  string   `json:"id"`
+	Name                string   `json:"name" jsonschema:"user supplied group label"`
+	Enabled             bool     `json:"enabled" jsonschema:"enabled in the reported configuration"`
+	ConfiguredOutbounds []string `json:"configuredOutbounds" jsonschema:"configured interface preference order; dns and block are special actions"`
+	Live                *bool    `json:"live,omitempty" jsonschema:"fircd's observed group health; omitted when unknown"`
+	ActiveOutbound      string   `json:"activeOutbound,omitempty" jsonschema:"egress reported by fircd for an enabled live routing group; omitted when unconfirmed or when the group only resolves DNS or blocks"`
+}
+
 type WANInterface struct {
 	Name     string `json:"name"`
 	Up       bool   `json:"up"`

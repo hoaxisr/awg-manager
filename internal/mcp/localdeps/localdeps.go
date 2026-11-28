@@ -25,6 +25,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/diagnostics"
 	"github.com/hoaxisr/awg-manager/internal/dnsroute"
 	"github.com/hoaxisr/awg-manager/internal/events"
+	"github.com/hoaxisr/awg-manager/internal/firc"
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/managed"
 	"github.com/hoaxisr/awg-manager/internal/managed/peerip"
@@ -209,6 +210,8 @@ type (
 // Config lists every daemon dependency. Nil optional fields make the
 // corresponding tool return "not available on this build".
 type Config struct {
+	FIRC           *firc.Operator
+	RoutingEngine  func() (string, bool)
 	Version        string
 	InstanceID     string
 	BootInProgress func() bool
