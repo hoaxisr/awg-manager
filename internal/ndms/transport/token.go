@@ -99,7 +99,8 @@ func (t *tokenTransport) revoke(noTokenCommand bool) error {
 }
 
 func (t *tokenTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	tok := t.current()
+	ctx := req.Context()
+	tok := within(ctx, t.current)
 	resp, err := t.base.RoundTrip(withToken(req, tok))
 	if err != nil || !rejectedToken(resp) {
 		return resp, err
@@ -107,8 +108,8 @@ func (t *tokenTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	// 403 отбит до исполнения команды, повтор безопасен и для POST — если
 	// тело можно переиграть. fresh == "" — перевыпуска не было (пауза, сбой):
 	// повтор без заголовка, 5.2 пока пускает и так.
-	fresh := t.regenerate(tok)
-	if fresh == tok || (req.Body != nil && req.GetBody == nil) {
+	fresh := within(ctx, func() string { return t.regenerate(tok) })
+	if ctx.Err() != nil || fresh == tok || (req.Body != nil && req.GetBody == nil) {
 		return resp, nil
 	}
 	retry := req.Clone(req.Context())
@@ -121,6 +122,20 @@ func (t *tokenTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	resp.Body.Close()
 	return t.base.RoundTrip(withToken(retry, fresh))
+}
+
+// within ждёт f не дольше ctx: выпуск токена — до трёх вызовов ndmc под t.mu.
+// Сама f доработает и без ждущего: прерванный выпуск оставил бы на роутере
+// несохранённый admin-токен. По истечении ctx — "", запрос всё равно отменён.
+func within(ctx context.Context, f func() string) string {
+	done := make(chan string, 1)
+	go func() { done <- f() }()
+	select {
+	case v := <-done:
+		return v
+	case <-ctx.Done():
+		return ""
+	}
 }
 
 func rejectedToken(resp *http.Response) bool {
@@ -136,8 +151,10 @@ func rejectedToken(resp *http.Response) bool {
 	return false
 }
 
+// withToken не ставит токен на запрос, порождённый редиректом (req.Response):
+// иначе он ушёл бы на адрес, который назвал ответивший.
 func withToken(req *http.Request, tok string) *http.Request {
-	if tok == "" {
+	if tok == "" || req.Response != nil {
 		return req
 	}
 	r := req.Clone(req.Context())

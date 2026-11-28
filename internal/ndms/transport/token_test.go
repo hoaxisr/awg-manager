@@ -2,9 +2,11 @@ package transport
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -465,5 +467,69 @@ func TestSetTokenFile_KeepsGate(t *testing.T) {
 	SetTokenFile(filepath.Join(t.TempDir(), "rci-token"), func() bool { return true })
 	if !tokens.enabled() {
 		t.Fatal("гейт потерян")
+	}
+}
+
+// Зависший ndmc не держит запрос дольше его дедлайна, а выпуск всё равно
+// доводится до конца и сохраняется.
+func TestToken_IssueDoesNotOutliveRequestDeadline(t *testing.T) {
+	release := make(chan struct{})
+	f := &fakeNdmc{gen: []string{tokA}}
+	tt, path := newTestTokens(t, f, rtFunc(func(r *http.Request) (*http.Response, error) {
+		return nil, r.Context().Err()
+	}))
+	tt.ndmc = func(cmd string) (string, error) {
+		<-release
+		return f.run(cmd)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://rci.test/", nil)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := tt.RoundTrip(req)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("err = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("запрос ждёт ndmc дольше дедлайна")
+	}
+
+	close(release)
+	if got := tt.current(); got != tokA {
+		t.Fatalf("токен после отмены запроса: %q", got)
+	}
+	if b, _ := os.ReadFile(path); strings.TrimSpace(string(b)) != tokA {
+		t.Fatalf("в файле %q", b)
+	}
+}
+
+func TestToken_NotSentAfterRedirect(t *testing.T) {
+	var leaked string
+	other := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		leaked = r.Header.Get(tokenHeader)
+	}))
+	defer other.Close()
+	var first string
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		first = r.Header.Get(tokenHeader)
+		http.Redirect(w, r, other.URL, http.StatusFound)
+	}))
+	defer origin.Close()
+	tt, path := newTestTokens(t, &fakeNdmc{}, http.DefaultTransport)
+	os.WriteFile(path, []byte(tokA), 0o600)
+
+	resp, err := (&http.Client{Transport: tt}).Get(origin.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if first != tokA || leaked != "" {
+		t.Fatalf("первый запрос %q, после редиректа %q", first, leaked)
 	}
 }

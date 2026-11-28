@@ -3,7 +3,10 @@ package transport
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -281,8 +284,13 @@ func (b *Batcher) flush(ctx context.Context, pending []readReq) {
 		// unwrapByPath[path], чтобы callers получили тот же shape.
 		body := rawItem
 		if itemErr == nil {
-			if unwrapped, uerr := unwrapBatchItem(rawItem, unwrapByPath[path]); uerr == nil {
+			unwrapped, uerr := unwrapBatchItem(rawItem, unwrapByPath[path])
+			var nested nestedStatusError
+			switch {
+			case uerr == nil:
 				body = unwrapped
+			case errors.As(uerr, &nested):
+				body, itemErr = nil, nested.asError(path, rawItem)
 			}
 			// На ошибке unwrap'а оставляем raw — caller возможно умеет
 			// парсить wrapped (или error будет видна при Unmarshal).
@@ -305,7 +313,7 @@ func (b *Batcher) flush(ctx context.Context, pending []readReq) {
 //	result   = {"release":"5.0","title":"x"}
 //
 // Если по пути нет ключа или значение не map — возвращает error;
-// caller (см. flush) делает fallback на rawItem.
+// caller (см. flush) делает fallback на rawItem. Исключение — nestedStatusError.
 func unwrapBatchItem(rawItem []byte, keys []string) ([]byte, error) {
 	if len(keys) == 0 {
 		return rawItem, nil
@@ -321,6 +329,9 @@ func unwrapBatchItem(rawItem []byte, keys []string) ([]byte, error) {
 		}
 		next, ok := m[k]
 		if !ok {
+			if msg := statusErrorMessage(m["status"]); msg != "" {
+				return nil, nestedStatusError(msg)
+			}
 			return nil, fmt.Errorf("unwrap: missing key %q", k)
 		}
 		node = next
@@ -330,6 +341,37 @@ func unwrapBatchItem(rawItem []byte, keys []string) ([]byte, error) {
 		return nil, fmt.Errorf("unwrap: marshal: %w", err)
 	}
 	return out, nil
+}
+
+// nestedStatusError — отказ NDMS внутри обёртки пути, на месте отсутствующего
+// узла: {"show":{"rc":{"status":[{"status":"error","message":"not found: …"}]}}}
+// (стенд 5.02.B.5, 28.11.2026). Верхнего "status" там нет, ExtractError слеп.
+type nestedStatusError string
+
+func (e nestedStatusError) Error() string { return string(e) }
+
+// asError приводит отказ к тому, что отдал бы прямой GET того же пути.
+func (e nestedStatusError) asError(path string, body []byte) error {
+	if strings.HasPrefix(string(e), "not found") {
+		return &HTTPError{Method: "POST-BATCH", Path: path, Status: http.StatusNotFound, Body: body}
+	}
+	return &NDMSAppError{Method: "POST-BATCH", Path: path, Message: string(e), Body: body}
+}
+
+// statusErrorMessage — сообщение первой ошибки в массиве "status", иначе "".
+func statusErrorMessage(v any) string {
+	list, _ := v.([]any)
+	for _, item := range list {
+		m, _ := item.(map[string]any)
+		if m["status"] == "error" {
+			msg, _ := m["message"].(string)
+			if msg == "" {
+				msg = "ndms error"
+			}
+			return msg
+		}
+	}
+	return ""
 }
 
 // distributeAll отдаёт одинаковый result/error всем receivers в batch'е.
