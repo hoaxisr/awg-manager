@@ -293,12 +293,12 @@ func (c *Client) UpgradePackages(names []string) (string, error) {
 	return out, err
 }
 
-// Install installs packages by name.
+// Install installs packages by name or an IPK from /opt/tmp.
 func (c *Client) Install(names []string) (string, error) {
 	if len(names) == 0 {
 		return "", fmt.Errorf("no packages specified")
 	}
-	if err := validatePkgNames(names); err != nil {
+	if err := validateInstallTargets(names); err != nil {
 		return "", err
 	}
 	args := append([]string{"install"}, names...)
@@ -449,6 +449,20 @@ func parseUpgradable(text string) []Package {
 // pkgNameRegex enforces a safe opkg package name format.
 // Leading hyphen is forbidden because opkg treats "-name" as a CLI flag.
 var pkgNameRegex = regexp.MustCompile(`^[a-zA-Z0-9._+][a-zA-Z0-9.\-_+]*$`)
+
+func validateInstallTargets(names []string) error {
+	for _, name := range names {
+		if pkgNameRegex.MatchString(name) {
+			continue
+		}
+		base, ok := strings.CutPrefix(name, "/opt/tmp/")
+		if ok && strings.HasSuffix(base, ".ipk") && pkgNameRegex.MatchString(base) {
+			continue
+		}
+		return fmt.Errorf("invalid package name format: %q", name)
+	}
+	return nil
+}
 
 func validatePkgNames(names []string) error {
 	for _, name := range names {

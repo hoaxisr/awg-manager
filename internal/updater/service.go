@@ -93,6 +93,9 @@ func (s *Service) channel() string {
 	return channelStable
 }
 
+// Channel returns the current update channel.
+func (s *Service) Channel() string { return s.channel() }
+
 func (s *Service) SetDownloader(dl Downloader) {
 	if dl == nil {
 		dl = newDefaultDownloader()
@@ -227,6 +230,20 @@ func (s *Service) CheckNow(ctx context.Context) *UpdateInfo {
 	s.mu.Unlock()
 
 	return info
+}
+
+// DownloadPackage downloads a package from the selected channel and verifies
+// its checksum. The caller owns the returned file and must remove it.
+func (s *Service) DownloadPackage(ctx context.Context, channel, packageName string) (string, error) {
+	base := channelBaseURL(channel)
+	archDir := archSuffixToRepoDir(archSuffix())
+	pkgsURL := fmt.Sprintf("%s/%s/Packages.gz", base, archDir)
+	pkg, err := fetchLatestPackageWithDownloader(ctx, s.downloader, pkgsURL, packageName, versionComparator(channel), s.statsHeaders())
+	if err != nil {
+		return "", fmt.Errorf("entware repo: %w", err)
+	}
+	downloadURL := fmt.Sprintf("%s/%s/%s", base, archDir, pkg.Filename)
+	return downloadPackage(ctx, downloadURL, pkg.SHA256, s.downloader)
 }
 
 // ApplyUpgrade downloads and installs the update from the entware repo.

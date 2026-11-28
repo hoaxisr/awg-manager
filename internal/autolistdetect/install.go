@@ -39,6 +39,10 @@ type packageManager interface {
 	Install([]string) (string, error)
 }
 
+type packageDownloader interface {
+	DownloadPackage(ctx context.Context, channel, packageName string) (string, error)
+}
+
 type keySource interface {
 	GetApiKey() string
 	IsAuthEnabled() bool
@@ -52,10 +56,12 @@ type Installer struct {
 	keys    keySource
 	confirm func(ctx context.Context, running bool) error
 
-	keyPath     string
-	enabledPath string
-	initPath    string
-	runInit     func(context.Context, string) error
+	keyPath         string
+	enabledPath     string
+	initPath        string
+	runInit         func(context.Context, string) error
+	channel         func() string
+	developPackages packageDownloader
 }
 
 func NewInstaller(pkg packageManager, keys keySource) *Installer {
@@ -71,9 +77,11 @@ func (i *Installer) SetConfirm(confirm func(ctx context.Context, running bool) e
 // SetInstaller connects opkg and AWGM's key store to the detection service.
 // panelVersion is the awg-manager version; the satellite package is released
 // with the same version, so an installed package below it is outdated.
-func (s *Service) SetInstaller(pkg packageManager, keys keySource, panelVersion string) {
+func (s *Service) SetInstaller(pkg packageManager, keys keySource, panelVersion string, channel func() string, developPackages packageDownloader) {
 	installer := NewInstaller(pkg, keys)
 	installer.SetConfirm(s.confirmState)
+	installer.channel = channel
+	installer.developPackages = developPackages
 	s.installer = installer
 	s.panelVersion = panelVersion
 }
@@ -86,8 +94,7 @@ func (s *Service) controlFilePath() string {
 }
 
 // packageState reports the installed package version and whether it is
-// below the panel version. Build metadata (+rN) is ignored: the feed carries
-// release versions only.
+// below the panel version, including +rN revisions on the develop channel.
 func (s *Service) packageState() (version string, outdated bool) {
 	b, err := os.ReadFile(s.controlFilePath())
 	if err != nil {
@@ -99,7 +106,7 @@ func (s *Service) packageState() (version string, outdated bool) {
 			break
 		}
 	}
-	return version, version != "" && semver.Compare(version, s.panelVersion) < 0
+	return version, version != "" && semver.CompareWithRevision(version, s.panelVersion) < 0
 }
 
 // AutoUpgrade brings an installed, outdated satellite up to the panel
@@ -249,7 +256,19 @@ func (i *Installer) Install(ctx context.Context) error {
 		}
 	}
 	updateOutput, updateErr := i.pkg.Update()
-	output, installErr := i.pkg.Install([]string{PackageName})
+	packageRef := PackageName
+	if i.channel != nil && i.channel() == "develop" {
+		if i.developPackages == nil {
+			return errors.New("autolist develop package downloader is not configured")
+		}
+		path, err := i.developPackages.DownloadPackage(ctx, "develop", PackageName)
+		if err != nil {
+			return fmt.Errorf("download develop %s: %w", PackageName, err)
+		}
+		packageRef = path
+		defer os.Remove(path)
+	}
+	output, installErr := i.pkg.Install([]string{packageRef})
 	if installErr == nil {
 		if _, err := os.Stat(i.initPath); err != nil {
 			installErr = fmt.Errorf("package installed no init script: %w", err)

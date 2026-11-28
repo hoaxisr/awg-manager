@@ -33,3 +33,15 @@ func TestValidatePkgNames(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateInstallTargets(t *testing.T) {
+	good := []string{"awgmautolist", "/opt/tmp/awgmautolist_2.21.1+r5_aarch64-3.10-kn.ipk"}
+	if err := validateInstallTargets(good); err != nil {
+		t.Fatalf("valid targets rejected: %v", err)
+	}
+	for _, bad := range []string{"/tmp/x.ipk", "/opt/tmp/../x.ipk", "/opt/tmp/x.tar", "--force-depends"} {
+		if err := validateInstallTargets([]string{bad}); err == nil {
+			t.Errorf("target %q accepted", bad)
+		}
+	}
+}

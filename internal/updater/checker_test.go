@@ -229,6 +229,37 @@ func TestCheck_DevelopDetectsNewerRevision(t *testing.T) {
 	}
 }
 
+func TestDownloadPackage_DevelopAutolist(t *testing.T) {
+	arch := archSuffix()
+	archDir := archSuffixToRepoDir(arch)
+	ipk := "awgmautolist_2.21.1+r5_" + arch + "-kn.ipk"
+	packages := "Package: awgmautolist\nVersion: 2.21.1+r5\nFilename: " + ipk + "\n"
+	var indexReq downloader.Request
+	var fileReq downloader.FileRequest
+	dl := &fakeDownloader{
+		readAllFn: func(_ context.Context, req downloader.Request) ([]byte, downloader.ResponseMeta, error) {
+			indexReq = req
+			return gzipBytes(t, packages), downloader.ResponseMeta{StatusCode: http.StatusOK}, nil
+		},
+		downloadFileFn: func(_ context.Context, req downloader.FileRequest) (downloader.FileResult, error) {
+			fileReq = req
+			return downloader.FileResult{}, nil
+		},
+	}
+	svc := &Service{downloader: dl}
+	path, err := svc.DownloadPackage(context.Background(), "develop", "awgmautolist")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(indexReq.URL, "/develop/") || !strings.HasSuffix(indexReq.URL, archDir+"/Packages.gz") {
+		t.Fatalf("index URL=%q", indexReq.URL)
+	}
+	wantURL := entwareRepoURL + "/develop/" + archDir + "/" + ipk
+	if fileReq.URL != wantURL || path != downloadDir+"/"+ipk {
+		t.Fatalf("URL=%q path=%q", fileReq.URL, path)
+	}
+}
+
 func TestCheck_DevelopSameRevisionUpToDate(t *testing.T) {
 	arch := archSuffix()
 	archDir := archSuffixToRepoDir(arch)

@@ -143,16 +143,13 @@ var startDetachedUpgrade = func(ipkPath string, done func(error)) error {
 	return nil
 }
 
-// beforeInstall (может быть nil) зовётся с путём пакета после скачивания и
-// проверки, перед установкой: снимок не пишется, если обновление не дошло до
-// установки.
-func upgradeWithDownloader(ctx context.Context, downloadURL, wantSHA256 string, dl Downloader, beforeInstall func(ipkPath string), done func(error)) error {
+func downloadPackage(ctx context.Context, downloadURL, wantSHA256 string, dl Downloader) (string, error) {
 	if dl == nil {
 		dl = newDefaultDownloader()
 	}
 	filename, err := ipkFilenameFromURL(downloadURL)
 	if err != nil {
-		return err
+		return "", err
 	}
 	ipkPath := downloadDir + "/" + filename
 
@@ -171,10 +168,21 @@ func upgradeWithDownloader(ctx context.Context, downloadURL, wantSHA256 string, 
 		Atomic:       true,
 	})
 	if err != nil {
-		return fmt.Errorf("download IPK: %w", err)
+		return "", fmt.Errorf("download IPK: %w", err)
 	}
 	if err := verifyFileSHA256(ipkPath, wantSHA256); err != nil {
 		os.Remove(ipkPath)
+		return "", err
+	}
+	return ipkPath, nil
+}
+
+// beforeInstall (может быть nil) зовётся с путём пакета после скачивания и
+// проверки, перед установкой: снимок не пишется, если обновление не дошло до
+// установки.
+func upgradeWithDownloader(ctx context.Context, downloadURL, wantSHA256 string, dl Downloader, beforeInstall func(ipkPath string), done func(error)) error {
+	ipkPath, err := downloadPackage(ctx, downloadURL, wantSHA256, dl)
+	if err != nil {
 		return err
 	}
 	if beforeInstall != nil {
@@ -234,7 +242,7 @@ func isSafeIPKFilename(name string) bool {
 	if name == "" || name == "." || name == "/" {
 		return false
 	}
-	if !strings.HasPrefix(name, pkgName+"_") {
+	if !strings.HasPrefix(name, pkgName+"_") && !strings.HasPrefix(name, "awgmautolist_") {
 		return false
 	}
 	if !strings.HasSuffix(strings.ToLower(name), ".ipk") {
