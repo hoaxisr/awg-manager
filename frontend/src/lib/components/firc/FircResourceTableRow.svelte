@@ -240,6 +240,7 @@
 		vertical-align: middle;
 	}
 	.lc-delay {
+		justify-content: center;
 		gap: 0.35rem;
 		min-width: 0;
 	}

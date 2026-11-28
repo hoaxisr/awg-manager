@@ -13,7 +13,7 @@
 </script>
 
 <div class="tunnel-table-wrap">
-	<table class="tunnel-data-table singbox-tunnel-table">
+	<table class="tunnel-data-table singbox-tunnel-table firc-tunnel-table">
 		<colgroup>
 			<col class="col-delay" />
 			<col class="col-name" />
@@ -53,3 +53,10 @@
 		</tbody>
 	</table>
 </div>
+
+<style>
+	/* До пяти кнопок действий (у остальных таблиц три) — общие 92px их режут. */
+	.firc-tunnel-table {
+		--tunnel-list-col-actions: 168px;
+	}
+</style>

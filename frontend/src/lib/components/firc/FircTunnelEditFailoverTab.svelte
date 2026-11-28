@@ -172,6 +172,8 @@
 		display: grid;
 		grid-template-columns: 1fr 1fr;
 		gap: 8px;
+		/* Подпись в две строки не должна сдвигать соседнее поле. */
+		align-items: end;
 	}
 	.field {
 		display: flex;

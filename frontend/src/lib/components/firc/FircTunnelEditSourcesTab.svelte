@@ -135,13 +135,47 @@
 								{/if}
 							{/if}
 						</div>
+						<div class="source-url-line">
+							{#if src.kind === 'subscription'}
+								<input
+									class="inp mono compact-inp"
+									type="text"
+									bind:value={src.url}
+									placeholder={m.firc_tunnel_edit_sub_url_placeholder()}
+								/>
+							{:else}
+								<input
+									class="inp mono compact-inp"
+									type="text"
+									bind:value={src.link}
+									placeholder="vless://... | vmess://... | hy2://... | anytls://... | mieru://... | tt://..."
+								/>
+							{/if}
+							<div class="source-side">
+								{#if src.kind === 'subscription'}
+									<select
+										class="inp compact-select"
+										value={src.interval ?? 21600}
+										onchange={(e) => {
+											src.interval = Number((e.currentTarget as HTMLSelectElement).value);
+										}}
+									>
+										{#each SUB_INTERVALS as opt}
+											<option value={opt.value}>{opt.label()}</option>
+										{/each}
+									</select>
+								{/if}
+								<IconButton
+									variant="danger"
+									title={m.firc_tunnel_edit_remove_source()}
+									ariaLabel={m.firc_tunnel_edit_remove_source()}
+									onclick={() => onremovesource(src.id)}
+								>
+									<Trash2 size={14} />
+								</IconButton>
+							</div>
+						</div>
 						{#if src.kind === 'subscription'}
-							<input
-								class="inp mono compact-inp"
-								type="text"
-								bind:value={src.url}
-								placeholder={m.firc_tunnel_edit_sub_url_placeholder()}
-							/>
 							{#if headersOpenId === src.id}
 								<textarea
 									class="inp mono"
@@ -162,37 +196,7 @@
 									{formatFircSubError(subLive.error)}
 								</div>
 							{/if}
-						{:else}
-							<input
-								class="inp mono compact-inp"
-								type="text"
-								bind:value={src.link}
-								placeholder="vless://... | vmess://... | hy2://... | anytls://... | mieru://... | tt://..."
-							/>
 						{/if}
-					</div>
-					<div class="source-side">
-						{#if src.kind === 'subscription'}
-							<select
-								class="inp compact-select"
-								value={src.interval ?? 21600}
-								onchange={(e) => {
-									src.interval = Number((e.currentTarget as HTMLSelectElement).value);
-								}}
-							>
-								{#each SUB_INTERVALS as opt}
-									<option value={opt.value}>{opt.label()}</option>
-								{/each}
-							</select>
-						{/if}
-						<IconButton
-							variant="danger"
-							title={m.firc_tunnel_edit_remove_source()}
-							ariaLabel={m.firc_tunnel_edit_remove_source()}
-							onclick={() => onremovesource(src.id)}
-						>
-							<Trash2 size={14} />
-						</IconButton>
 					</div>
 				</div>
 			{/each}
@@ -263,10 +267,6 @@
 		gap: 8px;
 	}
 	.source-row {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 10px;
 		padding: 8px 10px;
 		border: 1px solid var(--border);
 		border-radius: 8px;
@@ -276,15 +276,32 @@
 		display: flex;
 		flex-direction: column;
 		gap: 6px;
-		flex: 1;
 		min-width: 0;
 	}
 	.source-title-line {
 		display: flex;
 		align-items: center;
+		flex-wrap: wrap;
 		gap: 8px;
 	}
+	.source-title-line input {
+		flex: 1 1 120px;
+		width: auto;
+		min-width: 0;
+	}
+	.source-url-line {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 10px;
+	}
+	.source-url-line > input {
+		flex: 1 1 220px;
+		width: auto;
+		min-width: 0;
+	}
 	.source-side {
+		margin-left: auto;
 		display: flex;
 		align-items: center;
 		gap: 6px;
