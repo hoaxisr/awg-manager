@@ -8,6 +8,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/api"
 	"github.com/hoaxisr/awg-manager/internal/singbox"
+	"github.com/hoaxisr/awg-manager/internal/sys/opkg"
 	"github.com/hoaxisr/awg-manager/internal/updater"
 )
 
@@ -94,6 +95,7 @@ func (a *app) setupSingbox() {
 	// that earlier point in main.go's setup sequence.
 	a.updaterService = updater.New(version, a.settingsStore, a.loggingService, a.dataDir, &singboxUpdaterAdapter{op: a.singboxOp})
 	a.updaterService.SetEventBus(a.eventBus)
+	a.autolistService.SetInstaller(opkg.NewClient(), a.settingsStore, version, a.updaterService.Channel, a.updaterService)
 	// Start — в wiring_server, после SetDownloader/SetFeatures: SetDownloader
 	// пишет поля без синхронизации с горутиной проверок.
 }

@@ -22,7 +22,6 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/env"
 	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
-	"github.com/hoaxisr/awg-manager/internal/sys/opkg"
 	"github.com/hoaxisr/awg-manager/internal/sys/osdetect"
 	"github.com/hoaxisr/awg-manager/internal/terminal"
 	"github.com/hoaxisr/awg-manager/internal/testing"
@@ -168,7 +167,6 @@ func (a *app) setupTunnels() {
 	// Autolist is an independent package; AWGM owns install/control, key
 	// rotation and the authenticated UI proxy to its loopback API.
 	a.autolistService = autolistdetect.NewService()
-	a.autolistService.SetInstaller(opkg.NewClient(), a.settingsStore, version)
 
 	a.geoDataStore = geodata.NewGeoDataStore(a.dataDir)
 	a.geoDataStore.SetAppLogger(a.loggingService)

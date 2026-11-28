@@ -11,18 +11,20 @@ import (
 )
 
 type fakePackageManager struct {
-	updateErr  error
-	installErr error
-	calls      []string
-	onInstall  func()
+	updateErr      error
+	installErr     error
+	calls          []string
+	installTargets []string
+	onInstall      func()
 }
 
 func (f *fakePackageManager) Update() (string, error) {
 	f.calls = append(f.calls, "update")
 	return "update output", f.updateErr
 }
-func (f *fakePackageManager) Install([]string) (string, error) {
+func (f *fakePackageManager) Install(targets []string) (string, error) {
 	f.calls = append(f.calls, "install")
+	f.installTargets = append([]string(nil), targets...)
 	if f.onInstall != nil {
 		f.onInstall()
 	}
@@ -36,6 +38,19 @@ type fakeKeys struct {
 
 func (f fakeKeys) GetApiKey() string   { return f.key }
 func (f fakeKeys) IsAuthEnabled() bool { return f.auth }
+
+type fakePackageDownloader struct {
+	path    string
+	err     error
+	channel string
+	name    string
+}
+
+func (f *fakePackageDownloader) DownloadPackage(_ context.Context, channel, packageName string) (string, error) {
+	f.channel = channel
+	f.name = packageName
+	return f.path, f.err
+}
 
 // countingKeys: auth on, no key; counts the installer's precondition checks.
 type countingKeys struct{ checks int }
@@ -98,6 +113,45 @@ func TestInstallWritesKeyAndConfirms(t *testing.T) {
 	}
 }
 
+func TestInstallDevelopUsesDownloadedIPK(t *testing.T) {
+	installer, pkg, dir := testInstaller(t)
+	ipkPath := filepath.Join(dir, "awgmautolist_2.21.1+r5_aarch64-3.10-kn.ipk")
+	if err := os.WriteFile(ipkPath, []byte("ipk"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	downloads := &fakePackageDownloader{path: ipkPath}
+	installer.channel = func() string { return "develop" }
+	installer.developPackages = downloads
+	if err := installer.Install(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(pkg.calls, ",") != "update,install" {
+		t.Fatalf("calls=%v, want update and local install", pkg.calls)
+	}
+	if len(pkg.installTargets) != 1 || pkg.installTargets[0] != ipkPath {
+		t.Fatalf("install targets=%v", pkg.installTargets)
+	}
+	if downloads.channel != "develop" || downloads.name != PackageName {
+		t.Fatalf("download=%q %q", downloads.channel, downloads.name)
+	}
+	if _, err := os.Stat(ipkPath); !os.IsNotExist(err) {
+		t.Fatalf("downloaded IPK was not removed: %v", err)
+	}
+}
+
+func TestInstallDevelopDownloadFailureDoesNotInstall(t *testing.T) {
+	installer, pkg, _ := testInstaller(t)
+	downloadErr := errors.New("download failed")
+	installer.channel = func() string { return "develop" }
+	installer.developPackages = &fakePackageDownloader{err: downloadErr}
+	if err := installer.Install(context.Background()); !errors.Is(err, downloadErr) {
+		t.Fatalf("err=%v", err)
+	}
+	if strings.Join(pkg.calls, ",") != "update" {
+		t.Fatalf("opkg calls=%v", pkg.calls)
+	}
+}
+
 // An installed package is upgraded in place: the disabled intent survives and
 // the confirmation expects a stopped satellite.
 func TestInstallUpgradeKeepsDisabledIntent(t *testing.T) {
@@ -134,7 +188,7 @@ func TestPackageStateOutdated(t *testing.T) {
 	}{
 		{"2.20.1", "2.20.3", true},
 		{"0.10.0-1", "2.20.3", true},
-		{"2.20.3", "2.20.3+r5", false},
+		{"2.20.3", "2.20.3+r5", true},
 		{"2.20.3", "2.20.2", false},
 		{"2.20.3", "dev", false},
 	}
