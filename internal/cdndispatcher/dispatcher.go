@@ -19,8 +19,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/hoaxisr/awg-manager/internal/ndms/transport"
 )
 
 // Dispatcher coordinates HTTP traffic from the router's origin proxy port (default :9009)
@@ -34,7 +32,16 @@ type Dispatcher struct {
 	listener net.Listener
 	exited   chan struct{}
 	running  bool
+	rci      RCIReader // ставится до Start; nil — preserve-host не проверяем
 }
+
+// RCIReader — чтение RCI через общий NDMS-клиент (семафор, токен, User-Agent).
+type RCIReader interface {
+	GetRaw(ctx context.Context, path string) ([]byte, error)
+}
+
+// SetRCI задаёт читателя RCI; вызывать до Start.
+func (d *Dispatcher) SetRCI(rci RCIReader) { d.rci = rci }
 
 // CDNRouteRule defines a domain routing rule for CDN Ingress.
 type CDNRouteRule struct {
@@ -988,7 +995,7 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Local loopback requests (e.g. KeenDNS relay on 127.0.0.1) can route directly by path:
 	if isLoopback {
-		go EnsureKeeneticPreserveHost()
+		go d.ensureKeeneticPreserveHost()
 		if matchesXray {
 			if snap.xrayProxy != nil {
 				w.Header().Set("X-CDN-Route", "xray")
@@ -1197,7 +1204,7 @@ func (d *Dispatcher) startLocked() error {
 		d.mu.Unlock()
 	}()
 
-	go EnsureKeeneticPreserveHost()
+	go d.ensureKeeneticPreserveHost()
 
 	return nil
 }
@@ -1335,7 +1342,7 @@ func (d *Dispatcher) applyConfigLocked(cfg Config, mode applyMode) error {
 	// Address didn't change: atomic snapshot swap
 	d.cfg = newCfg
 	d.snapshot.Store(newSnap)
-	go EnsureKeeneticPreserveHost()
+	go d.ensureKeeneticPreserveHost()
 	return nil
 }
 
@@ -1396,12 +1403,15 @@ func runNdmc(cmdStr string) error {
 	return errors.New("ndmc not found")
 }
 
-// EnsureKeeneticPreserveHost checks Keenetic's local RCI for any "ip http proxy" entries
+// ensureKeeneticPreserveHost checks Keenetic's local RCI for any "ip http proxy" entries
 // that target either this dispatcher (port 9009) or the Telegram proxy multiplexer (port 8085),
 // and invokes ndmc/ndmq to enable "preserve-host" so incoming requests retain their Host header.
 // nginx роутера (его глобальные настройки, HTTP/2, лимиты) мы не трогаем:
 // это системный веб-сервер, смотрящий в интернет.
-func EnsureKeeneticPreserveHost() {
+func (d *Dispatcher) ensureKeeneticPreserveHost() {
+	if d.rci == nil {
+		return
+	}
 	preserveHostMu.Lock()
 	if time.Since(lastPreserveHostCheck) < 5*time.Second {
 		preserveHostMu.Unlock()
@@ -1413,23 +1423,15 @@ func EnsureKeeneticPreserveHost() {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:79/rci/show/ip/http/proxy", nil)
+	raw, err := d.rci.GetRaw(ctx, "/show/ip/http/proxy")
 	if err != nil {
-		return
-	}
-	resp, err := (&http.Client{Transport: transport.SharedTransport()}).Do(req)
-	if err != nil {
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
 		return
 	}
 
 	var proxies map[string]struct {
 		Upstream string `json:"upstream"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&proxies); err != nil {
+	if err := json.Unmarshal(raw, &proxies); err != nil {
 		return
 	}
 

@@ -19,7 +19,3 @@ var baseTransport = &http.Transport{
 
 // sharedTransport — rciTransport (HTTP или SCGI, scgi.go) с токеном X-NDMA-TKN (5.2+).
 var sharedTransport http.RoundTripper = tokens
-
-// SharedTransport отдаёт транспорт RCI для тех, кто строит свой http.Client
-// к 127.0.0.1:79 мимо Client, — чтобы и они ходили с токеном.
-func SharedTransport() http.RoundTripper { return sharedTransport }

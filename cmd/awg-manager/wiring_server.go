@@ -85,6 +85,9 @@ func (a *app) setupServer() {
 		PublicHostname: "",
 		XrayPathPrefix: "/cdn-bridge",
 	})
+	if a.ndmsTransportClient != nil {
+		cdnDisp.SetRCI(a.ndmsTransportClient)
+	}
 	a.cdnDispatcher = cdnDisp
 
 	onReload := func() {

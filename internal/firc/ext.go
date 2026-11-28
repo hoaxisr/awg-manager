@@ -406,7 +406,7 @@ func isProcessAlive(substrings ...string) bool {
 	return false
 }
 
-type rciRootSnapshot struct {
+type rciServersSnapshot struct {
 	WireguardServer struct {
 		Config struct {
 			Enable bool   `json:"enable"`
@@ -449,24 +449,49 @@ type rciRootSnapshot struct {
 	} `json:"crypto"`
 }
 
-func fetchKeeneticRCISnapshot(ctx context.Context) (rciRootSnapshot, bool) {
-	var snap rciRootSnapshot
+// rciAbsentTTL — на сколько запоминается отсутствие раздела: NDMS пишет E в
+// журнал роутера на каждое чтение несуществующего пути, а монитор зовёт нас
+// на каждом обновлении.
+const rciAbsentTTL = 10 * time.Minute
+
+// fetchRCIServers читает только разделы VPN-серверов установленных компонентов
+// (соответствие — из веб-интерфейса прошивки). Всё дерево `GET /rci/` ради них
+// стоило ~0,7 с против ~12 мс на раздел (стенд 5.02.B.5, 28.11.2026).
+func (op *Operator) fetchRCIServers(ctx context.Context) (rciServersSnapshot, bool) {
+	var snap rciServersSnapshot
+	if op.rci == nil {
+		return snap, false
+	}
 	reqCtx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
 	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, "http://127.0.0.1:79/rci/", nil)
-	if err != nil {
-		return snap, false
-	}
-	resp, err := (&http.Client{Transport: transport.SharedTransport()}).Do(req)
-	if err != nil {
-		return snap, false
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return snap, false
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&snap); err != nil {
-		return snap, false
+	for _, s := range []struct {
+		path       string
+		components []string // хватает любого
+		dst        any
+	}{
+		{"/show/rc/wireguard-server", []string{"wireguard-server"}, &snap.WireguardServer},
+		{"/show/rc/sstp-server", []string{"sstp-server"}, &snap.SstpServer},
+		{"/show/rc/vpn-server", []string{"vpnserver"}, &snap.VpnServer},
+		{"/show/rc/oc-server", []string{"ocserver"}, &snap.OcServer},
+		{"/show/rc/crypto", []string{"vpnserver-l2tp", "virtual-ip-server"}, &snap.Crypto},
+	} {
+		if !slices.ContainsFunc(s.components, op.hasComponent) {
+			continue
+		}
+		if at, ok := op.rciAbsent.Load(s.path); ok && time.Since(at.(time.Time)) < rciAbsentTTL {
+			continue
+		}
+		raw, err := op.rci.GetRaw(reqCtx, s.path)
+		var httpErr *transport.HTTPError
+		var appErr *transport.NDMSAppError // та же «not found» в батче
+		if (errors.As(err, &httpErr) && httpErr.Status == http.StatusNotFound) ||
+			(errors.As(err, &appErr) && strings.HasPrefix(appErr.Message, "not found")) {
+			op.rciAbsent.Store(s.path, time.Now())
+			continue
+		}
+		if err != nil || json.Unmarshal(raw, s.dst) != nil {
+			return rciServersSnapshot{}, false
+		}
 	}
 	return snap, true
 }
@@ -627,7 +652,7 @@ func (op *Operator) ListAvailableServers(ctx context.Context) []InboundServerIte
 		openfluxUp = isProcessAlive("openflux")
 	}
 
-	rci, rciOK := fetchKeeneticRCISnapshot(ctx)
+	rci, rciOK := op.fetchRCIServers(ctx)
 	wgSysUp := isNetInterfaceUp("nwg0")
 	wgSysSubnet := "172.16.6.0/24"
 	sstpUp := false

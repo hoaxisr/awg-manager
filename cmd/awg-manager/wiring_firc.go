@@ -680,7 +680,13 @@ func resolveFircConfigDir(dataDir string) string {
 func (a *app) setupFirc() {
 	configDir := resolveFircConfigDir(a.dataDir)
 
+	// nil-указатель в интерфейсе не равен nil.
+	var fircRCI firc.RCIReader
+	if a.ndmsTransportClient != nil {
+		fircRCI = a.ndmsTransportClient
+	}
 	a.fircOp = firc.NewOperator(firc.Options{
+		RCI:         fircRCI,
 		Logger:      slog.Default().With("component", "firc"),
 		AppLog:      a.loggingService,
 		ConfigDir:   configDir,

@@ -8,9 +8,9 @@ import (
 	"testing"
 )
 
-// Запрос к :79 мимо SharedTransport уходит без токена: W «obsoleted
-// unauthenticated» на 5.2 и без SCGI-обхода на 5.1.9.
-func TestDirectRCICallersUseSharedTransport(t *testing.T) {
+// Запрос к :79 мимо Client уходит без токена (W «obsoleted unauthenticated» на
+// 5.2), без SCGI-обхода на 5.1.9 и мимо семафора.
+func TestNoDirectRCICallers(t *testing.T) {
 	for _, root := range []string{"../..", "../../../cmd"} {
 		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") ||
@@ -21,12 +21,9 @@ func TestDirectRCICallersUseSharedTransport(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			for _, line := range strings.Split(string(b), "\n") {
-				if strings.Contains(line, `"http://127.0.0.1:79`) || strings.Contains(line, `"http://localhost:79`) {
-					if !strings.Contains(string(b), "SharedTransport()") {
-						t.Errorf("%s: запрос к RCI без transport.SharedTransport()", path)
-					}
-					break
+			for _, url := range []string{`"http://127.0.0.1:79`, `"http://localhost:79`} {
+				if strings.Contains(string(b), url) {
+					t.Errorf("%s: прямой запрос к RCI, нужен transport.Client", path)
 				}
 			}
 			return nil

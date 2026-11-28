@@ -25,6 +25,7 @@ import (
 
 	"github.com/hoaxisr/awg-manager/internal/logging"
 	"github.com/hoaxisr/awg-manager/internal/storage"
+	"github.com/hoaxisr/awg-manager/internal/sys/ndmsinfo"
 )
 
 // ErrRecoveryRequired is returned when a previous engine switch or runtime config rollback
@@ -69,6 +70,13 @@ type Options struct {
 	ConntrackPath string
 	// Foreign — поиск стороннего firc; nil — на каталоге вне системы его нет.
 	Foreign *ForeignDetector
+	// RCI — чтения NDMS; nil — подсети VPN-серверов берутся по умолчанию.
+	RCI RCIReader
+}
+
+// RCIReader — чтение RCI через общий NDMS-клиент (семафор, токен, User-Agent).
+type RCIReader interface {
+	GetRaw(ctx context.Context, path string) ([]byte, error)
 }
 
 // EngineSwitchHooks defines the callbacks used by SwitchEngine to coordinate
@@ -213,6 +221,9 @@ type MigrationJournalCommitFaultHooks struct {
 // extCloudClockMu) must never acquire any lock listed above.
 type Operator struct {
 	foreign                  *ForeignDetector
+	rci                      RCIReader
+	hasComponent             func(name string) bool
+	rciAbsent                sync.Map // путь раздела → time.Time последнего 404
 	foreignTicks             atomic.Int32
 	recoveryDeferred         atomic.Bool
 	runtimeObs               runtimeObserver
@@ -345,6 +356,8 @@ func NewOperator(opts Options) *Operator {
 		startTimeout:  opts.StartTimeout,
 		conntrackPath: opts.ConntrackPath,
 		foreign:       opts.Foreign,
+		rci:           opts.RCI,
+		hasComponent:  ndmsinfo.HasComponent,
 		client:        NewClient(opts.SocketPath),
 		singboxBinary: "/opt/bin/sing-box",
 		cloudEpoch:    1,
