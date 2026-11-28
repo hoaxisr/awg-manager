@@ -52,7 +52,7 @@ func (l *Local) FIRCStatus(ctx context.Context) (mcpsrv.FIRCStatus, error) {
 	}
 	if out.GroupsSource != "runtime" {
 		saved, err := op.LoadGroupsFile()
-		if err != nil {
+		if err != nil || saved == nil {
 			return out, nil
 		}
 		groups = saved

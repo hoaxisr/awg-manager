@@ -82,6 +82,36 @@ func TestFIRCStatusSources(t *testing.T) {
 	}
 }
 
+func TestFIRCStatusEmptySavedInventory(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		file       []byte // nil leaves groups.yaml absent
+		wantSource string
+		wantTotal  *int
+	}{
+		{"missing file", nil, "unknown", nil},
+		{"empty file", []byte{}, "unknown", nil},
+		{"explicit empty list", []byte("groups: []"), "saved", ptr(0)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			op := firc.NewOperator(firc.Options{ConfigDir: t.TempDir()})
+			if tc.file != nil {
+				if err := os.WriteFile(op.GroupsPath(), tc.file, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			out, err := New(Config{FIRC: op}).FIRCStatus(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out.GroupsSource != tc.wantSource || !reflect.DeepEqual(out.GroupsTotal, tc.wantTotal) ||
+				out.GroupsComplete != (tc.wantTotal != nil) || len(out.Groups) != 0 {
+				t.Fatalf("unexpected saved inventory: %+v", out)
+			}
+		})
+	}
+}
+
 func TestFIRCStatusLivePage(t *testing.T) {
 	groups := []firc.Group{
 		{ID: "fallback", Enable: true, Live: true, Active: "tun1", Interface: firc.GroupInterface{"tun0", "tun1"}, Check: &firc.GroupCheck{URL: "https://secret.invalid/"}},
