@@ -221,8 +221,6 @@ func (c *Controller) Pause() error {
 	return nil
 }
 
-func (c *Controller) Resume(ctx context.Context) error { return c.Start(ctx) }
-
 func (c *Controller) Stop() error { return c.Pause() }
 
 func (c *Controller) Status() CaptureStatus {

@@ -12,10 +12,9 @@
 // auth: AWGM is the only door to it, so nothing secret leaves this machine
 // and nothing is forwarded upstream.
 //
-// The Target/Candidate/HistoryEntry/Status types mirror the satellite's
-// operational documents (its internal/model package, see TECHNICAL_SPEC
-// sections 8 and 11). The satellite is a separate module and is never
-// imported, so the wire types are duplicated here on purpose.
+// CheckEvidence and Status mirror the satellite's operational documents.
+// The satellite is a separate module and is never imported, so the wire types
+// are duplicated here on purpose.
 package autolistdetect
 
 import (
@@ -51,7 +50,7 @@ const (
 	// initScript is the Entware lifecycle script; enabledFile holds the
 	// user's enable/disable intent as a shell assignment the script sources.
 	// Before the satellite's config directory existed the file lived at
-	// legacyEnabledFile; it is read as a fallback and migrated on write.
+	// legacyEnabledFile; it is moved into the working directory on first read/write.
 	initScript = "/opt/etc/init.d/S99awgmautolist"
 
 	// satDir is the satellite's config directory; enabledFile is the panel
@@ -92,26 +91,13 @@ const (
 // Error never proves a block (TECHNICAL_SPEC section 2).
 const verdictNotChecked = "not-checked"
 
-// legacyEnabledFile is the pre-directory intent path, still honored until
-// the first write moves it; legacyKeyFile — the pre-directory API-key path,
-// still removed by the uninstall cleanup. Vars, not consts: tests repoint
+// legacyEnabledFile and legacyKeyFile are pre-directory paths used only for
+// one-time migration and uninstall cleanup. Vars, not consts: tests repoint
 // them into a temp dir.
 var (
 	legacyEnabledFile = "/opt/etc/awgmautolist.enabled"
 	legacyKeyFile     = "/opt/etc/awgmautolist.key"
 )
-
-// Target identifies an observed destination. Domain is the registered zone
-// used by candidates and rules; Host is the exact SNI/hostname the probes
-// talk to. Domain is empty for IP-only targets, where one confirmed blocked
-// port covers the whole address.
-type Target struct {
-	Domain  string `json:"domain,omitempty"`
-	Host    string `json:"host,omitempty"`
-	IP      string `json:"ip,omitempty"`
-	Network string `json:"network"`
-	Port    uint16 `json:"port"`
-}
 
 // CheckEvidence is the recorded outcome of one active check.
 type CheckEvidence struct {
@@ -122,72 +108,13 @@ type CheckEvidence struct {
 	CheckedAt  string `json:"checkedAt,omitempty"`
 }
 
-// CoverageEvidence is the recorded outcome of the coverage/exclusion pass
-// that runs before any active probe.
-type CoverageEvidence struct {
-	Covered    bool   `json:"covered,omitempty"`
-	Excluded   bool   `json:"excluded,omitempty"`
-	Detail     string `json:"detail,omitempty"`
-	DurationMS int64  `json:"durationMs,omitempty"`
-}
-
-// Candidate is one row of the satellite's candidate table with the full
-// decision evidence: AF_PACKET reason, direct/WAN/tunnel verdicts with
-// durations, coverage result, chosen interface/outbound, first/last
-// observation times and the state (checking, waiting, added, rejected).
-type Candidate struct {
-	ID      string `json:"id"`
-	Target  Target `json:"target"`
-	Reason  string `json:"reason,omitempty"`
-	State   string `json:"state"`
-	FirstAt string `json:"firstAt,omitempty"`
-	LastAt  string `json:"lastAt,omitempty"`
-
-	// Клиент, чей трафик вызвал решение: IP и MAC из заголовка кадра.
-	ClientIP  string `json:"clientIP,omitempty"`
-	ClientMAC string `json:"clientMAC,omitempty"`
-
-	Coverage CoverageEvidence `json:"coverage"`
-	Direct   CheckEvidence    `json:"direct"`
-	WAN      CheckEvidence    `json:"wan"`
-	Tunnel   CheckEvidence    `json:"tunnel"`
-
-	TargetInterface string `json:"targetInterface,omitempty"`
-	TargetOutbound  string `json:"targetOutbound,omitempty"`
-
-	CorrelationID string `json:"correlationID,omitempty"`
-	LastError     string `json:"lastError,omitempty"`
-}
-
-// HistoryEntry is one recorded satellite action: when, manual or automatic,
-// on which domain/IP with protocol and port, through which interface and
-// outbound, why, and what the write or removal actually resulted in.
-type HistoryEntry struct {
-	At      string `json:"at,omitempty"`
-	Domain  string `json:"domain,omitempty"`
-	Host    string `json:"host,omitempty"`
-	IP      string `json:"ip,omitempty"`
-	Network string `json:"network,omitempty"`
-	Port    uint16 `json:"port,omitempty"`
-	Action  string `json:"action,omitempty"`
-	Source  string `json:"source,omitempty"`
-	// Клиент, чей трафик вызвал решение. Пусто у старых записей журнала.
-	ClientIP  string `json:"clientIP,omitempty"`
-	ClientMAC string `json:"clientMAC,omitempty"`
-	Interface string `json:"interface,omitempty"`
-	Outbound  string `json:"outbound,omitempty"`
-	Reason    string `json:"reason,omitempty"`
-	Result    string `json:"result,omitempty"`
-	// Why is a legacy field of the old satellite history.
-	Why string `json:"why,omitempty"`
-}
-
 // Status is the snapshot for the UI main screen: lifecycle (running/version/
 // installed/enabled), capture state, observed protocols, chosen tunnel and
-// DNS, last WAN verdict, check counters, rolling addition budget and the
-// candidate/history tables. Absent or stopped satellite yields the empty
-// status with Installed/Enabled read from the files — that is a normal
-// state, not an error.
+// DNS, last WAN verdict, check counters and the rolling addition budget.
+// The candidate/history tables are not part of the operational status; they
+// are paged on demand through the /list proxy. Absent or stopped satellite
+// yields the empty status with Installed/Enabled read from the files — that
+// is a normal state, not an error.
 type Status struct {
 	// Running — the satellite answered its status endpoint.
 	Running bool   `json:"running"`
@@ -200,6 +127,7 @@ type Status struct {
 	// means it is below the awg-manager version the satellite ships with.
 	PackageVersion  string `json:"packageVersion,omitempty"`
 	UpdateAvailable bool   `json:"updateAvailable,omitempty"`
+	SetupRequired   bool   `json:"setupRequired,omitempty"`
 
 	CaptureActive bool     `json:"captureActive,omitempty"`
 	CapturePaused bool     `json:"capturePaused,omitempty"`
@@ -219,11 +147,9 @@ type Status struct {
 	QueuedChecks int `json:"queuedChecks,omitempty"`
 
 	// Rolling hourly addition budget for the UI exhaustion indicator.
-	AddsUsedHour int `json:"addsUsedHour,omitempty"`
-	AddsLimit    int `json:"addsLimit,omitempty"`
-
-	Candidates []Candidate    `json:"candidates"`
-	History    []HistoryEntry `json:"history"`
+	AddsUsedHour      int `json:"addsUsedHour,omitempty"`
+	AddsLimit         int `json:"addsLimit,omitempty"`
+	WaitingCandidates int `json:"waitingCandidates,omitempty"`
 
 	// LastError — why a process that should be alive did not answer.
 	LastError string `json:"lastError,omitempty"`
@@ -236,22 +162,23 @@ type Status struct {
 
 // satelliteSnapshot is the operational status document the satellite serves
 // on GET /status. Lifecycle fields (Installed/Enabled) live on the AWGM side
-// and are deliberately absent here.
+// and are deliberately absent here; the unbounded candidate/history tables
+// stay out of this document and are fetched page by page via POST /list.
 type satelliteSnapshot struct {
-	Version         string         `json:"version"`
-	CaptureActive   bool           `json:"captureActive"`
-	CapturePaused   bool           `json:"capturePaused"`
-	Protocols       []string       `json:"protocols"`
-	TargetInterface string         `json:"targetInterface"`
-	TargetOutbound  string         `json:"targetOutbound"`
-	ResolveVia      string         `json:"resolveVia"`
-	LastWAN         CheckEvidence  `json:"lastWAN"`
-	ActiveChecks    int            `json:"activeChecks"`
-	QueuedChecks    int            `json:"queuedChecks"`
-	AddsUsedHour    int            `json:"addsUsedHour"`
-	AddsLimit       int            `json:"addsLimit"`
-	Candidates      []Candidate    `json:"candidates"`
-	History         []HistoryEntry `json:"history"`
+	Version           string        `json:"version"`
+	CaptureActive     bool          `json:"captureActive"`
+	CapturePaused     bool          `json:"capturePaused"`
+	Protocols         []string      `json:"protocols"`
+	TargetInterface   string        `json:"targetInterface"`
+	TargetOutbound    string        `json:"targetOutbound"`
+	ResolveVia        string        `json:"resolveVia"`
+	LastWAN           CheckEvidence `json:"lastWAN"`
+	ActiveChecks      int           `json:"activeChecks"`
+	QueuedChecks      int           `json:"queuedChecks"`
+	AddsUsedHour      int           `json:"addsUsedHour"`
+	AddsLimit         int           `json:"addsLimit"`
+	WaitingCandidates int           `json:"waitingCandidates"`
+	SetupRequired     bool          `json:"setupRequired"`
 }
 
 // Service detects and polls the satellite. It is safe for concurrent use
@@ -321,21 +248,19 @@ func (s *Service) installed() bool {
 	return err == nil
 }
 
-// desiredEnabled reads the user's intent. A missing file means the package
-// default: enabled. Anything other than an explicit "ENABLED=no" enables.
-// The legacy flat-path file is honored while it is the only one (the init
-// script applies the same fallback); the first write consolidates it.
+// desiredEnabled reads the working-directory intent after the one-time
+// legacy migration. A missing file means the package default: enabled.
 func (s *Service) desiredEnabled() bool { return enabledIntent(s.enabledStatePath()) }
 
 func enabledIntent(path string) bool {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		// No new file: an old flat-path file may still hold the intent.
-		legacy, legacyErr := os.ReadFile(legacyEnabledFile)
-		if legacyErr == nil && strings.TrimSpace(string(legacy)) == "ENABLED=no" {
-			return false
+		if migrateLegacyEnabledFile(filepath.Dir(path)) == nil {
+			b, err = os.ReadFile(path)
 		}
-		return true
+		if err != nil {
+			return true
+		}
 	}
 	return strings.TrimSpace(string(b)) != "ENABLED=no"
 }
@@ -373,7 +298,7 @@ func (s *Service) writeEnabledState(state string) error {
 
 // migrateLegacyEnabledFile moves the legacy flat-path intent file into dir
 // when it is the only copy. Best effort: any failure keeps the old file, and
-// the init script's fallback keeps it working.
+// the init script retries the same migration before sourcing it.
 func migrateLegacyEnabledFile(dir string) error {
 	if _, err := os.Stat(legacyEnabledFile); err != nil {
 		return err // absent (or unreadable): nothing to migrate
@@ -563,8 +488,6 @@ func (s *Service) emptyStatus() Status {
 		Enabled:         s.installed() && s.desiredEnabled(),
 		Protocols:       []string{},
 		LastWAN:         CheckEvidence{Verdict: verdictNotChecked},
-		Candidates:      []Candidate{},
-		History:         []HistoryEntry{},
 	}
 }
 
@@ -596,8 +519,8 @@ func (s *Service) GetStatus(ctx context.Context) Status {
 		st.QueuedChecks = snap.QueuedChecks
 		st.AddsUsedHour = snap.AddsUsedHour
 		st.AddsLimit = snap.AddsLimit
-		st.Candidates = nonNil(snap.Candidates)
-		st.History = nonNil(snap.History)
+		st.SetupRequired = snap.SetupRequired
+		st.WaitingCandidates = snap.WaitingCandidates
 		return st
 	}
 	// No usable answer. Silence plus a stale or absent pid file is the
@@ -634,7 +557,8 @@ func NewProxy(svc *Service) *Proxy { return &Proxy{svc: svc} }
 // design (TECHNICAL_SPEC sections 1 and 8): probes run on its own schedule,
 // exclusions are edited in its config. /add and /remove change router rules
 // and /config changes the satellite's mode; /history/clear clears only the
-// journal. The API layer gates mutations with the expert guard.
+// journal. /list pages the candidate/history tables. The API layer gates
+// mutations with the expert guard.
 var allowedPaths = map[string]bool{
 	"/status":        true,
 	"/config":        true,
@@ -645,6 +569,7 @@ var allowedPaths = map[string]bool{
 	"/remove":        true,
 	"/recheck":       true,
 	"/history/clear": true,
+	"/list":          true,
 }
 
 // commandPaths need the long command timeout: they run coverage, resolve

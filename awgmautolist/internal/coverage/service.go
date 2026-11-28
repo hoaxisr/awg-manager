@@ -4,8 +4,6 @@ package coverage
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -19,20 +17,17 @@ import (
 	"github.com/hoaxisr/awg-manager/awgmautolist/internal/engine"
 )
 
+// Client is the indexed coverage API plus the DNS catalog the resolver needs.
+// The legacy non-indexed rules/list + rulesets/match fallback is gone:
+// production always talks to the indexed endpoints.
 type Client interface {
-	Rules(context.Context) ([]awgm.Rule, error)
-	RuleSets(context.Context) ([]awgm.RuleSet, error)
-	MatchRuleSets(context.Context, string, []string) ([]awgm.RuleSetMatchResult, error)
+	CoverageIndexSnapshot(context.Context, []string) (awgm.CoverageSnapshot, error)
+	MatchRuleSetsIndexed(context.Context, string, []string) (awgm.IndexedRuleSetMatch, error)
 	awgm.DNSCatalogClient
 }
 
-type indexedClient interface {
-	CoverageIndexSnapshot(context.Context, []string) (awgm.CoverageSnapshot, error)
-	MatchRuleSetsIndexed(context.Context, string, []string) (awgm.IndexedRuleSetMatch, error)
-}
-
 type indexedMatcher struct {
-	client   indexedClient
+	client   Client
 	expected uint64
 }
 
@@ -51,32 +46,17 @@ func (m indexedMatcher) MatchRuleSets(ctx context.Context, input string, tags []
 }
 
 type Service struct {
-	client  Client
-	routes  *awgm.RouteResolver
-	indexed indexedClient
+	client Client
+	routes *awgm.RouteResolver
 }
 
 type snapshot struct {
 	rules      []awgm.Rule
-	sets       []awgm.RuleSet
-	revision   string
 	generation uint64
 }
 
 func New(client Client, routes *awgm.RouteResolver) *Service {
-	s := &Service{client: client, routes: routes}
-	if indexed, ok := client.(indexedClient); ok {
-		s.indexed = indexed
-	}
-	return s
-}
-
-func (s *Service) CurrentRevision(ctx context.Context) (string, error) {
-	snapshot, err := s.loadSnapshot(ctx, nil)
-	if err != nil {
-		return "", err
-	}
-	return snapshot.revision, nil
+	return &Service{client: client, routes: routes}
 }
 
 type evaluation struct {
@@ -118,10 +98,9 @@ func (s *Service) Check(ctx context.Context, suspect capture.Suspect, cfg config
 	}
 	// Rules and every per-tag result must belong to one generation. An apply
 	// landing mid-check causes a bounded whole-snapshot retry, never mixed
-	// gen-N rules with gen-N+1 content under an old revision.
+	// gen-N rules with gen-N+1 content.
 	for attempt := 0; attempt < 3; attempt++ {
-		result, revision, err := s.checkCurrent(ctx, suspect, cfg)
-		outcome.Revision = revision
+		result, err := s.checkCurrent(ctx, suspect, cfg)
 		if errors.Is(err, awgm.ErrCoverageGenerationChanged) {
 			continue
 		}
@@ -130,15 +109,12 @@ func (s *Service) Check(ctx context.Context, suspect capture.Suspect, cfg config
 	return finish(fmt.Errorf("coverage generation changed repeatedly"))
 }
 
-func (s *Service) checkCurrent(ctx context.Context, suspect capture.Suspect, cfg config.Config) (evaluation, string, error) {
+func (s *Service) checkCurrent(ctx context.Context, suspect capture.Suspect, cfg config.Config) (evaluation, error) {
 	snapshotResult, err := s.loadSnapshot(ctx, cfg.ExcludeRuleSets)
 	if err != nil {
-		return evaluation{}, "", err
+		return evaluation{}, err
 	}
-	var matcher awgm.RuleSetMatcher = s.client
-	if s.indexed != nil {
-		matcher = indexedMatcher{client: s.indexed, expected: snapshotResult.generation}
-	}
+	matcher := indexedMatcher{client: s.client, expected: snapshotResult.generation}
 	evaluator := awgm.NewCoverageEvaluator(matcher)
 	clientIP, _ := netip.ParseAddr(suspect.ClientIP)
 	input := awgm.CoverageInput{
@@ -149,7 +125,7 @@ func (s *Service) checkCurrent(ctx context.Context, suspect capture.Suspect, cfg
 	// IP-only UDP has no name stage and never invokes DNS.
 	if suspect.Target.Domain == "" {
 		result, err := s.evaluate(ctx, evaluator, snapshotResult.rules, cfg.ExcludeRuleSets, input)
-		return result, snapshotResult.revision, err
+		return result, err
 	}
 
 	// Cheap name checks run before DNS. Target.IP is deliberately cleared so
@@ -159,7 +135,7 @@ func (s *Service) checkCurrent(ctx context.Context, suspect capture.Suspect, cfg
 	nameInput.Target.IP = ""
 	nameResult, err := s.evaluate(ctx, evaluator, snapshotResult.rules, cfg.ExcludeRuleSets, nameInput)
 	if err != nil || nameResult.excluded || nameResult.coverage.Covered {
-		return nameResult, snapshotResult.revision, err
+		return nameResult, err
 	}
 
 	// DNS and the already-observed AF_PACKET address proceed in parallel.
@@ -195,24 +171,24 @@ func (s *Service) checkCurrent(ctx context.Context, suspect capture.Suspect, cfg
 	done.Wait()
 	if observedErr != nil {
 		if dnsErr != nil {
-			return evaluation{}, snapshotResult.revision, errors.Join(observedErr, dnsErr)
+			return evaluation{}, errors.Join(observedErr, dnsErr)
 		}
-		return evaluation{}, snapshotResult.revision, observedErr
+		return evaluation{}, observedErr
 	}
 	// Only a DNS failure permits an observed-only final verdict. With DNS
 	// success, resolved addresses still need their own exclusion-first pass.
 	if (observedResult.excluded || observedResult.coverage.Covered) && dnsErr != nil {
-		return observedResult, snapshotResult.revision, nil
+		return observedResult, nil
 	}
 	if dnsErr != nil {
-		return evaluation{}, snapshotResult.revision, dnsErr
+		return evaluation{}, dnsErr
 	}
 
 	// Preserve full rule semantics for conditions that combine a name and an
 	// address. Exclusions run before routing on every newly resolved IP.
 	input.Addresses = dnsAddresses
 	result, err := s.evaluate(ctx, evaluator, snapshotResult.rules, cfg.ExcludeRuleSets, input)
-	return result, snapshotResult.revision, err
+	return result, err
 }
 
 // evaluate deliberately checks exclusions before routing. Any unsupported,
@@ -228,45 +204,20 @@ func (s *Service) evaluate(ctx context.Context, evaluator *awgm.CoverageEvaluato
 }
 
 func (s *Service) loadSnapshot(ctx context.Context, exclusionTags []string) (snapshot, error) {
-	if s.indexed != nil {
-		indexed, err := s.indexed.CoverageIndexSnapshot(ctx, exclusionTags)
-		if err != nil {
-			return snapshot{}, err
-		}
-		if indexed.Generation == 0 {
-			return snapshot{}, fmt.Errorf("indexed snapshot returned zero generation")
-		}
-		if indexed.Slot != "router" && indexed.Slot != "fakeip" {
-			return snapshot{}, fmt.Errorf("indexed snapshot returned unsupported slot %q", indexed.Slot)
-		}
-		if indexed.Rules == nil {
-			indexed.Rules = []awgm.Rule{}
-		}
-		if indexed.RuleSets == nil {
-			indexed.RuleSets = []awgm.RuleSet{}
-		}
-		return snapshot{
-			rules: indexed.Rules, sets: indexed.RuleSets,
-			revision:   fmt.Sprintf("indexed:%s:%d", indexed.Slot, indexed.Generation),
-			generation: indexed.Generation,
-		}, nil
-	}
-	rules, err := s.client.Rules(ctx)
+	indexed, err := s.client.CoverageIndexSnapshot(ctx, exclusionTags)
 	if err != nil {
 		return snapshot{}, err
 	}
-	sets, err := s.client.RuleSets(ctx)
-	if err != nil {
-		return snapshot{}, err
+	if indexed.Generation == 0 {
+		return snapshot{}, fmt.Errorf("indexed snapshot returned zero generation")
 	}
-	encoded, err := json.Marshal(struct {
-		Rules []awgm.Rule    `json:"rules"`
-		Sets  []awgm.RuleSet `json:"sets"`
-	}{Rules: rules, Sets: sets})
-	if err != nil {
-		return snapshot{}, err
+	if indexed.Slot != "router" && indexed.Slot != "fakeip" {
+		return snapshot{}, fmt.Errorf("indexed snapshot returned unsupported slot %q", indexed.Slot)
 	}
-	return snapshot{rules: rules, sets: sets, revision: fmt.Sprintf("%x", sha256.Sum256(encoded))}, nil
+	if indexed.Rules == nil {
+		indexed.Rules = []awgm.Rule{}
+	}
+	return snapshot{rules: indexed.Rules, generation: indexed.Generation}, nil
 }
 
 func manuallyExcluded(names []string, exclusions []string) bool {

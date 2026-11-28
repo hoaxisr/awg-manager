@@ -13,9 +13,6 @@ import (
 	"github.com/hoaxisr/awg-manager/awgmautolist/internal/model"
 )
 
-const HistoryLimit = 512
-const CandidateLimit = 512
-
 type State struct {
 	Candidates map[string]model.Candidate `json:"-"`
 	History    []model.HistoryEntry       `json:"-"`
@@ -133,21 +130,10 @@ func (s *Store) snapshotLocked(now time.Time) State {
 	return out
 }
 
-func (s *Store) CandidatesByFirstSeen(now time.Time) []model.Candidate {
-	state := s.Snapshot(now)
-	out := make([]model.Candidate, 0, len(state.Candidates))
-	for _, candidate := range state.Candidates {
-		out = append(out, candidate)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].FirstAt.Equal(out[j].FirstAt) {
-			return out[i].ID < out[j].ID
-		}
-		return out[i].FirstAt.Before(out[j].FirstAt)
-	})
-	return out
-}
-
+// trimLocked keeps only the rolling one-hour addition budget window. The
+// candidate and history tables are deliberately unbounded: pages come from
+// the keyset queries in list.go, so nothing is silently evicted (BACKLOG
+// section 5).
 func (s *Store) trimLocked() {
 	cutoff := s.now().Add(-time.Hour)
 	additions := make([]time.Time, 0, len(s.state.Additions))
@@ -157,22 +143,6 @@ func (s *Store) trimLocked() {
 		}
 	}
 	s.state.Additions = additions
-	if len(s.state.History) > HistoryLimit {
-		s.state.History = append([]model.HistoryEntry(nil), s.state.History[len(s.state.History)-HistoryLimit:]...)
-	}
-	if len(s.state.Candidates) > CandidateLimit {
-		ids := make([]string, 0, len(s.state.Candidates))
-		for id := range s.state.Candidates {
-			ids = append(ids, id)
-		}
-		sort.Slice(ids, func(i, j int) bool {
-			return s.state.Candidates[ids[i]].FirstAt.Before(s.state.Candidates[ids[j]].FirstAt)
-		})
-		for len(s.state.Candidates) > CandidateLimit {
-			delete(s.state.Candidates, ids[0])
-			ids = ids[1:]
-		}
-	}
 }
 
 func (s *Store) writeLocked() error {

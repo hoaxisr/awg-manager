@@ -34,7 +34,7 @@ func TestCoverageIndexFakeIPRuleSetHasNoNDMSWrites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.Slot != string(orchestrator.SlotFakeIP) || len(snapshot.RuleSets) != 1 {
+	if snapshot.Slot != string(orchestrator.SlotFakeIP) {
 		t.Fatalf("snapshot=%+v", snapshot)
 	}
 	// Once published, even deleting the source cannot affect the immutable

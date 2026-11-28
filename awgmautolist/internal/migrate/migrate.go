@@ -52,13 +52,55 @@ func LegacyFlat() Flat {
 // behind. The returned error joins every per-file failure; files that moved
 // stay moved.
 func FromFlatFiles(dir string, legacy Flat, logf func(format string, args ...any)) (int, error) {
-	if logf == nil {
-		logf = func(string, ...any) {}
-	}
 	pairs := []struct{ old, new string }{
 		{legacy.Config, filepath.Join(dir, "config.json")},
 		{legacy.State, filepath.Join(dir, "state.json")},
 		{legacy.History, filepath.Join(dir, "history.json")},
+	}
+	return movePairs(dir, pairs, logf)
+}
+
+// ShellFiles holds the historical flat paths of the shell-sourced files.
+// LegacyShell returns the ones installed
+// under /opt/etc before the directory layout; tests pass their own.
+type ShellFiles struct {
+	Key     string
+	Enabled string
+	Conf    string
+}
+
+// LegacyShell returns the flat shell-file paths of the pre-directory layout.
+func LegacyShell() ShellFiles {
+	return ShellFiles{
+		Key:     "/opt/etc/awgmautolist.key",
+		Enabled: "/opt/etc/awgmautolist.enabled",
+		Conf:    "/opt/etc/awgmautolist.conf",
+	}
+}
+
+// MoveShellFiles performs the one-time move of the legacy shell-sourced files
+// into dir as key, enabled and awgmautolist.conf. The same rules as FromFlatFiles apply: the
+// move happens only while the new file is absent (a fresh key/enabled always
+// wins and is never overwritten or read from the old path), permissions are
+// preserved, a failed move leaves the source in place and is reported. The
+// init script runs the equivalent migration before sourcing so the daemon
+// environment keeps working on the first start after an upgrade; this
+// Go-side counterpart keeps standalone starts on the same single-directory
+// layout.
+func MoveShellFiles(dir string, legacy ShellFiles, logf func(format string, args ...any)) (int, error) {
+	pairs := []struct{ old, new string }{
+		{legacy.Key, filepath.Join(dir, "key")},
+		{legacy.Enabled, filepath.Join(dir, "enabled")},
+		{legacy.Conf, filepath.Join(dir, "awgmautolist.conf")},
+	}
+	return movePairs(dir, pairs, logf)
+}
+
+// movePairs moves old->new pairs into dir under the shared migration rules
+// (see FromFlatFiles).
+func movePairs(dir string, pairs []struct{ old, new string }, logf func(format string, args ...any)) (int, error) {
+	if logf == nil {
+		logf = func(string, ...any) {}
 	}
 	moved := 0
 	var errs []error

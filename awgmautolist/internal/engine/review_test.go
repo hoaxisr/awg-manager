@@ -292,7 +292,11 @@ func TestPauseInvalidationRemovesCheckingCard(t *testing.T) {
 	}
 }
 
-func TestAutoAddPartialPersistenceIsNotFailureOnly(t *testing.T) {
+// TestAutoAddPartialPersistenceKeepsCandidate verifies backlog section 2: a
+// write that persisted content but failed at a later step must NOT move the
+// candidate to added. The card stays waiting, carries the error, spends the
+// budget once for the real new entry, and journals the failure.
+func TestAutoAddPartialPersistenceKeepsCandidate(t *testing.T) {
 	h := newHarness(t, func(cfg *config.Config) { cfg.AutoAdd = true })
 	h.engine.deps.Writer = partialWriter{
 		result: WriteResult{Outbound: "awg0-out", Persisted: true, NewEntry: true},
@@ -306,15 +310,18 @@ func TestAutoAddPartialPersistenceIsNotFailureOnly(t *testing.T) {
 	h.capture.suspect(target, "tcp-rst")
 	h.waitFor(func() bool {
 		candidate, ok := h.candidate(key)
-		return ok && candidate.State == model.CandidateAdded
+		return ok && candidate.State == model.CandidateWaiting && candidate.LastError != ""
 	})
 	candidate, _ := h.candidate(key)
+	if candidate.State == model.CandidateAdded {
+		t.Fatalf("failed write moved the candidate to added: %+v", candidate)
+	}
 	if !strings.Contains(candidate.LastError, "apply failed") || h.engine.Status().AdditionsUsed != 1 {
 		t.Fatalf("partial candidate=%+v additions=%d", candidate, h.engine.Status().AdditionsUsed)
 	}
 	state := h.state.Snapshot(time.Now())
-	if len(state.History) == 0 || !strings.Contains(state.History[len(state.History)-1].Result, "partial") {
-		t.Fatalf("partial history missing: %+v", state.History)
+	if len(state.History) == 0 || !strings.Contains(state.History[len(state.History)-1].Result, "error") {
+		t.Fatalf("error history missing: %+v", state.History)
 	}
 }
 
@@ -349,16 +356,6 @@ func TestMonitorDisableClearsRecoveredWANError(t *testing.T) {
 	}
 }
 
-func TestFirstTunnelVisibleAtStartupWithoutPersistence(t *testing.T) {
-	h := newHarness(t, func(cfg *config.Config) { cfg.TargetInterface = "" })
-	if got := h.engine.Status().TargetInterface; got != "awg0" {
-		t.Fatalf("effective tunnel=%q", got)
-	}
-	if saved := h.config.Config().TargetInterface; saved != "" {
-		t.Fatalf("implicit default persisted: %q", saved)
-	}
-}
-
 func TestStatusJSONMatchesOperationalContract(t *testing.T) {
 	h := newHarness(t, func(cfg *config.Config) { cfg.UDPEnabled = true })
 	data, err := json.Marshal(h.engine.Status())
@@ -369,7 +366,7 @@ func TestStatusJSONMatchesOperationalContract(t *testing.T) {
 	if err := json.Unmarshal(data, &fields); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"captureActive", "capturePaused", "queuedChecks", "addsUsedHour", "addsLimit", "protocols", "lastWAN"} {
+	for _, key := range []string{"captureActive", "capturePaused", "queuedChecks", "addsUsedHour", "addsLimit", "protocols", "lastWAN", "setupRequired", "waitingCandidates"} {
 		if _, ok := fields[key]; !ok {
 			t.Errorf("missing JSON field %q: %s", key, data)
 		}

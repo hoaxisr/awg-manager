@@ -8383,42 +8383,6 @@ definitions:
       zapretStatus:
         $ref: '#/definitions/zapret.Status'
     type: object
-  autolistdetect.Candidate:
-    properties:
-      clientIP:
-        description: 'Клиент, чей трафик вызвал решение: IP и MAC из заголовка кадра.'
-        type: string
-      clientMAC:
-        type: string
-      correlationID:
-        type: string
-      coverage:
-        $ref: '#/definitions/autolistdetect.CoverageEvidence'
-      direct:
-        $ref: '#/definitions/autolistdetect.CheckEvidence'
-      firstAt:
-        type: string
-      id:
-        type: string
-      lastAt:
-        type: string
-      lastError:
-        type: string
-      reason:
-        type: string
-      state:
-        type: string
-      target:
-        $ref: '#/definitions/autolistdetect.Target'
-      targetInterface:
-        type: string
-      targetOutbound:
-        type: string
-      tunnel:
-        $ref: '#/definitions/autolistdetect.CheckEvidence'
-      wan:
-        $ref: '#/definitions/autolistdetect.CheckEvidence'
-    type: object
   autolistdetect.CheckEvidence:
     properties:
       bytes:
@@ -8432,52 +8396,6 @@ definitions:
       verdict:
         type: string
     type: object
-  autolistdetect.CoverageEvidence:
-    properties:
-      covered:
-        type: boolean
-      detail:
-        type: string
-      durationMs:
-        type: integer
-      excluded:
-        type: boolean
-    type: object
-  autolistdetect.HistoryEntry:
-    properties:
-      action:
-        type: string
-      at:
-        type: string
-      clientIP:
-        description: Клиент, чей трафик вызвал решение. Пусто у старых записей журнала.
-        type: string
-      clientMAC:
-        type: string
-      domain:
-        type: string
-      host:
-        type: string
-      interface:
-        type: string
-      ip:
-        type: string
-      network:
-        type: string
-      outbound:
-        type: string
-      port:
-        type: integer
-      reason:
-        type: string
-      result:
-        type: string
-      source:
-        type: string
-      why:
-        description: Why is a legacy field of the old satellite history.
-        type: string
-    type: object
   autolistdetect.Status:
     properties:
       activeChecks:
@@ -8488,10 +8406,6 @@ definitions:
       addsUsedHour:
         description: Rolling hourly addition budget for the UI exhaustion indicator.
         type: integer
-      candidates:
-        items:
-          $ref: '#/definitions/autolistdetect.Candidate'
-        type: array
       captureActive:
         type: boolean
       capturePaused:
@@ -8504,10 +8418,6 @@ definitions:
           кнопкой сноса. Панель ставит его сама (сателлит о снимке не знает);
           фронт предлагает восстановить объекты или начать заново.
         type: boolean
-      history:
-        items:
-          $ref: '#/definitions/autolistdetect.HistoryEntry'
-        type: array
       installed:
         description: |-
           Installed/Enabled distinguish a missing package, a deliberate
@@ -8534,6 +8444,8 @@ definitions:
       running:
         description: Running — the satellite answered its status endpoint.
         type: boolean
+      setupRequired:
+        type: boolean
       targetInterface:
         description: |-
           TargetInterface is the shared interface of tunnel probes and new
@@ -8546,18 +8458,7 @@ definitions:
         type: boolean
       version:
         type: string
-    type: object
-  autolistdetect.Target:
-    properties:
-      domain:
-        type: string
-      host:
-        type: string
-      ip:
-        type: string
-      network:
-        type: string
-      port:
+      waitingCandidates:
         type: integer
     type: object
   backup.Snapshot:

@@ -1,70 +1,114 @@
 # awgmautolist
 
-Отдельный демон для Keenetic/Entware. AF_PACKET наблюдает реальные LAN-потоки,
-проверяет существующее покрытие и исключения, выполняет direct/WAN/tunnel-пробы
-и только затем предлагает или создаёт правила через AWGM Router API.
+Отдельный демон для Keenetic/Entware. Он наблюдает реальные LAN-потоки через
+AF_PACKET, проверяет существующую маршрутизацию и доступность целей напрямую и
+через выбранный туннель, а затем предлагает или создаёт правила через AWGM Router API.
 
-## Наблюдение
+## Первоначальная настройка
 
-- По умолчанию: TCP/443 и DNS/53 для имён.
-- При включённом UDP: STUN/TURN на любых UDP-портах. Произвольный UDP-протокол
-  не становится кандидатом, потому что универсальной активной UDP-пробы нет.
+Для запуска рабочего engine нужен явно выбранный туннель. Пока он не выбран,
+сателлит находится в `setupRequired`: capture, пробы и запись правил не работают,
+но status/config API остаётся доступным для мастера настройки.
+
+В панели предлагается запустить wizard:
+
+1. выбрать туннель и режим наблюдения — только сайты или сайты + STUN/TURN (UDP);
+2. выбрать DNS — `dns.final` или конкретный поддерживаемый numeric-IP сервер;
+3. выбрать ручное подтверждение либо автодобавление;
+4. при автодобавлении отдельно принять риски и заполнить исключения.
+
+Ручной режим рекомендуется. AutoAdd может самостоятельно инициировать подключения,
+раскрывать сайтам IP VPN-сервера и направлять в туннель нежелательные ресурсы.
+Перед его включением показываются предупреждения о зарегистрированных зонах,
+UDP-правилах на весь IP, дополнительном трафике и нагрузке. Исключения можно
+пропустить только с отдельным подтверждением риска.
+
+Режима «первый доступный туннель» нет. Старые конфигурации с пустым
+`targetInterface` переводятся в `setupRequired`; существующие правила при этом не
+переключаются автоматически.
+
+## Наблюдение и кандидаты
+
+- По умолчанию наблюдаются TCP/443 и DNS/53 для имён.
+- При включённом UDP добавляются STUN/TURN на любых UDP-портах. Произвольный UDP
+  не становится кандидатом, поскольку универсальной активной UDP-пробы нет.
 - TCP-поводы: SYN/TLS без ответа, RST и остановка ответа не более чем на 30 КиБ.
-  TCP candidate требует пассивно полученное DNS/SNI-имя; unnamed TCP не создаёт
-  IP-only карточку или правило. DNS hints изолируются по клиенту и IP, а apex/www
-  объединяются через registered zone. IP-only остаётся допустимым для UDP STUN/TURN.
+- TCP candidate требует пассивно полученное DNS/SNI-имя; unnamed TCP не создаёт
+  карточку или правило. DNS hints изолируются по клиенту и IP.
 - Clash connections, журналы sing-box и conntrack не используются как evidence.
-  Read-only runtime API может использоваться для фактического selector/outbound.
+  Read-only runtime API применяется для фактического selector/outbound.
 
-Coverage использует отдельный AWGM always-current index активного applied slot
-(tproxy или fakeip-tun). Полная generation собирается из активных rule-set references
-и выбранных exclusions; warm hit/negative выполняются в памяти без JSON/SRS reads и
-без `sing-box rule-set match` subprocesses. Ошибка или неполнота generation fail-closed:
-candidate и write не создаются. Старый `/rulesets/match` не используется как fallback.
+Повторные suspects для queued/active/уже решённого candidate отбрасываются до
+bounded queue. Переполнение видно в `queueDropped` и журнале.
 
-DNS для IP-покрытия — один выбранный numeric-IP сервер sing-box, простые A/AAAA через
-UDP, DoH или DoT. Системный и AWGM resolver не вызываются. Name-only coverage/exclusion
-проверяется до DNS; затем observed IP может проверяться параллельно с A/AAAA.
+## Ошибки и списки в UI
 
-Повторные suspects для queued/active/уже решённого candidate отбрасываются на входе,
-до bounded queue. Переполнение по-прежнему видно в `queueDropped` и журнале.
+Кандидат попадает в «Добавленные» только после успешной записи и обратного
+чтения подтверждающего правила. Любая ошибка Add оставляет его кандидатом с
+красной рамкой; подробная причина доступна в «Подробности проверки» и журнале.
+Повторное добавление идемпотентно завершает частично выполненную операцию.
+
+«Кандидаты», «Добавленные» и «История» загружаются со стороны backend страницами
+по 128 записей. Кнопка «Показать ещё» использует стабильный cursor; поиск также
+выполняется на backend. Ограничений хранения в 512 карточек/событий нет, silent trim
+не выполняется. Operational queue, таймауты и настраиваемый лимит добавлений в час
+сохраняются.
+
+Логи доступны в «Инструменты → Журнал» с источником `autolist`. Панель читает
+существующий `/tmp/awgmautolist.log` порциями без отдельного транспорта; при ошибках
+проб в журнал попадают доступные `TimeDNS`, `TimeConnect` и `TimeTLS`.
+
+## Coverage
+
+AWGM хранит always-current index активного applied slot (`router`/tproxy или
+`fakeip`). Generation собирается из активных rule-set references и выбранных
+исключений; warm match выполняется в памяти без повторных JSON/SRS reads и без
+`sing-box rule-set match` subprocesses.
+
+`indexed-snapshot` возвращает только `generation`, `slot`, обычные правила и
+`skipped_rule_sets`; полное содержимое rule-sets по нему не передаётся. Совпадения
+проверяются отдельным `indexed-match`. Смена generation запускает повтор всей
+проверки, ошибка generation запрещает создание candidate/write. Старый
+`/rulesets/match` fallback отсутствует.
+
+DNS для IP-покрытия — один выбранный numeric-IP сервер sing-box: UDP, DoH или DoT.
+Системный и AWGM resolver не вызываются. Сначала проверяются name-only
+coverage/exclusion, затем observed IP и A/AAAA-адреса.
 
 ## Правила
 
 Демон владеет только inline rule-set `awgm-autolist` и одним безусловным
 owner-правилом. Домены записываются как registered zone (`www.example.co.uk` →
-`example.co.uk`), а активная проба сохраняет исходный SNI/IP. IP-only UDP цель получает
+`example.co.uk`), активная проба сохраняет исходный SNI/IP. IP-only UDP цель получает
 `/32` или `/128` без port/network: один подтверждённый blocked порт покрывает весь IP.
 Для TCP такие CIDR fallback-правила не создаются.
 
 AutoAdd доступен только при включённой tunnel-пробе и verdict `reachable`.
-AutoOff отсутствует. Удаление записей выполняется пользователем. Firewall, NDMS
-и kernel routes демон напрямую не изменяет.
+AutoOff отсутствует: записи удаляются пользователем. Firewall, NDMS и kernel routes
+демон напрямую не изменяет.
 
-## Файлы
+## Файлы и миграция
 
 ```text
 Бинарник:       /opt/bin/awgmautolist
 Каталог:        /opt/etc/awgmautolist/ (переопределяется AWGM_AUTOLIST_DIR)
 Настройки:      /opt/etc/awgmautolist/config.json
 State:          /opt/etc/awgmautolist/state.json
-Legacy-импорт:  /opt/etc/awgmautolist/history.json (старый -history.json
-                переносится при старте; legacy-импорт старого журнала
-                срабатывает, когда state.json пуст)
+Legacy history: /opt/etc/awgmautolist/history.json
 Intent/ключ:    /opt/etc/awgmautolist/enabled, /opt/etc/awgmautolist/key
-                (панель переносит старые /opt/etc/awgmautolist.{enabled,key})
 Init:           /opt/etc/init.d/S99awgmautolist
-Журнал:         /tmp/awgmautolist.log
+Лог-буфер:      /tmp/awgmautolist.log
 ```
 
-До версии 2.21 файлы лежали в /opt/etc плоско (`awgmautolist.json`,
-`awgmautolist-state.json`, `awgmautolist-history.json`). При первом старте
-демон переносит их в каталог; старые `enabled`/`key` читаются как запасной
-вариант до первого переноса панелью.
+При обновлении старые flat config/state/history/key/enabled/awgmautolist.conf однократно переносятся
+в рабочий каталог. Существующие новые файлы не перезаписываются. После миграции
+используются только файлы рабочего каталога: постоянных fallback-чтений из
+`/opt/etc/awgmautolist.{json,key,enabled}` нет. При свежем standalone-запуске каталог
+создаётся автоматически.
 
-Журнал находится только в tmpfs, ограничен 5 МиБ и усекается без ротации.
+Лог-буфер находится в tmpfs, ограничен 5 МиБ и усекается без ротации.
 
-## Запуск
+## Запуск и operational API
 
 ```sh
 export AWGM_API_KEY="ключ AWGM"
@@ -74,12 +118,17 @@ export AWGM_API_KEY="ключ AWGM"
   -listen 127.0.0.1:2226
 ```
 
-Адрес панели `-router` необязателен: цепочка фолбэков — явный флаг, затем
-`AWGM_ROUTER_URL`, затем `server.port` из `/opt/etc/awg-manager/settings.json`,
-затем `http://127.0.0.1:2222`. Выбор пишется в журнал.
+Адрес панели `-router` необязателен: явный флаг → `AWGM_ROUTER_URL` → `server.port`
+из `/opt/etc/awg-manager/settings.json` → `http://127.0.0.1:2222`.
 
-Loopback API содержит только operational status/config и действия кандидатов;
-диагностических endpoints и ручной `/probe` нет.
+Loopback API доступен только на loopback и содержит:
+
+- `GET /status` — operational state и `setupRequired`, без полных списков;
+- `GET/POST /config` — сохранённая конфигурация и её изменение;
+- `POST /list` — страницы candidates/history с фильтром состояния, поиском и cursor;
+- действия кандидатов и очистка истории.
+
+Диагностического ручного `/probe` нет.
 
 ## Сборка
 
@@ -90,6 +139,3 @@ go mod vendor
 
 Создаются статические IPK для `aarch64-3.10`, `mipsel-3.4` и `mips-3.4`.
 Пакеты используют opkg-compatible ustar и проверяются на AppleDouble entries.
-
-Техническое задание и подробный план находятся в независимом каталоге
-`/Users/admin/src/awgm-mini/TECHNICAL_SPEC.md` и `IMPLEMENTATION_PLAN.md`.

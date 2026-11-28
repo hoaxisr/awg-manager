@@ -9,7 +9,6 @@ import (
 
 	"github.com/hoaxisr/awg-manager/awgmautolist/internal/config"
 	"github.com/hoaxisr/awg-manager/awgmautolist/internal/engine"
-	"github.com/hoaxisr/awg-manager/awgmautolist/internal/model"
 	"github.com/hoaxisr/awg-manager/awgmautolist/internal/store"
 )
 
@@ -58,28 +57,24 @@ func New(eng Engine, cfg *config.Store, state *store.Store, version string) http
 		return cand, nil
 	}))
 	mux.HandleFunc("POST /history/clear", h.clearHistory)
+	mux.HandleFunc("POST /list", h.list)
 	return LimitBody(mux)
 }
 
+// statusDocument is the operational status: daemon state, observation and
+// counters only. The unbounded candidate/history tables are paged through
+// POST /list so this document stays small (BACKLOG section 5).
 type statusDocument struct {
 	engine.Status
-	Version    string               `json:"version"`
-	Candidates []model.Candidate    `json:"candidates"`
-	History    []model.HistoryEntry `json:"history"`
+	Version string `json:"version"`
 }
 
 func (h *Handler) status(w http.ResponseWriter, _ *http.Request) {
-	candidates := h.state.CandidatesByFirstSeen(time.Now())
-	historyState := h.state.Snapshot(time.Now()).History
-	history := make([]model.HistoryEntry, len(historyState))
-	for i := range historyState {
-		history[len(historyState)-1-i] = historyState[i]
-	}
-	WriteJSON(w, http.StatusOK, statusDocument{Status: h.engine.Status(), Version: h.version, Candidates: candidates, History: history})
+	WriteJSON(w, http.StatusOK, statusDocument{Status: h.engine.Status(), Version: h.version})
 }
 
 func (h *Handler) getConfig(w http.ResponseWriter, _ *http.Request) {
-	WriteJSON(w, http.StatusOK, h.effectiveConfig(h.config.Config()))
+	WriteJSON(w, http.StatusOK, h.config.Config())
 }
 
 func (h *Handler) patchConfig(w http.ResponseWriter, r *http.Request) {
@@ -93,14 +88,7 @@ func (h *Handler) patchConfig(w http.ResponseWriter, r *http.Request) {
 		WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	WriteJSON(w, http.StatusOK, h.effectiveConfig(cfg))
-}
-
-func (h *Handler) effectiveConfig(cfg config.Config) config.Config {
-	if cfg.TargetInterface == "" {
-		cfg.TargetInterface = h.engine.Status().TargetInterface
-	}
-	return cfg
+	WriteJSON(w, http.StatusOK, cfg)
 }
 
 func (h *Handler) clearHistory(w http.ResponseWriter, _ *http.Request) {
@@ -111,6 +99,50 @@ func (h *Handler) clearHistory(w http.ResponseWriter, _ *http.Request) {
 	WriteJSON(w, http.StatusOK, map[string]bool{"cleared": true})
 }
 
+// listRequest is the unified paged-list contract for both tables: kind
+// selects the table, state/q filter it, cursor continues a previous page,
+// limit defaults to and caps at 128.
+type listRequest struct {
+	Kind   string `json:"kind"`
+	State  string `json:"state"`
+	Q      string `json:"q"`
+	Cursor string `json:"cursor"`
+	Limit  int    `json:"limit"`
+}
+
+func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
+	var req listRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	switch req.State {
+	case "", "active", "waiting", "checking", "added", "rejected":
+	default:
+		WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown state " + req.State})
+		return
+	}
+	switch req.Kind {
+	case "candidates":
+		page, err := h.state.ListCandidates(req.State, req.Q, req.Cursor, req.Limit)
+		if err != nil {
+			WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		WriteJSON(w, http.StatusOK, page)
+	case "history":
+		page, err := h.state.ListHistory(req.Q, req.Cursor, req.Limit)
+		if err != nil {
+			WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		WriteJSON(w, http.StatusOK, page)
+	default:
+		WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "kind must be candidates or history"})
+	}
+}
+
+// actionRequest identifies one or more candidates for a per-ID action.
 type actionRequest struct {
 	ID  string   `json:"id"`
 	IDs []string `json:"ids"`

@@ -191,9 +191,8 @@ func (i *Installer) writeKey() error {
 	if err := os.MkdirAll(filepath.Dir(i.keyPath), 0o755); err != nil {
 		return err
 	}
-	// A key at the pre-directory path moves into the directory once, so the
-	// init script's legacy fallback stops mattering after the first write.
-	// Best effort: a failure keeps the old file, which the script still reads.
+	// A key at the pre-directory path moves into the directory once.
+	// Best effort: a failure keeps the old file, and the init script retries.
 	if i.keyPath != legacyKeyFile {
 		if _, err := os.Stat(i.keyPath); errors.Is(err, os.ErrNotExist) {
 			if _, lerr := os.Stat(legacyKeyFile); lerr == nil {

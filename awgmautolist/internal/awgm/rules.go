@@ -26,41 +26,11 @@ type Rule struct {
 	AWGMManaged      string   `json:"awgm_managed,omitempty"`
 }
 
-type RuleSet struct {
-	Tag             string           `json:"tag"`
-	Type            string           `json:"type"`
-	Format          string           `json:"format,omitempty"`
-	URL             string           `json:"url,omitempty"`
-	UpdateInterval  string           `json:"update_interval,omitempty"`
-	DownloadDetour  string           `json:"download_detour,omitempty"`
-	Path            string           `json:"path,omitempty"`
-	Rules           []map[string]any `json:"rules,omitempty"`
-	MaterializedSRS bool             `json:"materialized_srs,omitempty"`
-}
-
-func (c *Client) Rules(ctx context.Context) ([]Rule, error) {
-	var rules []Rule
-	err := c.get(ctx, "/api/singbox/router/rules/list", &rules)
-	return rules, err
-}
-
-func (c *Client) RuleSets(ctx context.Context) ([]RuleSet, error) {
-	var sets []RuleSet
-	err := c.get(ctx, "/api/singbox/router/rulesets/list", &sets)
-	return sets, err
-}
-
 type RuleSetMatchResult struct {
 	Tag       string `json:"tag"`
 	Matched   bool   `json:"matched"`
 	Supported bool   `json:"supported"`
 	Error     string `json:"error,omitempty"`
-}
-
-func (c *Client) MatchRuleSets(ctx context.Context, input string, tags []string) ([]RuleSetMatchResult, error) {
-	var results []RuleSetMatchResult
-	err := c.post(ctx, "/api/singbox/router/rulesets/match", map[string]any{"input": input, "tags": tags}, &results)
-	return results, err
 }
 
 // IndexedRuleSetMatch is the additive AWGM indexed-match response.
@@ -69,13 +39,12 @@ type IndexedRuleSetMatch struct {
 	Results    []RuleSetMatchResult `json:"results"`
 }
 
-// CoverageSnapshot is one applied active-slot generation. Rules and rule-sets
-// are projected together, so fakeip and tproxy cannot be mixed.
+// CoverageSnapshot is one applied active-slot generation: the routing rules
+// and the selected exclusion tags, without the full rule-set payloads.
 type CoverageSnapshot struct {
-	Generation uint64    `json:"generation"`
-	Slot       string    `json:"slot"`
-	Rules      []Rule    `json:"rules"`
-	RuleSets   []RuleSet `json:"rule_sets"`
+	Generation uint64 `json:"generation"`
+	Slot       string `json:"slot"`
+	Rules      []Rule `json:"rules"`
 }
 
 func (c *Client) MatchRuleSetsIndexed(ctx context.Context, input string, tags []string) (IndexedRuleSetMatch, error) {

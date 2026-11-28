@@ -1,7 +1,7 @@
 /**
  * awgmautolist 0.9.3 — внешний сателлит-демон (автосписок неоткрывающихся
  * сайтов). Ставится пользователем отдельно: AWGM читает его operational
- * статус через loopback и проксирует команды /config, /add, /forget,
+ * статус через loopback и проксирует команды /config, /list, /add, /forget,
  * /restore, /remove и /dismiss. Диагностических /probe и /exclude нет:
  * исключения редактируются в настройках.
  *
@@ -39,11 +39,40 @@ export interface AutolistBatchResult {
 }
 
 /**
- * Пути сателлита, которые проксирует AWGM: чтение/запись конфига, действия
- * кандидатов (одиночные и batch {ids}), повторная проверка /recheck и очистка
- * журнала /history/clear. /probe и /exclude в 0.9.3 не существуют.
+ * Пути сателлита, которые проксирует AWGM: чтение/запись конфига, постраничные
+ * списки /list, действия кандидатов (одиночные и batch {ids}), повторная
+ * проверка /recheck и очистка журнала /history/clear. /probe и /exclude
+ * в 0.9.3 не существуют.
  */
-export type AutolistSatellitePath = '/config' | '/add' | '/forget' | '/restore' | '/remove' | '/dismiss' | '/recheck' | '/history/clear';
+export type AutolistSatellitePath = '/config' | '/list' | '/add' | '/forget' | '/restore' | '/remove' | '/dismiss' | '/recheck' | '/history/clear';
+
+/** Вкладка списка: кандидаты (waiting+checking) и добавленные — одна ручка. */
+export type AutolistListKind = 'candidates' | 'history';
+
+/**
+ * Фильтр состояния для /list: '' — без фильтра, 'active' — waiting+checking.
+ * Для kind 'history' фильтр состояния не применяется.
+ */
+export type AutolistListState = 'active' | 'added' | 'waiting' | 'checking' | 'rejected' | '';
+
+/** Тело POST /list через прокси: страница списка с backend-поиском. */
+export interface AutolistListRequest {
+  kind: AutolistListKind;
+  state: AutolistListState;
+  /** Поиск по domain/host/ip/clientIP/clientMAC; '' — без поиска. */
+  q: string;
+  /** Cursor следующей страницы из прошлого ответа; '' — первая страница. */
+  cursor: string;
+  limit: number;
+}
+
+/** Ответ /list: страница записей с общим счётчиком и следующим cursor. */
+export interface AutolistListResponse<T = unknown> {
+  items: T[];
+  total: number;
+  nextCursor?: string;
+  hasMore: boolean;
+}
 
 /**
  * CheckEvidence — доказательства одной проверки: вердикт, объём ответа,
@@ -123,7 +152,8 @@ export interface AutolistHistoryEntry {
 	result?: string;
 }
 
-/** Operational статус сателлита для главного экрана. */
+/** Operational статус сателлита для главного экрана. Полные списки
+ * кандидатов и истории сюда не входят — их отдаёт POST /list страницами. */
 export interface AutolistStatus {
 	running: boolean;
 	version?: string;
@@ -131,6 +161,11 @@ export interface AutolistStatus {
 	installed: boolean;
 	/** Пользовательское намерение запускать сателлит, в том числе после reboot. */
 	enabled: boolean;
+	/**
+	 * Туннель первоначальной настройки не выбран: engine не работает, UI
+	 * показывает карточку «Запустить мастер настройки».
+	 */
+	setupRequired?: boolean;
 	/** Версия установленного opkg-пакета. */
 	packageVersion?: string;
 	/** Пакет старше панели: сателлит выпускается с её версией. */
@@ -141,7 +176,7 @@ export interface AutolistStatus {
 	capturePaused: boolean;
 	/** Наблюдаемые протоколы, например ['tcp/443', 'dns/53', 'stun/turn']. */
 	protocols?: string[];
-	/** Интерфейс tunnel-пробы и новых правил; пусто — первый доступный туннель. */
+	/** Интерфейс tunnel-пробы и новых правил; обязателен для работы engine. */
 	targetInterface?: string;
 	/** Outbound, фактически выбранный для последних правил. */
 	targetOutbound?: string;
@@ -154,8 +189,8 @@ export interface AutolistStatus {
 	/** Использование скользящего часового бюджета добавлений; limit=0 — выключен. */
 	addsUsedHour: number;
 	addsLimit: number;
-	candidates: AutolistCandidate[];
-	history: AutolistHistoryEntry[];
+	/** Счётчик waiting+checking для бейджа вкладки без полного списка в /status. */
+	waitingCandidates?: number;
 	lastError?: string;
 	/** У панели есть снимок объектов, удалённых кнопкой сноса: предложить восстановить или начать заново. */
 	hasRemovedBackup?: boolean;
@@ -167,7 +202,7 @@ export interface AutolistStatus {
  */
 export interface AutolistConfig {
 	autoAdd: boolean;
-	/** Пусто — первый доступный туннель по списку AWGM. */
+	/** Обязателен для работы engine: без явного выбора статус setupRequired. */
 	targetInterface?: string;
 	/** '' — dns.final из sing-box, иначе sb:<tag> из servers/list. */
 	resolveVia?: string;
@@ -183,8 +218,6 @@ export interface AutolistConfig {
 	excludeRuleSets?: string[];
 	/** Наблюдать STUN/TURN на любых UDP-портах. */
 	udpEnabled: boolean;
-	/** Подробный журнал в /tmp/awgmautolist.log. */
-	verbose: boolean;
 	/**
 	 * Бюджет добавлений за скользящий час, 1..500 (default 50). Статус
 	 * показывает его как addsLimit; 0/unlimited бэкенд не поддерживает.

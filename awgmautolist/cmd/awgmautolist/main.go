@@ -63,14 +63,29 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The working directory must exist before any migration or store write:
+	// a fresh standalone start must not fail its first persist with ENOENT.
+	confDir := filepath.Dir(*configPath)
+	if err := os.MkdirAll(confDir, 0o755); err != nil {
+		fatalf("config directory %s: %v", confDir, err)
+	}
+
 	// Legacy flat-layout files (/opt/etc/awgmautolist*.json) move into the
 	// config directory BEFORE anything reads the new paths: on the very first
 	// start after an upgrade the migrated config must be the one that loads.
 	// A failed move is logged and retried on the next start.
-	if moved, err := migrate.FromFlatFiles(filepath.Dir(*configPath), migrate.LegacyFlat(), logger.Printf); err != nil {
+	if moved, err := migrate.FromFlatFiles(confDir, migrate.LegacyFlat(), logger.Printf); err != nil {
 		logger.Printf("LEGACY migrate: %v", err)
 	} else if moved > 0 {
 		logger.Printf("LEGACY migrate: moved %d file(s)", moved)
+	}
+	// The shell-sourced key/enabled/conf get the same one-time move (the init
+	// script already did it before sourcing; standalone starts are covered
+	// here). A fresh key/enabled always wins, sources survive a failed move.
+	if moved, err := migrate.MoveShellFiles(confDir, migrate.LegacyShell(), logger.Printf); err != nil {
+		logger.Printf("LEGACY shell migrate: %v", err)
+	} else if moved > 0 {
+		logger.Printf("LEGACY shell migrate: moved %d file(s)", moved)
 	}
 	cfgStore := config.NewStore(*configPath)
 	report, err := cfgStore.Load()
@@ -122,12 +137,12 @@ func main() {
 			})
 		},
 		Logger: logger,
-		DefaultTunnel: func(ctx context.Context) (awgm.Tunnel, error) {
-			return awgm.FirstTunnel(ctx, client)
-		},
 	})
 	if err := eng.Start(ctx); err != nil {
 		fatalf("engine: %v", err)
+	}
+	if eng.Status().SetupRequired {
+		logger.Printf("SETUP required: no target interface configured; the engine is idle until the wizard chooses a tunnel")
 	}
 
 	server := &http.Server{

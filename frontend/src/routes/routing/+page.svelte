@@ -183,9 +183,7 @@
     // Но автолист работает только с маршрутизацией sing-box: без установленного
     // sing-box кандидаты бессмысленны, поэтому вкладки не показываем.
     // Ниже expert статус не опрашивается (autolistStatusIfExpert в сторе).
-    let autolistWaitingCount = $derived(
-        ($autolistStatusIfExpert?.data?.candidates ?? []).filter((c) => c.state === 'waiting').length,
-    );
+    let autolistWaitingCount = $derived($autolistStatusIfExpert?.data?.waitingCandidates ?? 0);
     let autolistAvailable = $derived($autolistStatusIfExpert?.data != null && singboxInstalled);
 
     let pendingTab = $state<string | null>(null);

@@ -41,6 +41,7 @@ type fakeAWGM struct {
 	failRulesetsAdd   bool             // rulesets/add answers 500
 
 	writes []string // chronology: "rules/add", "rulesets/update", ...
+	draft  bool
 }
 
 func newFakeAWGMWriter(t *testing.T) *fakeAWGM {
@@ -60,7 +61,7 @@ func newFakeAWGMWriter(t *testing.T) *fakeAWGM {
 		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		f.writes = append(f.writes, "rules/add")
+		f.recordWrite("rules/add")
 		f.rules = append(f.rules, rule)
 		writeData(w, map[string]bool{"ok": true})
 	})
@@ -79,7 +80,7 @@ func newFakeAWGMWriter(t *testing.T) *fakeAWGM {
 			http.Error(w, "rule index out of range", http.StatusBadRequest)
 			return
 		}
-		f.writes = append(f.writes, "rules/update")
+		f.recordWrite("rules/update")
 		f.rules[body.Index] = body.Rule
 		writeData(w, map[string]bool{"ok": true})
 	})
@@ -102,7 +103,7 @@ func newFakeAWGMWriter(t *testing.T) *fakeAWGM {
 			http.Error(w, "rule index out of range", http.StatusBadRequest)
 			return
 		}
-		f.writes = append(f.writes, "rules/delete")
+		f.recordWrite("rules/delete")
 		f.rules = append(f.rules[:body.Index], f.rules[body.Index+1:]...)
 		writeData(w, map[string]bool{"ok": true})
 	})
@@ -136,7 +137,7 @@ func newFakeAWGMWriter(t *testing.T) *fakeAWGM {
 			_ = json.NewEncoder(w).Encode(map[string]any{"error": true, "message": "add failed", "code": "INTERNAL"})
 			return
 		}
-		f.writes = append(f.writes, "rulesets/add")
+		f.recordWrite("rulesets/add")
 		f.ruleSets = append(f.ruleSets, rs)
 		writeData(w, map[string]bool{"ok": true})
 	})
@@ -151,7 +152,7 @@ func newFakeAWGMWriter(t *testing.T) *fakeAWGM {
 		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		f.writes = append(f.writes, "rulesets/update")
+		f.recordWrite("rulesets/update")
 		replaced := false
 		for i, rs := range f.ruleSets {
 			if rs["tag"] == body.Tag {
@@ -175,7 +176,7 @@ func newFakeAWGMWriter(t *testing.T) *fakeAWGM {
 		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		f.writes = append(f.writes, "rulesets/delete")
+		f.recordWrite("rulesets/delete")
 		kept := f.ruleSets[:0]
 		for _, rs := range f.ruleSets {
 			if rs["tag"] != body.Tag {
@@ -198,7 +199,7 @@ func newFakeAWGMWriter(t *testing.T) *fakeAWGM {
 		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		f.writes = append(f.writes, "outbounds/add")
+		f.recordWrite("outbounds/add")
 		f.outbounds = append(f.outbounds, ob)
 		writeData(w, map[string]bool{"ok": true})
 	})
@@ -213,7 +214,7 @@ func newFakeAWGMWriter(t *testing.T) *fakeAWGM {
 		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		f.writes = append(f.writes, "outbounds/update")
+		f.recordWrite("outbounds/update")
 		for i, ob := range f.outbounds {
 			if ob["tag"] == body.Tag {
 				f.outbounds[i] = body.Outbound
@@ -231,7 +232,7 @@ func newFakeAWGMWriter(t *testing.T) *fakeAWGM {
 		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		f.writes = append(f.writes, "outbounds/delete")
+		f.recordWrite("outbounds/delete")
 		kept := f.outbounds[:0]
 		for _, ob := range f.outbounds {
 			if ob["tag"] != body.Tag {
@@ -266,10 +267,15 @@ func newFakeAWGMWriter(t *testing.T) *fakeAWGM {
 		defer f.mu.Unlock()
 		writeData(w, f.subGroups)
 	})
+	mux.HandleFunc("/api/singbox/router/staging", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		writeData(w, map[string]bool{"hasDraft": f.draft})
+	})
 	mux.HandleFunc("/api/singbox/router/staging/apply", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		f.writes = append(f.writes, "staging/apply")
+		f.recordWrite("staging/apply")
 		if f.applyNoDraft || f.applyCode != "" {
 			code := f.applyCode
 			if code == "" {
@@ -278,11 +284,15 @@ func newFakeAWGMWriter(t *testing.T) *fakeAWGM {
 			f.applyNoDraft = false
 			f.applyCode = ""
 			f.applyErrors++
+			if code == "NO_DRAFT" {
+				f.draft = false
+			}
 			w.WriteHeader(http.StatusConflict)
 			_ = json.NewEncoder(w).Encode(map[string]any{"error": true, "message": "apply rejected", "code": code})
 			return
 		}
 		f.applied++
+		f.draft = false
 		writeData(w, map[string]bool{"ok": true})
 	})
 	f.srv = httptest.NewServer(mux)
@@ -318,6 +328,11 @@ func cloneMaps(src []map[string]any) []map[string]any {
 		_ = json.Unmarshal(raw, &out[i])
 	}
 	return out
+}
+
+func (f *fakeAWGM) recordWrite(name string) {
+	f.writes = append(f.writes, name)
+	f.draft = true
 }
 
 func (f *fakeAWGM) writesSnapshot() []string {
@@ -1073,6 +1088,60 @@ func TestWriterApplyFailureKeepsPartialPersisted(t *testing.T) {
 	}
 	if res.Persisted {
 		t.Fatalf("repeat after failure=%+v", res)
+	}
+}
+
+// An outbound written before a rule-set failure is an auxiliary draft write:
+// only the successful retry confirms the destination by readback.
+func TestWriterAddErrorKeepsPersistedSeparate(t *testing.T) {
+	f := newFakeAWGMWriter(t)
+	bindableSetup(f)
+	w := NewWriter(f.client)
+
+	f.failRulesetsAdd = true
+	res, err := w.Add(context.Background(), domainTarget("late.example"), "br0")
+	if err == nil || !contains(err.Error(), "ruleset create") {
+		t.Fatalf("err=%v", err)
+	}
+	if !res.Persisted || res.NewEntry {
+		t.Fatalf("result=%+v, want auxiliary write without destination confirmation", res)
+	}
+
+	f.failRulesetsAdd = false
+	res, err = w.Add(context.Background(), domainTarget("late.example"), "br0")
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if !res.Persisted || !res.NewEntry {
+		t.Fatalf("retry result=%+v, want the destination created and confirmed", res)
+	}
+}
+
+// An apply failure is not success even after the destination draft write;
+// the retry is a duplicate that succeeds without a second budget entry.
+func TestWriterAddApplyFailureIsNotSuccess(t *testing.T) {
+	f := newFakeAWGMWriter(t)
+	bindableSetup(f)
+	w := NewWriter(f.client)
+
+	f.applyCode = "VALIDATION"
+	res, err := w.Add(context.Background(), domainTarget("fail.example"), "br0")
+	if err == nil || !contains(err.Error(), "staging apply failed") {
+		t.Fatalf("err=%v", err)
+	}
+	if !res.Persisted || !res.NewEntry {
+		t.Fatalf("result=%+v, want written entry without destination confirmation", res)
+	}
+
+	res, err = w.Add(context.Background(), domainTarget("fail.example"), "br0")
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if got := f.appliedCount(); got != 1 {
+		t.Fatalf("retry applied the pending draft %d times, want 1", got)
+	}
+	if res.Persisted || res.NewEntry {
+		t.Fatalf("retry result=%+v, want confirmed duplicate without a new entry", res)
 	}
 }
 

@@ -20,7 +20,7 @@ func proxyTestService(t *testing.T, sat *httptest.Server) *Service {
 // The whitelist is exactly the satellite's operational surface: no /probe,
 // no /exclude, no diagnostics (TECHNICAL_SPEC sections 1 and 8).
 func TestAllowedPathsExcludeProbeAndDiagnostics(t *testing.T) {
-	for _, path := range []string{"/status", "/config", "/add", "/dismiss", "/forget", "/restore", "/remove", "/recheck", "/history/clear"} {
+	for _, path := range []string{"/status", "/config", "/add", "/dismiss", "/forget", "/restore", "/remove", "/recheck", "/history/clear", "/list"} {
 		if !allowedPaths[path] {
 			t.Fatalf("%s must be allowed", path)
 		}
@@ -113,6 +113,39 @@ func TestProxyForwardsClearHistory(t *testing.T) {
 		"/api/autolist/history/clear", bytes.NewReader([]byte(`{}`))))
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"cleared":true`) {
 		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// /list is the paged candidates/history endpoint: the proxy passes the body
+// through untouched and wraps the satellite page in the AWGM envelope.
+func TestProxyForwardsList(t *testing.T) {
+	var gotPath, gotBody string
+	sat := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		_, _ = w.Write([]byte(`{"items":[{"id":"domain|example.com|tcp|443"}],"total":1,"nextCursor":"","hasMore":false}`))
+	}))
+	defer sat.Close()
+
+	p := NewProxy(proxyTestService(t, sat))
+	req := httptest.NewRequest(http.MethodPost, "/api/autolist/list",
+		bytes.NewReader([]byte(`{"kind":"candidates","state":"active","q":"example","cursor":"","limit":128}`)))
+	rec := httptest.NewRecorder()
+	p.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d: %s", rec.Code, rec.Body.String())
+	}
+	if gotPath != "/list" {
+		t.Fatalf("satellite path = %q", gotPath)
+	}
+	if gotBody != `{"kind":"candidates","state":"active","q":"example","cursor":"","limit":128}` {
+		t.Fatalf("forwarded body = %q", gotBody)
+	}
+	want := `{"data":{"hasMore":false,"items":[{"id":"domain|example.com|tcp|443"}],"nextCursor":"","total":1},"success":true}`
+	if got := strings.TrimSpace(rec.Body.String()); got != want {
+		t.Fatalf("envelope body = %q", got)
 	}
 }
 

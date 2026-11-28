@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { m } from '$lib/i18n';
 	import { formatAutolistBytes, formatAutolistDuration, formatAutolistTime } from './time';
 	import { autolistStatus } from '$lib/stores/autolist';
@@ -14,8 +15,11 @@
 		buildAutolistConfigPayload,
 		mergeAutolistExclusions,
 	} from './configPayload';
+	import { autolistRiskItems } from './autoAddRisks';
+	import { buildDnsOptions, buildTunnelInterfaceOptions } from './options';
 	import { errorMessage } from '$lib/utils/errorMessage';
 	import { clientName } from './clientName';
+	import AutolistSetupWizard from './AutolistSetupWizard.svelte';
 	import RecheckModal from './RecheckModal.svelte';
 	import type {
 		AWGTagInfo,
@@ -25,6 +29,8 @@
 		AutolistCheckEvidence,
 		AutolistConfig,
 		AutolistHistoryEntry,
+		AutolistListKind,
+		AutolistListState,
 		AutolistVerdict,
 		PolicyDevice,
 		RouterInterface,
@@ -65,21 +71,178 @@
 	let running = $derived(status?.running === true);
 	let capturePaused = $derived(status?.capturePaused === true);
 	let captureActive = $derived(status?.captureActive === true && !capturePaused);
-	let candidates = $derived(status?.candidates ?? []);
-	let history = $derived(status?.history ?? []);
-	/** Ожидающие/проверяемые кандидаты — вкладка с выбором и массовыми действиями. */
-	let waitingCandidates = $derived(candidates.filter((c) => c.state === 'waiting' || c.state === 'checking'));
+	/** Туннель первоначальной настройки не выбран: только setup card + wizard. */
+	let setupRequired = $derived(status?.setupRequired === true);
+	let view = $state<'candidates' | 'added' | 'history'>('candidates');
+
+	// ── Списки вкладок: POST /list страницами по 128 ─────────────────────
+	// /status больше не несёт candidates/history: каждая вкладка догружает
+	// свой список сам — первая страница при входе, дальше кнопкой «Показать
+	// ещё». Поиск выполняет бэкенд (параметр q с debounce), cursor сбрасывается
+	// при смене q/вкладки/refresh/мутаций/очистке истории.
+
+	const AUTOLIST_PAGE_SIZE = 128;
+
+	type AutolistAnyItem = AutolistCandidate | AutolistHistoryEntry;
+
+	interface AutolistTabList {
+		items: AutolistAnyItem[];
+		total: number;
+		nextCursor: string;
+		hasMore: boolean;
+		loading: boolean;
+		loaded: boolean;
+		error: boolean;
+	}
+
+	function emptyAutolistTabList(): AutolistTabList {
+		return { items: [], total: 0, nextCursor: '', hasMore: false, loading: false, loaded: false, error: false };
+	}
+
+	let candidatesList = $state<AutolistTabList>(emptyAutolistTabList());
+	let addedList = $state<AutolistTabList>(emptyAutolistTabList());
+	let historyList = $state<AutolistTabList>(emptyAutolistTabList());
+
+	/** Загруженные waiting/checking кандидаты — вкладка с выбором и массовыми действиями. */
+	let waitingCandidates = $derived(candidatesList.items as AutolistCandidate[]);
 	/** Уже добавленные в туннель — отдельная вкладка с действием «удалить правило». */
-	let addedCandidates = $derived(candidates.filter((c) => c.state === 'added'));
+	let addedCandidates = $derived(addedList.items as AutolistCandidate[]);
+	let history = $derived(historyList.items as AutolistHistoryEntry[]);
+
+	let viewTabs = $derived([
+		{ id: 'candidates', label: m.autolist_view_candidates(), badge: candidatesList.total },
+		{ id: 'added', label: m.autolist_view_added(), badge: addedList.total },
+		{ id: 'history', label: m.autolist_view_history(), badge: historyList.total },
+	]);
 	let addLimitExhausted = $derived(
 		(status?.addsLimit ?? 0) > 0 && (status?.addsUsedHour ?? 0) >= (status?.addsLimit ?? 0),
 	);
-	let view = $state<'candidates' | 'added' | 'history'>('candidates');
-	let viewTabs = $derived([
-		{ id: 'candidates', label: m.autolist_view_candidates(), badge: waitingCandidates.length },
-		{ id: 'added', label: m.autolist_view_added(), badge: addedCandidates.length },
-		{ id: 'history', label: m.autolist_view_history(), badge: history.length },
-	]);
+
+	/** Generation-гард: отмена устаревших ответов при reset/смене вкладки/q. */
+	let listsGeneration = 0;
+
+	function listStateFor(v: 'candidates' | 'added' | 'history'): AutolistTabList {
+		return v === 'added' ? addedList : v === 'history' ? historyList : candidatesList;
+	}
+
+	function listParamsFor(v: 'candidates' | 'added' | 'history'): { kind: AutolistListKind; state: AutolistListState } {
+		if (v === 'history') return { kind: 'history', state: '' };
+		return { kind: 'candidates', state: v === 'added' ? 'added' : 'active' };
+	}
+
+	/** Детерминированный ключ записи истории: дедуп при склейке страниц. */
+	function historyEntryKey(h: AutolistHistoryEntry): string {
+		return [h.at, h.action, h.domain ?? '', h.host ?? '', h.ip ?? '', h.network ?? '', h.port ?? '', h.clientIP ?? '', h.clientMAC ?? ''].join('|');
+	}
+
+	function listItemKey(v: 'candidates' | 'added' | 'history', item: AutolistAnyItem): string {
+		return v === 'history' ? historyEntryKey(item as AutolistHistoryEntry) : (item as AutolistCandidate).id;
+	}
+
+	/** Первая страница списка вкладки: cursor сброшен, прежние items выкинуты. */
+	async function reloadList(v: 'candidates' | 'added' | 'history', q: string) {
+		const gen = ++listsGeneration;
+		const st = listStateFor(v);
+		st.items = [];
+		st.total = 0;
+		st.nextCursor = '';
+		st.hasMore = false;
+		st.error = false;
+		st.loaded = false;
+		st.loading = true;
+		const { kind, state } = listParamsFor(v);
+		try {
+			const page = await api.listAutolist(kind, { state, q, cursor: '', limit: AUTOLIST_PAGE_SIZE });
+			if (gen !== listsGeneration) return;
+			st.items = page.items as AutolistAnyItem[];
+			st.total = page.total;
+			st.nextCursor = page.nextCursor ?? '';
+			st.hasMore = page.hasMore;
+			st.loaded = true;
+		} catch {
+			if (gen !== listsGeneration) return;
+			st.error = true;
+		} finally {
+			if (gen === listsGeneration) st.loading = false;
+		}
+	}
+
+	/** «Показать ещё»: append с дедупом по ключу — повторные fetch не плодят дубли. */
+	async function loadMore(v: 'candidates' | 'added' | 'history') {
+		const st = listStateFor(v);
+		if (!st.hasMore || st.loading) return;
+		const gen = listsGeneration;
+		const cursor = st.nextCursor;
+		st.loading = true;
+		st.error = false;
+		const { kind, state } = listParamsFor(v);
+		try {
+			const page = await api.listAutolist(kind, { state, q: listQuery, cursor, limit: AUTOLIST_PAGE_SIZE });
+			if (gen !== listsGeneration) return;
+			const known = new Set(st.items.map((it) => listItemKey(v, it)));
+			const fresh = (page.items as AutolistAnyItem[]).filter((it) => !known.has(listItemKey(v, it)));
+			st.items = [...st.items, ...fresh];
+			st.total = page.total;
+			st.nextCursor = page.nextCursor ?? '';
+			st.hasMore = page.hasMore;
+			st.loaded = true;
+		} catch {
+			if (gen !== listsGeneration) return;
+			st.error = true;
+		} finally {
+			if (gen === listsGeneration) st.loading = false;
+		}
+	}
+
+	// ── Поиск по всем вкладкам ───────────────────────────────────────────
+	// Одно поле на все три вкладки; запрос уходит на бэкенд с debounce
+	// ~250 мс. Смена q сбрасывает cursor: эффект перезагружает текущую
+	// вкладку с первой страницы.
+
+	let searchInput = $state('');
+	let listQuery = $state('');
+	let searchTimer: ReturnType<typeof setTimeout> | undefined;
+
+	$effect(() => {
+		const value = searchInput;
+		if (searchTimer) clearTimeout(searchTimer);
+		searchTimer = setTimeout(() => {
+			listQuery = value.trim();
+		}, 250);
+		return () => {
+			if (searchTimer) clearTimeout(searchTimer);
+		};
+	});
+
+	// untrack: reloadList читает/пишет $state списков — без него эффект
+	// сам себя инвалидировал бы бесконечно. Зависимости: view/listQuery/running.
+	$effect(() => {
+		const v = view;
+		const q = listQuery;
+		const active = running;
+		untrack(() => {
+			if (active) void reloadList(v, q);
+		});
+	});
+
+	/** Сброс всех списков: мутации, очистка истории, сохранение настроек. */
+	function resetLists() {
+		listsGeneration++;
+		candidatesList = emptyAutolistTabList();
+		addedList = emptyAutolistTabList();
+		historyList = emptyAutolistTabList();
+	}
+
+	function reloadCurrentList() {
+		void reloadList(view, listQuery);
+	}
+
+	/** Общий пост-обработчик мутаций: статус + списки с первой страницы. */
+	function afterListMutation() {
+		autolistStatus.invalidate();
+		resetLists();
+		reloadCurrentList();
+	}
 
 	// ── Поиск по всем вкладкам ───────────────────────────────────────────
 	// Одно поле на все три вкладки: ищет по тому, что видно в строке —
@@ -171,6 +334,8 @@
 	async function refresh() {
 		refreshing = true;
 		try {
+			resetLists();
+			reloadCurrentList();
 			await autolistStatus.refetch();
 		} finally {
 			refreshing = false;
@@ -224,9 +389,10 @@
 
 	function closeRecheck() {
 		// RecheckModal сам пишет в стор при успехе — инвалидация по закрытию
-		// безопасна в любом случае: карточка подтянет свежие evidence.
+		// безопасна в любом случае: карточка подтянет свежие evidence,
+		// списки перечитаются с первой страницы.
 		recheckCandidate = null;
-		autolistStatus.invalidate();
+		afterListMutation();
 	}
 
 	/**
@@ -246,7 +412,7 @@
 		try {
 			await run();
 			notifications.success(ok());
-			autolistStatus.invalidate();
+			afterListMutation();
 			return true;
 		} catch (e) {
 			notifications.error(errorMessage(e, err()));
@@ -303,7 +469,7 @@
 				const done = new Set(result.ok);
 				selectedIds = new Set([...selectedIds].filter((id) => !done.has(id)));
 			}
-			autolistStatus.invalidate();
+			afterListMutation();
 		} catch (e) {
 			notifications.error(errorMessage(e, errText()));
 		} finally {
@@ -372,7 +538,7 @@
 			}
 			// Карточки выбранных кандидатов уйдут после refetch; снятие выбора не ждёт его.
 			selectedIds = new Set([...selectedIds].filter((id) => !ids.includes(id)));
-			autolistStatus.invalidate();
+			afterListMutation();
 		} catch (e) {
 			notifications.error(errorMessage(e, m.autolist_bulk_exclude_err()));
 		} finally {
@@ -551,9 +717,13 @@
 	// ── Settings modal ───────────────────────────────────────────────────
 
 	let settingsOpen = $state(false);
+	/** Мастер первоначальной настройки: открывается из setup card. */
+	let wizardOpen = $state(false);
 	/** Наборы, не влезшие в потолок памяти: в покрытии они не учитываются. */
 	let skippedRuleSets = $state<string[]>([]);
 	let autoConfirmOpen = $state(false);
+	/** Явное согласие с рисками в модалке настроек: тот же список, что у wizard. */
+	let autoRiskAcknowledged = $state(false);
 	let busy = $state(false);
 	let historyClearConfirmOpen = $state(false);
 	let historyClearBusy = $state(false);
@@ -700,80 +870,28 @@
 	});
 
 	/**
-	 * Список «Интерфейс туннеля»: каталог туннелей (те же три источника, что
-	 * у TunnelCatalog сателлита, awgm/catalog.go) плюс WAN из all-interfaces.
-	 * Managed AWG-туннели (opkgtun*) вырезаны из all-interfaces (isOwnTunnel),
-	 * поэтому приходят только из getAWGTags. Порядок: AWG, standalone
-	 * sing-box, подписки, WAN, затем «хвост» текущего targetInterface —
-	 * сохранённое значение видно, даже если источник временно недоступен.
-	 * Дедуп по kernel-имени интерфейса: первый источник выигрывает, у
-	 * дубликата забираем человеческое имя, если у первого его не было.
+	 * Список «Интерфейс туннеля» и DNS-опции: общие чистые сборщики (options.ts)
+	 * — та же семантика полей, что и у мастера первоначальной настройки.
 	 */
-	let tunnelInterfaceOptions = $derived.by(() => {
-		/** Накопитель по kernel-имени; label — человеческое имя или ''. */
-		const byValue = new Map<string, { value: string; label: string; description?: string }>();
-		const add = (value: string, human: string, description?: string) => {
-			const existing = byValue.get(value);
-			if (!existing) byValue.set(value, { value, label: human, description });
-			else if (!existing.label && human) existing.label = human;
-		};
-		const fmt = (value: string, human: string) => (human ? `${human} (${value})` : value);
-		// Managed AWG: enabled-поля нет, берём все с непустым iface.
-		for (const t of awgTagInfos) {
-			if (!t.iface) continue;
-			add(t.iface, t.label, m.autolist_cfg_target_kind_awg());
-		}
-		// Standalone sing-box: интерфейс существует, только пока процесс поднят.
-		for (const t of singboxTunnels) {
-			if (!t.running || !t.kernelInterface) continue;
-			add(t.kernelInterface, t.tag, m.autolist_cfg_target_kind_singbox());
-		}
-		// Подписки: синтетический интерфейс t2s<proxyIndex>.
-		for (const s of subscriptions) {
-			if (!s.enabled || s.proxyIndex < 0) continue;
-			add(`t2s${s.proxyIndex}`, s.label, m.autolist_cfg_target_kind_subscription());
-		}
-		// WAN/прочие из all-interfaces: LAN/bridge не предлагаем (private).
-		for (const iface of interfaces) {
-			if (!iface.up) continue;
-			if (iface.securityLevel && iface.securityLevel !== 'public') continue;
-			add(iface.name, iface.label, m.autolist_cfg_target_kind_wan());
-		}
-		const opts = [...byValue.values()].map((o) => ({ ...o, label: fmt(o.value, o.label) }));
-		const current = cfgDraft.targetInterface ?? '';
-		if (current && !byValue.has(current)) {
-			opts.push({ value: current, label: current });
-		}
-		return opts;
-	});
+	let tunnelInterfaceOptions = $derived(
+		buildTunnelInterfaceOptions({
+			awgTagInfos,
+			singboxTunnels,
+			subscriptions,
+			interfaces,
+			current: cfgDraft.targetInterface ?? '',
+		}),
+	);
 
-	let dnsOptions = $derived.by(() => {
-		const finalTag = dnsGlobals?.final ?? '';
-		const opts: { value: string; label: string; description?: string; disabled?: boolean }[] = [];
-		if (finalTag) {
-			opts.push({ value: '', label: m.autolist_dns_final(), description: finalTag });
-		}
-		for (const server of dnsServers) {
-			const supportedTransport = server.type === 'udp' || server.type === 'https' || server.type === 'tls';
-			const disabled = !supportedTransport;
-			const description = !supportedTransport
-				? m.autolist_dns_unsupported()
-				: server.detour
-					? m.autolist_dns_detour()
-					: `${server.type.toUpperCase()} · ${server.server}`;
-			opts.push({ value: `sb:${server.tag}`, label: server.tag, description, disabled });
-		}
-		const current = cfgDraft.resolveVia ?? '';
-		if (current && !opts.some((o) => o.value === current)) {
-			opts.push({ value: current, label: current });
-		}
-		return opts;
-	});
+	let dnsOptions = $derived(buildDnsOptions({ dnsServers, dnsGlobals, current: cfgDraft.resolveVia ?? '' }));
 
 	let exclusionRuleSetOptions = $derived(exclusionRuleSets.map((rs) => ({ value: rs.tag, label: rs.tag })));
 
 	/** AutoAdd доступен только при включённой tunnel-пробе. */
 	let autoAddAvailable = $derived((cfgDraft.tunnelProbe ?? false) === true);
+
+	/** Туннель обязателен: сохранение без явного выбора запрещено. */
+	let targetChosen = $derived((cfgDraft.targetInterface ?? '').trim() !== '');
 
 	async function openSettings() {
 		const generation = ++cfgLoadGeneration;
@@ -833,7 +951,8 @@
 	function toggleAuto() {
 		if (!cfgLoadSucceeded || !autoAddAvailable) return;
 		if (!cfgDraft.autoAdd) {
-			// включаем — сначала предупреждение
+			// включаем — сначала предупреждение с явным согласием с рисками
+			autoRiskAcknowledged = false;
 			autoConfirmOpen = true;
 		} else {
 			cfgDraft = { ...cfgDraft, autoAdd: false };
@@ -841,14 +960,14 @@
 	}
 
 	async function confirmAuto() {
-		if (!cfgLoadSucceeded || !autoAddAvailable || busy) return;
+		if (!cfgLoadSucceeded || !autoAddAvailable || busy || !autoRiskAcknowledged) return;
 		autoConfirmOpen = false;
 		cfgDraft = { ...cfgDraft, autoAdd: true };
 		await saveConfig();
 	}
 
 	async function saveConfig() {
-		if (!cfgLoadSucceeded || busy) return;
+		if (!cfgLoadSucceeded || busy || !targetChosen) return;
 		const generation = cfgLoadGeneration;
 		const draftAtSave = cfgDraft;
 		busy = true;
@@ -856,7 +975,7 @@
 			await api.setAutolistConfig(buildAutolistConfigPayload(draftAtSave));
 			notifications.success(m.autolist_cfg_saved());
 			if (generation === cfgLoadGeneration && cfgDraft === draftAtSave) settingsOpen = false;
-			autolistStatus.invalidate();
+			afterListMutation();
 			void fetchSkippedRuleSets(draftAtSave.excludeRuleSets ?? []);
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : m.autolist_cfg_save_err());
@@ -878,7 +997,7 @@
 			await api.clearAutolistHistory();
 			notifications.success(m.autolist_history_clear_ok());
 			historyClearConfirmOpen = false;
-			autolistStatus.invalidate();
+			afterListMutation();
 		} catch (e) {
 			notifications.error(errorMessage(e, m.autolist_history_clear_err()));
 		} finally {
@@ -900,7 +1019,9 @@
 
 {#snippet candidateCard(c: AutolistCandidate)}
 	{@const busy = busyIds.has(c.id)}
-	<div class="card p-4 flex flex-col gap-2">
+	<!-- Карточка с ошибкой записи получает красную рамку; текст ошибки — только
+	     внутри «Подробности проверки» (сниппет candidateDetails ниже). -->
+	<div class="card p-4 flex flex-col gap-2" class:autolist-card-error={!!c.lastError}>
 		<div class="flex items-center gap-3 flex-wrap">
 			{#if c.state === 'waiting' || c.state === 'checking'}
 				<input
@@ -1128,49 +1249,65 @@
 
 	{#if loading}
 		<div class="card p-6 text-sm opacity-60">…</div>
+	{:else if !status?.installed}
+		<div class="card p-6 flex flex-col gap-3">
+			<div class="flex items-center gap-2 font-medium">
+				<CircleAlert size={18} class="text-warning" aria-hidden="true" />
+				{m.autolist_not_installed()}
+			</div>
+			<p class="text-sm opacity-70">{m.autolist_not_installed_hint()}</p>
+			<div>
+				<Button variant="primary" size="sm" onclick={() => void installSatellite()} loading={lifecycleBusy}>
+					{m.autolist_install()}
+				</Button>
+			</div>
+		</div>
+	{:else if setupRequired}
+		<!-- Туннель первоначальной настройки не выбран: обычный контент недоступен,
+		     только мастер. Status/control API работает, чтобы отдать setupRequired. -->
+		<div class="card p-6 flex flex-col gap-3">
+			<div class="flex items-center gap-2 font-medium">
+				<Settings2 size={18} class="text-warning" aria-hidden="true" />
+				{m.autolist_setup_title()}
+			</div>
+			<p class="text-sm opacity-70">{m.autolist_setup_hint()}</p>
+			<div>
+				<Button variant="primary" size="sm" onclick={() => (wizardOpen = true)}>
+					{#snippet iconBefore()}<Power size={14} strokeWidth={2} aria-hidden="true" />{/snippet}
+					{m.autolist_setup_start()}
+				</Button>
+			</div>
+		</div>
 	{:else if !running}
 		<div class="card p-6 flex flex-col gap-3">
-			{#if !status?.installed}
-				<div class="flex items-center gap-2 font-medium">
-					<CircleAlert size={18} class="text-warning" aria-hidden="true" />
-					{m.autolist_not_installed()}
-				</div>
-				<p class="text-sm opacity-70">{m.autolist_not_installed_hint()}</p>
-				<div>
-					<Button variant="primary" size="sm" onclick={() => void installSatellite()} loading={lifecycleBusy}>
-						{m.autolist_install()}
+			<div class="flex items-center gap-2 font-medium">
+				<CircleAlert size={18} class="text-warning" aria-hidden="true" />
+				{status?.enabled === false ? m.autolist_disabled() : m.autolist_not_running()}
+			</div>
+			<p class="text-sm opacity-70 break-all">
+				{status?.enabled === false ? m.autolist_disabled_hint() : m.autolist_not_running_hint()}
+			</p>
+			<div>
+				<div class="flex items-center gap-2 flex-wrap">
+					<Button variant="primary" size="sm" onclick={() => void setSatelliteEnabled(true)} loading={lifecycleBusy}>
+						{#snippet iconBefore()}<Power size={14} strokeWidth={2} aria-hidden="true" />{/snippet}
+						{status?.enabled === false ? m.autolist_enable() : m.common_start()}
 					</Button>
-				</div>
-			{:else}
-				<div class="flex items-center gap-2 font-medium">
-					<CircleAlert size={18} class="text-warning" aria-hidden="true" />
-					{status?.enabled === false ? m.autolist_disabled() : m.autolist_not_running()}
-				</div>
-				<p class="text-sm opacity-70 break-all">
-					{status?.enabled === false ? m.autolist_disabled_hint() : m.autolist_not_running_hint()}
-				</p>
-				<div>
-					<div class="flex items-center gap-2 flex-wrap">
-						<Button variant="primary" size="sm" onclick={() => void setSatelliteEnabled(true)} loading={lifecycleBusy}>
-							{#snippet iconBefore()}<Power size={14} strokeWidth={2} aria-hidden="true" />{/snippet}
-							{status?.enabled === false ? m.autolist_enable() : m.common_start()}
+					<!-- Объекты Autolist остаются в конфиге и после остановки: снос —
+					     только явной кнопкой, поэтому она нужна и в stopped-карточке. -->
+					<Button variant="outline-danger" size="sm" onclick={() => (teardownConfirmOpen = true)} disabled={teardownBusy}>
+						{#snippet iconBefore()}<Trash2 size={14} strokeWidth={2} aria-hidden="true" />{/snippet}
+						{m.autolist_teardown_button()}
+					</Button>
+					<!-- Есть снимок последнего сноса: вернуть объекты или начать заново. -->
+					{#if status?.hasRemovedBackup}
+						<Button variant="outline-primary" size="sm" onclick={() => void openBackupDialog()}>
+							{#snippet iconBefore()}<ArchiveRestore size={14} strokeWidth={2} aria-hidden="true" />{/snippet}
+							{m.autolist_backup_button()}
 						</Button>
-						<!-- Объекты Autolist остаются в конфиге и после остановки: снос —
-						     только явной кнопкой, поэтому она нужна и в stopped-карточке. -->
-						<Button variant="outline-danger" size="sm" onclick={() => (teardownConfirmOpen = true)} disabled={teardownBusy}>
-							{#snippet iconBefore()}<Trash2 size={14} strokeWidth={2} aria-hidden="true" />{/snippet}
-							{m.autolist_teardown_button()}
-						</Button>
-						<!-- Есть снимок последнего сноса: вернуть объекты или начать заново. -->
-						{#if status?.hasRemovedBackup}
-							<Button variant="outline-primary" size="sm" onclick={() => void openBackupDialog()}>
-								{#snippet iconBefore()}<ArchiveRestore size={14} strokeWidth={2} aria-hidden="true" />{/snippet}
-								{m.autolist_backup_button()}
-							</Button>
-						{/if}
-					</div>
+					{/if}
 				</div>
-			{/if}
+			</div>
 		</div>
 	{:else}
 		<!-- Главный экран: состояние мониторинга и бюджет -->
@@ -1221,12 +1358,12 @@
 				<Search size={15} aria-hidden="true" />
 				<input
 					type="text"
-					bind:value={search}
+					bind:value={searchInput}
 					placeholder={m.autolist_search_placeholder()}
 					aria-label={m.autolist_search_placeholder()}
 				/>
-				{#if search}
-					<button class="autolist-search-clear" onclick={() => (search = '')} title={m.common_clear()}>
+				{#if searchInput}
+					<button class="autolist-search-clear" onclick={() => (searchInput = '')} title={m.common_clear()}>
 						<X size={14} aria-hidden="true" />
 					</button>
 				{/if}
@@ -1247,7 +1384,14 @@
 					{/each}
 				</div>
 			{/if}
-			{#if waitingCandidates.length === 0}
+			{#if candidatesList.items.length === 0 && candidatesList.loading}
+				<div class="card p-6 text-sm opacity-60">…</div>
+			{:else if candidatesList.items.length === 0 && candidatesList.error}
+				<div class="card p-6 flex items-center gap-3 flex-wrap">
+					<span class="text-sm text-error flex-1">{m.autolist_list_loading_error()}</span>
+					<Button variant="secondary" size="sm" onclick={reloadCurrentList}>{m.common_retry()}</Button>
+				</div>
+			{:else if candidatesList.total === 0 && !listQuery}
 				<div class="card p-6 flex flex-col gap-2">
 					<div class="flex items-center gap-2 font-medium">
 						<CircleDashed size={18} aria-hidden="true" />
@@ -1258,7 +1402,7 @@
 			{:else if visibleCandidates.length === 0}
 				<div class="card p-6 text-sm opacity-70">{m.autolist_search_not_found()}</div>
 			{:else}
-				<!-- панель массовых действий -->
+				<!-- панель массовых действий: работает по загруженным waiting кандидатам -->
 				<div class="flex items-center gap-2 flex-wrap">
 					<label class="flex items-center gap-2 text-sm cursor-pointer select-none">
 						<input type="checkbox" checked={allSelected} onchange={toggleAllSelected} disabled={bulkBusy} />
@@ -1300,9 +1444,26 @@
 						{@render candidateCard(c)}
 					{/each}
 				</div>
+				{#if candidatesList.error}
+					<p class="text-xs text-error">{m.autolist_list_loading_error()}</p>
+				{/if}
+			{/if}
+			{#if candidatesList.hasMore}
+				<div>
+					<Button variant="secondary" size="sm" onclick={() => void loadMore('candidates')} loading={candidatesList.loading}>
+						{m.autolist_show_more()}
+					</Button>
+				</div>
 			{/if}
 		{:else if view === 'added'}
-			{#if addedCandidates.length === 0}
+			{#if addedList.items.length === 0 && addedList.loading}
+				<div class="card p-6 text-sm opacity-60">…</div>
+			{:else if addedList.items.length === 0 && addedList.error}
+				<div class="card p-6 flex items-center gap-3 flex-wrap">
+					<span class="text-sm text-error flex-1">{m.autolist_list_loading_error()}</span>
+					<Button variant="secondary" size="sm" onclick={reloadCurrentList}>{m.common_retry()}</Button>
+				</div>
+			{:else if addedList.total === 0 && !listQuery}
 				<div class="card p-6 flex flex-col gap-2">
 					<div class="flex items-center gap-2 font-medium">
 						<CircleDashed size={18} aria-hidden="true" />
@@ -1318,9 +1479,26 @@
 						{@render candidateCard(c)}
 					{/each}
 				</div>
+				{#if addedList.error}
+					<p class="text-xs text-error">{m.autolist_list_loading_error()}</p>
+				{/if}
+			{/if}
+			{#if addedList.hasMore}
+				<div>
+					<Button variant="secondary" size="sm" onclick={() => void loadMore('added')} loading={addedList.loading}>
+						{m.autolist_show_more()}
+					</Button>
+				</div>
 			{/if}
 		{:else}
-			{#if history.length === 0}
+			{#if historyList.items.length === 0 && historyList.loading}
+				<div class="card p-6 text-sm opacity-60">…</div>
+			{:else if historyList.items.length === 0 && historyList.error}
+				<div class="card p-6 flex items-center gap-3 flex-wrap">
+					<span class="text-sm text-error flex-1">{m.autolist_list_loading_error()}</span>
+					<Button variant="secondary" size="sm" onclick={reloadCurrentList}>{m.common_retry()}</Button>
+				</div>
+			{:else if historyList.total === 0 && !listQuery}
 				<div class="card p-6 flex flex-col gap-2">
 					<div class="flex items-center gap-2 font-medium">
 						<CircleDashed size={18} aria-hidden="true" />
@@ -1346,7 +1524,7 @@
 							</tr>
 						</thead>
 						<tbody>
-							{#each visibleHistory as h (`${h.at}:${h.action}:${h.domain ?? h.ip ?? ''}`)}
+							{#each visibleHistory as h (historyEntryKey(h))}
 								<tr class="border-b border-base-200 last:border-0 align-top">
 									<td class="px-4 py-2.5 opacity-70 whitespace-nowrap">{formatAutolistTime(h.at)}</td>
 									<td class="px-4 py-2.5 font-mono">
@@ -1406,6 +1584,16 @@
 						</tbody>
 					</table>
 				</div>
+				{#if historyList.error}
+					<p class="text-xs text-error">{m.autolist_list_loading_error()}</p>
+				{/if}
+			{/if}
+			{#if historyList.hasMore}
+				<div>
+					<Button variant="secondary" size="sm" onclick={() => void loadMore('history')} loading={historyList.loading}>
+						{m.autolist_show_more()}
+					</Button>
+				</div>
 			{/if}
 		{/if}
 
@@ -1428,7 +1616,7 @@
 		{:else}
 			<div class="autolist-settings-grid">
 				<section class="flex flex-col gap-4">
-					<h3 class="text-sm font-semibold opacity-70">{m.autolist_cfg_group_probe()}</h3>
+					<h3 class="text-sm font-semibold opacity-70">{m.autolist_cfg_group_main()}</h3>
 
 					<div class="flex flex-col gap-1.5">
 						<span class="text-sm font-medium">{m.autolist_cfg_target()}</span>
@@ -1439,8 +1627,29 @@
 							onchange={(v) => (cfgDraft = { ...cfgDraft, targetInterface: v })}
 							fullWidth
 						/>
-						<span class="text-xs opacity-60">{m.autolist_cfg_target_hint()}</span>
+						{#if cfgLoadSucceeded && !targetChosen}
+							<span class="text-xs text-warning font-medium">{m.autolist_cfg_target_required()}</span>
+						{:else}
+							<span class="text-xs opacity-60">{m.autolist_cfg_target_hint()}</span>
+						{/if}
 					</div>
+
+					<div class="flex items-start justify-between gap-3">
+						<span class="flex flex-col gap-1">
+							<span class="text-sm font-medium">{m.autolist_cfg_udp()}</span>
+							<span class="text-xs opacity-70">{m.autolist_cfg_udp_hint()}</span>
+						</span>
+						<Toggle
+							checked={cfgDraft.udpEnabled ?? false}
+							controlled
+							onchange={(v) => (cfgDraft = { ...cfgDraft, udpEnabled: v })}
+							ariaLabel={m.autolist_cfg_udp()}
+						/>
+					</div>
+				</section>
+
+				<section class="flex flex-col gap-4">
+					<h3 class="text-sm font-semibold opacity-70">{m.autolist_cfg_group_checks()}</h3>
 
 					<div class="flex flex-col gap-1.5">
 						<span class="text-sm font-medium">{m.autolist_cfg_dns()}</span>
@@ -1451,6 +1660,19 @@
 							fullWidth
 						/>
 						<span class="text-xs opacity-60">{m.autolist_cfg_dns_hint()}</span>
+					</div>
+
+					<div class="flex items-start justify-between gap-3">
+						<span class="flex flex-col gap-1">
+							<span class="text-sm font-medium">{m.autolist_cfg_tunnel_probe()}</span>
+							<span class="text-xs opacity-70">{m.autolist_cfg_tunnel_probe_hint()}</span>
+						</span>
+						<Toggle
+							checked={cfgDraft.tunnelProbe ?? false}
+							controlled
+							onchange={setTunnelProbe}
+							ariaLabel={m.autolist_cfg_tunnel_probe()}
+						/>
 					</div>
 
 					<div class="flex flex-col gap-1.5">
@@ -1489,94 +1711,57 @@
 							ariaLabel={m.autolist_cfg_wan_monitor()}
 						/>
 					</div>
-
-					<div class="flex items-start justify-between gap-3">
-						<span class="flex flex-col gap-1">
-							<span class="text-sm font-medium">{m.autolist_cfg_tunnel_probe()}</span>
-							<span class="text-xs opacity-70">{m.autolist_cfg_tunnel_probe_hint()}</span>
-						</span>
-						<Toggle
-							checked={cfgDraft.tunnelProbe ?? false}
-							controlled
-							onchange={setTunnelProbe}
-							ariaLabel={m.autolist_cfg_tunnel_probe()}
-						/>
-					</div>
-
-					<div class="flex items-start justify-between gap-3">
-						<span class="flex flex-col gap-1">
-							<span class="text-sm font-medium">{m.autolist_cfg_udp()}</span>
-							<span class="text-xs opacity-70">{m.autolist_cfg_udp_hint()}</span>
-						</span>
-						<Toggle
-							checked={cfgDraft.udpEnabled ?? false}
-							controlled
-							onchange={(v) => (cfgDraft = { ...cfgDraft, udpEnabled: v })}
-							ariaLabel={m.autolist_cfg_udp()}
-						/>
-					</div>
-
-					<div class="flex items-start justify-between gap-3">
-						<span class="flex flex-col gap-1">
-							<span class="text-sm font-medium">{m.autolist_cfg_verbose()}</span>
-							<span class="text-xs opacity-70">{m.autolist_cfg_verbose_hint()}</span>
-						</span>
-						<Toggle
-							checked={cfgDraft.verbose ?? false}
-							controlled
-							onchange={(v) => (cfgDraft = { ...cfgDraft, verbose: v })}
-							ariaLabel={m.autolist_cfg_verbose()}
-						/>
-					</div>
 				</section>
+			</div>
 
-				<section class="flex flex-col gap-4">
-					<h3 class="text-sm font-semibold opacity-70">{m.autolist_cfg_group_rules()}</h3>
+			<section class="flex flex-col gap-4">
+				<h3 class="text-sm font-semibold opacity-70">{m.autolist_cfg_group_rules()}</h3>
 
-					<div class="flex flex-col gap-1.5">
-						<span class="text-sm font-medium">{m.autolist_cfg_exclude_domains()}</span>
-						<textarea
-							class="input-control font-mono"
-							rows="3"
-							value={cfgDraft.excludeDomains?.join('\n') ?? ''}
-							oninput={(e) => setExcludedDomains(e.currentTarget.value)}
-							placeholder="example.com, sub.example.org"
-						></textarea>
-						<span class="text-xs opacity-60">{m.autolist_cfg_exclude_domains_hint()}</span>
-					</div>
+				<div class="flex flex-col gap-1.5">
+					<span class="text-sm font-medium">{m.autolist_cfg_exclude_domains()}</span>
+					<textarea
+						class="input-control font-mono"
+						rows="3"
+						value={cfgDraft.excludeDomains?.join('\n') ?? ''}
+						oninput={(e) => setExcludedDomains(e.currentTarget.value)}
+						placeholder="example.com, sub.example.org"
+					></textarea>
+					<span class="text-xs opacity-60">{m.autolist_cfg_exclude_domains_hint()}</span>
+				</div>
 
-					<div class="flex flex-col gap-1.5">
-						<span class="text-sm font-medium">{m.autolist_cfg_exclude_rulesets()}</span>
-						<ChipMultiSelect
-							values={cfgDraft.excludeRuleSets ?? []}
-							options={exclusionRuleSetOptions}
-							onchange={(values) => (cfgDraft = { ...cfgDraft, excludeRuleSets: values })}
-							allowOrphans
-						/>
-						<span class="text-xs opacity-60">{m.autolist_cfg_exclude_rulesets_hint()}</span>
-						{#if skippedRuleSets.length > 0}
-							<div class="autolist-warning rounded-lg bg-warning/10 border border-warning/30 px-3 py-2 text-xs">
-								{m.autolist_cfg_exclude_rulesets_too_large()}
-								<span class="opacity-70">{skippedRuleSets.join(', ')}</span>
-							</div>
-						{/if}
-					</div>
+				<div class="flex flex-col gap-1.5">
+					<span class="text-sm font-medium">{m.autolist_cfg_exclude_rulesets()}</span>
+					<ChipMultiSelect
+						values={cfgDraft.excludeRuleSets ?? []}
+						options={exclusionRuleSetOptions}
+						onchange={(values) => (cfgDraft = { ...cfgDraft, excludeRuleSets: values })}
+						allowOrphans
+					/>
+					<span class="text-xs opacity-60">{m.autolist_cfg_exclude_rulesets_hint()}</span>
+					{#if skippedRuleSets.length > 0}
+						<div class="autolist-warning rounded-lg bg-warning/10 border border-warning/30 px-3 py-2 text-xs">
+							{m.autolist_cfg_exclude_rulesets_too_large()}
+							<span class="opacity-70">{skippedRuleSets.join(', ')}</span>
+						</div>
+					{/if}
+				</div>
+			</section>
 
-					<div class="autolist-warning flex items-start justify-between gap-3 rounded-lg bg-warning/10 border border-warning/30">
-						<span class="flex flex-col gap-1">
-							<span class="text-sm font-medium flex items-center gap-1.5">
-								<TriangleAlert size={15} class="text-warning" aria-hidden="true" />
-								{m.autolist_cfg_auto()}
-							</span>
-							<span class="text-xs opacity-70">{m.autolist_cfg_auto_hint()}</span>
-							{#if !autoAddAvailable}
-								<span class="text-xs text-warning font-medium">{m.autolist_cfg_auto_dependency()}</span>
-							{/if}
-							<span class="text-xs text-warning font-medium">{m.autolist_cfg_auto_warning()}</span>
-						</span>
-						<Toggle checked={cfgDraft.autoAdd} controlled onchange={toggleAuto} disabled={!autoAddAvailable} ariaLabel={m.autolist_cfg_auto()} />
-					</div>
-				</section>
+			<!-- AutoAdd визуально отделён от обычных переключателей: danger-панель
+			     и то же подтверждение рисков, что и в мастере. -->
+			<div class="autolist-warning flex items-start justify-between gap-3 rounded-lg bg-warning/10 border border-warning/30">
+				<span class="flex flex-col gap-1">
+					<span class="text-sm font-medium flex items-center gap-1.5">
+						<TriangleAlert size={15} class="text-warning" aria-hidden="true" />
+						{m.autolist_cfg_auto()}
+					</span>
+					<span class="text-xs opacity-70">{m.autolist_cfg_auto_hint()}</span>
+					{#if !autoAddAvailable}
+						<span class="text-xs text-warning font-medium">{m.autolist_cfg_auto_dependency()}</span>
+					{/if}
+					<span class="text-xs text-warning font-medium">{m.autolist_cfg_auto_warning()}</span>
+				</span>
+				<Toggle checked={cfgDraft.autoAdd} controlled onchange={toggleAuto} disabled={!autoAddAvailable} ariaLabel={m.autolist_cfg_auto()} />
 			</div>
 
 			<!-- Опасная зона: очистка журнала. Только история, не кандидаты/правила/бюджет. -->
@@ -1596,26 +1781,67 @@
 	</div>
 	{#snippet actions()}
 		<Button variant="ghost" size="md" onclick={() => (settingsOpen = false)}>{m.common_cancel()}</Button>
-		<Button variant="primary" size="md" onclick={saveConfig} disabled={cfgLoading || !cfgLoadSucceeded || busy} loading={busy}>
+		<Button variant="primary" size="md" onclick={saveConfig} disabled={cfgLoading || !cfgLoadSucceeded || busy || !targetChosen} loading={busy}>
 			{m.common_save()}
 		</Button>
 	{/snippet}
 </Modal>
 
-<!-- Подтверждение включения автоматики -->
+<!-- Подтверждение включения автоматики: тот же список рисков, что и в мастере,
+     плюс обязательное явное согласие. Без него кнопка не активна. -->
 <Modal open={autoConfirmOpen} onclose={() => (autoConfirmOpen = false)} title={m.autolist_auto_confirm_title()} size="sm">
 	<div class="flex flex-col gap-3">
 		<div class="autolist-warning flex items-start gap-2.5 rounded-lg bg-warning/10 border border-warning/30">
 			<TriangleAlert size={18} class="text-warning shrink-0 mt-0.5" aria-hidden="true" />
 			<p class="text-sm">{m.autolist_auto_confirm_text()}</p>
 		</div>
+		<div class="flex flex-col gap-1.5">
+			<span class="text-sm font-medium">{m.autolist_risks_title()}</span>
+			<ul class="autolist-risk-list text-sm opacity-80">
+				{#each autolistRiskItems() as item (item)}
+					<li>{item}</li>
+				{/each}
+			</ul>
+		</div>
 		<p class="text-sm opacity-70">{m.autolist_auto_confirm_limits()}</p>
+		<div class="flex items-start justify-between gap-3">
+			<span class="text-sm">{m.autolist_risks_ack()}</span>
+			<Toggle
+				checked={autoRiskAcknowledged}
+				controlled
+				onchange={(v) => (autoRiskAcknowledged = v)}
+				ariaLabel={m.autolist_risks_ack()}
+			/>
+		</div>
 	</div>
 	{#snippet actions()}
 		<Button variant="ghost" size="md" onclick={() => (autoConfirmOpen = false)}>{m.common_cancel()}</Button>
-		<Button variant="primary" size="md" onclick={confirmAuto} disabled={!cfgLoadSucceeded || !autoAddAvailable || busy} loading={busy}>{m.autolist_auto_confirm_yes()}</Button>
+		<Button
+			variant="primary"
+			size="md"
+			onclick={confirmAuto}
+			disabled={!cfgLoadSucceeded || !autoAddAvailable || busy || !autoRiskAcknowledged}
+			loading={busy}
+		>
+			{m.autolist_auto_confirm_yes()}
+		</Button>
 	{/snippet}
 </Modal>
+
+<!-- Мастер первоначальной настройки: открывается из setup card. -->
+<AutolistSetupWizard
+	open={wizardOpen}
+	onclose={() => (wizardOpen = false)}
+	onsaved={afterListMutation}
+	onfetchresources={() => void fetchProbeResources()}
+	{awgTagInfos}
+	{singboxTunnels}
+	{subscriptions}
+	{interfaces}
+	{dnsServers}
+	{dnsGlobals}
+	exclusionRuleSets={exclusionRuleSets}
+/>
 
 <!-- Подтверждение очистки журнала -->
 <Modal open={historyClearConfirmOpen} onclose={() => (historyClearConfirmOpen = false)} title={m.autolist_history_clear_confirm_title()} size="sm">
@@ -1885,5 +2111,17 @@
 			grid-template-columns: repeat(2, minmax(0, 1fr));
 			align-items: start;
 		}
+	}
+	/* Карточка с ошибкой записи: красная рамка. Текст ошибки живёт только
+	   внутри «Подробности проверки». */
+	.autolist-card-error {
+		border-color: color-mix(in srgb, var(--color-error, #dc2626) 55%, var(--border));
+	}
+	.autolist-risk-list {
+		margin: 0;
+		padding-left: 1.25rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.375rem;
 	}
 </style>

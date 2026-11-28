@@ -237,7 +237,7 @@ exit 0
 }
 
 func TestHTTPSMetaTrailerDoesNotCountAsBody(t *testing.T) {
-	raw := []byte("hello" + curlMetaMarker + "200|0.1|0.2|0.3|https://x/")
+	raw := []byte("hello" + curlMetaMarker + "200|0.1|0.2|0.3")
 	body, meta := splitCurlMeta(raw)
 	if string(body) != "hello" || !meta.known || meta.httpCode != 200 || meta.connectSec != 0.2 {
 		t.Fatalf("body=%q meta=%+v", body, meta)

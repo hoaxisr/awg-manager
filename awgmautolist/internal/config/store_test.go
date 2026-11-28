@@ -15,7 +15,7 @@ func TestDefaults(t *testing.T) {
 	}
 	cfg := store.Config()
 	if cfg.WANCheckURL != DefaultWANCheckURL || !cfg.TunnelProbe || cfg.AutoAdd ||
-		cfg.WANMonitorEnabled || cfg.UDPEnabled || cfg.Verbose {
+		cfg.WANMonitorEnabled || cfg.UDPEnabled {
 		t.Fatalf("unexpected defaults: %+v", cfg)
 	}
 	if cfg.AddsPerHour != DefaultAddsPerHour {
@@ -29,7 +29,7 @@ func TestPatchPreservesUnknownFields(t *testing.T) {
 	if _, err := store.Patch([]byte(`{"future":{"enabled":true},"autoAdd":false}`)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Patch([]byte(`{"verbose":true}`)); err != nil {
+	if _, err := store.Patch([]byte(`{"futureFlag":true}`)); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path)
@@ -41,7 +41,7 @@ func TestPatchPreservesUnknownFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	future, ok := got["future"].(map[string]any)
-	if !ok || future["enabled"] != true || got["verbose"] != true || got["autoAdd"] != false {
+	if !ok || future["enabled"] != true || got["futureFlag"] != true || got["autoAdd"] != false {
 		t.Fatalf("unknown/config fields were not preserved: %s", data)
 	}
 }
@@ -136,7 +136,7 @@ func TestLegacyResolverMigratesOnlyInMemoryUntilSave(t *testing.T) {
 	if !reflect.DeepEqual(before, original) {
 		t.Fatal("Load rewrote flash config")
 	}
-	if _, err := store.Patch([]byte(`{"verbose":true}`)); err != nil {
+	if _, err := store.Patch([]byte(`{"futureFlag":true}`)); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(path)

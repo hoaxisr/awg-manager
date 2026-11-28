@@ -62,7 +62,7 @@ func TestControllerPauseResumeClosesSocketGeneration(t *testing.T) {
 	if controller.Status().Running || controller.Status().FlowStats.Flows != 0 {
 		t.Fatalf("capture did not pause cleanly: %+v", controller.Status())
 	}
-	if err := controller.Resume(context.Background()); err != nil {
+	if err := controller.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if err := controller.Stop(); err != nil {
@@ -142,7 +142,7 @@ func TestControllerPauseDoesNotHangForeverIfReaderIsStuck(t *testing.T) {
 	}
 	// opMu освобождён: Start должен работать после разблокировки reader.
 	close(unblock)
-	if err := controller.Resume(context.Background()); err != nil {
+	if err := controller.Start(context.Background()); err != nil {
 		t.Fatalf("resume after timed-out pause: %v", err)
 	}
 	if err := controller.Stop(); err != nil {

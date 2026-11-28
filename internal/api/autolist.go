@@ -25,10 +25,13 @@ type AutolistHandler struct {
 	// nil — поле статуса остаётся false. Ошибка чтения снимка не валит
 	// статус: трактуется как «снимка нет», факт уходит в журнал.
 	hasRemovedBackup func(ctx context.Context) (bool, time.Time, error)
+	// logSync доталкивает журнал сателлита (/tmp/awgmautolist.log) в общий
+	// журнал панели; тикает из Status (polling уже периодический).
+	logSync *autolistLogSync
 }
 
 func NewAutolistHandler(svc *autolistdetect.Service) *AutolistHandler {
-	return &AutolistHandler{svc: svc}
+	return &AutolistHandler{svc: svc, logSync: &autolistLogSync{}}
 }
 
 // SetHasRemovedBackupProbe подключает проверку файла снимка удалённых
@@ -65,7 +68,16 @@ type autolistStatusResponse struct {
 }
 
 func emptyAutolistStatus() *autolistdetect.Status {
-	return &autolistdetect.Status{Protocols: []string{}, Candidates: []autolistdetect.Candidate{}, History: []autolistdetect.HistoryEntry{}}
+	return &autolistdetect.Status{Protocols: []string{}}
+}
+
+// syncAutolistLog — best-effort доталкивание журнала сателлита в app-журнал:
+// отсутствие/ошибка файла означают просто «нет событий», статус не валит.
+func (h *AutolistHandler) syncAutolistLog() {
+	if h.logSync == nil {
+		return
+	}
+	h.logSync.sync(h.log)
 }
 
 // AutolistStatus returns process/capture state, candidates and history.
@@ -80,6 +92,7 @@ func (h *AutolistHandler) Status(w http.ResponseWriter, r *http.Request) {
 		response.MethodNotAllowed(w)
 		return
 	}
+	h.syncAutolistLog()
 	if h.svc == nil {
 		response.Success(w, autolistStatusResponse{AutolistStatus: h.withRemovedBackup(r.Context(), emptyAutolistStatus())})
 		return

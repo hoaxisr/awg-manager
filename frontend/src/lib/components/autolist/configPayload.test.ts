@@ -20,7 +20,6 @@ describe('buildAutolistConfigPayload', () => {
 		excludeDomains: [] as string[],
 		excludeRuleSets: [] as string[],
 		udpEnabled: false,
-		verbose: false,
 	};
 
 	it('keeps cleared strings, explicit false values, and empty arrays in the JSON body', () => {
@@ -34,7 +33,6 @@ describe('buildAutolistConfigPayload', () => {
 			excludeDomains: [],
 			excludeRuleSets: [],
 			udpEnabled: false,
-			verbose: false,
 		});
 
 		expect(JSON.parse(JSON.stringify(payload))).toEqual({
@@ -47,12 +45,11 @@ describe('buildAutolistConfigPayload', () => {
 			excludeDomains: [],
 			excludeRuleSets: [],
 			udpEnabled: false,
-			verbose: false,
 			addsPerHour: AUTOLIST_DEFAULT_ADDS_PER_HOUR,
 		});
 	});
 
-	it('sends exactly the eleven 0.9.0 settings — no legacy fields in the body', () => {
+	it('sends exactly the ten 0.9.3 settings — no legacy verbose field in the body', () => {
 		const payload = buildAutolistConfigPayload({
 			autoAdd: true,
 			targetInterface: 'nwg0',
@@ -63,7 +60,6 @@ describe('buildAutolistConfigPayload', () => {
 			excludeDomains: ['example.com'],
 			excludeRuleSets: ['geosite-google'],
 			udpEnabled: true,
-			verbose: true,
 			addsPerHour: 25,
 		}) as unknown as Record<string, unknown>;
 
@@ -76,7 +72,6 @@ describe('buildAutolistConfigPayload', () => {
 			'targetInterface',
 			'tunnelProbe',
 			'udpEnabled',
-			'verbose',
 			'wanCheckUrl',
 			'wanMonitorEnabled',
 		]);
@@ -113,7 +108,6 @@ describe('buildAutolistConfigPayload', () => {
 			excludeDomains: ['a.com', 'b.com'],
 			excludeRuleSets: [],
 			udpEnabled: false,
-			verbose: false,
 		});
 
 		expect(payload.targetInterface).toBe('awg0');
@@ -129,7 +123,6 @@ describe('autolistConfigDraft', () => {
 		expect(draft.wanMonitorEnabled).toBe(false);
 		expect(draft.tunnelProbe).toBe(false);
 		expect(draft.udpEnabled).toBe(false);
-		expect(draft.verbose).toBe(false);
 		expect(draft.wanCheckUrl).toBe(AUTOLIST_DEFAULT_WAN_URL);
 		expect(draft.resolveVia).toBe('');
 		expect(draft.targetInterface).toBe('');
