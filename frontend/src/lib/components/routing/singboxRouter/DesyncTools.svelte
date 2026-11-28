@@ -3,6 +3,7 @@
 	import { Button, Dropdown, type DropdownOption } from '$lib/components/ui';
 	import { api } from '$lib/api/client';
 	import { formatRelativeTime } from '$lib/utils/format';
+	import { shortStrategy } from './desyncDraft';
 	import type { SingboxDesyncDiagnostics, SingboxDesyncProbeResult, SingboxDesyncScanRow, SingboxRouterDesyncFields, SingboxRouterOutbound } from '$lib/types';
 
 	interface Props {
@@ -83,7 +84,7 @@
 	// Лучшая стратегия записи — больше успехов, затем меньше отказов.
 	function best(strategies: Record<string, { success: number; failure: number }>): string {
 		const list = Object.entries(strategies).sort((a, b) => b[1].success - a[1].success || a[1].failure - b[1].failure);
-		return list.length ? `${list[0][0]} (${list[0][1].success}/${list[0][1].failure})` : '—';
+		return list.length ? `${shortStrategy(list[0][0])} (${list[0][1].success}/${list[0][1].failure})` : '—';
 	}
 </script>
 
@@ -158,7 +159,7 @@
 		{:else if diag}
 			<div class="diag-summary">
 				{m.routing_desync_diag_summary({ count: diag.entry_count, active: diag.active })}
-				{#if diag.current}· {diag.current}{/if}
+				{#if diag.current}· {shortStrategy(diag.current)}{/if}
 			</div>
 			{#if diag.reason}<div class="type-hint">{diag.reason}</div>{/if}
 			{#if diag.persistence_error}<div class="error">{diag.persistence_error}</div>{/if}

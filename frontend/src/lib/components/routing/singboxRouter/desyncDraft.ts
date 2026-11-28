@@ -1,6 +1,6 @@
 import type { SingboxRouterDesyncFields } from '$lib/types';
 
-// Списки значений — из option/desync.go awgm-box 46. Проверку значений и
+// Списки значений — из option/desync.go awgm-box 48. Проверку значений и
 // сочетаний делает sing-box check при сохранении, форма её не дублирует.
 export const DESYNC_PRESETS = ['auto', 'custom', 'split', 'disorder', 'tlsrec', 'fake', 'fake_split', 'oob', 'GT1', 'GT2', 'GT3', 'GT4'];
 export const DESYNC_MODES = ['none', 'split', 'disorder', 'tlsrec', 'fake', 'fake_split', 'oob', 'multi_split', 'fake_disorder', 'multi_disorder', 'disoob', 'hostfakesplit'];
@@ -31,6 +31,9 @@ export interface DesyncDraft {
 	adaptive_timeout: string;
 	strategy: string;
 }
+
+/** Идентификатор стратегии Adaptive `режим:<32 hex>` → `режим·<6 hex>`: варианты режима различимы. */
+export const shortStrategy = (id: string) => id.replace(/:([0-9a-f]{6})[0-9a-f]{26}$/, '·$1');
 
 type DesyncSource = SingboxRouterDesyncFields & { strategy?: string };
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { desyncDraftFrom, desyncFieldsFrom } from './desyncDraft';
+import { desyncDraftFrom, desyncFieldsFrom, shortStrategy } from './desyncDraft';
 
 describe('desyncDraft', () => {
 	it('new outbound defaults to preset auto only', () => {
@@ -24,5 +24,12 @@ describe('desyncDraft', () => {
 		const d = desyncDraftFrom();
 		d.ttl = '3.5';
 		expect(() => desyncFieldsFrom(d)).toThrow('ttl');
+	});
+});
+
+describe('shortStrategy', () => {
+	it('укорачивает хеш и не трогает прочее', () => {
+		expect(shortStrategy('multi_split:0123456789abcdef0123456789abcdef')).toBe('multi_split·012345');
+		expect(shortStrategy('split')).toBe('split');
 	});
 });

@@ -1,6 +1,14 @@
 # Changelog
 
-## [2.21.2] - 20260-11-28
+## [2.21.3] - 2026-11-28
+
+### Изменено
+
+- **sing-box (awgm-box) обновлён до 48.** Outbound `desync` получил новые стратегии: отдельные позиции разреза TLS records (`tlsrec_pos`), порядок сегментов (`segment_order`), расстановку и преобразования fake ClientHello (`fake_placement`, `fake_delay`, `fake_tls_random`, `fake_tls_size`, `fake_tls_template`), правку HTTP-заголовка Host (`http_mod`), `hostfake_mode` и разрезы QUIC CRYPTO (`quic_split_pos`, `quic_order`). Задаются в поле `strategy`. Движок — @miuirussia.
+- **Desync Adaptive** подбирает уже не только режим, а до 32 вариантов стратегии; в таблице обучения вариант показан как `режим·код`. Накопленное обучение после обновления начинается заново. Поля, заданные в форме или в `strategy`, Adaptive больше не меняет: при явном `mode` другие режимы не перебираются — чтобы перебирались, оставьте `mode` «по пресету».
+- **Desync: позиции разреза TLS records 5 и меньше отклоняются.** Касается `mode: tlsrec` или `tlsrec_first` без `tlsrec_pos`, когда такое число есть в `split_pos` (например `1,midsld`): с такой конфигурацией sing-box не запустится. Уберите это число из `split_pos` или задайте `tlsrec_pos` не меньше 6.
+
+## [2.21.2] - 2026-11-28
 
 ### Добавлено
 
