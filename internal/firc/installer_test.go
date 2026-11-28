@@ -2,6 +2,7 @@ package firc
 
 import (
 	"debug/elf"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -218,46 +219,25 @@ func TestBuildIPKScriptPackagingAndArchContract(t *testing.T) {
 		_ = os.WriteFile(fircdBin, makeMinimalELF(spec.class, spec.data, spec.machine, "fircd-"+spec.awgArch), 0o755)
 		_ = os.WriteFile(tunvlessBin, makeMinimalELF(spec.class, spec.data, spec.machine, "tunvless-"+spec.awgArch), 0o755)
 
-		prebuiltAwg := filepath.Join(repoRoot, "prebuilt", "bin", "awg-"+spec.awgArch)
-		createdPrebuiltAwg := false
-		if _, err := os.Stat(prebuiltAwg); os.IsNotExist(err) {
-			_ = os.MkdirAll(filepath.Dir(prebuiltAwg), 0o755)
-			_ = os.WriteFile(prebuiltAwg, makeMinimalELF(spec.class, spec.data, spec.machine, "awg-cli-"+spec.awgArch), 0o755)
-			createdPrebuiltAwg = true
-		}
-		if createdPrebuiltAwg {
-			defer os.Remove(prebuiltAwg)
-		}
-
-		frontendIdx := filepath.Join(repoRoot, "frontend", "build", "index.html")
-		createdFrontendIdx := false
-		if _, err := os.Stat(frontendIdx); os.IsNotExist(err) {
-			if _, gzErr := os.Stat(frontendIdx + ".gz"); os.IsNotExist(gzErr) {
-				_ = os.MkdirAll(filepath.Dir(frontendIdx), 0o755)
-				_ = os.WriteFile(frontendIdx, []byte("<!doctype html><html></html>"), 0o644)
-				createdFrontendIdx = true
-			}
-		}
-		if createdFrontendIdx {
-			defer os.Remove(frontendIdx)
-		}
+		root := stageIPKTree(t, repoRoot, spec.awgArch, makeMinimalELF(spec.class, spec.data, spec.machine, "stub-"+spec.awgArch))
 
 		// Negative test: the manager package must reject a host executable.
-		badCmd := exec.Command("bash", filepath.Join(repoRoot, "scripts", "build-ipk.sh"), "0.9.9-contract", spec.pkgArch)
-		badCmd.Dir = repoRoot
+		badCmd := exec.Command("bash", filepath.Join(root, "scripts", "build-ipk.sh"), "0.9.9-contract", spec.pkgArch)
+		badCmd.Dir = root
 		badCmd.Env = append(os.Environ(),
 			"SKIP_FRONTEND_BUILD=1",
 			"AWG_MANAGER_BIN_OVERRIDE="+hostBin,
 			"FIRCD_BIN_OVERRIDE="+hostBin,
 			"TUNVLESS_BIN_OVERRIDE="+tunvlessBin,
 		)
-		if out, err := badCmd.CombinedOutput(); err == nil {
-			t.Fatalf("scripts/build-ipk.sh(%s) succeeded with host x86_64 fircd binary! Output:\n%s", spec.pkgArch, string(out))
+		// Отказ именно по архитектуре: без этого тест зеленеет на любой поломке скрипта.
+		if out, err := badCmd.CombinedOutput(); err == nil || !strings.Contains(string(out), "ELF architecture mismatch") {
+			t.Fatalf("scripts/build-ipk.sh(%s) не отверг host x86_64 бинарь: err=%v\n%s", spec.pkgArch, err, string(out))
 		}
 
 		// Positive test: valid target binaries -> scripts/build-ipk.sh succeeds and produces valid IPK
-		okCmd := exec.Command("bash", filepath.Join(repoRoot, "scripts", "build-ipk.sh"), "0.9.9-contract", spec.pkgArch)
-		okCmd.Dir = repoRoot
+		okCmd := exec.Command("bash", filepath.Join(root, "scripts", "build-ipk.sh"), "0.9.9-contract", spec.pkgArch)
+		okCmd.Dir = root
 		okCmd.Env = append(os.Environ(),
 			"SKIP_FRONTEND_BUILD=1",
 			"AWG_MANAGER_BIN_OVERRIDE="+awgMgrBin,
@@ -271,8 +251,7 @@ func TestBuildIPKScriptPackagingAndArchContract(t *testing.T) {
 			t.Fatalf("scripts/build-ipk.sh(%s) failed: %v\nOutput:\n%s", spec.pkgArch, err, string(out))
 		}
 
-		ipkPath := filepath.Join(repoRoot, "dist", "awg-manager_0.9.9-contract_"+spec.pkgArch+"-kn.ipk")
-		defer os.Remove(ipkPath)
+		ipkPath := filepath.Join(root, "dist", "awg-manager_0.9.9-contract_"+spec.pkgArch+"-kn.ipk")
 		verifyManagerOnlyIPK(t, ipkPath, spec.pkgArch)
 	}
 }
@@ -443,34 +422,12 @@ func TestRealCrossBuiltProductionIPKArtifactsAllArches(t *testing.T) {
 				t.Fatalf("fircd (%s) missing expected Keenetic Entware flavour string %q", spec.pkgArch, spec.wantFlavour)
 			}
 
-			// Ensure prebuilt/bin/awg-<awgArch> and frontend/build/index.html exist for build-ipk.sh
-			prebuiltAwg := filepath.Join(repoRoot, "prebuilt", "bin", "awg-"+spec.awgArch)
-			createdPrebuiltAwg := false
-			if _, err := os.Stat(prebuiltAwg); os.IsNotExist(err) {
-				_ = os.MkdirAll(filepath.Dir(prebuiltAwg), 0o755)
-				_ = os.WriteFile(prebuiltAwg, makeMinimalELF(spec.class, spec.data, spec.machine, "awg-cli-"+spec.awgArch), 0o755)
-				createdPrebuiltAwg = true
-			}
-			if createdPrebuiltAwg {
-				defer os.Remove(prebuiltAwg)
-			}
-
-			frontendIdx := filepath.Join(repoRoot, "frontend", "build", "index.html")
-			createdFrontendIdx := false
-			if _, err := os.Stat(frontendIdx); os.IsNotExist(err) {
-				if _, gzErr := os.Stat(frontendIdx + ".gz"); os.IsNotExist(gzErr) {
-					_ = os.MkdirAll(filepath.Dir(frontendIdx), 0o755)
-					_ = os.WriteFile(frontendIdx, []byte("<!doctype html><html></html>"), 0o644)
-					createdFrontendIdx = true
-				}
-			}
-			if createdFrontendIdx {
-				defer os.Remove(frontendIdx)
-			}
+			// Без заглушек: здесь допускаются только настоящие артефакты.
+			root := stageIPKTree(t, repoRoot, spec.awgArch, nil)
 
 			// Build production IPK using scripts/build-ipk.sh with the real cross-compiled binaries
-			okCmd := exec.Command("bash", filepath.Join(repoRoot, "scripts", "build-ipk.sh"), "0.7.0-prod", spec.pkgArch)
-			okCmd.Dir = repoRoot
+			okCmd := exec.Command("bash", filepath.Join(root, "scripts", "build-ipk.sh"), "0.7.0-prod", spec.pkgArch)
+			okCmd.Dir = root
 			okCmd.Env = append(os.Environ(),
 				"SKIP_FRONTEND_BUILD=1",
 				"AWG_MANAGER_BIN_OVERRIDE="+awgMgrBin,
@@ -484,8 +441,7 @@ func TestRealCrossBuiltProductionIPKArtifactsAllArches(t *testing.T) {
 				t.Fatalf("scripts/build-ipk.sh(%s) failed: %v\nOutput:\n%s", spec.pkgArch, err, string(out))
 			}
 
-			ipkPath := filepath.Join(repoRoot, "dist", "awg-manager_0.7.0-prod_"+spec.pkgArch+"-kn.ipk")
-			defer os.Remove(ipkPath)
+			ipkPath := filepath.Join(root, "dist", "awg-manager_0.7.0-prod_"+spec.pkgArch+"-kn.ipk")
 			verifyManagerOnlyIPK(t, ipkPath, spec.pkgArch)
 			runtimeIPK := filepath.Join(t.TempDir(), "runtime.ipk")
 			if err := BuildRuntimeIPK(repoRoot, fircdBin, tunvlessBin, spec.pkgArch, "0.7.0-prod", runtimeIPK); err != nil {
@@ -493,6 +449,47 @@ func TestRealCrossBuiltProductionIPKArtifactsAllArches(t *testing.T) {
 			}
 		})
 	}
+}
+
+// stageIPKTree копирует во временный каталог то, что читает scripts/build-ipk.sh:
+// скрипт чистит build/ рядом с собой, и запуск в корне репозитория затирал
+// локальную сборку заглушкой. Чего в чекауте нет (артефакты сборки), заменяет stub.
+func stageIPKTree(t *testing.T, repoRoot, awgArch string, stub []byte) string {
+	t.Helper()
+	root := t.TempDir()
+	put := func(rel string, fallback []byte) {
+		data, err := os.ReadFile(filepath.Join(repoRoot, rel))
+		if errors.Is(err, os.ErrNotExist) && fallback != nil {
+			data, err = fallback, nil
+		}
+		if err == nil {
+			err = os.MkdirAll(filepath.Dir(filepath.Join(root, rel)), 0o755)
+		}
+		if err == nil {
+			err = os.WriteFile(filepath.Join(root, rel), data, 0o755)
+		}
+		if err != nil {
+			t.Fatalf("stage %s: %v", rel, err)
+		}
+	}
+	for _, rel := range []string{
+		"VERSION", "scripts/build-ipk.sh", "internal/sys/kmod/download.go",
+		"internal/ndms/events/hook-script.sh", "entware/control/postinst", "entware/control/prerm",
+	} {
+		put(rel, nil)
+	}
+	put("prebuilt/bin/awg-"+awgArch, stub)
+	put("c-core/warpscout/out/awgm-warpscout-"+awgArch, stub)
+	put("frontend/build/index.html", []byte("<!doctype html><html></html>"))
+	copyDir := func(rel string) {
+		if err := os.CopyFS(filepath.Join(root, rel), os.DirFS(filepath.Join(repoRoot, rel))); err != nil {
+			t.Fatalf("stage %s: %v", rel, err)
+		}
+	}
+	for _, rel := range []string{"entware/files/etc/init.d", "kmod/awg-proxy/out", "kmod/awgm-relay/out", "prebuilt/kmod"} {
+		copyDir(rel)
+	}
+	return root
 }
 
 func verifyManagerOnlyIPK(t *testing.T, pkg, arch string) {
@@ -515,6 +512,12 @@ func verifyManagerOnlyIPK(t *testing.T, pkg, arch string) {
 	payload, err := extractTarGzToMap(outer["data.tar.gz"])
 	if err != nil {
 		t.Fatal(err)
+	}
+	// Без модуля скрипт только предупреждает, а пакет выходит неполным.
+	for _, name := range []string{"awg_proxy.ko", "awgm_relay.ko"} {
+		if p := "opt/etc/awg-manager/modules/" + name; len(payload[p]) == 0 {
+			t.Errorf("manager IPK (%s) без %s", arch, p)
+		}
 	}
 	for p := range runtimePayload {
 		if _, ok := payload[p]; ok {
