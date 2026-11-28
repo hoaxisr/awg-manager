@@ -19,6 +19,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/hoaxisr/awg-manager/internal/ndms/transport"
 )
 
 // Dispatcher coordinates HTTP traffic from the router's origin proxy port (default :9009)
@@ -1415,11 +1417,14 @@ func EnsureKeeneticPreserveHost() {
 	if err != nil {
 		return
 	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil || resp.StatusCode != http.StatusOK {
+	resp, err := (&http.Client{Transport: transport.SharedTransport()}).Do(req)
+	if err != nil {
 		return
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return
+	}
 
 	var proxies map[string]struct {
 		Upstream string `json:"upstream"`

@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hoaxisr/awg-manager/internal/ndms/transport"
 	"github.com/hoaxisr/awg-manager/internal/storage"
 	"github.com/hoaxisr/awg-manager/internal/sys/cloudagent"
 )
@@ -456,7 +457,7 @@ func fetchKeeneticRCISnapshot(ctx context.Context) (rciRootSnapshot, bool) {
 	if err != nil {
 		return snap, false
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := (&http.Client{Transport: transport.SharedTransport()}).Do(req)
 	if err != nil {
 		return snap, false
 	}
