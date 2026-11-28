@@ -215,11 +215,17 @@ func (c *Client) GetRaw(ctx context.Context, path string) ([]byte, error) {
 // `/show/interface/<name>/summary` здесь БЫЛ и снят: чтений по имени в демоне
 // нет (F546), сводка берётся из полного списка. Понадобится снова сырой путь —
 // вернуть вместе с вызывающим. `/show/rc/interface/` — дерево rc целиком.
+//
+// Разделы VPN-серверов: «not found» в батче лежит внутри обёртки пути,
+// ExtractError его не видит — вызывающий получил бы пустые данные без ошибки.
+// Прямой GET отдаёт типизированный 404.
 func bypassBatch(path string) bool {
-	if strings.HasPrefix(path, "/show/rc/interface/") {
+	switch path {
+	case "/show/rc/wireguard-server", "/show/rc/sstp-server", "/show/rc/vpn-server",
+		"/show/rc/oc-server", "/show/rc/crypto":
 		return true
 	}
-	return false
+	return strings.HasPrefix(path, "/show/rc/interface/")
 }
 
 // getRawDirect — legacy single-GET path. Используется когда Batcher

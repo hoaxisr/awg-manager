@@ -45,13 +45,6 @@ func TestFetchRCIServers(t *testing.T) {
 		t.Fatalf("asked %v, want %v", rci.asked, want)
 	}
 
-	// 404 запомнен — повторно раздел не спрашиваем.
-	rci.asked = nil
-	op.fetchRCIServers(context.Background())
-	if slices.Contains(rci.asked, "/show/rc/sstp-server") {
-		t.Fatalf("отсутствующий раздел перечитан: %v", rci.asked)
-	}
-
 	rci.err = errors.New("rci down")
 	if _, ok := op.fetchRCIServers(context.Background()); ok {
 		t.Fatal("отказ RCI должен давать ok=false")

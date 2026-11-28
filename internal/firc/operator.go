@@ -223,7 +223,6 @@ type Operator struct {
 	foreign                  *ForeignDetector
 	rci                      RCIReader
 	hasComponent             func(name string) bool
-	rciAbsent                sync.Map // путь раздела → time.Time последнего 404
 	foreignTicks             atomic.Int32
 	recoveryDeferred         atomic.Bool
 	runtimeObs               runtimeObserver

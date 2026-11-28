@@ -449,11 +449,6 @@ type rciServersSnapshot struct {
 	} `json:"crypto"`
 }
 
-// rciAbsentTTL — на сколько запоминается отсутствие раздела: NDMS пишет E в
-// журнал роутера на каждое чтение несуществующего пути, а монитор зовёт нас
-// на каждом обновлении.
-const rciAbsentTTL = 10 * time.Minute
-
 // fetchRCIServers читает только разделы VPN-серверов установленных компонентов
 // (соответствие — из веб-интерфейса прошивки). Всё дерево `GET /rci/` ради них
 // стоило ~0,7 с против ~12 мс на раздел (стенд 5.02.B.5, 28.11.2026).
@@ -478,16 +473,10 @@ func (op *Operator) fetchRCIServers(ctx context.Context) (rciServersSnapshot, bo
 		if !slices.ContainsFunc(s.components, op.hasComponent) {
 			continue
 		}
-		if at, ok := op.rciAbsent.Load(s.path); ok && time.Since(at.(time.Time)) < rciAbsentTTL {
-			continue
-		}
 		raw, err := op.rci.GetRaw(reqCtx, s.path)
 		var httpErr *transport.HTTPError
-		var appErr *transport.NDMSAppError // та же «not found» в батче
-		if (errors.As(err, &httpErr) && httpErr.Status == http.StatusNotFound) ||
-			(errors.As(err, &appErr) && strings.HasPrefix(appErr.Message, "not found")) {
-			op.rciAbsent.Store(s.path, time.Now())
-			continue
+		if errors.As(err, &httpErr) && httpErr.Status == http.StatusNotFound {
+			continue // раздела нет — остальные от этого не зависят
 		}
 		if err != nil || json.Unmarshal(raw, s.dst) != nil {
 			return rciServersSnapshot{}, false
