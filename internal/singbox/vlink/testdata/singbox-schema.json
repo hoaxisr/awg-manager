@@ -12305,6 +12305,51 @@
             "split_pos": {
               "type": "string"
             },
+            "tlsrec_pos": {
+              "type": "string"
+            },
+            "segment_order": {
+              "type": "string"
+            },
+            "fake_placement": {
+              "type": "string",
+              "enum": [
+                "",
+                "before",
+                "between",
+                "before_between"
+              ]
+            },
+            "fake_delay": {
+              "$ref": "#/$defs/Duration"
+            },
+            "fake_tls_random": {
+              "type": "boolean"
+            },
+            "fake_tls_size": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 60000
+            },
+            "fake_tls_template": {
+              "type": "string",
+              "enum": [
+                "",
+                "original",
+                "compact"
+              ]
+            },
+            "http_mod": {
+              "type": "string"
+            },
+            "hostfake_mode": {
+              "type": "string",
+              "enum": [
+                "",
+                "legacy",
+                "replace"
+              ]
+            },
             "fake_sni": {
               "type": "string"
             },
@@ -12421,6 +12466,12 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 16
+            },
+            "quic_split_pos": {
+              "type": "string"
+            },
+            "quic_order": {
+              "type": "string"
             },
             "auto_tune": {
               "type": "boolean"
@@ -19786,5 +19837,5 @@
       ]
     }
   },
-  "x-singbox-version": "47"
+  "x-singbox-version": "48"
 }
