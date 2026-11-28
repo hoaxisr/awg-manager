@@ -14,6 +14,7 @@ import (
 	"github.com/hoaxisr/awg-manager/internal/connections"
 	"github.com/hoaxisr/awg-manager/internal/diagnostics"
 	"github.com/hoaxisr/awg-manager/internal/events"
+	"github.com/hoaxisr/awg-manager/internal/firc"
 	"github.com/hoaxisr/awg-manager/internal/ipinspect"
 	"github.com/hoaxisr/awg-manager/internal/mcp"
 	"github.com/hoaxisr/awg-manager/internal/mcp/localdeps"
@@ -1481,7 +1482,13 @@ func (s *Server) registerMcpRoutes(mux *http.ServeMux, h *routeHandlers) {
 		pingSnapshot = h.pingCheckHandler.PublishSnapshot
 	}
 
+	var fircOp *firc.Operator
+	if s.fircHandler != nil {
+		fircOp = s.fircHandler.Operator()
+	}
 	local := localdeps.New(localdeps.Config{
+		FIRC:            fircOp,
+		RoutingEngine:   s.settings.CachedRoutingEngine,
 		Version:         s.config.Version,
 		InstanceID:      s.instanceID,
 		BootInProgress:  s.bootStatusFn,

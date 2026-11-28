@@ -7,6 +7,9 @@ import "context"
 // Implementations return plain errors with user-facing messages: tools
 // forward err.Error() to the model verbatim.
 type Deps interface {
+	// FIRCStatus observes the selected managed runtime, falling back to saved
+	// configuration. A saved row never carries live or active outbound data.
+	FIRCStatus(ctx context.Context) (FIRCStatus, error)
 	SystemStatus(ctx context.Context) (SystemStatus, error)
 
 	ListTunnels(ctx context.Context) ([]TunnelSummary, error)

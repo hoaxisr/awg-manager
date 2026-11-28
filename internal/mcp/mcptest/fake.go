@@ -19,6 +19,16 @@ import (
 	mcpsrv "github.com/hoaxisr/awg-manager/internal/mcp"
 )
 
+// FIRCStatus mirrors firc.Group.Interface and Group.Active in the live groups
+// API: failover can select a later entry in the configured order.
+func (f *Fake) FIRCStatus(context.Context) (mcpsrv.FIRCStatus, error) {
+	selected, live, count := true, true, 1
+	return mcpsrv.FIRCStatus{
+		Selected: &selected, Runtime: "responding", GroupsSource: "runtime", GroupsTotal: &count, GroupsComplete: true,
+		Groups: []mcpsrv.FIRCGroupStatus{{ID: "a0000001", Name: "VPN", Enabled: true, ConfiguredOutbounds: []string{"tun0", "tun1"}, Live: &live, ActiveOutbound: "tun1"}},
+	}, nil
+}
+
 // Fake is a mutable in-memory Deps. Writes change state for the life of
 // the process so a client can observe its own effects.
 type Fake struct {

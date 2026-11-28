@@ -15,6 +15,7 @@ import (
 // read-only key rather than allowed — a forgotten entry must cost a
 // puzzling refusal, never a silent hole.
 var readOnlyTools = map[string]bool{
+	"get_firc_status":               true,
 	"get_system_status":             true,
 	"get_logs":                      true,
 	"test_connectivity":             true,
